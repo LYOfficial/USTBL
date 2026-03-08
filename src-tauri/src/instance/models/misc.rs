@@ -160,7 +160,7 @@ impl InstanceSummary {
       mod_loader: instance.mod_loader.clone(),
       optifine: instance.optifine.clone(),
       // skip fallback remote fetch in `get_major_game_version` and `compare_game_versions` to avoid instance list load delay.
-      // ref: https://github.com/UNIkeEN/SJMCL/pull/799
+      // ref: https://github.com/USTB-SkyCode/USTBL/pull/799
       major_version: get_major_game_version(app, &instance.version, false).await,
       support_quick_play: compare_game_versions(app, &instance.version, "23w14a", false)
         .await

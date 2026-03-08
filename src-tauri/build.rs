@@ -15,7 +15,7 @@ fn main() {
 
   // Iterate over all env variables and print those starting with "SJMCL_" for compilation (env variables can not be accessed directly in compile time)
   // ref: https://users.rust-lang.org/t/std-set-var-in-build-rs-not-setting-environment-variable/34924/6
-  // original naive impl, see: https://github.com/UNIkeEN/SJMCL/pull/412/files
+  // original naive impl, see: https://github.com/USTB-SkyCode/USTBL/pull/412/files
   for (key, value) in env::vars() {
     if key.starts_with("SJMCL_") {
       println!("cargo:rustc-env={}={}", key, value);

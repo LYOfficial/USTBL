@@ -7,7 +7,7 @@ export const TitleShort: React.FC<LogoTitleProps> = (props) => {
   return (
     <Heading size="md" className={styles.title} {...props}>
       <Highlight query="L" styles={{ color: "blue.600", userSelect: "none" }}>
-        SJMCL
+        USTBL
       </Highlight>
     </Heading>
   );
@@ -17,7 +17,7 @@ export const TitleFull: React.FC<LogoTitleProps> = (props) => {
   return (
     <Heading size="md" className={styles.title} {...props}>
       <Highlight query="L" styles={{ color: "blue.600", userSelect: "none" }}>
-        SJMC Launcher
+        USTB Launcher
       </Highlight>
     </Heading>
   );

@@ -50,7 +50,7 @@ pub async fn select_java_runtime(
 /// ref: https://zh.minecraft.wiki/w/Java%E7%89%88?variant=zh-cn#%E8%BD%AF%E4%BB%B6%E9%9C%80%E6%B1%82
 async fn get_minimum_java_version_by_game(app: &AppHandle, instance: &Instance) -> i32 {
   // only allow fallback remote fetch here in the launch process, as Java selection and command generation are used sequentially.
-  // ref: https://github.com/UNIkeEN/SJMCL/pull/799
+  // ref: https://github.com/USTB-SkyCode/USTBL/pull/799
   // 26.1(26.1-snapshot-1)+
   if compare_game_versions(app, &instance.version, "26.1-snapshot-1", true).await >= Ordering::Equal
   {

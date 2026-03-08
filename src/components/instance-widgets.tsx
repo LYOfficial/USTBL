@@ -111,7 +111,7 @@ export const InstanceBasicInfoWidget = () => {
     <InstanceWidgetBase
       title={t("InstanceWidgets.basicInfo.title")}
       icon={LuBox}
-      mr={-4} // ref: https://github.com/UNIkeEN/SJMCL/issues/762
+      mr={-4} // ref: https://github.com/USTB-SkyCode/USTBL/issues/762
     >
       <OptionItem
         title={t("InstanceWidgets.basicInfo.gameVersion")}

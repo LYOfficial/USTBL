@@ -20,7 +20,7 @@
           "title": "Signaler un problème ou demander une fonctionnalité"
         },
         "aboutSJMC": {
-          "title": "À propos de Minecraft society à l’université jiao tong shanghai (SJMC)"
+          "title": "À propos de Minecraft society à l’université jiao tong shanghai (USTB)"
         }
       }
     },
@@ -58,11 +58,11 @@
       "settings": {
         "copyright": {
           "title": "Droits d'auteur",
-          "description": "Copyright © 2024-2026 Équipe de développement SJMCL."
+          "description": "Copyright © 2024-2026 Équipe de développement USTBL."
         },
         "userAgreement": {
           "title": "Accord d'utilisateur",
-          "url": "https://mc.sjtu.cn/sjmcl/en/docs/tos"
+          "url": "https://docs.ustb.world/"
         },
         "openSourceLicense": {
           "title": "Licence open source",
@@ -172,7 +172,7 @@
         "title": "Options avancées",
         "uuid": {
           "label": "UUID",
-          "placeholder": "(Généré automatiquement par SJMCL)",
+          "placeholder": "(Généré automatiquement par USTBL)",
           "errorMessage": "Format UUID incorrect"
         }
       }
@@ -201,7 +201,7 @@
       "description": {
         "start": {
           "3rdparty": "Cette source d'authentification prend en charge la proposition Yggdrasil Connect",
-          "microsoft": "SJMCL prend en charge le flux d'autorisation d'appareil OAuth 2.0 de Microsoft"
+          "microsoft": "USTBL prend en charge le flux d'autorisation d'appareil OAuth 2.0 de Microsoft"
         },
         "next": "Veuillez cliquer sur le bouton Continuer la connexion pour ouvrir la fenêtre de connexion et saisir le code ci-dessus (déjà copié)"
       },
@@ -506,7 +506,7 @@
       "type": "Type"
     },
     "warning": {
-      "mojang": "Le runtime Java distribué par Mojang sera installé par SJMCL dans un répertoire spécifique.",
+      "mojang": "Le runtime Java distribué par Mojang sera installé par USTBL dans un répertoire spécifique.",
       "oracle": "Le téléchargement à partir de la source Oracle peut nécessiter une connexion."
     }
   },
@@ -1038,14 +1038,14 @@
         "directories": {
           "special": {
             "CURRENT_DIR": "Dossier actuel",
-            "APP_DATA_SUBDIR": "Dossier de données SJMCL",
+            "APP_DATA_SUBDIR": "Dossier de données USTBL",
             "OFFICIAL_DIR": "Dossier du lanceur officiel"
           }
         }
       },
       "deleteDialog": {
         "title": "Supprimer le répertoire du jeu",
-        "content": "Êtes-vous sûr de vouloir supprimer le répertoire du jeu {{dirName}} ? (SJMCL ne le scannera plus, mais les fichiers ne seront pas supprimés du disque)"
+        "content": "Êtes-vous sûr de vouloir supprimer le répertoire du jeu {{dirName}} ? (USTBL ne le scannera plus, mais les fichiers ne seront pas supprimés du disque)"
       },
       "directoryNotExist": "Ce répertoire n'existe pas, veuillez le supprimer et l'ajouter à nouveau"
     },
@@ -1167,8 +1167,8 @@
           "url": "https://www.mualliance.cn/en"
         },
         "SJMC": {
-          "title": "Club Minecraft de l'Université Jiao Tong de Shanghai (SJMC)",
-          "url": "https://mc.sjtu.cn/en/"
+          "title": "Club Minecraft de l'Université Jiao Tong de Shanghai (USTB)",
+          "url": "https://www.ustb.world/"
         }
       }
     },
@@ -1193,8 +1193,8 @@
     "top": {
       "settings": {
         "LauncherDocs": {
-          "title": "Documentation du lanceur SJMC",
-          "url": "https://mc.sjtu.cn/sjmcl/zh/docs"
+          "title": "Documentation du lanceur USTB",
+          "url": "https://docs.ustb.world/"
         }
       }
     }
@@ -1380,7 +1380,7 @@
     }
   },
   "IntelligenceSettingsPage": {
-    "title": "Intelligence SJMCL",
+    "title": "Intelligence USTBL",
     "description": "Intégrez des modèles d'IA à votre lanceur et à votre expérience de jeu Minecraft.",
     "mcpServer": {
       "title": "Service MCP",
@@ -1393,7 +1393,7 @@
         "docs": {
           "title": "Guide d'utilisation",
           "description": "Découvrez comment connecter le lanceur à des applications d'agent externes (comme Claude, Cherry Studio, etc.).",
-          "url": "https://mc.sjtu.cn/sjmcl/en/docs/intelligence/launcher-mcp"
+          "url": "https://docs.ustb.world/"
         },
         "port": {
           "title": "Port",
@@ -1422,7 +1422,7 @@
     },
     "confirmDelete": {
       "title": "Supprimer Java",
-      "description": "Êtes-vous sûr de vouloir supprimer cette version de Java ? (SJMCL ne pourra plus l'utiliser pour lancer le jeu, mais les fichiers ne seront pas supprimés du disque)"
+      "description": "Êtes-vous sûr de vouloir supprimer cette version de Java ? (USTBL ne pourra plus l'utiliser pour lancer le jeu, mais les fichiers ne seront pas supprimés du disque)"
     }
   },
   "LaunchPage": {
@@ -1545,7 +1545,7 @@
       "neoforge": "NeoForge",
       "authlibInjector": "Authlib Injector",
       "github": "GitHub",
-      "sjmclapi": "API du lanceur SJMC"
+      "sjmclapi": "API du lanceur USTB"
     }
   },
   "ReLoginPlayerModal": {
@@ -1565,8 +1565,8 @@
   },
   "RestartForUpdateConfirmDialog": {
     "title": "Mise à jour du lanceur",
-    "body": "La nouvelle version a été téléchargée. Redémarrez SJMCL pour finaliser la mise à jour.",
-    "bodyMSI": "La nouvelle version a été téléchargée. Cliquer sur « Installer » fermera SJMCL et exécutera le programme d'installation.",
+    "body": "La nouvelle version a été téléchargée. Redémarrez USTBL pour finaliser la mise à jour.",
+    "bodyMSI": "La nouvelle version a été téléchargée. Cliquer sur « Installer » fermera USTBL et exécutera le programme d'installation.",
     "button": {
       "restart": "Redémarrer",
       "install": "Installer",
@@ -2621,7 +2621,7 @@
     "header": {
       "title": "Étoilez-nous sur GitHub !"
     },
-    "body": "Si vous aimez SJMCL et souhaitez nous soutenir, pouvez-vous nous donner une étoile sur GitHub ? Ce petit geste compte beaucoup pour nous et nous motive à continuer à améliorer l'expérience.",
+    "body": "Si vous aimez USTBL et souhaitez nous soutenir, pouvez-vous nous donner une étoile sur GitHub ? Ce petit geste compte beaucoup pour nous et nous motive à continuer à améliorer l'expérience.",
     "button": {
       "later": "Plus tard",
       "starUs": "Étoiler"
@@ -2655,7 +2655,7 @@
   "UnavailableExePathAlertDialog": {
     "dialog": {
       "title": "Chemin d'exécution non sûr",
-      "content": "SJMCL est actuellement exécuté depuis un répertoire temporaire ou invalide. Vos paramètres et données de jeu peuvent être perdus. Veuillez déplacer SJMCL vers un autre emplacement et le relancer.",
+      "content": "USTBL est actuellement exécuté depuis un répertoire temporaire ou invalide. Vos paramètres et données de jeu peuvent être perdus. Veuillez déplacer USTBL vers un autre emplacement et le relancer.",
       "btnContinue": "Continuer quand même"
     }
   },
@@ -2692,11 +2692,11 @@
       "title": "Bienvenue !"
     },
     "body": {
-      "text": "Bienvenue sur SJMCL ! Avant de commencer, veuillez lire et accepter notre <terms>Accord d'utilisateur</terms>."
+      "text": "Bienvenue sur USTBL ! Avant de commencer, veuillez lire et accepter notre <terms>Accord d'utilisateur</terms>."
     },
     "warning": {
-      "unstableVersion": "Vous utilisez actuellement SJMCL (version {{versionLabel}}). Certaines fonctionnalités peuvent être instables ou encore en développement. Nous vous invitons à signaler tout problème d'utilisation ou à soumettre vos suggestions d'amélioration.",
-      "winArm64Notice": "SJMCL prend désormais en charge la plateforme Windows on Arm. Si vous utilisez un appareil basé sur une plateforme <b>Qualcomm</b>, vous devrez peut-être installer le <glpack>Pack de compatibilité OpenGL</glpack> pour pouvoir jouer."
+      "unstableVersion": "Vous utilisez actuellement USTBL (version {{versionLabel}}). Certaines fonctionnalités peuvent être instables ou encore en développement. Nous vous invitons à signaler tout problème d'utilisation ou à soumettre vos suggestions d'amélioration.",
+      "winArm64Notice": "USTBL prend désormais en charge la plateforme Windows on Arm. Si vous utilisez un appareil basé sur une plateforme <b>Qualcomm</b>, vous devrez peut-être installer le <glpack>Pack de compatibilité OpenGL</glpack> pour pouvoir jouer."
     },
     "button": {
       "agree": "Accepter"
