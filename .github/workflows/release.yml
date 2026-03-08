@@ -1,0 +1,227 @@
+# Manually build and release artifacts instead of using tauri-actions
+# Reasons:
+# 1. Include OS name in output filenames (tauri-actions doesn't support this)
+# 2. Publish portable .exe for Windows (unsupported by tauri-actions either)
+name: Release
+
+on:
+    push:
+        tags:
+            - 'v*'
+    workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  Version-Check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check-tag.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      
+      - name: Check version consistency
+        run: npm run version check
+
+      - name: Check Tag Version
+        id: check-tag
+        shell: bash
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          echo "Package version: $PKG_VERSION"
+          
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            TAG_VERSION="${{ github.ref_name }}"
+            TAG_VERSION=${TAG_VERSION#v}
+            
+            if [[ "$TAG_VERSION" != "$PKG_VERSION" ]]; then
+              echo "❌ Git tag version ($TAG_VERSION) does not match package version ($PKG_VERSION)"
+              exit 1
+            fi
+            echo "✅ Git tag version matches package version: $TAG_VERSION"
+          else
+            COMMIT_HASH=$(git rev-parse HEAD)
+            COMMIT_HASH=${COMMIT_HASH:0:6}
+            PKG_VERSION="$PKG_VERSION"-"$COMMIT_HASH"
+            echo "Not a tag, using package version with commit hash: $PKG_VERSION"
+          fi
+          
+          # Set the version as output
+          echo "version=$PKG_VERSION" >> $GITHUB_OUTPUT
+
+  Build-and-Release:
+    needs: [Version-Check]
+    uses: ./.github/workflows/build.yml
+    with:
+      version: ${{ needs.Version-Check.outputs.version }}
+      branch: ${{ github.ref }}
+      upload_artifacts: true
+    secrets:
+      SJMCL_CURSEFORGE_API_KEY: ${{ secrets.SJMCL_CURSEFORGE_API_KEY }}
+
+  Code-Sign-macOS:
+    needs: [Version-Check, Build-and-Release]
+    uses: ./.github/workflows/sign-macos.yml
+    with:
+      version: ${{ needs.Version-Check.outputs.version }}
+    secrets:
+      MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+      MACOS_CERT_P12_PASSWORD: ${{ secrets.MACOS_CERT_P12_PASSWORD }}
+      MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+      MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+      MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+      MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+
+  Upload-release-to-AUR:
+    needs: [Version-Check, Build-and-Release]
+    if: always() && needs.Build-and-Release.result == 'success'
+    uses: ./.github/workflows/publish-aur.yml
+    with:
+      version: ${{ needs.Version-Check.outputs.version }}
+    secrets:
+      AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+
+  Create-Release:
+    needs: [Version-Check, Build-and-Release, Code-Sign-macOS, Upload-release-to-AUR]
+    if: always() && needs.Build-and-Release.result == 'success'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download non-macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: 'SJMCL_${{ needs.Version-Check.outputs.version }}_*'
+          path: artifacts
+          merge-multiple: true
+
+      - name: Download signed macOS artifacts
+        if: needs.Code-Sign-macOS.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: 'SJMCL_${{ needs.Version-Check.outputs.version }}_macos_*_signed'
+          path: artifacts-signed
+          merge-multiple: true
+
+      - name: Organize release artifacts
+        env:
+          VERSION: ${{ needs.Version-Check.outputs.version }}
+          SIGNING_SUCCESS: ${{ needs.Code-Sign-macOS.result == 'success' }}
+        run: |
+          mkdir -p release-artifacts
+          
+          # Copy non-macOS artifacts
+          find artifacts -name "SJMCL_${{ env.VERSION }}_windows_*" -exec cp {} release-artifacts/ \;
+          find artifacts -name "SJMCL_${{ env.VERSION }}_linux_*" -exec cp {} release-artifacts/ \;
+          
+          # Copy macOS artifacts (signed if available, unsigned otherwise)
+          if [ "${{ env.SIGNING_SUCCESS }}" = "true" ] && [ -d artifacts-signed ]; then
+            echo "Using signed macOS artifacts"
+            # Copy signed macOS artifacts (rename to remove _signed suffix)
+            find artifacts-signed -name "SJMCL_${{ env.VERSION }}_macos_*" -type f | while read file; do
+              basename=$(basename "$file")
+              # Remove _signed suffix before the file extension
+              newname=$(echo "$basename" | sed 's/_signed\./\./')
+              cp "$file" "release-artifacts/$newname"
+            done
+          else
+            echo "⚠️ WARNING: Using unsigned macOS artifacts (signing failed or was skipped)"
+            # Copy unsigned macOS artifacts
+            find artifacts -name "SJMCL_${{ env.VERSION }}_macos_*" -exec cp {} release-artifacts/ \;
+          fi
+
+          # Collect all SHA256 files into one summary
+          touch SHA256SUMS.txt
+          echo "# Version: ${{ env.VERSION }}" >> SHA256SUMS.txt
+          echo "# Generated: $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> SHA256SUMS.txt
+          echo "" >> SHA256SUMS.txt
+          
+          # Collect SHA256 from downloaded artifacts
+          find artifacts -name "*.sha256" -type f | sort | while read sha256_file; do
+            cat "$sha256_file" >> SHA256SUMS.txt
+          done
+          
+          # Also collect from signed macOS artifacts if available
+          if [ "${{ env.SIGNING_SUCCESS }}" = "true" ] && [ -d artifacts-signed ]; then
+            find artifacts-signed -name "*.sha256" -type f | sort | while read sha256_file; do
+              cat "$sha256_file" >> SHA256SUMS.txt
+            done
+          fi
+
+          rm -f release-artifacts/*.sha256
+
+          echo ""
+          echo "Core executable SHA256 checksums:"
+          cat SHA256SUMS.txt
+
+          echo "Final release artifacts:"
+          ls -la release-artifacts/
+
+      # Only upload to SJMC server for the main repository
+      # We need to upload the SHA256SUMS file as well, but don't want to keep it in the release-artifacts folder
+      - name: Upload artifacts to SJMC server
+        if: github.repository == 'UNIkeEN/SJMCL'
+        timeout-minutes: 10
+        env:
+          SJMC_SECRET_KEY: ${{ secrets.SJMC_DEPLOY_SECRET_KEY }}
+          SJMC_DEPLOY_API: ${{ secrets.SJMC_DEPLOY_API }}
+          SJMC_DEPLOY_PROJECT: ${{ secrets.SJMC_DEPLOY_PROJECT }}
+          VERSION: ${{ needs.Version-Check.outputs.version }}
+        run: |
+          SHA256SUMS_FILE=SHA256SUMS_${{ env.VERSION }}.txt
+          cp SHA256SUMS.txt release-artifacts/${SHA256SUMS_FILE}
+          bash scripts/release/upload_to_sjmc_server.sh
+          rm release-artifacts/${SHA256SUMS_FILE}
+        shell: bash
+
+      - name: Generate Changelog
+        id: changelog
+        env:
+          SIGNING_SUCCESS: ${{ needs.Code-Sign-macOS.result == 'success' }}
+          UPLOAD_AUR_SUCCESS: ${{ needs.Upload-release-to-AUR.result == 'success' }}
+        run: |
+          pip install requests packaging
+          python scripts/release/generate_changelog_draft.py > release-notes.md
+          
+          # Add warning if macOS signing failed
+          if [ "${{ env.SIGNING_SUCCESS }}" != "true" ]; then
+            echo "" >> release-notes.md
+            echo "---" >> release-notes.md
+            echo "" >> release-notes.md
+            echo "⚠️ **Note:** macOS artifacts in this release are **not code-signed**. macOS users may see security warnings when running the application." >> release-notes.md
+          fi
+          if [ "${{ env.UPLOAD_AUR_SUCCESS }}" != "true" ]; then
+            echo "" >> release-notes.md
+            echo "---" >> release-notes.md
+            echo "" >> release-notes.md
+            echo "⚠️ **Note:** version of this release are **not updated** in AUR. The AUR package may be outdated." >> release-notes.md
+          fi
+        shell: bash
+
+      - name: Create Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.Version-Check.outputs.version }}
+        run: |
+          RELEASE_TAG="${{ env.VERSION }}"
+          
+          # Create the release
+          gh release create "$GITHUB_REF_NAME" \
+            --title "SJMCL ${{ env.VERSION }}" \
+            --draft \
+            $PRERELEASE \
+            --notes-file release-notes.md \
+            ./release-artifacts/*
+

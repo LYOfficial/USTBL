@@ -1,0 +1,269 @@
+name: Sign macOS Artifacts
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version to sign'
+        required: true
+        type: string
+    secrets:
+      MACOS_CERT_P12_BASE64:
+        description: 'Base64 encoded p12 certificate'
+        required: false
+      MACOS_CERT_P12_PASSWORD:
+        description: 'Password for p12 certificate'
+        required: false
+      MACOS_SIGNING_IDENTITY:
+        description: 'Code signing identity'
+        required: false
+      MACOS_NOTARY_APPLE_ID:
+        description: 'Apple ID for notarization'
+        required: false
+      MACOS_NOTARY_PASSWORD:
+        description: 'App-specific password for notarization'
+        required: false
+      MACOS_NOTARY_TEAM_ID:
+        description: 'Team ID for notarization'
+        required: false
+
+jobs:
+  sign-macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        arch: [aarch64, x86_64]
+    
+    steps:
+      - name: Validate signing secrets
+        id: validate
+        run: |
+          MISSING_SECRETS=()
+          
+          if [ -z "${{ secrets.MACOS_CERT_P12_BASE64 }}" ]; then
+            MISSING_SECRETS+=("MACOS_CERT_P12_BASE64")
+          fi
+          if [ -z "${{ secrets.MACOS_CERT_P12_PASSWORD }}" ]; then
+            MISSING_SECRETS+=("MACOS_CERT_P12_PASSWORD")
+          fi
+          if [ -z "${{ secrets.MACOS_SIGNING_IDENTITY }}" ]; then
+            MISSING_SECRETS+=("MACOS_SIGNING_IDENTITY")
+          fi
+          if [ -z "${{ secrets.MACOS_NOTARY_APPLE_ID }}" ]; then
+            MISSING_SECRETS+=("MACOS_NOTARY_APPLE_ID")
+          fi
+          if [ -z "${{ secrets.MACOS_NOTARY_PASSWORD }}" ]; then
+            MISSING_SECRETS+=("MACOS_NOTARY_PASSWORD")
+          fi
+          if [ -z "${{ secrets.MACOS_NOTARY_TEAM_ID }}" ]; then
+            MISSING_SECRETS+=("MACOS_NOTARY_TEAM_ID")
+          fi
+          
+          if [ ${#MISSING_SECRETS[@]} -gt 0 ]; then
+            echo "::warning::⚠️ macOS code signing will be skipped - missing secrets: ${MISSING_SECRETS[*]}"
+            echo "The release will continue with unsigned macOS artifacts."
+            exit 1
+          fi
+          
+          echo "✅ All required secrets are present"
+
+      - uses: actions/checkout@v4
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}
+          path: artifacts
+
+      - name: Setup signing environment
+        env:
+          CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          CERT_P12_PASSWORD: ${{ secrets.MACOS_CERT_P12_PASSWORD }}
+        run: |
+          # Decode p12 file
+          echo "$CERT_P12_BASE64" | base64 -d > /tmp/cert.p12
+          
+          # Create temporary keychain
+          KEYCHAIN_PATH=$HOME/temp-signing.keychain-db
+          security create-keychain -p "password" "$KEYCHAIN_PATH"
+          security unlock-keychain -p "password" "$KEYCHAIN_PATH"
+          security set-keychain-settings "$KEYCHAIN_PATH"
+          
+          # Import certificate
+          security import /tmp/cert.p12 -k "$KEYCHAIN_PATH" -P "$CERT_P12_PASSWORD" -T /usr/bin/codesign
+          
+          # Set default keychain
+          security list-keychains -s "$KEYCHAIN_PATH"
+          
+          # Clean up certificate file
+          rm /tmp/cert.p12
+
+      - name: Install appdmg
+        run: |
+          npm install -g appdmg
+
+      - name: Extract and sign .app
+        env:
+          SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        working-directory: artifacts
+        run: |
+          # Extract the .app from tar.gz
+          tar -xzf SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}.app.tar.gz
+          
+          # Sign the .app bundle
+          codesign --deep --force --options runtime \
+            --sign "$SIGNING_IDENTITY" \
+            "SJMCL.app"
+          
+          # Verify signing
+          codesign --verify --deep --strict --verbose=2 SJMCL.app
+          
+          # Re-compress the signed .app
+          rm SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}.app.tar.gz
+          tar -czf SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}.app.tar.gz SJMCL.app
+
+      - name: Create DMG configuration
+        working-directory: artifacts
+        run: |
+          # Create appdmg configuration file
+          cat > dmg-config.json << EOF
+          {
+            "title": "SJMCL Installer",
+            "icon": "../src-tauri/assets/icons/dmg/volume.icns",
+            "background": "../src-tauri/assets/misc/dmg_bg.png",
+            "format": "UDZO",
+            "icon-size": 120,
+            "window": {
+              "size": {
+                "width": 640,
+                "height": 418
+              }
+            },
+            "contents": [
+              {
+                "x": 180,
+                "y": 170,
+                "type": "file",
+                "path": "SJMCL.app"
+              },
+              {
+                "x": 480,
+                "y": 170,
+                "type": "link",
+                "path": "/Applications"
+              }
+            ]
+          }
+          EOF
+
+      - name: Create and sign DMG
+        env:
+          SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        working-directory: artifacts
+        run: |
+          # Remove the original DMG if it exists (build workflow no longer creates DMG)
+          rm -f SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}.dmg
+          
+          # Create a new DMG with the signed app using appdmg
+          appdmg dmg-config.json SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}.dmg
+          
+          # Sign the new DMG
+          codesign --force --sign "$SIGNING_IDENTITY" \
+            SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}.dmg
+          
+          # Verify DMG signing
+          codesign --verify --deep --strict --verbose=2 SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}.dmg
+          
+          # Clean up extracted .app and config file
+          rm -rf SJMCL.app dmg-config.json
+
+      - name: Notarize .app
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+          NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+        working-directory: artifacts
+        run: |
+          # Extract .app for notarization
+          tar -xzf SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}.app.tar.gz
+          
+          # Create zip for notarization
+          ditto -c -k --keepParent SJMCL.app SJMCL.zip
+          
+          # Submit for notarization
+          xcrun notarytool submit SJMCL.zip \
+            --apple-id "$NOTARY_APPLE_ID" \
+            --password "$NOTARY_PASSWORD" \
+            --team-id "$NOTARY_TEAM_ID" \
+            --wait
+          
+          # Staple the notarization
+          xcrun stapler staple SJMCL.app
+          
+          # Re-compress the notarized .app
+          rm SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}.app.tar.gz SJMCL.zip
+          tar -czf SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}.app.tar.gz SJMCL.app
+          rm -rf SJMCL.app
+
+      - name: Notarize DMG
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+          NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+        working-directory: artifacts
+        run: |
+          # Submit DMG for notarization
+          xcrun notarytool submit SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}.dmg \
+            --apple-id "$NOTARY_APPLE_ID" \
+            --password "$NOTARY_PASSWORD" \
+            --team-id "$NOTARY_TEAM_ID" \
+            --wait
+          
+          # Staple the notarization to DMG
+          xcrun stapler staple SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}.dmg
+
+      - name: Verify notarization
+        working-directory: artifacts
+        run: |
+          # Extract the notarized .app for verification
+          tar -xzf SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}.app.tar.gz
+          
+          echo "=== Testing Gatekeeper assessment on notarized app ==="
+          spctl --verbose=4 --assess --type execute SJMCL.app
+          
+          echo "=== Final signature verification ==="
+          codesign --verify --deep --strict --verbose=2 SJMCL.app
+
+      - name: Calculate SHA256
+        working-directory: artifacts
+        run: |
+          CORE_EXECUTABLE="SJMCL.app/Contents/MacOS/SJMCL"
+          if [ -f "$CORE_EXECUTABLE" ]; then
+            EXECUTABLE_SHA256=$(shasum -a 256 "$CORE_EXECUTABLE" | awk '{print $1}')
+            echo "Signed core executable SHA256: $EXECUTABLE_SHA256"
+            ARTIFACT_NAME="SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}_signed"
+            echo "$EXECUTABLE_SHA256  $ARTIFACT_NAME" > "$ARTIFACT_NAME.sha256"
+          fi
+
+      - name: Cleanup artifacts
+        working-directory: artifacts
+        run: |
+          rm -rf SJMCL.app
+          ls -la .
+
+      - name: Cleanup keychain
+        if: always()
+        run: |
+          KEYCHAIN_PATH=$HOME/temp-signing.keychain-db
+          if [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH"
+          fi
+
+      - name: Upload signed artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}_signed
+          path: artifacts/*
+          if-no-files-found: error

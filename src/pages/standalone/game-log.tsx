@@ -1,0 +1,322 @@
+import {
+  Box,
+  Button,
+  Flex,
+  IconButton,
+  Input,
+  Spacer,
+  Text,
+  Tooltip,
+} from "@chakra-ui/react";
+import { appLogDir, join } from "@tauri-apps/api/path";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { LuChevronsDown, LuFileInput, LuTrash } from "react-icons/lu";
+import {
+  AutoSizer,
+  CellMeasurer,
+  CellMeasurerCache,
+  List,
+  ListRowRenderer,
+} from "react-virtualized";
+import "react-virtualized/styles.css";
+import Empty from "@/components/common/empty";
+import { useLauncherConfig } from "@/contexts/config";
+import { LaunchService } from "@/services/launch";
+import styles from "@/styles/game-log.module.css";
+import { parseIdFromWindowLabel } from "@/utils/window";
+
+type LogLevel = "FATAL" | "ERROR" | "WARN" | "INFO" | "DEBUG";
+
+const GameLogPage: React.FC = () => {
+  const { t } = useTranslation();
+  const { config } = useLauncherConfig();
+  const primaryColor = config.appearance.theme.primaryColor;
+
+  const [logs, setLogs] = useState<string[]>([]);
+  const [searchTerm, setSearchTerm] = useState<string>("");
+  const [filterStates, setFilterStates] = useState<{ [key: string]: boolean }>({
+    FATAL: true,
+    ERROR: true,
+    WARN: true,
+    INFO: true,
+    DEBUG: true,
+  });
+  const [isScrolledToBottom, setIsScrolledToBottom] = useState(true);
+
+  const launchingIdRef = useRef<number | null>(null);
+  const listRef = useRef<List>(null);
+  const userScrolledRef = useRef(false);
+
+  const cacheRef = useRef(
+    new CellMeasurerCache({
+      fixedWidth: true,
+      defaultHeight: 20,
+    })
+  );
+
+  const logLevelMap: Record<
+    LogLevel,
+    { colorScheme: string; textColor: string }
+  > = {
+    FATAL: { colorScheme: "red", textColor: "red.500" },
+    ERROR: { colorScheme: "orange", textColor: "orange.500" },
+    WARN: { colorScheme: "yellow", textColor: "yellow.500" },
+    INFO: { colorScheme: "gray", textColor: "gray.600" },
+    DEBUG: { colorScheme: "blue", textColor: "blue.600" },
+  };
+
+  const clearLogs = () => setLogs([]);
+
+  // set window title with i18n
+  useEffect(() => {
+    (async () => {
+      await getCurrentWebviewWindow().setTitle(t("Tauri.windowTitle.gameLog"));
+    })();
+  }, [t]);
+
+  // invoke retrieve on first load
+  useEffect(() => {
+    (async () => {
+      launchingIdRef.current = parseIdFromWindowLabel(
+        getCurrentWebviewWindow().label
+      );
+      const launchingId = launchingIdRef.current;
+      if (launchingId) {
+        const res = await LaunchService.retrieveGameLog(launchingId);
+        if (res.status === "success" && Array.isArray(res.data)) {
+          setLogs(res.data);
+        }
+      }
+    })();
+  }, []);
+
+  // keep listening to game process output
+  useEffect(() => {
+    const unlisten = LaunchService.onGameProcessOutput((payload) => {
+      setLogs((prevLogs) => [...prevLogs, payload]);
+    });
+    return () => unlisten();
+  }, []);
+
+  // scroll to bottom on new log if unclicked
+  useEffect(() => {
+    if (userScrolledRef.current) return;
+    requestAnimationFrame(() => {
+      listRef.current?.scrollToRow(logs.length - 1);
+    });
+  }, [logs.length]);
+
+  const revealRawLogFile = async () => {
+    if (!launchingIdRef.current) return;
+
+    const baseDir = await appLogDir();
+    const logFilePath = await join(
+      baseDir,
+      "game",
+      `game_log_${launchingIdRef.current}.log`
+    );
+
+    await revealItemInDir(logFilePath);
+  };
+
+  const logLevels = useMemo<LogLevel[]>(() => {
+    let lastLevel: LogLevel = "INFO";
+
+    return logs.map((log) => {
+      const match = log.match(
+        /\[\d{2}:\d{2}:\d{2}]\s+\[.*?\/(INFO|WARN|ERROR|DEBUG|FATAL)]/i
+      );
+
+      if (match) {
+        lastLevel = match[1].toUpperCase() as LogLevel;
+        return lastLevel;
+      }
+
+      if (
+        /^\s+at /.test(log) ||
+        /^\s+Caused by:/.test(log) ||
+        /^\s+/.test(log)
+      ) {
+        return lastLevel;
+      }
+
+      if (/exception|error|invalid|failed|错误/i.test(log)) {
+        lastLevel = "ERROR";
+        return lastLevel;
+      }
+
+      return lastLevel;
+    });
+  }, [logs]);
+
+  const logCounts = useMemo<Record<LogLevel, number>>(() => {
+    const counts: Record<LogLevel, number> = {
+      FATAL: 0,
+      ERROR: 0,
+      WARN: 0,
+      INFO: 0,
+      DEBUG: 0,
+    };
+
+    logLevels.forEach((level) => {
+      counts[level]++;
+    });
+
+    return counts;
+  }, [logLevels]);
+
+  const filteredLogs = useMemo(() => {
+    return logs
+      .map((log, index) => ({
+        log,
+        level: logLevels[index],
+      }))
+      .filter(
+        ({ log, level }) =>
+          filterStates[level] &&
+          log.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+  }, [logs, logLevels, filterStates, searchTerm]);
+
+  const rowRenderer: ListRowRenderer = ({ key, index, style, parent }) => {
+    const { log, level } = filteredLogs[index];
+
+    return (
+      <CellMeasurer
+        key={key}
+        cache={cacheRef.current}
+        parent={parent}
+        rowIndex={index}
+        columnIndex={0}
+      >
+        <div style={style}>
+          <Text
+            className={styles["log-text"]}
+            color={logLevelMap[level].textColor}
+            fontWeight={!["INFO", "DEBUG"].includes(level) ? 600 : 400}
+            whiteSpace="pre-wrap"
+            wordBreak="break-word"
+            lineHeight="1.4"
+            userSelect={"text"}
+          >
+            {log}
+          </Text>
+        </div>
+      </CellMeasurer>
+    );
+  };
+
+  // Reset list cache and recalculate row heights on filteredLogs update
+  useEffect(() => {
+    cacheRef.current.clearAll();
+    listRef.current?.recomputeRowHeights();
+  }, [filterStates, searchTerm]);
+
+  const levels = Object.keys(logLevelMap) as LogLevel[];
+
+  return (
+    <Box p={4} h="100vh" display="flex" flexDirection="column">
+      <Flex alignItems="center" mb={4}>
+        <Input
+          type="text"
+          placeholder={t("GameLogPage.placeholder")}
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          size="sm"
+          w="200px"
+          mr={4}
+          focusBorderColor={`${primaryColor}.500`}
+        />
+        <Spacer />
+
+        {levels.map((level) => (
+          <Button
+            key={level}
+            size="xs"
+            variant={filterStates[level] ? "solid" : "outline"}
+            onClick={() =>
+              setFilterStates({
+                ...filterStates,
+                [level]: !filterStates[level],
+              })
+            }
+            mr={2}
+            colorScheme={logLevelMap[level].colorScheme}
+          >
+            {level} ({logCounts[level] || 0})
+          </Button>
+        ))}
+        <Tooltip label={t("GameLogPage.revealRawLog")} placement="bottom">
+          <IconButton
+            icon={<LuFileInput />}
+            aria-label={t("GameLogPage.revealRawLog")}
+            variant="ghost"
+            size="sm"
+            colorScheme="gray"
+            onClick={revealRawLogFile}
+          />
+        </Tooltip>
+        <Tooltip label={t("GameLogPage.clearLogs")} placement="bottom">
+          <IconButton
+            icon={<LuTrash />}
+            aria-label={t("GameLogPage.clearLogs")}
+            variant="ghost"
+            size="sm"
+            colorScheme="gray"
+            onClick={clearLogs}
+          />
+        </Tooltip>
+      </Flex>
+
+      <Box flex="1" borderWidth="1px" borderRadius="md" position="relative">
+        {filteredLogs.length === 0 ? (
+          <Empty withIcon={false} />
+        ) : (
+          <AutoSizer>
+            {({ width, height }) => (
+              <List
+                ref={listRef}
+                width={width}
+                height={height}
+                rowCount={filteredLogs.length}
+                deferredMeasurementCache={cacheRef.current}
+                rowHeight={cacheRef.current.rowHeight}
+                rowRenderer={rowRenderer}
+                onScroll={({ clientHeight, scrollHeight, scrollTop }) => {
+                  const atBottom = scrollHeight - scrollTop - clientHeight < 2;
+                  setIsScrolledToBottom(atBottom);
+                  userScrolledRef.current = !atBottom;
+                }}
+              />
+            )}
+          </AutoSizer>
+        )}
+
+        {!isScrolledToBottom && (
+          <Button
+            position="absolute"
+            bottom={7}
+            right={7}
+            size="sm"
+            variant="subtle"
+            boxShadow="md"
+            leftIcon={<LuChevronsDown />}
+            onClick={() => {
+              if (userScrolledRef.current) {
+                userScrolledRef.current = false;
+              }
+              listRef.current?.scrollToRow(filteredLogs.length - 1);
+            }}
+          >
+            {t("GameLogPage.scrollToBottom")}
+          </Button>
+        )}
+      </Box>
+    </Box>
+  );
+};
+
+export default GameLogPage;

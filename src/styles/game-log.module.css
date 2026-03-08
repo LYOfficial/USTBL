@@ -1,0 +1,13 @@
+.log-text {
+  font-family: 'Courier New', monospace;
+  font-size: var(--chakra-fontSizes-xs-sm);
+  line-height: var(--chakra-lineHeights-5);
+}
+
+.log-list-container {
+  overflow-x: hidden;
+  overflow-y: scroll;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+}
