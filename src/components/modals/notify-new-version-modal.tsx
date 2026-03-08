@@ -37,8 +37,7 @@ const NotifyNewVersionModal: React.FC<NotifyNewVersionModalProps> = ({
 
   const handleDownloadUpdate = () => {
     if (isLinux) {
-      const lang = config.general.general.language === "zh-Hans" ? "zh" : "en";
-      openUrl(`https://mc.sjtu.cn/sjmcl/${lang}`);
+      openUrl("https://github.com/USTB-SkyCode/USTBL/releases");
     } else {
       ConfigService.downloadLauncherUpdate(newVersion).then((response) => {
         if (response.status !== "success") {

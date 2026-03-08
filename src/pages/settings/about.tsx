@@ -116,7 +116,7 @@ const AboutSettingsPage = () => {
                 ))}
               </AvatarGroup>
               <CommonIconButton
-                label="https://github.com/UNIkeEN/SJMCL/graphs/contributors"
+                label="https://github.com/USTB-SkyCode/USTBL/graphs/contributors"
                 icon="external"
                 withTooltip
                 tooltipPlacement="bottom-end"
@@ -124,7 +124,7 @@ const AboutSettingsPage = () => {
                 h={18}
                 onClick={() => {
                   openUrl(
-                    "https://github.com/UNIkeEN/SJMCL/graphs/contributors"
+                    "https://github.com/USTB-SkyCode/USTBL/graphs/contributors"
                   );
                 }}
               />
@@ -135,14 +135,14 @@ const AboutSettingsPage = () => {
           title: t("AboutSettingsPage.about.settings.reportIssue.title"),
           children: (
             <CommonIconButton
-              label="https://github.com/UNIkeEN/SJMCL/issues"
+              label="https://github.com/USTB-SkyCode/USTBL/issues"
               icon="external"
               withTooltip
               tooltipPlacement="bottom-end"
               size="xs"
               h={18}
               onClick={() => {
-                openUrl("https://github.com/UNIkeEN/SJMCL/issues");
+                openUrl("https://github.com/USTB-SkyCode/USTBL/issues");
               }}
             />
           ),
@@ -151,14 +151,14 @@ const AboutSettingsPage = () => {
           title: t("AboutSettingsPage.about.settings.aboutSJMC.title"),
           children: (
             <CommonIconButton
-              label="https://mc.sjtu.cn/welcome/content/3/"
+              label="https://www.ustb.world/"
               icon="external"
               withTooltip
               tooltipPlacement="bottom-end"
               size="xs"
               h={18}
               onClick={() => {
-                openUrl("https://mc.sjtu.cn/welcome/content/3/");
+                openUrl("https://www.ustb.world/");
               }}
             />
           ),
@@ -225,14 +225,14 @@ const AboutSettingsPage = () => {
           ),
           children: (
             <CommonIconButton
-              label="https://github.com/UNIkeEN/SJMCL?tab=readme-ov-file#copyright"
+              label="https://github.com/USTB-SkyCode/USTBL?tab=readme-ov-file#copyright"
               icon="external"
               withTooltip
               tooltipPlacement="bottom-end"
               size="xs"
               onClick={() => {
                 openUrl(
-                  "https://github.com/UNIkeEN/SJMCL?tab=readme-ov-file#copyright"
+                  "https://github.com/USTB-SkyCode/USTBL?tab=readme-ov-file#copyright"
                 );
               }}
             />

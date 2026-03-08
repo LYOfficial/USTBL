@@ -303,7 +303,7 @@ export const defaultConfig: LauncherConfig = {
   localGameDirectories: [{ name: "Current", dir: ".minecraft/" }],
   globalGameConfig: defaultGameConfig,
   discoverSourceEndpoints: [
-    ["https://mc.sjtu.cn/api-sjmcl/article", true],
+    ["https://docs.ustb.world/api/rss?lang=zh", true],
     ["https://mc.sjtu.cn/api-sjmcl/article/mua", true],
   ],
   extraJavaPaths: [],
