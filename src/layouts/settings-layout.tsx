@@ -20,7 +20,6 @@ import {
   LuInfo,
   LuPalette,
   LuSettings,
-  LuSparkles,
 } from "react-icons/lu";
 import NavMenu from "@/components/common/nav-menu";
 import { useLauncherConfig } from "@/contexts/config";
@@ -45,7 +44,6 @@ const SettingsLayout: React.FC<SettingsLayoutProps> = ({ children }) => {
       { key: "general", icon: LuSettings },
       { key: "appearance", icon: LuPalette },
       { key: "download", icon: LuCloudDownload },
-      { key: "intelligence", icon: LuSparkles },
       { key: "help", icon: LuCircleHelp },
       { key: "about", icon: LuInfo },
     ],

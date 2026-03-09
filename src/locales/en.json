@@ -320,6 +320,9 @@
         }
       },
       "presetBgList": {
+        "tyg1200": {
+          "name": "TYG 1200"
+        },
         "Jokull": {
           "name": "Jǫkull Village"
         },
@@ -479,6 +482,7 @@
       "home": "Home",
       "community-news": "Community",
       "minecraft-news": "Minecraft News",
+      "install-modpack": "Install Modpack",
       "modpack": "Modpacks",
       "mod": "Mods",
       "world": "Worlds",
@@ -1167,8 +1171,8 @@
           "url": "https://www.mualliance.cn/en"
         },
         "SJMC": {
-          "title": "SJTU Minecraft Club (USTB)",
-          "url": "https://www.ustb.world/"
+          "title": "USTB Metaverse Voxel Workshop",
+          "url": "https://docs.ustb.world"
         }
       }
     },
@@ -2569,7 +2573,7 @@
       "appearance": "Appearance",
       "download": "Download",
       "intelligence": "Intelligence",
-      "help": "Docs & Help",
+      "help": "Docs",
       "about": "About",
       "dev-test": "Dev - Test Page"
     }

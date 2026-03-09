@@ -92,8 +92,10 @@ const MainLayout = ({ children }: MainLayoutProps) => {
     const constructBgImgSrc = async () => {
       const bgKey = config.appearance.background.choice;
       if (bgKey.startsWith("%built-in:")) {
+        const builtInKey = bgKey.replace("%built-in:", "");
+        const ext = builtInKey === "tyg1200" ? "png" : "jpg";
         setBgImgSrc(
-          `/images/backgrounds/${bgKey.replace("%built-in:", "")}.jpg`
+          `/images/backgrounds/${builtInKey}.${ext}`
         );
       } else {
         const _appDataDir = await appDataDir();

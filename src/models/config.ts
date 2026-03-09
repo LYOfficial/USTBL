@@ -248,7 +248,7 @@ export const defaultConfig: LauncherConfig = {
       fontSize: 100,
     },
     background: {
-      choice: "%built-in:Jokull",
+      choice: "%built-in:tyg1200",
       randomCustom: false,
       autoDarken: true,
     },
@@ -304,7 +304,6 @@ export const defaultConfig: LauncherConfig = {
   globalGameConfig: defaultGameConfig,
   discoverSourceEndpoints: [
     ["https://docs.ustb.world/api/rss?lang=zh", true],
-    ["https://mc.sjtu.cn/api-sjmcl/article/mua", true],
   ],
   extraJavaPaths: [],
   suppressedDialogs: [],

@@ -320,6 +320,9 @@
         }
       },
       "presetBgList": {
+        "tyg1200": {
+          "name": "TYG 1200"
+        },
         "Jokull": {
           "name": "银淞雪镇"
         },
@@ -479,6 +482,7 @@
       "home": "主页",
       "community-news": "社区新闻",
       "minecraft-news": "Minecraft 新闻",
+      "install-modpack": "安装整合包",
       "modpack": "整合包",
       "mod": "模组",
       "world": "世界",
@@ -1167,8 +1171,8 @@
           "url": "https://www.mualliance.cn"
         },
         "SJMC": {
-          "title": "上海交通大学 Minecraft 社（USTB）",
-          "url": "https://www.ustb.world/"
+          "title": "北京科技大学元宇宙体素工作坊",
+          "url": "https://docs.ustb.world"
         }
       }
     },
@@ -2569,7 +2573,7 @@
       "appearance": "外观",
       "download": "下载资源",
       "intelligence": "智能",
-      "help": "文档与帮助",
+      "help": "文档",
       "about": "关于",
       "dev-test": "开发 - 测试页"
     }
