@@ -1,9 +1,6 @@
 use crate::error::{SJMCLError, SJMCLResult};
 use crate::instance::constants::{TRANSLATION_CACHE_EXPIRY_HOURS, TRANSLATION_CACHE_FILE_NAME};
 use crate::instance::models::misc::LocalModInfo;
-use crate::resource::helpers::curseforge::{
-  fetch_remote_resource_by_id_curseforge, fetch_remote_resource_by_local_curseforge,
-};
 use crate::resource::helpers::modrinth::{
   fetch_remote_resource_by_id_modrinth, fetch_remote_resource_by_local_modrinth,
 };
@@ -81,7 +78,7 @@ pub async fn add_local_mod_translations(
     }
   }
 
-  // Try both services concurrently and use the fastest successful response
+  // Query Modrinth for translated metadata.
   let modrinth_result = {
     let app_clone = app.clone();
     let file_path_clone = file_path.clone();
@@ -93,24 +90,8 @@ pub async fn add_local_mod_translations(
     })
   };
 
-  let curseforge_result = {
-    let app_clone = app.clone();
-    let file_path_clone = file_path.clone();
-    tokio::spawn(async move {
-      let file_info =
-        fetch_remote_resource_by_local_curseforge(&app_clone, &file_path_clone).await?;
-      let resource_info =
-        fetch_remote_resource_by_id_curseforge(&app_clone, &file_info.resource_id).await?;
-      Ok::<_, SJMCLError>(resource_info)
-    })
-  };
-
-  let (modrinth_res, curseforge_res) = tokio::join!(modrinth_result, curseforge_result);
-
-  // Prefer Modrinth result if both are successful
-  let final_result = match (modrinth_res, curseforge_res) {
-    (Ok(Ok(modrinth_data)), _) => Some(modrinth_data),
-    (_, Ok(Ok(curseforge_data))) => Some(curseforge_data),
+  let final_result = match modrinth_result.await {
+    Ok(Ok(modrinth_data)) => Some(modrinth_data),
     _ => None,
   };
 

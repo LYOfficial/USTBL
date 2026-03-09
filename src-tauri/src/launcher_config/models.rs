@@ -206,7 +206,7 @@ structstruck::strike! {
         pub font_size: usize, // as percent
       },
       pub background: struct {
-        #[default = "%built-in:Jokull"]
+        #[default = "%built-in:tyg1200"]
         pub choice: String,
         pub random_custom: bool,
         #[default = true]
@@ -282,8 +282,7 @@ structstruck::strike! {
       default,
       deserialize_with = "deserialize_discover_sources"
     )]
-    #[default(_code="vec![(\"https://docs.ustb.world/api/rss?lang=zh\".to_string(), true),
-    (\"https://mc.sjtu.cn/api-sjmcl/article/mua\".to_string(), true)]")]
+    #[default(_code="vec![(\"https://docs.ustb.world/api/rss?lang=zh\".to_string(), true)]")]
     pub discover_source_endpoints: Vec<(String, bool)>,
     pub extra_java_paths: Vec<String>,
     pub suppressed_dialogs: Vec<String>,

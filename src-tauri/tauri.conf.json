@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "USTBL",
   "version": "1.0.0-beta.1",
-  "identifier": "SJMCL",
+  "identifier": "USTBL",
   "build": {
     "frontendDist": "../out",
     "devUrl": "http://localhost:3000",
@@ -20,6 +20,8 @@
         "minWidth": 800,
         "minHeight": 550,
         "center": true,
+        "decorations": false,
+        "transparent": true,
         "dragDropEnabled": false
       },
       {

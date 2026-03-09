@@ -1,4 +1,5 @@
 use crate::discover::helpers::mc_news::{fetch_mc_news_page, MC_NEWS_ENDPOINT};
+use crate::discover::helpers::rss::{fetch_rss_page, fetch_rss_source_info, is_rss_source};
 use crate::discover::models::{NewsPostRequest, NewsPostResponse, NewsSourceInfo};
 use crate::error::SJMCLResult;
 use crate::launcher_config::models::LauncherConfig;
@@ -24,6 +25,17 @@ pub async fn fetch_news_sources_info(app: AppHandle) -> SJMCLResult<Vec<NewsSour
     .map(|(url, _)| {
       let client = client.clone();
       async move {
+        if is_rss_source(&url) {
+          return fetch_rss_source_info(&client, &url)
+            .await
+            .unwrap_or(NewsSourceInfo {
+              name: "".to_string(),
+              full_name: "".to_string(),
+              endpoint_url: url.clone(),
+              icon_src: "".to_string(),
+            });
+        }
+
         let mut news_source = NewsSourceInfo {
           name: "".to_string(),
           full_name: "".to_string(),
@@ -68,6 +80,10 @@ pub async fn fetch_news_post_summaries(
       async move {
         if url.starts_with(MC_NEWS_ENDPOINT) {
           return fetch_mc_news_page(&client, &url, cursor).await;
+        }
+
+        if is_rss_source(&url) {
+          return fetch_rss_page(&client, &url, cursor).await;
         }
 
         let mut req = client.get(&url).query(&[("pageSize", "12")]);

@@ -47,6 +47,10 @@ impl LauncherConfig {
       }
     }
 
+    if self.appearance.background.choice.trim().is_empty() {
+      self.appearance.background.choice = "%built-in:tyg1200".to_string();
+    }
+
     // Set default local game directories
     if self.local_game_directories.is_empty() {
       let mut dirs = Vec::new();
@@ -96,6 +100,9 @@ impl LauncherConfig {
     if *IS_PORTABLE {
       let _ = extract_assets(app);
     }
+
+    // Keep the community-news source list aligned with the built-in RSS source.
+    self.discover_source_endpoints = vec![("https://docs.ustb.world/api/rss?lang=zh".to_string(), true)];
 
     self.basic_info = BasicInfo {
       launcher_version: version,

@@ -21,7 +21,7 @@ interface DownloadModpackModalProps extends Omit<ModalProps, "children"> {
 
 export const DownloadModpackModal: React.FC<DownloadModpackModalProps> = ({
   initialSearchQuery = "",
-  initialDownloadSource = OtherResourceSource.CurseForge,
+  initialDownloadSource = OtherResourceSource.Modrinth,
   ...modalProps
 }) => {
   const { t } = useTranslation();

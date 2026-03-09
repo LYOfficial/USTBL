@@ -39,7 +39,7 @@ interface DownloadResourceModalProps extends Omit<ModalProps, "children"> {
 const DownloadResourceModal: React.FC<DownloadResourceModalProps> = ({
   initialResourceType = OtherResourceType.Mod,
   initialSearchQuery = "",
-  initialDownloadSource = OtherResourceSource.CurseForge,
+  initialDownloadSource = OtherResourceSource.Modrinth,
   ...modalProps
 }) => {
   const { t } = useTranslation();

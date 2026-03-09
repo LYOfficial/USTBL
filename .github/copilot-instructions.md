@@ -33,8 +33,7 @@ SJMCL is a cross-platform Minecraft launcher built with **Tauri v2** architectur
 cp .env.template .env
 ```
 
-The `.env` file contains required environment variables that are embedded into the Rust backend at compile time:
-- `SJMCL_CURSEFORGE_API_KEY`: CurseForge API key for mod downloads
+The `.env` file contains runtime environment variables used by the frontend:
 - `NEXT_PUBLIC_DEV_TOOLBAR`: Development toolbar toggle
 
 Without the `.env` file, the build will fail or produce a non-functional application.

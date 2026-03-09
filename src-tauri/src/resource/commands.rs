@@ -3,10 +3,6 @@ use crate::instance::helpers::client_json::McClientInfo;
 use crate::instance::helpers::misc::get_instance_subdir_path_by_id;
 use crate::instance::models::misc::{InstanceSubdirType, ModLoaderType};
 use crate::launcher_config::models::LauncherConfig;
-use crate::resource::helpers::curseforge::{
-  fetch_remote_resource_by_id_curseforge, fetch_remote_resource_by_local_curseforge,
-  fetch_resource_list_by_name_curseforge, fetch_resource_version_packs_curseforge,
-};
 use crate::resource::helpers::loader_meta::fabric::get_fabric_meta_by_game_version;
 use crate::resource::helpers::loader_meta::forge::get_forge_meta_by_game_version;
 use crate::resource::helpers::loader_meta::neoforge::get_neoforge_meta_by_game_version;
@@ -98,9 +94,6 @@ pub async fn fetch_resource_list_by_name(
   query: OtherResourceSearchQuery,
 ) -> SJMCLResult<OtherResourceSearchRes> {
   match download_source {
-    OtherResourceSource::CurseForge => {
-      Ok(fetch_resource_list_by_name_curseforge(&app, &query).await?)
-    }
     OtherResourceSource::Modrinth => Ok(fetch_resource_list_by_name_modrinth(&app, &query).await?),
     _ => Err(ResourceError::NoDownloadApi.into()),
   }
@@ -113,9 +106,6 @@ pub async fn fetch_resource_version_packs(
   query: OtherResourceVersionPackQuery,
 ) -> SJMCLResult<Vec<OtherResourceVersionPack>> {
   match download_source {
-    OtherResourceSource::CurseForge => {
-      Ok(fetch_resource_version_packs_curseforge(&app, &query).await?)
-    }
     OtherResourceSource::Modrinth => Ok(fetch_resource_version_packs_modrinth(&app, &query).await?),
     _ => Err(ResourceError::NoDownloadApi.into()),
   }
@@ -165,9 +155,6 @@ pub async fn fetch_remote_resource_by_local(
   file_path: String,
 ) -> SJMCLResult<OtherResourceFileInfo> {
   match download_source {
-    OtherResourceSource::CurseForge => {
-      Ok(fetch_remote_resource_by_local_curseforge(&app, &file_path).await?)
-    }
     OtherResourceSource::Modrinth => {
       Ok(fetch_remote_resource_by_local_modrinth(&app, &file_path).await?)
     }
@@ -228,9 +215,6 @@ pub async fn fetch_remote_resource_by_id(
   resource_id: String,
 ) -> SJMCLResult<OtherResourceInfo> {
   match download_source {
-    OtherResourceSource::CurseForge => {
-      Ok(fetch_remote_resource_by_id_curseforge(&app, &resource_id).await?)
-    }
     OtherResourceSource::Modrinth => {
       Ok(fetch_remote_resource_by_id_modrinth(&app, &resource_id).await?)
     }

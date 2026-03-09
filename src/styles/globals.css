@@ -6,6 +6,13 @@ html {
   overscroll-behavior: none;
 }
 
+html,
+body,
+#__next {
+  height: 100%;
+  background: transparent;
+}
+
 /* root */
 body {
   margin: 0;
