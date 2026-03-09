@@ -63,7 +63,7 @@ jobs:
 
             $reserved = $bytes[$entryOffset + 3]
             if ($reserved -ne 0) {
-              throw "Invalid ICO reserved field at entry $i: $reserved (must be 0)"
+              throw ("Invalid ICO reserved field at entry {0}: {1} (must be 0)" -f $i, $reserved)
             }
           }
 
