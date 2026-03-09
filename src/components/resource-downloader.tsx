@@ -94,12 +94,12 @@ const tagLists: Record<string, any> = {
 };
 
 const downloadSourceLists: Record<string, OtherResourceSource[]> = {
-  mod: [OtherResourceSource.CurseForge, OtherResourceSource.Modrinth],
-  world: [OtherResourceSource.CurseForge],
-  resourcepack: [OtherResourceSource.CurseForge, OtherResourceSource.Modrinth],
-  shader: [OtherResourceSource.CurseForge, OtherResourceSource.Modrinth],
-  modpack: [OtherResourceSource.CurseForge, OtherResourceSource.Modrinth],
-  datapack: [OtherResourceSource.CurseForge, OtherResourceSource.Modrinth],
+  mod: [OtherResourceSource.Modrinth],
+  world: [OtherResourceSource.Modrinth],
+  resourcepack: [OtherResourceSource.Modrinth],
+  shader: [OtherResourceSource.Modrinth],
+  modpack: [OtherResourceSource.Modrinth],
+  datapack: [OtherResourceSource.Modrinth],
 };
 
 const ResourceDownloaderMenu: React.FC<ResourceDownloaderMenuProps> = ({
@@ -295,7 +295,7 @@ const ResourceDownloaderList: React.FC<ResourceDownloaderListProps> = ({
 const ResourceDownloader: React.FC<ResourceDownloaderProps> = ({
   resourceType,
   initialSearchQuery = "",
-  initialDownloadSource = OtherResourceSource.CurseForge,
+  initialDownloadSource = OtherResourceSource.Modrinth,
   curInstance,
   displayInModal = true,
 }) => {
@@ -316,11 +316,7 @@ const ResourceDownloader: React.FC<ResourceDownloaderProps> = ({
   const [searchQuery, setSearchQuery] = useState<string>(initialSearchQuery);
   const [gameVersion, setGameVersion] = useState<string>("");
   const [selectedTag, setSelectedTag] = useState<string>("All");
-  const [sortBy, setSortBy] = useState<string>(
-    initialDownloadSource === OtherResourceSource.CurseForge
-      ? "Popularity"
-      : "relevance"
-  );
+  const [sortBy, setSortBy] = useState<string>("relevance");
   const [downloadSource, setDownloadSource] = useState<OtherResourceSource>(
     initialDownloadSource
   );
@@ -348,7 +344,7 @@ const ResourceDownloader: React.FC<ResourceDownloaderProps> = ({
   const onDownloadSourceChange = (e: string) => {
     setDownloadSource(e as OtherResourceSource);
     setSelectedTag("All");
-    setSortBy(e === "CurseForge" ? "Popularity" : "relevance");
+    setSortBy("relevance");
   };
 
   const handleFetchResourceListByName = useCallback(
@@ -481,7 +477,7 @@ const ResourceDownloader: React.FC<ResourceDownloaderProps> = ({
       resourceType &&
       !(downloadSourceLists[resourceType] || []).includes(downloadSource)
     ) {
-      onDownloadSourceChange(OtherResourceSource.CurseForge);
+      onDownloadSourceChange(OtherResourceSource.Modrinth);
     }
     setSelectedTag("All");
   }, [resourceType, downloadSource]);
@@ -579,7 +575,7 @@ const ResourceDownloader: React.FC<ResourceDownloaderProps> = ({
           displayText={downloadSource}
           onChange={onDownloadSourceChange}
           value={downloadSource}
-          defaultValue={OtherResourceSource.CurseForge}
+          defaultValue={OtherResourceSource.Modrinth}
           options={downloadSourceLists[resourceType].map((item, index) => (
             <MenuItemOption key={index} value={item} fontSize="xs">
               {item}
@@ -595,11 +591,7 @@ const ResourceDownloader: React.FC<ResourceDownloaderProps> = ({
           )}
           onChange={setSortBy}
           value={sortBy}
-          defaultValue={
-            downloadSource === OtherResourceSource.CurseForge
-              ? "Popularity"
-              : "relevance"
-          }
+          defaultValue={"relevance"}
           options={sortByList.map((item, index) => (
             <MenuItemOption key={index} value={item} fontSize="xs">
               {t(`ResourceDownloader.sortByList.${downloadSource}.${item}`)}

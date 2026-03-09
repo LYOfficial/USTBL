@@ -131,7 +131,6 @@ struct SearchEntry {
 #[derive(Debug, Clone)]
 pub struct MCModRecord {
   pub mcmod_id: u32,
-  pub curseforge_slug: Option<String>,
   pub modrinth_slug: Option<String>,
   pub name: String,
   pub subname: Option<String>,
@@ -169,7 +168,6 @@ pub struct ModDataBase {
   initialized: bool,
   mods: Vec<MCModRecord>,
   modrinth_to_mod: HashMap<String, u32>,
-  curseforge_to_mod: HashMap<String, u32>,
 }
 
 impl ModDataBase {
@@ -178,7 +176,6 @@ impl ModDataBase {
       initialized: false,
       mods: Vec::new(),
       modrinth_to_mod: HashMap::new(),
-      curseforge_to_mod: HashMap::new(),
     }
   }
 
@@ -201,10 +198,6 @@ impl ModDataBase {
     match source {
       OtherResourceSource::Modrinth => self
         .modrinth_to_mod
-        .get(resource_slug)
-        .and_then(|&mcmod_id| self.get_mod_record_by_mcmod_id(mcmod_id)),
-      OtherResourceSource::CurseForge => self
-        .curseforge_to_mod
         .get(resource_slug)
         .and_then(|&mcmod_id| self.get_mod_record_by_mcmod_id(mcmod_id)),
       _ => None,
@@ -316,7 +309,6 @@ pub async fn initialize_mod_db(app: &AppHandle) -> SJMCLResult<()> {
     .clone();
 
   let mcmod_id_index = headers.iter().position(|h| h == "mcmod_id").unwrap();
-  let curseforge_slug_index = headers.iter().position(|h| h == "curseforge_slug").unwrap();
   let modrinth_slug_index = headers.iter().position(|h| h == "modrinth_slug").unwrap();
   let name_index = headers.iter().position(|h| h == "name").unwrap();
   let subname_index = headers.iter().position(|h| h == "subname").unwrap();
@@ -333,14 +325,12 @@ pub async fn initialize_mod_db(app: &AppHandle) -> SJMCLResult<()> {
       .unwrap();
     let name = record.get(name_index).unwrap().trim().to_string();
 
-    let curseforge_slug = record.get(curseforge_slug_index);
     let modrinth_slug = record.get(modrinth_slug_index);
     let subname = record.get(subname_index);
     let abbr = record.get(abbr_index);
 
     let mod_record = MCModRecord {
       mcmod_id,
-      curseforge_slug: curseforge_slug.map(str::to_owned),
       modrinth_slug: modrinth_slug.map(str::to_owned),
       name,
       subname: subname.map(str::to_owned),
@@ -349,11 +339,6 @@ pub async fn initialize_mod_db(app: &AppHandle) -> SJMCLResult<()> {
 
     cache.mods.push(mod_record);
 
-    if let Some(curseforge_slug) = curseforge_slug {
-      cache
-        .curseforge_to_mod
-        .insert(curseforge_slug.to_string(), mcmod_id);
-    }
     if let Some(modrinth_slug) = modrinth_slug {
       cache
         .modrinth_to_mod
@@ -387,7 +372,6 @@ pub async fn handle_search_query(app: &AppHandle, query: &str) -> SJMCLResult<St
   let mut best_match: Option<(&MCModRecord, f64, bool)> = None;
   for mod_record in &search_results {
     if mod_record.subname.is_none()
-      && mod_record.curseforge_slug.is_none()
       && mod_record.modrinth_slug.is_none()
     {
       continue;
@@ -409,7 +393,6 @@ pub async fn handle_search_query(app: &AppHandle, query: &str) -> SJMCLResult<St
       if let Some(exact_name) = mod_record
         .subname
         .as_ref()
-        .or(mod_record.curseforge_slug.as_ref())
         .or(mod_record.modrinth_slug.as_ref())
       {
         return Ok(exact_name.chars().take(24).collect());
@@ -423,12 +406,6 @@ pub async fn handle_search_query(app: &AppHandle, query: &str) -> SJMCLResult<St
 
   for mod_record in &search_results {
     let mut mod_keywords = HashSet::new();
-
-    if let Some(curseforge_slug) = &mod_record.curseforge_slug {
-      for keyword in extract_keywords_from_slug(curseforge_slug) {
-        mod_keywords.insert(keyword);
-      }
-    }
 
     if let Some(modrinth_slug) = &mod_record.modrinth_slug {
       for keyword in extract_keywords_from_slug(modrinth_slug) {

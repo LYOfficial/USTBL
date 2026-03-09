@@ -28,7 +28,6 @@ const PingTestPage = () => {
           bmclapi: "https://bmclapi2.bangbang93.com",
         },
         {
-          curseforge: "https://www.curseforge.com/minecraft",
           modrinth: "https://modrinth.com",
         },
         {

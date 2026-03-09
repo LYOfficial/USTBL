@@ -320,6 +320,9 @@
         }
       },
       "presetBgList": {
+        "tyg1200": {
+          "name": "北京科技大学体育館"
+        },
         "Jokull": {
           "name": "雪原の秘境"
         },

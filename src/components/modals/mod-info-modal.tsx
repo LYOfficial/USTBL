@@ -43,33 +43,8 @@ const ModInfoModal: React.FC<ModInfoModalProps> = ({
     config.general.general.language === "zh-Hans" &&
     config.general.functionality.resourceTranslation;
 
-  const [cfModWebsiteUrl, setCfModWebsiteUrl] = useState<string>("");
   const [mrModWebsiteUrl, setMrModWebsiteUrl] = useState<string>("");
   const [MCModWebsiteUrl, setMCModWebsiteUrl] = useState<string>("");
-
-  const handleCurseForgeInfo = useCallback(async () => {
-    const response = await ResourceService.fetchRemoteResourceByLocal(
-      OtherResourceSource.CurseForge,
-      mod.filePath
-    );
-    if (response.status === "success") {
-      const modId = response.data.resourceId;
-      const res = await ResourceService.fetchRemoteResourceById(
-        OtherResourceSource.CurseForge,
-        modId
-      );
-      if (res.status === "success") {
-        if (res.data.websiteUrl) {
-          setCfModWebsiteUrl(res.data.websiteUrl);
-        }
-        if (res.data.mcmodId) {
-          setMCModWebsiteUrl(
-            `https://www.mcmod.cn/class/${res.data.mcmodId}.html`
-          );
-        }
-      }
-    }
-  }, [mod.filePath]);
 
   const handleModrinthInfo = useCallback(async () => {
     const response = await ResourceService.fetchRemoteResourceByLocal(
@@ -96,12 +71,10 @@ const ModInfoModal: React.FC<ModInfoModalProps> = ({
   }, [mod.filePath]);
 
   useEffect(() => {
-    setCfModWebsiteUrl("");
     setMrModWebsiteUrl("");
     setMCModWebsiteUrl("");
-    handleCurseForgeInfo();
     handleModrinthInfo();
-  }, [handleCurseForgeInfo, handleModrinthInfo]);
+  }, [handleModrinthInfo]);
 
   return (
     <Modal size={{ base: "md", lg: "lg", xl: "xl" }} {...modalProps}>
@@ -155,20 +128,6 @@ const ModInfoModal: React.FC<ModInfoModalProps> = ({
 
         <ModalFooter w="100%">
           <HStack spacing={3}>
-            <HStack spacing={2}>
-              <LuExternalLink />
-              <Button
-                colorScheme={primaryColor}
-                onClick={() => {
-                  openUrl(cfModWebsiteUrl);
-                }}
-                fontSize="sm"
-                variant="link"
-                disabled={!cfModWebsiteUrl}
-              >
-                CurseForge
-              </Button>
-            </HStack>
             <HStack spacing={2}>
               <LuExternalLink />
               <Button

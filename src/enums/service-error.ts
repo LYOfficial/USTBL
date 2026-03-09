@@ -35,7 +35,6 @@ export enum InstanceError {
   InstallProfileParseError = "INSTALL_PROFILE_PARSE_ERROR",
   ModLoaderVersionParseError = "MOD_LOADER_VERSION_PARSE_ERROR",
   ModpackManifestParseError = "MODPACK_MANIFEST_PARSE_ERROR",
-  CurseForgeFileManifestParseError = "CURSE_FORGE_FILE_MANIFEST_PARSE_ERROR",
   NetworkError = "NETWORK_ERROR",
   UnsupportedModLoader = "UNSUPPORTED_MOD_LOADER",
   NotSupportChangeModLoader = "NOT_SUPPORT_CHANGE_MOD_LOADER",

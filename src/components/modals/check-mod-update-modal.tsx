@@ -142,67 +142,23 @@ const CheckModUpdateModal: React.FC<CheckModUpdateModalProps> = ({
 
       const updatePromises = currentLocalMods.map(async (mod) => {
         try {
-          const [cfRemoteModRes, mrRemoteModRes] = await Promise.all([
-            ResourceService.fetchRemoteResourceByLocal(
-              OtherResourceSource.CurseForge,
-              mod.filePath
-            ),
-            ResourceService.fetchRemoteResourceByLocal(
-              OtherResourceSource.Modrinth,
-              mod.filePath
-            ),
-          ]);
+          const mrRemoteModRes = await ResourceService.fetchRemoteResourceByLocal(
+            OtherResourceSource.Modrinth,
+            mod.filePath
+          );
 
-          let cfRemoteMod = undefined;
-          let mrRemoteMod = undefined;
+          const mrRemoteMod =
+            mrRemoteModRes.status === "success" ? mrRemoteModRes.data : undefined;
 
-          if (cfRemoteModRes.status === "success") {
-            cfRemoteMod = cfRemoteModRes.data;
-          }
-          if (mrRemoteModRes.status === "success") {
-            mrRemoteMod = mrRemoteModRes.data;
-          }
-
-          const updatePromises = [];
-
-          if (cfRemoteMod?.resourceId) {
-            updatePromises.push(
-              handleFetchLatestMod(
-                cfRemoteMod.resourceId,
-                mod.loaderType,
-                [currentSummary?.majorVersion || "All"],
-                OtherResourceSource.CurseForge
-              )
-            );
-          } else {
-            updatePromises.push(Promise.resolve(undefined));
-          }
-
-          if (mrRemoteMod?.resourceId) {
-            updatePromises.push(
-              handleFetchLatestMod(
+          const latestFile = mrRemoteMod?.resourceId
+            ? await handleFetchLatestMod(
                 mrRemoteMod.resourceId,
                 mod.loaderType,
                 [currentSummary?.version || "All"],
                 OtherResourceSource.Modrinth
               )
-            );
-          } else {
-            updatePromises.push(Promise.resolve(undefined));
-          }
-
-          const [cfRemoteFile, mrRemoteFile] =
-            await Promise.all(updatePromises);
-
-          let isCurseForgeNewer = cfRemoteMod !== undefined;
-          if (cfRemoteFile && mrRemoteFile) {
-            isCurseForgeNewer =
-              new Date(cfRemoteFile.fileDate).getTime() >
-              new Date(mrRemoteFile.fileDate).getTime();
-          }
-
-          const latestFile = isCurseForgeNewer ? cfRemoteFile : mrRemoteFile;
-          const remoteMod = isCurseForgeNewer ? cfRemoteMod : mrRemoteMod;
+            : undefined;
+          const remoteMod = mrRemoteMod;
 
           let needUpdate = false;
           if (latestFile && remoteMod) {
@@ -219,9 +175,7 @@ const CheckModUpdateModal: React.FC<CheckModUpdateModalProps> = ({
                 name: mod.name,
                 curVersion: mod.version,
                 newVersion: latestFile.name,
-                source: isCurseForgeNewer
-                  ? OtherResourceSource.CurseForge
-                  : OtherResourceSource.Modrinth,
+                source: OtherResourceSource.Modrinth,
                 downloadUrl: latestFile.downloadUrl,
                 sha1: latestFile.sha1,
                 fileName: latestFile.fileName,

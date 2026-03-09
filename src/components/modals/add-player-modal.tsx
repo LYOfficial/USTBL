@@ -1,8 +1,4 @@
 import {
-  Alert,
-  AlertDescription,
-  AlertIcon,
-  AlertTitle,
   Button,
   Flex,
   FormControl,
@@ -314,26 +310,10 @@ const AddPlayerModal: React.FC<AddPlayerModalProps> = ({
               />
             </FormControl>
 
-            {playerType !== PlayerType.Microsoft &&
-              !config.basicInfo.allowFullLoginFeature && (
-                <Alert status="error" borderRadius="md">
-                  <AlertIcon />
-                  <VStack spacing={0} align="start">
-                    <AlertTitle>
-                      {t("General.alert.noFullLogin.title")}
-                    </AlertTitle>
-                    <AlertDescription>
-                      {t("General.alert.noFullLogin.description")}
-                    </AlertDescription>
-                  </VStack>
-                </Alert>
-              )}
-
             {playerType === PlayerType.Offline && (
               <VStack w="100%" spacing={1}>
                 <FormControl
                   isRequired
-                  isDisabled={!config.basicInfo.allowFullLoginFeature}
                   isInvalid={
                     !!playername.length && !isOfflinePlayernameValid(playername)
                   }
@@ -355,19 +335,15 @@ const AddPlayerModal: React.FC<AddPlayerModalProps> = ({
                     {t("AddPlayerModal.offline.playerName.errorMessage")}
                   </FormErrorMessage>
                 </FormControl>
-                {config.basicInfo.allowFullLoginFeature && (
-                  <Section
-                    isAccordion
-                    initialIsOpen={false}
-                    title={t("AddPlayerModal.offline.advancedOptions.title")}
-                    onAccordionToggle={(isOpen) =>
-                      setShowAdvancedOptions(isOpen)
-                    }
-                    w="100%"
-                    mt={2}
-                    mb={-2}
-                  />
-                )}
+                <Section
+                  isAccordion
+                  initialIsOpen={false}
+                  title={t("AddPlayerModal.offline.advancedOptions.title")}
+                  onAccordionToggle={(isOpen) => setShowAdvancedOptions(isOpen)}
+                  w="100%"
+                  mt={2}
+                  mb={-2}
+                />
                 {showAdvancedOptions && (
                   <FormControl isInvalid={!!uuid.length && !isUuidValid(uuid)}>
                     <FormLabel>
@@ -456,8 +432,7 @@ const AddPlayerModal: React.FC<AddPlayerModalProps> = ({
                         </Text>
                       </HStack>
                     </FormControl>
-                    {config.basicInfo.allowFullLoginFeature &&
-                      authServer?.authUrl &&
+                    {authServer?.authUrl &&
                       (!showOAuth ? (
                         <>
                           <FormControl isRequired>
@@ -533,7 +508,6 @@ const AddPlayerModal: React.FC<AddPlayerModalProps> = ({
           )}
 
           {playerType === PlayerType.ThirdParty &&
-            config.basicInfo.allowFullLoginFeature &&
             authServer?.features.openidConfigurationUrl &&
             (showOAuth ? (
               <HStack spacing={2}>
@@ -575,11 +549,9 @@ const AddPlayerModal: React.FC<AddPlayerModalProps> = ({
                 isDisabled={
                   !playername ||
                   (playerType === PlayerType.Offline &&
-                    config.basicInfo.allowFullLoginFeature &&
                     !isOfflinePlayernameValid(playername)) ||
                   (uuid && !isUuidValid(uuid)) ||
                   (playerType === PlayerType.ThirdParty &&
-                    config.basicInfo.allowFullLoginFeature &&
                     authServerList.length > 0 &&
                     (!authServer || !password))
                 }

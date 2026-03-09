@@ -39,6 +39,8 @@ const XPLUS_PROJECT_URL =
 const XPLUS_VERSION_API =
   "https://api.modrinth.com/v2/project/UCpApD3P/version";
 const RECOMMENDED_VERSION = "1.21.11";
+const MODPACK_ICON_URL =
+  "https://cdn.modrinth.com/data/UCpApD3P/eb989b0763ca1ad11ee37e879ff2024294db410f_96.webp";
 const RECOMMENDED_DOWNLOAD_URL =
   "https://cdn.modrinth.com/data/UCpApD3P/versions/hudo6QuU/XPlus%20PerioTable%20based%20on%20Minecraft%201.21.11%20%28Fabric%29.mrpack";
 
@@ -80,6 +82,12 @@ const toXPlusVersionList = (rawList: any[]): XPlusVersion[] => {
     })
     .filter((item): item is XPlusVersion => Boolean(item))
     .sort((a, b) => {
+      const aRecommended = a.gameVersions.includes(RECOMMENDED_VERSION);
+      const bRecommended = b.gameVersions.includes(RECOMMENDED_VERSION);
+      if (aRecommended !== bRecommended) {
+        return aRecommended ? -1 : 1;
+      }
+
       if (!a.published || !b.published) return 0;
       return new Date(b.published).getTime() - new Date(a.published).getTime();
     });
@@ -219,7 +227,7 @@ const InstallModpackPage = () => {
                 ),
                 prefixElement: (
                   <Avatar
-                    src="/images/icons/Logo_128x128.png"
+                    src={MODPACK_ICON_URL}
                     name="XPlus"
                     boxSize={8}
                     borderRadius="md"

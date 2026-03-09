@@ -516,7 +516,7 @@ export const mockDownloadResourceList: OtherResourceInfo[] = [
     tags: ["UI", "QoL"],
     lastUpdated: "2022-02-17T00:00:00Z",
     downloads: 11,
-    source: OtherResourceSource.CurseForge,
+    source: OtherResourceSource.Modrinth,
   },
   {
     type: OtherResourceType.ResourcePack,
@@ -539,7 +539,7 @@ export const mockDownloadResourceList: OtherResourceInfo[] = [
     tags: ["Map", "Utility"],
     lastUpdated: "2022-02-17T00:00:00Z",
     downloads: 45,
-    source: OtherResourceSource.CurseForge,
+    source: OtherResourceSource.Modrinth,
   },
   {
     type: OtherResourceType.Mod,
@@ -549,7 +549,7 @@ export const mockDownloadResourceList: OtherResourceInfo[] = [
     tags: ["Graphics", "Optimization"],
     lastUpdated: "2022-02-17T00:00:00Z",
     downloads: 14,
-    source: OtherResourceSource.CurseForge,
+    source: OtherResourceSource.Modrinth,
   },
   {
     type: OtherResourceType.Mod,
@@ -562,7 +562,7 @@ export const mockDownloadResourceList: OtherResourceInfo[] = [
     tags: ["UI", "QoL"],
     lastUpdated: "2022-02-17T00:00:00Z",
     downloads: 11,
-    source: OtherResourceSource.CurseForge,
+    source: OtherResourceSource.Modrinth,
   },
   {
     type: OtherResourceType.ResourcePack,
@@ -585,7 +585,7 @@ export const mockDownloadResourceList: OtherResourceInfo[] = [
     tags: ["Map", "Utility"],
     lastUpdated: "2022-02-17T00:00:00Z",
     downloads: 45,
-    source: OtherResourceSource.CurseForge,
+    source: OtherResourceSource.Modrinth,
   },
   {
     type: OtherResourceType.Mod,
@@ -595,6 +595,6 @@ export const mockDownloadResourceList: OtherResourceInfo[] = [
     tags: ["Graphics", "Optimization"],
     lastUpdated: "2022-02-17T00:00:00Z",
     downloads: 14,
-    source: OtherResourceSource.CurseForge,
+    source: OtherResourceSource.Modrinth,
   },
 ];

@@ -74,7 +74,7 @@ jobs:
       - name: Download macOS artifacts
         uses: actions/download-artifact@v4
         with:
-          name: SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}
+          name: USTBL_${{ inputs.version }}_macos_${{ matrix.arch }}
           path: artifacts
 
       - name: Setup signing environment
@@ -110,19 +110,19 @@ jobs:
         working-directory: artifacts
         run: |
           # Extract the .app from tar.gz
-          tar -xzf SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}.app.tar.gz
+          tar -xzf USTBL_${{ inputs.version }}_macos_${{ matrix.arch }}.app.tar.gz
           
           # Sign the .app bundle
           codesign --deep --force --options runtime \
             --sign "$SIGNING_IDENTITY" \
-            "SJMCL.app"
+            "USTBL.app"
           
           # Verify signing
-          codesign --verify --deep --strict --verbose=2 SJMCL.app
+          codesign --verify --deep --strict --verbose=2 USTBL.app
           
           # Re-compress the signed .app
-          rm SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}.app.tar.gz
-          tar -czf SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}.app.tar.gz SJMCL.app
+          rm USTBL_${{ inputs.version }}_macos_${{ matrix.arch }}.app.tar.gz
+          tar -czf USTBL_${{ inputs.version }}_macos_${{ matrix.arch }}.app.tar.gz USTBL.app
 
       - name: Create DMG configuration
         working-directory: artifacts
@@ -130,7 +130,7 @@ jobs:
           # Create appdmg configuration file
           cat > dmg-config.json << EOF
           {
-            "title": "SJMCL Installer",
+            "title": "USTBL Installer",
             "icon": "../src-tauri/assets/icons/dmg/volume.icns",
             "background": "../src-tauri/assets/misc/dmg_bg.png",
             "format": "UDZO",
@@ -146,7 +146,7 @@ jobs:
                 "x": 180,
                 "y": 170,
                 "type": "file",
-                "path": "SJMCL.app"
+                "path": "USTBL.app"
               },
               {
                 "x": 480,
@@ -164,20 +164,20 @@ jobs:
         working-directory: artifacts
         run: |
           # Remove the original DMG if it exists (build workflow no longer creates DMG)
-          rm -f SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}.dmg
+          rm -f USTBL_${{ inputs.version }}_macos_${{ matrix.arch }}.dmg
           
           # Create a new DMG with the signed app using appdmg
-          appdmg dmg-config.json SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}.dmg
+          appdmg dmg-config.json USTBL_${{ inputs.version }}_macos_${{ matrix.arch }}.dmg
           
           # Sign the new DMG
           codesign --force --sign "$SIGNING_IDENTITY" \
-            SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}.dmg
+            USTBL_${{ inputs.version }}_macos_${{ matrix.arch }}.dmg
           
           # Verify DMG signing
-          codesign --verify --deep --strict --verbose=2 SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}.dmg
+          codesign --verify --deep --strict --verbose=2 USTBL_${{ inputs.version }}_macos_${{ matrix.arch }}.dmg
           
           # Clean up extracted .app and config file
-          rm -rf SJMCL.app dmg-config.json
+          rm -rf USTBL.app dmg-config.json
 
       - name: Notarize .app
         env:
@@ -187,25 +187,25 @@ jobs:
         working-directory: artifacts
         run: |
           # Extract .app for notarization
-          tar -xzf SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}.app.tar.gz
+          tar -xzf USTBL_${{ inputs.version }}_macos_${{ matrix.arch }}.app.tar.gz
           
           # Create zip for notarization
-          ditto -c -k --keepParent SJMCL.app SJMCL.zip
+          ditto -c -k --keepParent USTBL.app USTBL.zip
           
           # Submit for notarization
-          xcrun notarytool submit SJMCL.zip \
+          xcrun notarytool submit USTBL.zip \
             --apple-id "$NOTARY_APPLE_ID" \
             --password "$NOTARY_PASSWORD" \
             --team-id "$NOTARY_TEAM_ID" \
             --wait
           
           # Staple the notarization
-          xcrun stapler staple SJMCL.app
+          xcrun stapler staple USTBL.app
           
           # Re-compress the notarized .app
-          rm SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}.app.tar.gz SJMCL.zip
-          tar -czf SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}.app.tar.gz SJMCL.app
-          rm -rf SJMCL.app
+          rm USTBL_${{ inputs.version }}_macos_${{ matrix.arch }}.app.tar.gz USTBL.zip
+          tar -czf USTBL_${{ inputs.version }}_macos_${{ matrix.arch }}.app.tar.gz USTBL.app
+          rm -rf USTBL.app
 
       - name: Notarize DMG
         env:
@@ -215,42 +215,42 @@ jobs:
         working-directory: artifacts
         run: |
           # Submit DMG for notarization
-          xcrun notarytool submit SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}.dmg \
+          xcrun notarytool submit USTBL_${{ inputs.version }}_macos_${{ matrix.arch }}.dmg \
             --apple-id "$NOTARY_APPLE_ID" \
             --password "$NOTARY_PASSWORD" \
             --team-id "$NOTARY_TEAM_ID" \
             --wait
           
           # Staple the notarization to DMG
-          xcrun stapler staple SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}.dmg
+          xcrun stapler staple USTBL_${{ inputs.version }}_macos_${{ matrix.arch }}.dmg
 
       - name: Verify notarization
         working-directory: artifacts
         run: |
           # Extract the notarized .app for verification
-          tar -xzf SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}.app.tar.gz
+          tar -xzf USTBL_${{ inputs.version }}_macos_${{ matrix.arch }}.app.tar.gz
           
           echo "=== Testing Gatekeeper assessment on notarized app ==="
-          spctl --verbose=4 --assess --type execute SJMCL.app
+          spctl --verbose=4 --assess --type execute USTBL.app
           
           echo "=== Final signature verification ==="
-          codesign --verify --deep --strict --verbose=2 SJMCL.app
+          codesign --verify --deep --strict --verbose=2 USTBL.app
 
       - name: Calculate SHA256
         working-directory: artifacts
         run: |
-          CORE_EXECUTABLE="SJMCL.app/Contents/MacOS/SJMCL"
+          CORE_EXECUTABLE="USTBL.app/Contents/MacOS/USTBL"
           if [ -f "$CORE_EXECUTABLE" ]; then
             EXECUTABLE_SHA256=$(shasum -a 256 "$CORE_EXECUTABLE" | awk '{print $1}')
             echo "Signed core executable SHA256: $EXECUTABLE_SHA256"
-            ARTIFACT_NAME="SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}_signed"
+            ARTIFACT_NAME="USTBL_${{ inputs.version }}_macos_${{ matrix.arch }}_signed"
             echo "$EXECUTABLE_SHA256  $ARTIFACT_NAME" > "$ARTIFACT_NAME.sha256"
           fi
 
       - name: Cleanup artifacts
         working-directory: artifacts
         run: |
-          rm -rf SJMCL.app
+          rm -rf USTBL.app
           ls -la .
 
       - name: Cleanup keychain
@@ -264,6 +264,6 @@ jobs:
       - name: Upload signed artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: SJMCL_${{ inputs.version }}_macos_${{ matrix.arch }}_signed
+          name: USTBL_${{ inputs.version }}_macos_${{ matrix.arch }}_signed
           path: artifacts/*
           if-no-files-found: error

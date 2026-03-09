@@ -43,7 +43,7 @@ jobs:
         if: ${{ inputs.deb_hash_x86_64 == '' }}
         uses: actions/download-artifact@v4
         with:
-          pattern: "SJMCL_${{ inputs.version }}_linux_x86_64"
+          pattern: "USTBL_${{ inputs.version }}_linux_x86_64"
           path: artifacts
           merge-multiple: true
 
@@ -51,7 +51,7 @@ jobs:
         if: ${{ inputs.deb_hash_aarch64 == '' }}
         uses: actions/download-artifact@v4
         with:
-          pattern: "SJMCL_${{ inputs.version }}_linux_aarch64"
+          pattern: "USTBL_${{ inputs.version }}_linux_aarch64"
           path: artifacts
           merge-multiple: true
 
@@ -63,10 +63,10 @@ jobs:
           if [[ -z "$X86_64_DEB_HASH" || -z "$AARCH64_DEB_HASH" ]]; then
             ls -la artifacts
             if [[ -z "$X86_64_DEB_HASH" ]]; then
-              X86_64_DEB_HASH=$(sha512sum artifacts/SJMCL_${{ inputs.version }}_linux_x86_64.deb)
+              X86_64_DEB_HASH=$(sha512sum artifacts/USTBL_${{ inputs.version }}_linux_x86_64.deb)
             fi
             if [[ -z "$AARCH64_DEB_HASH" ]]; then
-              AARCH64_DEB_HASH=$(sha512sum artifacts/SJMCL_${{ inputs.version }}_linux_aarch64.deb)
+              AARCH64_DEB_HASH=$(sha512sum artifacts/USTBL_${{ inputs.version }}_linux_aarch64.deb)
             fi
           fi
           echo "X86_64_DEB_HASH=$X86_64_DEB_HASH"

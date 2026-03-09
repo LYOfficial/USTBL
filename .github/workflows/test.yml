@@ -82,5 +82,3 @@ jobs:
 
       - name: Test Build
         run: npx tauri build ${{ matrix.args }}
-        env:
-          SJMCL_CURSEFORGE_API_KEY: ${{ secrets.SJMCL_CURSEFORGE_API_KEY }}

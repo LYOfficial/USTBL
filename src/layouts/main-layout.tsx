@@ -16,6 +16,7 @@ import HeadNavBar from "@/components/head-navbar";
 import StarUsModal from "@/components/modals/star-us-modal";
 import UnavailableExePathAlertDialog from "@/components/modals/unavailable-exe-path-alert-dialog";
 import WelcomeAndTermsModal from "@/components/modals/welcome-and-terms-modal";
+import WindowTitleBar from "@/components/window-title-bar";
 import { useLauncherConfig } from "@/contexts/config";
 import { isDev } from "@/utils/env";
 
@@ -185,44 +186,49 @@ const MainLayout = ({ children }: MainLayoutProps) => {
     );
 
   return (
-    <Flex
-      direction="column"
-      h="100vh"
-      bgImg={`url('${bgImgSrc}')`}
-      bgSize="cover"
-      bgPosition="center"
-      bgRepeat="no-repeat"
-      bgColor={isDarkenBg ? "rgba(0,0,0,0.45)" : "transparent"}
-      bgBlendMode={isDarkenBg ? "darken" : "normal"}
-      style={getGlobalExtraStyle(config)}
-    >
-      <HeadNavBar />
-      {router.pathname === "/launch" ? (
-        <>{children}</>
-      ) : (
-        <AdvancedCard
-          level="back"
-          h="100%"
-          overflow="auto"
-          mt={1}
-          mb={4}
-          mx={4}
-        >
-          {children}
-        </AdvancedCard>
-      )}
+    <Flex h="100vh" p={1.5} bg="transparent" style={getGlobalExtraStyle(config)}>
+      <Flex
+        direction="column"
+        h="100%"
+        w="100%"
+        rounded="2xl"
+        overflow="hidden"
+        bgImg={`url('${bgImgSrc}')`}
+        bgSize="cover"
+        bgPosition="center"
+        bgRepeat="no-repeat"
+        bgColor={isDarkenBg ? "rgba(0,0,0,0.45)" : "transparent"}
+        bgBlendMode={isDarkenBg ? "darken" : "normal"}
+      >
+        <WindowTitleBar />
+        <HeadNavBar />
+        {router.pathname === "/launch" ? (
+          <>{children}</>
+        ) : (
+          <AdvancedCard
+            level="back"
+            h="100%"
+            overflow="auto"
+            mt={1}
+            mb={4}
+            mx={4}
+          >
+            {children}
+          </AdvancedCard>
+        )}
 
-      <WelcomeAndTermsModal
-        isOpen={isWelcomeAndTermsModalOpen}
-        onClose={onWelcomeAndTermsModalClose}
-      />
-      <StarUsModal isOpen={isStarUsModalOpen} onClose={onStarUsModalClose} />
-      <UnavailableExePathAlertDialog
-        isOpen={isUnavailableExePathAlertDialogOpen}
-        onClose={onUnavailableExePathAlertDialogClose}
-      />
+        <WelcomeAndTermsModal
+          isOpen={isWelcomeAndTermsModalOpen}
+          onClose={onWelcomeAndTermsModalClose}
+        />
+        <StarUsModal isOpen={isStarUsModalOpen} onClose={onStarUsModalClose} />
+        <UnavailableExePathAlertDialog
+          isOpen={isUnavailableExePathAlertDialogOpen}
+          onClose={onUnavailableExePathAlertDialogClose}
+        />
 
-      {isDev && <DevToolbar />}
+        {isDev && <DevToolbar />}
+      </Flex>
     </Flex>
   );
 };
