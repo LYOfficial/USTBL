@@ -1,4 +1,6 @@
-use crate::launcher_config::constants::{CONFIG_PARTIAL_UPDATE_EVENT, LAUNCHER_CFG_FILE_NAME};
+use crate::launcher_config::constants::{
+  CONFIG_PARTIAL_UPDATE_EVENT, LAUNCHER_CFG_FILE_NAME, LEGACY_LAUNCHER_CFG_FILE_NAME,
+};
 use crate::partial::PartialUpdate;
 use crate::storage::Storage;
 use crate::utils::string::snake_to_camel_case;
@@ -9,6 +11,7 @@ use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use smart_default::SmartDefault;
+use std::fs;
 use std::path::PathBuf;
 use strum_macros::Display;
 use tauri::{AppHandle, Emitter};
@@ -351,6 +354,44 @@ impl LauncherConfig {
 }
 
 impl Storage for LauncherConfig {
+  fn load() -> Result<Self, std::io::Error>
+  where
+    Self: Sized + serde::de::DeserializeOwned,
+  {
+    let file_path = Self::file_path();
+    if file_path.exists() {
+      let json_string = fs::read_to_string(file_path)?;
+      let value = serde_json::from_str(&json_string)?;
+      return Ok(value);
+    }
+
+    let legacy_path = if *IS_PORTABLE {
+      EXE_DIR.join(LEGACY_LAUNCHER_CFG_FILE_NAME)
+    } else {
+      APP_DATA_DIR
+        .get()
+        .unwrap()
+        .join(LEGACY_LAUNCHER_CFG_FILE_NAME)
+    };
+
+    let json_string = fs::read_to_string(&legacy_path)?;
+    let value = serde_json::from_str(&json_string)?;
+
+    if let Some(parent) = file_path.parent() {
+      fs::create_dir_all(parent)?;
+    }
+
+    if let Err(err) = fs::rename(&legacy_path, &file_path) {
+      log::warn!(
+        "Failed to rename legacy launcher config to new path: {err}. Falling back to copy-write migration."
+      );
+      fs::write(&file_path, &json_string)?;
+      let _ = fs::remove_file(&legacy_path);
+    }
+
+    Ok(value)
+  }
+
   fn file_path() -> PathBuf {
     if *IS_PORTABLE {
       EXE_DIR.join(LAUNCHER_CFG_FILE_NAME)

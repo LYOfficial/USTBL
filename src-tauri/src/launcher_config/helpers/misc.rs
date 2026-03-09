@@ -16,10 +16,13 @@ impl LauncherConfig {
   pub fn setup_with_app(&mut self, app: &AppHandle) -> SJMCLResult<()> {
     // same as lib.rs
     let is_dev = cfg!(debug_assertions);
-    let version = match (is_dev, app.package_info().version.to_string().as_str()) {
-      (true, _) => "dev".to_string(),
-      (false, "0.0.0") => "nightly".to_string(),
-      (false, v) => v.to_string(),
+    let package_version = app.package_info().version.to_string();
+    let version = if is_dev {
+      "dev".to_string()
+    } else if package_version == "0.0.0" || package_version.is_empty() {
+      env!("CARGO_PKG_VERSION").to_string()
+    } else {
+      package_version
     };
 
     // Set the default download cache directory if unset or not writable, and create it
