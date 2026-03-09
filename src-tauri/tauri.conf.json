@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "USTBL",
-  "version": "1.0.0-beta.1",
+  "version": "0.1.0",
   "identifier": "USTBL",
   "build": {
     "frontendDist": "../out",
@@ -64,34 +64,14 @@
   "bundle": {
     "active": true,
     "targets": [
-      "deb",
-      "rpm",
-      "appimage",
-      "nsis",
-      "app"
+      "nsis"
     ],
     "category": "Game",
     "icon": [
-      "assets/icons/32x32.png",
-      "assets/icons/64x64.png",
-      "assets/icons/128x128.png",
-      "assets/icons/128x128@2x.png",
-      "assets/icons/icon.icns",
-      "assets/icons/icon.ico",
-      "assets/icons/icon.png"
+      "assets/icons/icon.ico"
     ],
     "licenseFile": "../LICENSE",
     "license": "GPLv3",
-    "macOS": {
-      "dmg": {
-        "background": "assets/misc/dmg_bg.png",
-        "windowSize": {
-          "width": 640,
-          "height": 440
-        }
-      },
-      "entitlements": "Entitlements.plist"
-    },
     "windows": {
       "nsis": {
         "installerIcon": "assets/icons/icon.ico",
@@ -99,15 +79,13 @@
           "English",
           "SimpChinese",
           "TradChinese"
-        ],
-        "sidebarImage": "assets/misc/nsis_sidebar.bmp"
+        ]
       }
     },
     "resources": [
       "assets/skins/*",
       "assets/game/*",
       "assets/icons/icon.ico",
-      "assets/icons/icon.png",
       "assets/icons/variants/square.png",
       "assets/db/*"
     ]

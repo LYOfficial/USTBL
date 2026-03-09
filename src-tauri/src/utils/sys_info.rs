@@ -16,10 +16,16 @@ use tauri_plugin_os::locale;
 /// send_statistics("1.0.0".to_string(), "windows".to_string(), "sha256".to_string()).await;
 /// ```
 pub async fn send_statistics(version: String, os: String, sha256: String) {
+  let reported_version = if version.starts_with("USTBL-") {
+    version
+  } else {
+    format!("USTBL-{}", version)
+  };
+
   _ = reqwest::Client::new()
     .post("https://mc.sjtu.cn/api-sjmcl/statistics")
     .json(&json!({
-      "version": version,
+      "version": reported_version,
       "os": os,
       "exe_sha256": sha256,
     }))

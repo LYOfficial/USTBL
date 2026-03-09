@@ -153,7 +153,7 @@ const WindowTitleBar = () => {
   };
 
   const isNoDragTarget = (target: EventTarget | null) => {
-    if (!(target instanceof HTMLElement)) {
+    if (!(target instanceof Element)) {
       return false;
     }
 
@@ -260,14 +260,14 @@ const WindowTitleBar = () => {
           aria-label="minimize"
           size="sm"
           variant="ghost"
-          icon={<Icon as={LuMinus} />}
+          icon={<Icon as={LuMinus} pointerEvents="none" />}
           onClick={onMinimize}
         />
         <IconButton
           aria-label="maximize"
           size="sm"
           variant="ghost"
-          icon={<Icon as={isMaximized ? LuCopy : LuSquare} />}
+          icon={<Icon as={isMaximized ? LuCopy : LuSquare} pointerEvents="none" />}
           onClick={onToggleMaximize}
         />
         <IconButton
@@ -275,7 +275,7 @@ const WindowTitleBar = () => {
           size="sm"
           variant="ghost"
           colorScheme="red"
-          icon={<Icon as={LuX} />}
+          icon={<Icon as={LuX} pointerEvents="none" />}
           onClick={onClose}
         />
       </HStack>
