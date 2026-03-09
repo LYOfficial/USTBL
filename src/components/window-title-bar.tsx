@@ -100,8 +100,12 @@ const WindowTitleBar = () => {
       return;
     }
 
-    const appWindow = await getAppWindow();
-    await appWindow.minimize();
+    try {
+      const appWindow = await getAppWindow();
+      await appWindow.minimize();
+    } catch {
+      // Ignore when running with insufficient window permission.
+    }
   };
 
   const onToggleMaximize = async () => {
@@ -109,13 +113,17 @@ const WindowTitleBar = () => {
       return;
     }
 
-    const appWindow = await getAppWindow();
-    if (await appWindow.isMaximized()) {
-      await appWindow.unmaximize();
-    } else {
-      await appWindow.maximize();
+    try {
+      const appWindow = await getAppWindow();
+      if (await appWindow.isMaximized()) {
+        await appWindow.unmaximize();
+      } else {
+        await appWindow.maximize();
+      }
+      setIsMaximized(await appWindow.isMaximized());
+    } catch {
+      // Ignore when running with insufficient window permission.
     }
-    setIsMaximized(await appWindow.isMaximized());
   };
 
   const onClose = async () => {
@@ -123,8 +131,12 @@ const WindowTitleBar = () => {
       return;
     }
 
-    const appWindow = await getAppWindow();
-    await appWindow.close();
+    try {
+      const appWindow = await getAppWindow();
+      await appWindow.close();
+    } catch {
+      // Ignore when running with insufficient window permission.
+    }
   };
 
   const onStartDrag = async () => {
@@ -132,15 +144,44 @@ const WindowTitleBar = () => {
       return;
     }
 
-    const appWindow = await getAppWindow();
-    await appWindow.startDragging();
+    try {
+      const appWindow = await getAppWindow();
+      await appWindow.startDragging();
+    } catch {
+      // Ignore when running with insufficient window permission.
+    }
+  };
+
+  const isNoDragTarget = (target: EventTarget | null) => {
+    if (!(target instanceof HTMLElement)) {
+      return false;
+    }
+
+    return Boolean(
+      target.closest(
+        "button, [role='button'], [role='tab'], a, input, select, textarea, [data-no-drag='true']"
+      )
+    );
   };
 
   const onDragMouseDown = (event: MouseEvent) => {
     if (event.button !== 0) {
       return;
     }
+
+    if (isNoDragTarget(event.target)) {
+      return;
+    }
+
     void onStartDrag();
+  };
+
+  const onDragDoubleClick = (event: MouseEvent) => {
+    if (isNoDragTarget(event.target)) {
+      return;
+    }
+
+    void onToggleMaximize();
   };
 
   return (
@@ -154,13 +195,10 @@ const WindowTitleBar = () => {
       _dark={{ borderColor: "whiteAlpha.200", bg: "whiteAlpha.100" }}
       userSelect="none"
       spacing={2}
+      onMouseDown={onDragMouseDown}
+      onDoubleClick={onDragDoubleClick}
     >
       <HStack
-        data-tauri-drag-region
-        onMouseDown={onDragMouseDown}
-        onDoubleClick={() => {
-          void onToggleMaximize();
-        }}
         px={2}
         h="100%"
         flexShrink={0}
@@ -213,16 +251,7 @@ const WindowTitleBar = () => {
         </HStack>
       )}
 
-      <HStack
-        data-tauri-drag-region
-        onMouseDown={onDragMouseDown}
-        onDoubleClick={() => {
-          void onToggleMaximize();
-        }}
-        h="100%"
-        minW="24px"
-        flexShrink={0}
-      >
+      <HStack h="100%" minW="24px" flexShrink={0}>
         <Box w="100%" h="100%" />
       </HStack>
 
