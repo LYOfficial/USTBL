@@ -302,9 +302,7 @@ export const defaultConfig: LauncherConfig = {
   },
   localGameDirectories: [{ name: "Current", dir: ".minecraft/" }],
   globalGameConfig: defaultGameConfig,
-  discoverSourceEndpoints: [
-    ["https://docs.ustb.world/api/rss?lang=zh", true],
-  ],
+  discoverSourceEndpoints: [["https://docs.ustb.world/api/rss?lang=zh", true]],
   extraJavaPaths: [],
   suppressedDialogs: [],
   states: {

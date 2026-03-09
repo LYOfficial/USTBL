@@ -86,14 +86,13 @@ const NewsPanel: React.FC<NewsPanelProps> = ({
                     boxSize={8}
                   />
                 }
-                children={
-                  <Text fontSize="xs" className="secondary-text">
-                    {formatRelativeTime(post.createAt, t)}
-                  </Text>
-                }
                 isFullClickZone
                 onClick={() => openUrl(post.link)}
-              />
+              >
+                <Text fontSize="xs" className="secondary-text">
+                  {formatRelativeTime(post.createAt, t)}
+                </Text>
+              </OptionItem>
             </Card>
           ))}
         </SimpleGrid>
@@ -117,7 +116,9 @@ export const DiscoverHomePage = () => {
   const fetchCommunityNews = useCallback(async () => {
     setIsLoadingCommunity(true);
     try {
-      const source = [{ url: "https://docs.ustb.world/api/rss?lang=zh", cursor: null }];
+      const source = [
+        { url: "https://docs.ustb.world/api/rss?lang=zh", cursor: null },
+      ];
       const response = await DiscoverService.fetchNewsPostSummaries(source);
       if (response.status === "success") {
         setCommunityPosts(response.data.posts.slice(0, MAX_NEWS_POST_NUM));

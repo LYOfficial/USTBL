@@ -2,7 +2,10 @@ import { HStack, Text } from "@chakra-ui/react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useTranslation } from "react-i18next";
 import { CommonIconButton } from "@/components/common/common-icon-button";
-import { OptionItemGroup, OptionItemGroupProps } from "@/components/common/option-item";
+import {
+  OptionItemGroup,
+  OptionItemGroupProps,
+} from "@/components/common/option-item";
 import { TitleFullWithLogo } from "@/components/logo-title";
 import { useLauncherConfig } from "@/contexts/config";
 

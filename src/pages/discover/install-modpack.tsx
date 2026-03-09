@@ -36,7 +36,8 @@ type XPlusVersion = {
 
 const XPLUS_PROJECT_URL =
   "https://modrinth.com/modpack/xplus-2.0-modpack-global/versions";
-const XPLUS_VERSION_API = "https://api.modrinth.com/v2/project/UCpApD3P/version";
+const XPLUS_VERSION_API =
+  "https://api.modrinth.com/v2/project/UCpApD3P/version";
 const RECOMMENDED_VERSION = "1.21.11";
 const RECOMMENDED_DOWNLOAD_URL =
   "https://cdn.modrinth.com/data/UCpApD3P/versions/hudo6QuU/XPlus%20PerioTable%20based%20on%20Minecraft%201.21.11%20%28Fabric%29.mrpack";
@@ -58,11 +59,13 @@ const fallbackVersions: XPlusVersion[] = [
 const toXPlusVersionList = (rawList: any[]): XPlusVersion[] => {
   return rawList
     .map((item) => {
-      const primaryFile = (item.files || []).find((f: any) => f.primary) ||
+      const primaryFile =
+        (item.files || []).find((f: any) => f.primary) ||
         (item.files || []).find((f: any) => f.url?.endsWith(".mrpack"));
       if (!primaryFile?.url) return null;
 
-      const encodedFileName = primaryFile.filename || item.name || `${item.id}.mrpack`;
+      const encodedFileName =
+        primaryFile.filename || item.name || `${item.id}.mrpack`;
       const decodedFileName = decodeURIComponent(encodedFileName);
 
       return {
@@ -119,14 +122,18 @@ const InstallModpackPage = () => {
   }, [fetchVersions]);
 
   const recommendedVersionId = useMemo(() => {
-    return versions.find((item) => item.gameVersions.includes(RECOMMENDED_VERSION))?.id;
+    return versions.find((item) =>
+      item.gameVersions.includes(RECOMMENDED_VERSION)
+    )?.id;
   }, [versions]);
 
   const handleInstall = async (version: XPlusVersion) => {
     setDownloadingId(version.id);
     try {
       const baseDir = await downloadDir();
-      const fileName = sanitizeFileName(version.fileName || `${version.name}.mrpack`);
+      const fileName = sanitizeFileName(
+        version.fileName || `${version.name}.mrpack`
+      );
       const savePath = `${baseDir}/${fileName}`;
 
       handleScheduleProgressiveTaskGroup("modpack", [
@@ -183,7 +190,10 @@ const InstallModpackPage = () => {
             </Link>
           </HStack>
           <Text fontSize="xs" className="secondary-text">
-            仅保留 XPlus 各版本安装。默认推荐下载 Minecraft {RECOMMENDED_VERSION} 版本。
+            仅保留 XPlus 各版本安装。默认推荐下载 Minecraft
+            {" "}
+            {RECOMMENDED_VERSION}
+            版本。
           </Text>
         </Box>
 
