@@ -321,7 +321,7 @@
       },
       "presetBgList": {
         "tyg1200": {
-          "name": "北京科技大学体育馆"
+          "name": "体育馆"
         },
         "Jokull": {
           "name": "银淞雪镇"
@@ -473,14 +473,14 @@
   },
   "DiscoverHomePage": {
     "minecraft-news": "Minecraft 新闻",
-    "community-news": "社区新闻",
+    "community-news": "社团新闻",
     "hotModpacks": "{{source}} 的热门整合包"
   },
   "DiscoverLayout": {
     "discoverDomainList": {
       "search": "搜索",
       "home": "主页",
-      "community-news": "社区新闻",
+      "community-news": "社团新闻",
       "minecraft-news": "Minecraft 新闻",
       "install-modpack": "安装整合包",
       "modpack": "整合包",
@@ -1144,7 +1144,7 @@
     },
     "step3": {
       "title": "发现页",
-      "content": "在此处浏览 Minecraft 与社区新闻，发现并下载各类相关资源，如模组、地图、整合包等。<br/>另外，您也可以通过键盘快捷键 <key>{{keyname}}</key> + <key>S</key> 快速打开 “聚合搜索”。"
+      "content": "在此处浏览 Minecraft 与社团新闻，发现并下载各类相关资源，如模组、地图、整合包等。<br/>另外，您也可以通过键盘快捷键 <key>{{keyname}}</key> + <key>S</key> 快速打开 “聚合搜索”。"
     },
     "step4": {
       "title": "Minecraft，启动！",

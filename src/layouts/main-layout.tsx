@@ -190,7 +190,6 @@ const MainLayout = ({ children }: MainLayoutProps) => {
         direction="column"
         h="100%"
         w="100%"
-        rounded="2xl"
         overflow="hidden"
         bgImg={`url('${bgImgSrc}')`}
         bgSize="cover"
