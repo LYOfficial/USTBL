@@ -37,6 +37,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validate ICO metadata
+        shell: pwsh
+        run: |
+          $iconPath = "src-tauri/assets/icons/icon.ico"
+          if (-not (Test-Path $iconPath)) {
+            throw "Icon file not found: $iconPath"
+          }
+
+          $bytes = [System.IO.File]::ReadAllBytes($iconPath)
+          if ($bytes.Length -lt 6) {
+            throw "Invalid ICO file: too small ($($bytes.Length) bytes)"
+          }
+
+          $entryCount = [BitConverter]::ToUInt16($bytes, 4)
+          if ($entryCount -lt 1) {
+            throw "Invalid ICO file: no icon entries"
+          }
+
+          for ($i = 0; $i -lt $entryCount; $i++) {
+            $entryOffset = 6 + (16 * $i)
+            if ($bytes.Length -lt ($entryOffset + 16)) {
+              throw "Invalid ICO file: incomplete ICONDIRENTRY at index $i"
+            }
+
+            $reserved = $bytes[$entryOffset + 3]
+            if ($reserved -ne 0) {
+              throw "Invalid ICO reserved field at entry $i: $reserved (must be 0)"
+            }
+          }
+
+          Write-Host "ICO validation passed for $iconPath ($entryCount entries)."
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
