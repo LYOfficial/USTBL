@@ -51,8 +51,7 @@ const fallbackVersions: XPlusVersion[] = [
     gameVersions: ["1.21.11"],
     downloadUrl: RECOMMENDED_DOWNLOAD_URL,
     sha1: "",
-    fileName:
-      "XPlus PerioTable based on Minecraft 1.21.11 (Fabric).mrpack",
+    fileName: "XPlus PerioTable based on Minecraft 1.21.11 (Fabric).mrpack",
   },
 ];
 
@@ -190,10 +189,7 @@ const InstallModpackPage = () => {
             </Link>
           </HStack>
           <Text fontSize="xs" className="secondary-text">
-            仅保留 XPlus 各版本安装。默认推荐下载 Minecraft
-            {" "}
-            {RECOMMENDED_VERSION}
-            版本。
+            仅保留 XPlus 各版本安装。默认推荐下载 Minecraft {RECOMMENDED_VERSION} 版本。
           </Text>
         </Box>
 

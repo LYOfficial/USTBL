@@ -46,8 +46,6 @@ const NewsPanel: React.FC<NewsPanelProps> = ({
   return (
     <Section
       title={title}
-      titleIcon={LuGlobe}
-      titleColor={accentColor}
       headExtra={
         <HStack>
           <CommonIconButton
