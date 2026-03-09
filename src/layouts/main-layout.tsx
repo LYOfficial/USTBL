@@ -12,7 +12,6 @@ import { useEffect, useRef, useState } from "react";
 import { BeatLoader } from "react-spinners";
 import AdvancedCard from "@/components/common/advanced-card";
 import DevToolbar from "@/components/dev/dev-toolbar";
-import HeadNavBar from "@/components/head-navbar";
 import StarUsModal from "@/components/modals/star-us-modal";
 import UnavailableExePathAlertDialog from "@/components/modals/unavailable-exe-path-alert-dialog";
 import WelcomeAndTermsModal from "@/components/modals/welcome-and-terms-modal";
@@ -186,7 +185,7 @@ const MainLayout = ({ children }: MainLayoutProps) => {
     );
 
   return (
-    <Flex h="100vh" p={1.5} bg="transparent" style={getGlobalExtraStyle(config)}>
+    <Flex h="100vh" p={0} bg="transparent" style={getGlobalExtraStyle(config)}>
       <Flex
         direction="column"
         h="100%"
@@ -201,7 +200,6 @@ const MainLayout = ({ children }: MainLayoutProps) => {
         bgBlendMode={isDarkenBg ? "darken" : "normal"}
       >
         <WindowTitleBar />
-        <HeadNavBar />
         {router.pathname === "/launch" ? (
           <>{children}</>
         ) : (
