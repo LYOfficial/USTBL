@@ -7,7 +7,7 @@ on:
         description: Build version label for artifacts
         required: false
         type: string
-        default: USTBL-0.1.0
+        default: USTBL-0.1.1
 
 permissions:
   contents: read
@@ -98,7 +98,7 @@ jobs:
       - name: Setup artifact name
         shell: bash
         run: |
-          echo "ARTIFACT_NAME=${{ github.event.inputs.version || 'USTBL-0.1.0' }}_windows_${{ matrix.arch }}" >> $GITHUB_ENV
+          echo "ARTIFACT_NAME=${{ github.event.inputs.version || 'USTBL-0.1.1' }}_windows_${{ matrix.arch }}" >> $GITHUB_ENV
 
       - name: Calculate SHA256 checksums
         shell: bash
