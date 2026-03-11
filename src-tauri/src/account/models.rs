@@ -254,11 +254,17 @@ pub struct AuthServerInfo {
 
 impl From<AuthServerInfo> for AuthServer {
   fn from(info: AuthServerInfo) -> Self {
-    AuthServer {
-      name: info.metadata["meta"]["serverName"]
+    let name = if info.auth_url == "https://skin.ustb.world/skinapi" {
+      "USTB Servers".to_string()
+    } else {
+      info.metadata["meta"]["serverName"]
         .as_str()
         .unwrap_or_default()
-        .to_string(),
+        .to_string()
+    };
+
+    AuthServer {
+      name,
       auth_url: info.auth_url,
       homepage_url: info.metadata["meta"]["links"]["homepage"]
         .as_str()

@@ -1,6 +1,6 @@
 pub static AUTHLIB_INJECTOR_JAR_NAME: &str = "authlib-injector.jar";
 pub static PRESET_AUTH_SERVERS: [&str; 3] = [
-  "https://skin.ustb.world/api/yggdrasil",
+  "https://skin.ustb.world/skinapi",
   "https://skin.mualliance.ltd/api/yggdrasil",
   "https://littleskin.cn/api/yggdrasil",
 ];

@@ -1,6 +1,6 @@
 /*
 export const mockAuthServerList: AuthServer[] = [
-  { name: "SJMC 用户中心", authUrl: "https://skin.ustb.world/api/yggdrasil" },
+  { name: "USTB Servers", authUrl: "https://skin.ustb.world/skinapi" },
   {
     name: "MUA 用户中心",
     authUrl: "https://skin.mualliance.ltd/api/yggdrasil",
@@ -14,8 +14,8 @@ export const mockPlayerList: Player[] = [
     avatarSrc: "https://skin.ustb.world/avatar/2?size=72&png=1",
     playerType: "3rdparty",
     authServer: {
-      name: "SJMC 用户中心",
-      authUrl: "https://skin.ustb.world/api/yggdrasil",
+      name: "USTB Servers",
+      authUrl: "https://skin.ustb.world/skinapi",
     },
     authAccount: "xxxxxx@sjtu.edu.cn",
   },
@@ -25,8 +25,8 @@ export const mockPlayerList: Player[] = [
     avatarSrc: "https://skin.ustb.world/avatar/308?size=72&png=1",
     playerType: "3rdparty",
     authServer: {
-      name: "SJMC 用户中心",
-      authUrl: "https://skin.ustb.world/api/yggdrasil",
+      name: "USTB Servers",
+      authUrl: "https://skin.ustb.world/skinapi",
     },
     authAccount: "yyyyyy@sjtu.edu.cn",
   },
