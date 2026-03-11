@@ -1,11 +1,52 @@
-use crate::account::helpers::authlib_injector::constants::CLIENT_IDS;
+use crate::account::helpers::authlib_injector::constants::{
+  CLIENT_IDS, USTB_AUTH_SERVER_URL, USTB_HOMEPAGE_URL, USTB_OPENID_CONFIGURATION_URL,
+};
 use crate::account::models::{AccountError, AccountInfo, AuthServerInfo};
 use crate::error::SJMCLResult;
 use crate::utils::web::normalize_url;
+use serde_json::{json, Value};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_http::reqwest;
 use url::Url;
+
+fn is_ustb_auth_server(auth_url: &str) -> bool {
+  normalize_url(auth_url) == normalize_url(USTB_AUTH_SERVER_URL)
+}
+
+fn apply_ustb_oauth_fallback(metadata: &mut Value) {
+  if metadata.is_null() {
+    *metadata = json!({});
+  }
+
+  if metadata.get("meta").is_none() || !metadata["meta"].is_object() {
+    metadata["meta"] = json!({});
+  }
+
+  if metadata["meta"].get("serverName").is_none() {
+    metadata["meta"]["serverName"] = json!("USTB Servers");
+  }
+
+  if metadata["meta"].get("links").is_none() || !metadata["meta"]["links"].is_object() {
+    metadata["meta"]["links"] = json!({});
+  }
+
+  if metadata["meta"]["links"].get("homepage").is_none() {
+    metadata["meta"]["links"]["homepage"] = json!(USTB_HOMEPAGE_URL);
+  }
+
+  if metadata["meta"]["links"].get("register").is_none() {
+    metadata["meta"]["links"]["register"] = json!(USTB_HOMEPAGE_URL);
+  }
+
+  if metadata["meta"].get("feature.non_email_login").is_none() {
+    metadata["meta"]["feature.non_email_login"] = json!(true);
+  }
+
+  if metadata["meta"].get("feature.openid_configuration_url").is_none() {
+    metadata["meta"]["feature.openid_configuration_url"] = json!(USTB_OPENID_CONFIGURATION_URL);
+  }
+}
 
 pub async fn fetch_auth_server_info(
   app: &AppHandle,
@@ -14,11 +55,15 @@ pub async fn fetch_auth_server_info(
   let client = app.state::<reqwest::Client>();
   match client.get(&auth_url).send().await {
     Ok(response) => {
-      let json: serde_json::Value = response.json().await.map_err(|_| AccountError::Invalid)?;
+      let mut metadata: Value = response.json().await.map_err(|_| AccountError::Invalid)?;
+
+      if is_ustb_auth_server(&auth_url) {
+        apply_ustb_oauth_fallback(&mut metadata);
+      }
 
       let mut client_id = None;
 
-      let openid_configuration_url = json["meta"]["feature.openid_configuration_url"]
+      let openid_configuration_url = metadata["meta"]["feature.openid_configuration_url"]
         .as_str()
         .unwrap_or_default()
         .to_string();
@@ -40,7 +85,7 @@ pub async fn fetch_auth_server_info(
       Ok(AuthServerInfo {
         auth_url: auth_url.clone(),
         client_id,
-        metadata: json,
+        metadata,
         timestamp: chrono::Utc::now().timestamp_millis() as u64,
       })
     }

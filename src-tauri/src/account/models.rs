@@ -1,5 +1,7 @@
 use crate::account::constants::ACCOUNTS_FILE_NAME;
-use crate::account::helpers::authlib_injector::constants::PRESET_AUTH_SERVERS;
+use crate::account::helpers::authlib_injector::constants::{
+  PRESET_AUTH_SERVERS, USTB_AUTH_SERVER_URL,
+};
 use crate::account::helpers::skin::draw_avatar;
 use crate::storage::Storage;
 use crate::utils::image::ImageWrapper;
@@ -254,7 +256,7 @@ pub struct AuthServerInfo {
 
 impl From<AuthServerInfo> for AuthServer {
   fn from(info: AuthServerInfo) -> Self {
-    let name = if info.auth_url == "https://skin.ustb.world/skinapi" {
+    let name = if info.auth_url == USTB_AUTH_SERVER_URL {
       "USTB Servers".to_string()
     } else {
       info.metadata["meta"]["serverName"]
