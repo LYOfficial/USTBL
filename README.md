@@ -2,7 +2,7 @@
 
 # USTB Servers Launcher 启动器
 
-> 根据 [@SJMCL](https://github.com/USTB-SkyCode/USTBL) 项目开发！
+> 根据 [@SJMCL](https://github.com/UNIkeEN/SJMCL) 项目开发！
 
 ## 功能特性
 
