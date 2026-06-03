@@ -142,23 +142,67 @@ const CheckModUpdateModal: React.FC<CheckModUpdateModalProps> = ({
 
       const updatePromises = currentLocalMods.map(async (mod) => {
         try {
-          const mrRemoteModRes = await ResourceService.fetchRemoteResourceByLocal(
-            OtherResourceSource.Modrinth,
-            mod.filePath
-          );
+          const [cfRemoteModRes, mrRemoteModRes] = await Promise.all([
+            ResourceService.fetchRemoteResourceByLocal(
+              OtherResourceSource.CurseForge,
+              mod.filePath
+            ),
+            ResourceService.fetchRemoteResourceByLocal(
+              OtherResourceSource.Modrinth,
+              mod.filePath
+            ),
+          ]);
 
-          const mrRemoteMod =
-            mrRemoteModRes.status === "success" ? mrRemoteModRes.data : undefined;
+          let cfRemoteMod = undefined;
+          let mrRemoteMod = undefined;
 
-          const latestFile = mrRemoteMod?.resourceId
-            ? await handleFetchLatestMod(
+          if (cfRemoteModRes.status === "success") {
+            cfRemoteMod = cfRemoteModRes.data;
+          }
+          if (mrRemoteModRes.status === "success") {
+            mrRemoteMod = mrRemoteModRes.data;
+          }
+
+          const updatePromises = [];
+
+          if (cfRemoteMod?.resourceId) {
+            updatePromises.push(
+              handleFetchLatestMod(
+                cfRemoteMod.resourceId,
+                mod.loaderType,
+                [currentSummary?.majorVersion || "All"],
+                OtherResourceSource.CurseForge
+              )
+            );
+          } else {
+            updatePromises.push(Promise.resolve(undefined));
+          }
+
+          if (mrRemoteMod?.resourceId) {
+            updatePromises.push(
+              handleFetchLatestMod(
                 mrRemoteMod.resourceId,
                 mod.loaderType,
                 [currentSummary?.version || "All"],
                 OtherResourceSource.Modrinth
               )
-            : undefined;
-          const remoteMod = mrRemoteMod;
+            );
+          } else {
+            updatePromises.push(Promise.resolve(undefined));
+          }
+
+          const [cfRemoteFile, mrRemoteFile] =
+            await Promise.all(updatePromises);
+
+          let isCurseForgeNewer = cfRemoteMod !== undefined;
+          if (cfRemoteFile && mrRemoteFile) {
+            isCurseForgeNewer =
+              new Date(cfRemoteFile.fileDate).getTime() >
+              new Date(mrRemoteFile.fileDate).getTime();
+          }
+
+          const latestFile = isCurseForgeNewer ? cfRemoteFile : mrRemoteFile;
+          const remoteMod = isCurseForgeNewer ? cfRemoteMod : mrRemoteMod;
 
           let needUpdate = false;
           if (latestFile && remoteMod) {
@@ -175,7 +219,9 @@ const CheckModUpdateModal: React.FC<CheckModUpdateModalProps> = ({
                 name: mod.name,
                 curVersion: mod.version,
                 newVersion: latestFile.name,
-                source: OtherResourceSource.Modrinth,
+                source: isCurseForgeNewer
+                  ? OtherResourceSource.CurseForge
+                  : OtherResourceSource.Modrinth,
                 downloadUrl: latestFile.downloadUrl,
                 sha1: latestFile.sha1,
                 fileName: latestFile.fileName,
@@ -212,10 +258,12 @@ const CheckModUpdateModal: React.FC<CheckModUpdateModalProps> = ({
     }
   }, [summary, localMods, handleFetchLatestMod, onCheckUpdateModalClear]);
 
+  const summaryId = summary?.id;
+
   const handleDownloadUpdatedMods = useCallback(
     async (urlShaPairs: { url: string; sha1: string; fileName: string }[]) => {
       let params: ModUpdateQuery[] = [];
-      if (summary?.id) {
+      if (summaryId) {
         for (const pair of urlShaPairs) {
           const { url, sha1, fileName } = pair;
           const oldMod = modsToUpdate.find((mod) =>
@@ -238,17 +286,17 @@ const CheckModUpdateModal: React.FC<CheckModUpdateModalProps> = ({
             });
           }
         }
-        ResourceService.updateMods(summary.id, params);
+        ResourceService.updateMods(summaryId, params);
       }
     },
-    [summary?.id, modsToUpdate, updateList, addPrefix]
+    [summaryId, modsToUpdate, updateList, addPrefix]
   );
 
   useEffect(() => {
-    if (modalProps.isOpen && summary?.id && localMods.length > 0) {
+    if (modalProps.isOpen && summaryId && localMods.length > 0) {
       handleCheckModUpdate();
     }
-  }, [modalProps.isOpen, summary?.id, localMods.length, handleCheckModUpdate]);
+  }, [modalProps.isOpen, summaryId, localMods.length, handleCheckModUpdate]);
 
   useEffect(() => {
     if (!modalProps.isOpen) {

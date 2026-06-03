@@ -15,9 +15,6 @@ export default function DiscoverIndexPage() {
         "discover/sources",
         "discover/community-news"
       );
-    if (lastRecord.includes("discover/resource")) {
-      lastRecord = "/discover/install-modpack";
-    }
     router.replace(lastRecord);
   }, [history, router]);
 

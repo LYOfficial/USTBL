@@ -1,10 +1,18 @@
-import { Button, HStack, Icon, Text, VStack } from "@chakra-ui/react";
+import {
+  Button,
+  HStack,
+  Icon,
+  Text,
+  VStack,
+  useDisclosure,
+} from "@chakra-ui/react";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { useRouter } from "next/router";
 import React, { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { IconType } from "react-icons";
 import { FaRegStar, FaStar } from "react-icons/fa6";
+import { GoDotFill } from "react-icons/go";
 import {
   LuBookDashed,
   LuEarth,
@@ -12,7 +20,7 @@ import {
   LuHaze,
   LuHouse,
   LuPackage,
-  LuPackagePlus,
+  LuPackageOpen,
   LuPlay,
   LuSettings,
   LuSquareLibrary,
@@ -21,6 +29,7 @@ import {
 import { CommonIconButton } from "@/components/common/common-icon-button";
 import NavMenu from "@/components/common/nav-menu";
 import { Section } from "@/components/common/section";
+import ExportModpackModal from "@/components/modals/export-modpack-modal";
 import { useLauncherConfig } from "@/contexts/config";
 import {
   InstanceContextProvider,
@@ -28,6 +37,7 @@ import {
 } from "@/contexts/instance";
 import { useSharedModals } from "@/contexts/shared-modal";
 import { useToast } from "@/contexts/toast";
+import { isChakraColor } from "@/enums/misc";
 import { InstanceService } from "@/services/instance";
 
 const InstanceDetailsLayout: React.FC<{ children: React.ReactNode }> = ({
@@ -50,11 +60,18 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
     useSharedModals();
   const { id } = router.query;
   const instanceId = Array.isArray(id) ? id[0] : id;
+  const selectedTab = router.pathname.split("/")[4] || "overview";
 
   const { summary, handleUpdateInstanceConfig } = useInstanceSharedData();
-  const { config } = useLauncherConfig();
+  const { config, isZh } = useLauncherConfig();
   const primaryColor = config.appearance.theme.primaryColor;
   const navBarType = config.general.functionality.instancesNavType;
+
+  const {
+    isOpen: isExportModpackModalOpen,
+    onOpen: onExportModpackModalOpen,
+    onClose: onExportModpackModalClose,
+  } = useDisclosure();
 
   const handleCreateLaunchDesktopShortcut = useCallback(
     (instanceId: string) => {
@@ -101,8 +118,8 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
     {
       icon: "openFolder",
       danger: false,
-      onClick: () => {
-        openPath(summary?.versionPath || "");
+      onClick: async () => {
+        await openPath(summary?.versionPath || "");
       },
     },
     {
@@ -114,10 +131,14 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
       },
     },
     {
-      icon: LuPackagePlus,
+      icon: LuPackageOpen,
       label: t("InstanceDetailsLayout.secMenu.exportModPack"),
       danger: false,
-      onClick: () => {},
+      onClick: () => {
+        if (summary) {
+          onExportModpackModalOpen();
+        }
+      },
     },
     {
       icon: "delete",
@@ -150,20 +171,24 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
       withBackButton={navBarType !== "instance"}
       backRoutePath="/instances/list"
       titleExtra={
-        <CommonIconButton
-          icon={summary?.starred ? FaStar : FaRegStar}
-          label={t(
-            `InstanceDetailsLayout.secMenu.${summary?.starred ? "unstar" : "star"}`
+        <HStack spacing={1} marginInlineEnd="0.5rem">
+          <CommonIconButton
+            icon={summary?.starred ? FaStar : FaRegStar}
+            label={t(
+              `InstanceDetailsLayout.secMenu.${summary?.starred ? "unstar" : "star"}`
+            )}
+            color={summary?.starred ? "yellow.500" : "inherit"}
+            onClick={() => {
+              handleUpdateInstanceConfig("starred", !summary?.starred);
+            }}
+            size="xs"
+            fontSize="sm"
+            h={21}
+          />
+          {isChakraColor(summary?.tag) && (
+            <Icon as={GoDotFill} color={`${summary.tag}.500`} />
           )}
-          color={summary?.starred ? "yellow.500" : "inherit"}
-          onClick={() => {
-            handleUpdateInstanceConfig("starred", !summary?.starred);
-          }}
-          size="xs"
-          fontSize="sm"
-          h={21}
-          marginInlineEnd="0.5rem"
-        />
+        </HStack>
       }
       headExtra={
         <HStack spacing={2}>
@@ -196,16 +221,13 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
     >
       <NavMenu
         flexWrap="wrap"
-        selectedKeys={[router.asPath]}
-        onClick={(value) => router.push(value)}
+        selectedKeys={[selectedTab]}
         direction="row"
         size="xs"
         mb={4}
-        spacing={
-          config.general.general.language.startsWith("zh") ? "0.05rem" : 0.5
-        }
+        spacing={isZh ? "0.05rem" : 0.5}
         items={instanceTabList.map((item) => ({
-          value: `/instances/details/${encodeURIComponent(instanceId || "")}/${item.key}`,
+          value: item.key,
           label: (
             <HStack spacing={1.5}>
               <Icon as={item.icon} />
@@ -215,6 +237,12 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
             </HStack>
           ),
         }))}
+        onClick={(value) =>
+          router.push({
+            pathname: `/instances/details/[id]/${value}`,
+            query: { id: instanceId || "" },
+          })
+        }
       />
       <VStack
         overflow="auto"
@@ -225,6 +253,14 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
       >
         {children}
       </VStack>
+      {summary && (
+        <ExportModpackModal
+          isOpen={isExportModpackModalOpen}
+          onClose={onExportModpackModalClose}
+          instanceId={summary.id}
+          instanceName={summary.name}
+        />
+      )}
     </Section>
   );
 };

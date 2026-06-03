@@ -28,7 +28,12 @@ import {
   TaskParam,
 } from "@/models/task";
 import { ConfigService } from "@/services/config";
+import {
+  EXTENSION_REFRESH_EVENT,
+  ExtensionService,
+} from "@/services/extension";
 import { InstanceService } from "@/services/instance";
+import { RESOURCE_REFRESH_EVENT } from "@/services/resource";
 import { TaskService } from "@/services/task";
 
 interface TaskContextType {
@@ -59,7 +64,8 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
   const [tasks, setTasks] = useState<TaskGroupDesc[]>([]);
   const [generalPercent, setGeneralPercent] = useState<number>();
   const { t } = useTranslation();
-  const loadingToastRef = React.useRef<ToastId | null>(null);
+  const modLoaderLoadingToastRef = React.useRef<ToastId | null>(null);
+  const optifineLoadingToastRef = React.useRef<ToastId | null>(null);
 
   const updateGroupInfo = useCallback((group: TaskGroupDesc) => {
     if (group.status === GTaskEventStatusEnums.Completed) {
@@ -428,7 +434,7 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
             return task;
           });
 
-          const { name, version } = parseTaskGroup(payload.taskGroup);
+          const { name, params } = parseTaskGroup(payload.taskGroup);
 
           toast({
             status:
@@ -438,9 +444,7 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
             title: t(
               `Services.task.onTaskGroupUpdate.status.${payload.event}`,
               {
-                param: t(`DownloadTasksPage.task.${name}`, {
-                  param: version || "",
-                }),
+                param: t(`DownloadTasksPage.task.${name}`, params),
               }
             ),
           });
@@ -451,15 +455,22 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
               case "change-mod-loader":
                 getInstanceList(true);
                 break;
+              case "change-optifine":
+                getInstanceList(true);
+                break;
+              case "game-client-w-java":
+                getInstanceList(true);
+                getJavaInfos(true);
+                break;
               case "forge-libraries":
               case "neoforge-libraries":
-              case "optifine-libraries":
-                if (version) {
+                if (params.param || params.param1) {
+                  const instanceId = params.param || params.param1;
                   let instanceName = getInstanceList()?.find(
-                    (i) => i.id === version
+                    (i) => i.id === instanceId
                   )?.name;
-                  if (loadingToastRef.current) return newTasks;
-                  loadingToastRef.current = toast({
+                  if (modLoaderLoadingToastRef.current) return newTasks;
+                  modLoaderLoadingToastRef.current = toast({
                     title: t(
                       "Services.instance.finishModLoaderInstall.loading",
                       {
@@ -468,13 +479,53 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
                     ),
                     status: "loading",
                   });
-                  InstanceService.finishModLoaderInstall(version).then(
+                  InstanceService.finishModLoaderInstall(instanceId).then(
                     (response) => {
-                      if (loadingToastRef.current) {
-                        closeToast(loadingToastRef.current);
-                        loadingToastRef.current = null;
+                      if (modLoaderLoadingToastRef.current) {
+                        closeToast(modLoaderLoadingToastRef.current);
+                        modLoaderLoadingToastRef.current = null;
                       }
                       if (response.status === "success") {
+                        getInstanceList(true);
+                        toast({
+                          title: response.message,
+                          status: "success",
+                        });
+                      } else {
+                        toast({
+                          title: response.message,
+                          description: response.details,
+                          status: "error",
+                        });
+                      }
+                    }
+                  );
+                }
+                break;
+              case "optifine-libraries":
+                if (params.param || params.param1) {
+                  const instanceId = params.param || params.param1;
+                  let instanceName = getInstanceList()?.find(
+                    (i) => i.id === instanceId
+                  )?.name;
+                  if (optifineLoadingToastRef.current) return newTasks;
+                  optifineLoadingToastRef.current = toast({
+                    title: t(
+                      "Services.instance.finishOptiFineLoaderInstall.loading",
+                      {
+                        instanceName,
+                      }
+                    ),
+                    status: "loading",
+                  });
+                  InstanceService.finishOptiFineLoaderInstall(instanceId).then(
+                    (response) => {
+                      if (optifineLoadingToastRef.current) {
+                        closeToast(optifineLoadingToastRef.current);
+                        optifineLoadingToastRef.current = null;
+                      }
+                      if (response.status === "success") {
+                        getInstanceList(true);
                         toast({
                           title: response.message,
                           status: "success",
@@ -492,19 +543,13 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
                 break;
               case "mod":
               case "mod-update":
-                emit("instance:refresh-resource-list", OtherResourceType.Mod);
+                emit(RESOURCE_REFRESH_EVENT, OtherResourceType.Mod);
                 break;
               case "resourcepack":
-                emit(
-                  "instance:refresh-resource-list",
-                  OtherResourceType.ResourcePack
-                );
+                emit(RESOURCE_REFRESH_EVENT, OtherResourceType.ResourcePack);
                 break;
               case "shader":
-                emit(
-                  "instance:refresh-resource-list",
-                  OtherResourceType.ShaderPack
-                );
+                emit(RESOURCE_REFRESH_EVENT, OtherResourceType.ShaderPack);
                 break;
               case "modpack": {
                 let group = newTasks.find(
@@ -554,6 +599,46 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
                         false
                       ).then((response) => {
                         if (response.status !== "success") {
+                          toast({
+                            title: response.message,
+                            description: response.details,
+                            status: "error",
+                          });
+                        }
+                      });
+                    },
+                  });
+                }
+                break;
+              }
+              case "extension-update": {
+                let group = newTasks.find(
+                  (t) => t.taskGroup === payload.taskGroup
+                );
+                const task = group?.taskDescs[0];
+                const expectedIdentifier = params.param1;
+                const newVersion = params.param2 || "";
+
+                if (task && expectedIdentifier) {
+                  openGenericConfirmDialog({
+                    title: t("ExtensionUpdateConfirmDialog.title"),
+                    body: t("ExtensionUpdateConfirmDialog.body", {
+                      identifier: expectedIdentifier,
+                      version: newVersion,
+                      src: task.payload.src,
+                    }),
+                    onOKCallback: () => {
+                      ExtensionService.addExtension(
+                        task.payload.dest,
+                        expectedIdentifier
+                      ).then((response) => {
+                        if (response.status === "success") {
+                          toast({
+                            title: response.message,
+                            status: "success",
+                          });
+                          emit(EXTENSION_REFRESH_EVENT);
+                        } else {
                           toast({
                             title: response.message,
                             description: response.details,
@@ -642,7 +727,7 @@ export const parseTaskGroup = (
   taskGroup: string
 ): {
   name: string;
-  version?: string;
+  params: Record<string, string>;
   timestamp: number;
   isRetry: boolean;
   rawName: string;
@@ -659,11 +744,17 @@ export const parseTaskGroup = (
     timestamp = parseInt(taskGroup.substring(lastAtIndex + 1));
   }
 
-  const [name, version] = rawName.split("?");
+  const [name, paramString] = rawName.split("?");
+  const params = paramString ? paramString.split("&") : [];
 
   return {
     name: name.replace(/^retry-/, ""),
-    version,
+    params:
+      params.length === 1
+        ? { param: params[0] }
+        : Object.fromEntries(
+            params.map((param, index) => [`param${index + 1}`, param])
+          ),
     isRetry: name.startsWith("retry-"),
     timestamp: timestamp,
     rawName,

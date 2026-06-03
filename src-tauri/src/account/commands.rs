@@ -3,8 +3,10 @@ use crate::account::helpers::authlib_injector::info::{
 };
 use crate::account::helpers::authlib_injector::jar::check_authlib_jar;
 use crate::account::helpers::authlib_injector::{self};
-use crate::account::helpers::import::hmcl::retrieve_hmcl_account_info;
 use crate::account::helpers::import::ImportLauncherType;
+use crate::account::helpers::import::hmcl::retrieve_hmcl_account_info;
+use crate::account::helpers::import::multimc::retrieve_multimc_account_info;
+use crate::account::helpers::microsoft::models::{MicrosoftFriendAction, MicrosoftFriendList};
 use crate::account::helpers::{microsoft, misc, offline};
 use crate::account::models::{
   AccountError, AccountInfo, AuthServer, DeviceAuthResponseInfo, Player, PlayerInfo, PlayerType,
@@ -56,30 +58,7 @@ pub fn retrieve_player_list(app: AppHandle) -> SJMCLResult<Vec<Player>> {
 pub async fn add_player_offline(app: AppHandle, username: String, uuid: String) -> SJMCLResult<()> {
   let new_player = offline::login(&app, username, uuid).await?;
 
-  let account_binding = app.state::<Mutex<AccountInfo>>();
-  let mut account_state = account_binding.lock()?;
-
-  let config_binding = app.state::<Mutex<LauncherConfig>>();
-  let mut config_state = config_binding.lock()?;
-
-  if account_state
-    .players
-    .iter()
-    .any(|player| player.id == new_player.id)
-  {
-    return Err(AccountError::Duplicate.into());
-  }
-
-  config_state.partial_update(
-    &app,
-    "states.shared.selected_player_id",
-    &serde_json::to_string(&new_player.id).unwrap_or_default(),
-  )?;
-  config_state.save()?;
-
-  account_state.players.push(new_player);
-  account_state.save()?;
-  Ok(())
+  misc::add_player(&app, new_player)
 }
 
 #[tauri::command]
@@ -135,33 +114,13 @@ pub async fn add_player_oauth(
     }
   };
 
-  {
-    let account_binding = app.state::<Mutex<AccountInfo>>();
-    let mut account_state = account_binding.lock()?;
+  misc::add_player(&app, new_player)?;
 
-    let config_binding = app.state::<Mutex<LauncherConfig>>();
-    let mut config_state = config_binding.lock()?;
-
-    if account_state
-      .players
-      .iter()
-      .any(|player| player.id == new_player.id)
-    {
-      return Err(AccountError::Duplicate.into());
-    }
-
-    config_state.partial_update(
-      &app,
-      "states.shared.selected_player_id",
-      &serde_json::to_string(&new_player.id).unwrap_or_default(),
-    )?;
-    config_state.save()?;
-
-    account_state.players.push(new_player);
-    account_state.save()?;
+  if server_type == PlayerType::Microsoft {
+    misc::check_full_login_availability(&app).await?;
   }
 
-  misc::check_full_login_availability(&app).await
+  Ok(())
 }
 
 #[tauri::command]
@@ -264,23 +223,8 @@ pub async fn add_player_3rdparty_password(
       // if the token is not binded, refresh it to bind the token.
       new_players[0] = authlib_injector::password::refresh(&app, &new_players[0], true).await?;
     }
-    {
-      let account_binding = app.state::<Mutex<AccountInfo>>();
-      let mut account_state = account_binding.lock()?;
-      let config_binding = app.state::<Mutex<LauncherConfig>>();
-      let mut config_state = config_binding.lock()?;
 
-      config_state.partial_update(
-        &app,
-        "states.shared.selected_player_id",
-        &serde_json::to_string(&new_players[0].id).unwrap_or_default(),
-      )?;
-      account_state.players.push(new_players[0].clone());
-
-      account_state.save()?;
-      config_state.save()?;
-    }
-
+    misc::add_player(&app, new_players.remove(0))?;
     Ok(vec![])
   } else {
     // if more than one player will be added, return the players to inform the frontend to trigger selector.
@@ -351,33 +295,7 @@ pub async fn add_player_from_selection(app: AppHandle, player: Player) -> SJMCLR
   let player_info: PlayerInfo = player.into();
   let refreshed_player = authlib_injector::password::refresh(&app, &player_info, true).await?;
 
-  {
-    let account_binding = app.state::<Mutex<AccountInfo>>();
-    let mut account_state = account_binding.lock()?;
-
-    let config_binding = app.state::<Mutex<LauncherConfig>>();
-    let mut config_state = config_binding.lock()?;
-
-    if account_state
-      .players
-      .iter()
-      .any(|x| x.id == refreshed_player.id)
-    {
-      return Err(AccountError::Duplicate.into());
-    }
-
-    config_state.partial_update(
-      &app,
-      "states.shared.selected_player_id",
-      &serde_json::to_string(&refreshed_player.id).unwrap_or_default(),
-    )?;
-    account_state.players.push(refreshed_player);
-
-    account_state.save()?;
-    config_state.save()?;
-  }
-
-  misc::check_full_login_availability(&app).await
+  misc::add_player(&app, refreshed_player)
 }
 
 #[tauri::command]
@@ -486,15 +404,7 @@ pub async fn delete_player(app: AppHandle, player_id: String) -> SJMCLResult<()>
 
 #[tauri::command]
 pub async fn refresh_player(app: AppHandle, player_id: String) -> SJMCLResult<()> {
-  let account_binding = app.state::<Mutex<AccountInfo>>();
-
-  let cloned_account_state = account_binding.lock()?.clone();
-
-  let player = cloned_account_state
-    .players
-    .iter()
-    .find(|player| player.id == player_id)
-    .ok_or(AccountError::NotFound)?;
+  let player = misc::get_player_by_id(&app, &player_id)?.ok_or(AccountError::NotFound)?;
 
   let refreshed_player = match player.player_type {
     PlayerType::ThirdParty => {
@@ -503,28 +413,60 @@ pub async fn refresh_player(app: AppHandle, player_id: String) -> SJMCLResult<()
         player.auth_server_url.clone().unwrap_or_default(),
       )?);
 
-      authlib_injector::common::refresh(&app, player, &auth_server).await?
+      authlib_injector::common::refresh(&app, &player, &auth_server).await?
     }
 
-    PlayerType::Microsoft => microsoft::oauth::refresh(&app, player).await?,
+    PlayerType::Microsoft => microsoft::oauth::refresh(&app, &player).await?,
 
     PlayerType::Offline => {
       return Err(AccountError::Invalid.into());
     }
   };
 
-  let mut account_state = account_binding.lock()?;
-
-  if let Some(player) = account_state
-    .players
-    .iter_mut()
-    .find(|player| player.id == player_id)
-  {
-    *player = refreshed_player;
-    account_state.save()?;
-  }
+  misc::update_player_by_id(&app, &player_id, refreshed_player)?;
 
   Ok(())
+}
+
+#[tauri::command]
+pub async fn retrieve_microsoft_friend_list(
+  app: AppHandle,
+  cur_player_id: String,
+) -> SJMCLResult<MicrosoftFriendList> {
+  let player = misc::get_player_by_id(&app, &cur_player_id)?.ok_or(AccountError::NotFound)?;
+
+  if player.player_type != PlayerType::Microsoft {
+    return Err(AccountError::Invalid.into());
+  }
+
+  microsoft::friends::retrieve_friend_list(&app, &player).await
+}
+
+#[tauri::command]
+pub async fn update_microsoft_friend(
+  app: AppHandle,
+  cur_player_id: String,
+  tgt_player_name: Option<String>,
+  tgt_player_uuid: Option<String>,
+  action: MicrosoftFriendAction,
+) -> SJMCLResult<MicrosoftFriendList> {
+  let player = misc::get_player_by_id(&app, &cur_player_id)?.ok_or(AccountError::NotFound)?;
+
+  if player.player_type != PlayerType::Microsoft {
+    return Err(AccountError::Invalid.into());
+  }
+
+  let tgt_player_name = tgt_player_name
+    .map(|name| name.trim().to_string())
+    .filter(|name| !name.is_empty());
+  let tgt_player_uuid = match tgt_player_uuid {
+    Some(uuid) if !uuid.is_empty() => {
+      Some(uuid::Uuid::parse_str(&uuid).map_err(|_| AccountError::Invalid)?)
+    }
+    _ => None,
+  };
+
+  microsoft::friends::update_friend(&app, &player, tgt_player_name, tgt_player_uuid, action).await
 }
 
 #[tauri::command]
@@ -631,6 +573,7 @@ pub async fn retrieve_other_launcher_account_info(
 ) -> SJMCLResult<(Vec<Player>, Vec<AuthServer>)> {
   let (mut player_infos, urls) = match launcher_type {
     ImportLauncherType::HMCL => retrieve_hmcl_account_info(&app).await?,
+    ImportLauncherType::MultiMC => retrieve_multimc_account_info(&app).await?,
     _ => return Ok((vec![], vec![])),
   };
 

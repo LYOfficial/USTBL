@@ -8,6 +8,7 @@ export enum OtherResourceType {
 }
 
 export enum OtherResourceSource {
+  CurseForge = "CurseForge",
   Modrinth = "Modrinth",
 }
 
@@ -21,6 +22,55 @@ export enum DependencyType {
 }
 
 export const modTagList = {
+  CurseForge: {
+    All: ["All"],
+    "Adventure and RPG": ["Armor, Tools, and Weapons", "Mobs"],
+    Farming: ["Food", "Forestry"],
+    Technology: [
+      "Automation",
+      "Buildcraft",
+      "Energy",
+      "Energy, Fluid, and Item Transport",
+      "Genetics",
+      "Integrated Dynamics",
+      "Processing",
+      "Redstone",
+      "Storage",
+    ],
+    Magic: ["Blood Magic"],
+    World: [
+      "Biomes",
+      "Dimensions",
+      "Galacticraft",
+      "Ores and Resources",
+      "Player Transport",
+      "Skyblock",
+      "World Gen",
+      "Structures",
+    ],
+    Auxiliary: [
+      "Performance",
+      "Bug Fixes",
+      "Map and Information",
+      "API and Library",
+      "Education",
+      "Server Utility",
+      "Twitch Integration",
+      "Utility & QoL",
+    ],
+    Addons: ["KubeJS"],
+    Miscellaneous: [
+      "MCreator",
+      "Cosmetic",
+      "Twilight Forest",
+      "Create",
+      "Applied Energistics 2",
+      "Industrial Craft",
+      "Thermal Expansion",
+      "Tinker's Construct",
+      "Thaumcraft",
+    ],
+  },
   Modrinth: {
     All: ["All"],
     adventure: ["equipment", "cursed", "mobs", "magic"],
@@ -40,10 +90,37 @@ export const modTagList = {
 };
 
 export const worldTagList = {
+  CurseForge: {
+    All: ["All"],
+    Types: [
+      "Adventure",
+      "Creation",
+      "Game Map",
+      "Modded World",
+      "Parkour",
+      "Puzzle",
+      "Survival",
+    ],
+  },
   Modrinth: [],
 };
 
 export const resourcePackTagList = {
+  CurseForge: {
+    All: ["All"],
+    Resolution: ["16x", "32x", "64x", "128x", "256x", "512x and Higher"],
+    Styles: [
+      "Animated",
+      "Medieval",
+      "Miscellaneous",
+      "Mod Support",
+      "Modern",
+      "Photo Realistic",
+      "Steampunk",
+      "Traditional",
+    ],
+    Special: ["Data Packs", "Font Packs"],
+  },
   Modrinth: {
     All: ["All"],
     Resolution: ["8x-", "16x", "32x", "64x", "128x", "256x", "512x+"],
@@ -74,6 +151,10 @@ export const resourcePackTagList = {
 };
 
 export const shaderPackTagList = {
+  CurseForge: {
+    All: ["All"],
+    Styles: ["Fantasy", "Realistic", "Vanilla"],
+  },
   Modrinth: {
     All: ["All"],
     Styles: [
@@ -98,6 +179,19 @@ export const shaderPackTagList = {
 };
 
 export const datapackTagList = {
+  CurseForge: {
+    All: ["All"],
+    Styles: [
+      "Magic",
+      "Miscellaneous",
+      "Fantasy",
+      "Mod Support",
+      "Tech",
+      "Library",
+      "Utility",
+      "Adventure",
+    ],
+  },
   Modrinth: {
     All: ["All"],
     styles: [
@@ -125,6 +219,28 @@ export const datapackTagList = {
 };
 
 export const modpackTagList = {
+  CurseForge: {
+    All: ["All"],
+    Styles: [
+      "Adventure and RPG",
+      "Combat / PvP",
+      "Exploration",
+      "Extra Large",
+      "FTB Official Pack",
+      "Hardcore",
+      "Horror",
+      "Magic",
+      "Map Based",
+      "Mini Game",
+      "Multiplayer",
+      "Quests",
+      "Sci-Fi",
+      "Skyblock",
+      "Small / Light",
+      "Tech",
+      "Vanilla+",
+    ],
+  },
   Modrinth: {
     All: ["All"],
     styles: [
@@ -143,5 +259,12 @@ export const modpackTagList = {
 };
 
 export const sortByLists = {
+  CurseForge: [
+    "Popularity",
+    "A-Z",
+    "Latest update",
+    "Creation date",
+    "Total downloads",
+  ],
   Modrinth: ["relevance", "downloads", "follows", "updated", "newest"],
 };

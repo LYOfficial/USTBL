@@ -21,6 +21,23 @@ export enum TextureType {
 
 export enum ImportLauncherType {
   HMCL = "HMCL",
-  PCL = "PCL",
+  MultiMC = "MultiMC",
   SCL = "SCL",
+}
+
+export enum MicrosoftFriendPresenceStatus {
+  Online = "ONLINE",
+  PlayingOffline = "PLAYING_OFFLINE",
+  PlayingRealms = "PLAYING_REALMS",
+  PlayingServer = "PLAYING_SERVER",
+  PlayingHostedServer = "PLAYING_HOSTED_SERVER",
+  Offline = "OFFLINE",
+}
+
+export enum MicrosoftFriendAction {
+  Add = "add",
+  Remove = "remove",
+  Accept = "accept",
+  Decline = "decline",
+  Revoke = "revoke",
 }

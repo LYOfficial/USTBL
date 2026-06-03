@@ -229,10 +229,8 @@ export const InstanceScreenshotsWidget = () => {
           onClick={() => {
             router.push(
               {
-                pathname: `/instances/details/${encodeURIComponent(instanceId || "")}/screenshots`,
-                query: {
-                  screenshotIndex: currentIndex.toString(),
-                },
+                pathname: "/instances/details/[id]/screenshots",
+                query: { id: instanceId || "" },
               },
               undefined,
               { shallow: true }
@@ -317,9 +315,10 @@ export const InstanceModsWidget = () => {
           justifyContent="flex-start"
           colorScheme={primaryColor}
           onClick={() => {
-            router.push(
-              `/instances/details/${encodeURIComponent(instanceId || "")}/mods`
-            );
+            router.push({
+              pathname: "/instances/details/[id]/mods",
+              query: { id: instanceId || "" },
+            });
           }}
         >
           <HStack spacing={1.5}>
@@ -439,13 +438,11 @@ export const InstanceLastPlayedWidget = () => {
 
 export const InstanceMoreWidget = () => {
   const { t } = useTranslation();
-  const { config } = useLauncherConfig();
+  const { config, isZh } = useLauncherConfig();
   const primaryColor = config.appearance.theme.primaryColor;
-  const language = config.general.general.language;
   const router = useRouter();
   const { id } = router.query;
   const instanceId = Array.isArray(id) ? id[0] : id;
-  const { summary } = useInstanceSharedData();
 
   const features: Record<string, IconType> = {
     worlds: LuEarth,
@@ -459,16 +456,17 @@ export const InstanceMoreWidget = () => {
     <InstanceWidgetBase title={t("InstanceWidgets.more.title")} icon={LuShapes}>
       <Grid templateColumns="repeat(3, 1fr)" rowGap={2}>
         {Object.entries(features).map(([key, icon]) =>
-          language.startsWith("zh") ? (
+          isZh ? (
             <Button
               key={key}
               variant="ghost"
               size="lg"
               colorScheme={primaryColor}
               onClick={() =>
-                router.push(
-                  `/instances/details/${encodeURIComponent(instanceId || "")}/${key}`
-                )
+                router.push({
+                  pathname: `/instances/details/[id]/${key}`,
+                  query: { id: instanceId || "" },
+                })
               }
             >
               <VStack spacing={1} align="center">
@@ -489,9 +487,10 @@ export const InstanceMoreWidget = () => {
                 size="lg"
                 colorScheme={primaryColor}
                 onClick={() =>
-                  router.push(
-                    `/instances/details/${encodeURIComponent(instanceId || "")}/${key}`
-                  )
+                  router.push({
+                    pathname: `/instances/details/[id]/${key}`,
+                    query: { id: instanceId || "" },
+                  })
                 }
                 aria-label={t(`InstanceDetailsLayout.instanceTabList.${key}`)}
               />

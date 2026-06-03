@@ -1,19 +1,32 @@
-import { Center, HStack } from "@chakra-ui/react";
+import {
+  Center,
+  Flex,
+  HStack,
+  Icon,
+  IconButton,
+  Image,
+  Text,
+  VStack,
+  useDisclosure,
+} from "@chakra-ui/react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { LuChevronRight, LuHaze } from "react-icons/lu";
 import { BeatLoader } from "react-spinners";
 import { CommonIconButton } from "@/components/common/common-icon-button";
 import CountTag from "@/components/common/count-tag";
 import Empty from "@/components/common/empty";
 import { OptionItem, OptionItemGroup } from "@/components/common/option-item";
 import { Section } from "@/components/common/section";
-import SelectableCard, {
-  SelectableCardProps,
-} from "@/components/common/selectable-card";
+import { WrapCardGroup } from "@/components/common/wrap-card";
+import { ChangeLoaderModal } from "@/components/modals/change-loader-modal";
+import { useFileDnD } from "@/components/special/file-dnd-overlay";
 import { useLauncherConfig } from "@/contexts/config";
+import { useExtensionHost } from "@/contexts/extension/host";
 import { useInstanceSharedData } from "@/contexts/instance";
 import { useSharedModals } from "@/contexts/shared-modal";
+import { ExtensionUISlotKey } from "@/enums/extension";
 import { InstanceSubdirType } from "@/enums/instance";
 import { OtherResourceType } from "@/enums/resource";
 import { GetStateFlag } from "@/hooks/get-state";
@@ -24,16 +37,24 @@ const InstanceShaderPacksPage = () => {
   const { config, update } = useLauncherConfig();
   const { t } = useTranslation();
   const {
+    instanceId,
     summary,
     openInstanceSubdir,
-    handleImportResource,
+    handleImportResources,
     getShaderPackList,
     isShaderPackListLoading: isLoading,
   } = useInstanceSharedData();
+  const { getExtensionSlotItems } = useExtensionHost();
   const { openSharedModal } = useSharedModals();
   const accordionStates = config.states.instanceShaderPacksPage.accordionStates;
 
   const [shaderPacks, setShaderPacks] = useState<ShaderPackInfo[]>([]);
+
+  const {
+    isOpen: isChangeLoaderModalOpen,
+    onOpen: onChangeLoaderModalOpen,
+    onClose: onChangeLoaderModalClose,
+  } = useDisclosure();
 
   const getShaderPackListWrapper = useCallback(
     (sync?: boolean) => {
@@ -50,6 +71,24 @@ const InstanceShaderPacksPage = () => {
   useEffect(() => {
     getShaderPackListWrapper();
   }, [getShaderPackListWrapper]);
+
+  useFileDnD({
+    extensions: ["zip"],
+    multiple: true,
+    titleKey: "InstanceShaderPacksPage.fileDnD.title",
+    descKey: "InstanceShaderPacksPage.fileDnD.desc",
+    icon: LuHaze,
+    onDrop: async (paths) => {
+      handleImportResources({
+        filterName: t("InstanceDetailsLayout.instanceTabList.shaderpacks"),
+        filterExt: ["zip"],
+        tgtDirType: InstanceSubdirType.ShaderPacks,
+        paths,
+        multiple: true,
+        onSuccessCallback: () => getShaderPackListWrapper(true),
+      });
+    },
+  });
 
   useEffect(() => {
     const unlisten = ResourceService.onResourceRefresh(
@@ -80,11 +119,11 @@ const InstanceShaderPacksPage = () => {
     {
       icon: "add",
       onClick: () => {
-        handleImportResource({
+        handleImportResources({
           filterName: t("InstanceDetailsLayout.instanceTabList.shaderpacks"),
           filterExt: ["zip"],
           tgtDirType: InstanceSubdirType.ShaderPacks,
-          decompress: false,
+          multiple: true,
           onSuccessCallback: () => getShaderPackListWrapper(true),
         });
       },
@@ -96,6 +135,14 @@ const InstanceShaderPacksPage = () => {
   ];
 
   const shaderItemMenuOperations = (pack: ShaderPackInfo) => [
+    ...getExtensionSlotItems(
+      ExtensionUISlotKey.InstanceShaderPackItemMenuOperations,
+      {
+        pack,
+        instanceId,
+        summary,
+      }
+    ),
     {
       label: "",
       icon: "copyOrMove",
@@ -113,20 +160,50 @@ const InstanceShaderPacksPage = () => {
     },
   ];
 
-  const selectableCardItems: SelectableCardProps[] = [
+  const shaderLoaderCardItems = [
     {
-      title: "OptiFine",
-      iconSrc: "/images/icons/OptiFine.png",
-      description:
-        summary?.optifine?.status === "Installed"
-          ? summary?.optifine?.version
-          : t("InstanceShaderPacksPage.shaderLoaderList.notInstalled"),
-      displayMode: "entry",
+      cardContent: (
+        <Flex justify="space-between" align="center">
+          <HStack spacing={2}>
+            <Image
+              src="/images/icons/OptiFine.png"
+              alt="OptiFine"
+              boxSize="28px"
+              borderRadius="4px"
+            />
+            <VStack spacing={0} alignItems="start">
+              <Text
+                fontSize="xs-sm"
+                fontWeight={
+                  summary?.optifine?.status === "Installed" ? "bold" : "normal"
+                }
+                color={
+                  summary?.optifine?.status === "Installed"
+                    ? `${config.appearance.theme.primaryColor}.600`
+                    : "inherit"
+                }
+              >
+                OptiFine
+              </Text>
+              <Text fontSize="xs" className="secondary-text">
+                {summary?.optifine?.status === "Installed"
+                  ? summary?.optifine?.version
+                  : t("InstanceShaderPacksPage.shaderLoaderList.notInstalled")}
+              </Text>
+            </VStack>
+          </HStack>
+          <HStack spacing={0}>
+            <IconButton
+              aria-label="select"
+              icon={<Icon as={LuChevronRight} boxSize={3.5} />}
+              variant="ghost"
+              size="xs"
+              onClick={onChangeLoaderModalOpen}
+            />
+          </HStack>
+        </Flex>
+      ),
       isSelected: summary?.optifine?.status === "Installed",
-      onSelect: () => {},
-      // TODO: add OptiFine installation support
-      isDisabled: true,
-      isChevronShown: false,
     },
   ];
 
@@ -143,17 +220,7 @@ const InstanceShaderPacksPage = () => {
           );
         }}
       >
-        <HStack spacing={3.5} w="100%">
-          {selectableCardItems.map((item, index) => (
-            <SelectableCard
-              key={index}
-              {...item}
-              flex={1}
-              minH="max-content"
-              h="100%"
-            />
-          ))}
-        </HStack>
+        <WrapCardGroup items={shaderLoaderCardItems} />
       </Section>
       <Section
         title={t("InstanceShaderPacksPage.shaderPackList.title")}
@@ -207,6 +274,11 @@ const InstanceShaderPacksPage = () => {
           <Empty withIcon={false} size="sm" />
         )}
       </Section>
+      <ChangeLoaderModal
+        isOpen={isChangeLoaderModalOpen}
+        onClose={onChangeLoaderModalClose}
+        mode="optifine"
+      />
     </>
   );
 };

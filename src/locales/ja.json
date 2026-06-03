@@ -1,7 +1,7 @@
 {
   "AboutSettingsPage": {
     "about": {
-      "title": "USTBLについて",
+      "title": "SJMCLについて",
       "settings": {
         "version": {
           "title": "バージョン",
@@ -16,11 +16,11 @@
         "contributors": {
           "title": "開発チーム"
         },
-        "reportIssue": {
-          "title": "問題報告"
+        "sourceCode": {
+          "title": "GitHub でソースコードを見る"
         },
         "aboutSJMC": {
-          "title": "上海交通大学 Minecraft クラブ (USTB) について"
+          "title": "上海交通大学 Minecraft クラブ (SJMC) について"
         }
       }
     },
@@ -58,11 +58,11 @@
       "settings": {
         "copyright": {
           "title": "コピーライト",
-          "description": "© 2024-2026 USTBL 開発チーム"
+          "description": "© 2024-2026 SJMCL 開発チーム"
         },
         "userAgreement": {
           "title": "利用規約",
-          "url": "https://docs.ustb.world/"
+          "url": "https://mc.sjtu.cn/sjmcl/en/docs/tos"
         },
         "openSourceLicense": {
           "title": "オープンソースライセンス",
@@ -112,6 +112,12 @@
         "title": "サーバーダウンロード",
         "description": "各バージョンのヴァニラサーバーファイルをダウンロード"
       }
+    }
+  },
+  "MainLayout": {
+    "fileDnD": {
+      "title": "モッドパックをインポート",
+      "desc": "モッドパックファイル {{fileName}} を SJMCL にインポート"
     }
   },
   "AddAuthServerModal": {
@@ -201,7 +207,7 @@
       "description": {
         "start": {
           "3rdparty": "この認証ソースは Yggdrasil Connect 仕様提案をサポート",
-          "microsoft": " USTBL は Microsoft OAuth 2.0 デバイス認証フローをサポート"
+          "microsoft": " SJMCL は Microsoft OAuth 2.0 デバイス認証フローをサポート"
         },
         "next": "次へ進むボタンをクリックし、ログインウィンドウに上記のコードを入力してください。（自動コピー済）"
       },
@@ -283,7 +289,8 @@
           "title": "上部ナビゲーションバーのスタイル",
           "type": {
             "standard": "スタンダード",
-            "simplified": "ミニマル"
+            "simplified": "ミニマル",
+            "adaptive": "自動"
           }
         }
       }
@@ -320,17 +327,11 @@
         }
       },
       "presetBgList": {
-        "tyg1200": {
-          "name": "北京科技大学体育館"
-        },
-        "Jokull": {
-          "name": "雪原の秘境"
+        "Florwyn": {
+          "name": "Florwyn"
         },
         "SJTU-eastgate": {
           "name": "紫気東来（ SJTU 東門）"
-        },
-        "GNLXC": {
-          "name": "GNWork 理想郷"
         }
       }
     },
@@ -346,16 +347,26 @@
       }
     }
   },
-  "ChangeModLoaderModal": {
+  "ChangeLoaderModal": {
     "header": {
-      "title": {
-        "change": "モッドローダーを変更",
-        "install": "モッドローダーをインストール"
+      "modloader": {
+        "title": {
+          "change": "モッドローダーを変更",
+          "install": "モッドローダーをインストール"
+        }
+      },
+      "optifine": {
+        "title": {
+          "change": "OptiFine を変更",
+          "install": "OptiFine をインストール"
+        }
       }
     },
     "notSelectedLoader": "新しいローダーが選択されていません",
+    "notSelectedOptifine": "新しい OptiFine が選択されていません",
     "footer": {
       "installFabricApi": "同時に Fabric API モッドをインストール",
+      "installQFAPI": "QFAPI / QSL モッドもインストール（利用可能な場合）",
       "reinstall": "再インストール"
     }
   },
@@ -424,7 +435,8 @@
       "info": "基本設定"
     },
     "footer": {
-      "installFabricApi": "同時に Fabric API をインストール"
+      "installFabricApi": "同時に Fabric API をインストール",
+      "installQFAPI": "QFAPI / QSL モッドもインストール（利用可能な場合）"
     }
   },
   "CreateRenamedInstShortcutAlertDialog": {
@@ -434,6 +446,12 @@
     "dialog": {
       "title": "認証サーバーを削除",
       "content": "この認証サーバー「{{name}}」を削除しますか。「{{name}}」はサーバーリストの中から消えます。"
+    }
+  },
+  "DeleteGameFriendDialog": {
+    "dialog": {
+      "title": "フレンドを削除",
+      "content": "フレンド「{{name}}」を削除しますか？"
     }
   },
   "DeleteGameServerAlertDialog": {
@@ -509,7 +527,7 @@
       "type": "タイプ"
     },
     "warning": {
-      "mojang": "Mojang によって配布される Java ランタイムは USTBL によって特定のディレクトリにインストールされます",
+      "mojang": "Mojang によって配布される Java ランタイムは SJMCL によって特定のディレクトリにインストールされます",
       "oracle": "Oracle ソースからのダウンロードにはログインの必要な場合があります"
     }
   },
@@ -575,6 +593,7 @@
     },
     "proxy": {
       "title": "プロキシ",
+      "headExtra": "再起動が必要",
       "settings": {
         "enabled": {
           "title": "プロキシ有効化"
@@ -621,8 +640,10 @@
     },
     "task": {
       "game-client": "ゲームクライアント {{param}}",
+      "game-client-w-java": "ゲームクライアント {{param1}}（Java {{param2}} 同梱）",
       "game-server": "ゲームサーバー {{param}}",
       "change-mod-loader": "モッドローダーを変更 {{param}}",
+      "change-optifine": "OptiFine を変更 {{param}}",
       "mod": "モッド",
       "world": "ワールド",
       "resourcepack": "リソースパック",
@@ -634,7 +655,9 @@
       "retry": "再試行",
       "neoforge-libraries": "NeoForge ランタイムライブラリ",
       "forge-libraries": "Forge ランタイムライブラリ",
+      "optifine-libraries": "OptiFine ランタイムライブラリ",
       "launcher-update": "ランチャーを更新",
+      "extension-update": "拡張機能 {{param1}} {{param2}} を更新",
       "mojang-java": "Java {{param}} ランタイム"
     }
   },
@@ -690,6 +713,14 @@
   "Empty": {
     "noData": "データなし"
   },
+  "EnableExtensionConfirmDialog": {
+    "title": "拡張機能を有効化",
+    "body": "<hl>{{author}}</hl> が提供する拡張機能 <hl>{{name}}</hl>（<hl>{{identifier}}</hl>）を有効にしますか？",
+    "button": {
+      "enable": "有効化"
+    },
+    "unknownDeveloper": "不明な開発者"
+  },
   "Enums": {
     "chakraColors": {
       "gray": "灰色",
@@ -735,6 +766,109 @@
       "windows": "エクスプローラー"
     }
   },
+  "ExportModpackModal": {
+    "header": {
+      "title": "{{param}} をモッドパックとしてエクスポート"
+    },
+    "label": {
+      "exportFormat": "エクスポート形式",
+      "basicInfo": "基本情報",
+      "modpackName": "モッドパック名",
+      "modpackVersion": "モッドパックバージョン",
+      "author": "作者",
+      "description": "説明",
+      "includedFiles": "含めるファイル",
+      "exportOptions": "エクスポートオプション",
+      "packWithLauncher": "ランチャーを同梱",
+      "minMemory": "最小メモリ (MB)",
+      "noCreateRemoteFiles": "リモートファイルを無効化",
+      "skipCurseForgeRemoteFiles": "CurseForge のリモートファイルをスキップ"
+    },
+    "button": {
+      "export": "エクスポート"
+    },
+    "error": {
+      "invalidName": "有効なモッドパック名を入力してください",
+      "invalidVersion": "有効なバージョン番号を入力してください",
+      "noFileSelected": "含めるファイルまたはフォルダーを少なくとも 1 つ選択してください"
+    },
+    "errorMessage": {
+      "error-1": "名前は空にできません",
+      "error-2": "名前に無効な文字が含まれています",
+      "error-3": "名前が長すぎます（最大 255 文字）"
+    },
+    "fileTreeTranslation": {
+      "mods": "モッド",
+      "config": "モッド設定ファイル",
+      "shaderpacks": "シェーダーパック",
+      "resourcepacks": "リソースパック",
+      "optionsTxt": "ゲーム設定",
+      "saves": "セーブデータ"
+    },
+    "tooltip": {
+      "exportFormat": {
+        "Modrinth": "パッケージサイズが小さく、インポート時にマニフェストから必要なモッドをダウンロードします。",
+        "MultiMC": "主要ランチャーで広くサポートされ、完全なインスタンスとしてパッケージ化されます。"
+      }
+    }
+  },
+  "ExtensionContributionWrapper": {
+    "failedToRender": "この拡張機能の内容を表示できませんでした。"
+  },
+  "ExtensionHostContextProvider": {
+    "extensionProvidedDialog": "このダイアログは拡張機能 {{name}} によって提供されています",
+    "toast": {
+      "activateError": "拡張機能 {{name}} の有効化に失敗"
+    }
+  },
+  "ExtensionInfoModal": {
+    "label": {
+      "author": "作者",
+      "description": "説明"
+    }
+  },
+  "ExtensionOpenExternalLinkConfirmDialog": {
+    "title": "外部リンクを開く",
+    "body": "拡張機能 {{extension}} が外部ブラウザーで {{link}} を開こうとしています。",
+    "button": {
+      "open": "開く"
+    }
+  },
+  "ExtensionSettingsDetailPage": {
+    "title": "{{name}} の設定"
+  },
+  "ExtensionSettingsPage": {
+    "alert": "SJMCL はサードパーティー拡張機能の挙動や個人データの扱いを制御できません。信頼できる提供元の拡張機能のみをインストールして有効化してください。",
+    "fileDnD": {
+      "title": "SJMCL 拡張機能をインストール",
+      "desc": "拡張機能ファイル {{fileName}} を SJMCL にインストール"
+    },
+    "installed": "インストール済みの拡張機能",
+    "menu": {
+      "info": "拡張機能情報"
+    },
+    "top": {
+      "settings": {
+        "extensionDocs": {
+          "title": "拡張機能開発ドキュメント",
+          "description": "拡張機能システムの紹介と API ドキュメントを読み、スキャフォールドですばやく開発を始められます。",
+          "url": "https://mc.sjtu.cn/sjmcl/en/dev/extension/"
+        },
+        "awesomeExtensions": {
+          "title": "コミュニティ拡張機能を探す",
+          "description": "GitHub でコミュニティ製の拡張機能一覧を閲覧します。",
+          "url": "https://github.com/SJMC-Dev/awesome-SJMCL-extensions"
+        }
+      }
+    }
+  },
+  "ExtensionUpdateConfirmDialog": {
+    "title": "拡張機能を更新",
+    "body": "拡張機能 {{identifier}} は {{src}} から新しいバージョン {{version}} をダウンロードしました。インストールを確認しますか？"
+  },
+  "FileDnDProvider": {
+    "fileName": "{{fileName}} など（全{{count}}件）"
+  },
   "GameAdvancedSettingsPage": {
     "title": "高度起動設定",
     "topWarning": "本設定は上級者向けに設計されていますので、以下の項目を変更すると、ゲームの起動不能やデータの破損を引き起こす可能性があります。オプションの機能を完全に理解している場合のみ変更してください。",
@@ -762,8 +896,17 @@
     "jvm": {
       "title": "Java 仮想マシン設定",
       "settings": {
-        "args": {
-          "title": "JVM パラメーター"
+        "garbageCollector": {
+          "title": "ガベージコレクター",
+          "desc": "古い Java バージョンでは特定のガベージコレクターが利用できない場合があります",
+          "options": {
+            "auto": "自動（デフォルト）",
+            "g1gc": "G1GC",
+            "zgc": "ZGC",
+            "shenandoah": "ShenandoahGC",
+            "parallel": "ParallelGC",
+            "serial": "SerialGC"
+          }
         },
         "javaPermanentGenerationSpace": {
           "title": "メモリ永続保存領域(MB)",
@@ -771,6 +914,9 @@
         },
         "environmentVariable": {
           "title": "環境変数"
+        },
+        "args": {
+          "title": "JVM パラメーター"
         }
       }
     },
@@ -789,6 +935,10 @@
         },
         "dontPatchNatives": {
           "title": "ローカルライブラリの自動置換をしない"
+        },
+        "useLwjglUnsafeAgent": {
+          "title": "LWJGL Unsafe Agent を有効にする",
+          "description": "影響を受ける Minecraft バージョンでは、HMCL の <hmcl>LWJGL Unsafe Agent</hmcl> を自動的に使用してパフォーマンス問題を修正します。"
         },
         "useNativeGlfw": {
           "title": "システム GLFW を利用（Linux のみ）"
@@ -946,10 +1096,12 @@
     "notice": "通知",
     "open": "開く",
     "openFolder": "フォルダーを開く",
+    "optional": "任意",
     "previous": "前へ",
     "refresh": "再読み込み",
     "revealFile": "{{opener}}で表示",
     "search": "サーチ",
+    "settings": "設定",
     "share": {
       "text": "共有",
       "toast": {
@@ -970,7 +1122,7 @@
       "settings": {
         "language": {
           "title": "言語（Language）",
-          "communityAck": "USTBL のローカリゼーションはコミュニティによる提供されました。@LAR73 さんのご協力を感謝いたします"
+          "communityAck": "SJMCL のローカリゼーションはコミュニティによる提供されました。@LAR73 さんのご協力を感謝いたします"
         },
         "resourceTranslation": {
           "title": "リソース翻訳",
@@ -989,16 +1141,28 @@
     "functions": {
       "title": "機能設定",
       "settings": {
+        "discoverPage": {
+          "title": "発見ページ",
+          "description": "発見ページで Minecraft やコミュニティのニュースを手軽に閲覧し、ゲームリソースを検索・ダウンロードできます。",
+          "on": "有効",
+          "search-only": "検索のみ",
+          "off": "非表示"
+        },
         "instancesNavType": {
           "title": "インスタンス分類",
           "description": "インスタンスページの左側ナビゲーションバーの表示・グループ化方法を変更",
           "instance": "インスタンス順",
           "directory": "ディレクトリ順",
+          "tag": "タグ別",
           "hidden": "非表示"
         },
         "launchPageQuickSwitch": {
           "title": "クイックスイッチ",
           "description": "起動ページにアカウントとインスタンスの直接選択が可能。"
+        },
+        "autoDownloadJava": {
+          "title": "適切な Java ランタイムを自動ダウンロード",
+          "description": "有効にすると、新しいインスタンス作成時に適切な Java ランタイムがない場合、専用ディレクトリに自動でインストールします"
         }
       }
     },
@@ -1041,7 +1205,7 @@
         "directories": {
           "special": {
             "CURRENT_DIR": "現在フォルダー",
-            "APP_DATA_SUBDIR": "USTBL データフォルダー",
+            "APP_DATA_SUBDIR": "SJMCL データフォルダー",
             "OFFICIAL_DIR": "公式ランチャーフォルダー"
           }
         }
@@ -1142,8 +1306,8 @@
       "content": "ここでアカウントを追加し、プレイしたいキャラクターを選択することができます。"
     },
     "step3": {
-      "title": "Minecraft、起動！",
-      "content": "インスタンスとキャラクターを選択し、関連設定を調整したら、起動ボタンをクリックしてゲームを楽しみましょう 🥳"
+      "title": "発見ページ",
+      "content": "ここでは Minecraft やコミュニティのニュースを閲覧したり、Mod、マップ、Modパックなどの各種リソースを発見・ダウンロードしたりすることができます。<br/>また、キーボードショートカット <key>{{keyname}}</key> + <key>F</key> で「グローバル検索」を素早く開けます。"
     },
     "step4": {
       "title": "Minecraft を起動！",
@@ -1170,8 +1334,8 @@
           "url": "https://www.mualliance.cn"
         },
         "SJMC": {
-          "title": "上海交通大学 Minecraft クラブ（USTB）",
-          "url": "https://www.ustb.world/"
+          "title": "上海交通大学 Minecraft クラブ（SJMC）",
+          "url": "https://mc.sjtu.cn"
         }
       }
     },
@@ -1196,10 +1360,23 @@
     "top": {
       "settings": {
         "LauncherDocs": {
-          "title": "USTB Launcher ドキュメント（中国語）",
-          "url": "https://docs.ustb.world/"
+          "title": "SJMC Launcher ドキュメント（中国語）",
+          "url": "https://mc.sjtu.cn/sjmcl/docs"
+        },
+        "UserGroup": {
+          "title": "ユーザーコミュニティ",
+          "description": "QQ グループや Discord サーバーに参加して、問題報告、機能要望、サポートの相談ができます",
+          "url": "https://mc.sjtu.cn/sjmcl/en/docs/user-group"
         }
       }
+    }
+  },
+  "HomeWidget": {
+    "extraOpMenu": {
+      "moveUp": "このウィジェットを上へ移動",
+      "moveDown": "このウィジェットを下へ移動",
+      "extensionInfo": "拡張機能情報",
+      "settings": "拡張機能の設定を開く"
     }
   },
   "ImportAccountInfoModal": {
@@ -1207,11 +1384,15 @@
       "title": "他のランチャーからアカウント情報をインポート"
     },
     "launcherDesc": {
-      "HMCL": "Hello Minecraft! Launcher"
+      "HMCL": "Hello Minecraft! Launcher",
+      "MultiMC": "MultiMC"
     },
     "body": {
       "authServers": "認証サーバー",
       "players": "キャラクター"
+    },
+    "footer": {
+      "parentDirHint": "追加済みのゲームディレクトリの親ディレクトリから、アカウント情報ファイルを検索します。"
     },
     "tooltips": {
       "existingServer": "同じアドレスの認証サーバーが既に存在するため、インポート時に上書きされます。",
@@ -1267,9 +1448,14 @@
     }
   },
   "InstanceModsPage": {
+    "fileDnD": {
+      "title": "モッドをインストール",
+      "desc": "モッドファイル {{fileName}} をこのインスタンスにインストール"
+    },
     "modLoaderList": {
       "title": "モッドローダー",
-      "notInstalled": "未インストール"
+      "notInstalled": "未インストール",
+      "installed": "インストール済み"
     },
     "modList": {
       "title": "モッド",
@@ -1284,11 +1470,24 @@
     }
   },
   "InstanceResourcePacksPage": {
+    "fileDnD": {
+      "title": "リソースパックを追加",
+      "desc": "リソースパックファイル {{fileName}} をこのインスタンスに追加"
+    },
     "resourcePackList": {
       "title": "グローバルリソースパック"
     },
     "serverResPackList": {
       "title": "サーバーリソースパック"
+    }
+  },
+  "InstanceSchematicsPage": {
+    "fileDnD": {
+      "title": "スキーマティックを追加",
+      "desc": "スキーマティックファイル {{fileName}} をこのインスタンスに追加"
+    },
+    "schematicList": {
+      "title": "スキーマティック"
     }
   },
   "InstanceScreenshotsPage": {
@@ -1299,6 +1498,7 @@
   "InstanceSettingsPage": {
     "name": "インスタンス名称",
     "description": "インスタンス情報",
+    "colorTag": "カラータグ",
     "icon": "インスタンスアイコン",
     "applySettings": "インスタンス限定設定を有効化",
     "restoreSettings": "限定設定をリセット",
@@ -1314,18 +1514,16 @@
     }
   },
   "InstanceShaderPacksPage": {
+    "fileDnD": {
+      "title": "シェーダーパックを追加",
+      "desc": "シェーダーパックファイル {{fileName}} をこのインスタンスに追加"
+    },
     "shaderLoaderList": {
       "title": "ローダー",
       "notInstalled": "未インストール"
     },
     "shaderPackList": {
       "title": "シェーダーパック"
-    }
-  },
-  "InstanceSchematicsPage": {
-    "schematicList": {
-      "title": "スキーマティック",
-      "preview": "プレビュー"
     }
   },
   "InstanceWidgets": {
@@ -1351,6 +1549,10 @@
     }
   },
   "InstanceWorldsPage": {
+    "fileDnD": {
+      "title": "ワールドを追加",
+      "desc": "セーブファイル {{fileName}} をこのインスタンスに追加"
+    },
     "worldList": {
       "title": "ローカルワールド",
       "lastPlayedAt": "前回プレイ：",
@@ -1383,7 +1585,7 @@
     }
   },
   "IntelligenceSettingsPage": {
-    "title": "USTBL AI",
+    "title": "SJMCL AI",
     "description": "AI モデルをランチャーと Minecraft の体験に統合します。",
     "mcpServer": {
       "title": "MCP サービス",
@@ -1396,7 +1598,7 @@
         "docs": {
           "title": "ユーザーガイド",
           "description": "ランチャーを外部エージェントアプリ（Claude、Cherry Studio など）に接続する方法を確認します。",
-          "url": "https://docs.ustb.world/"
+          "url": "https://mc.sjtu.cn/sjmcl/en/docs/intelligence/launcher-mcp"
         },
         "port": {
           "title": "ポート",
@@ -1428,6 +1630,13 @@
       "description": "この Java を削除しますか。（この Java てゲームの起動ができなくなりますが、 Java ファイルの削除はしません。）"
     }
   },
+  "LastExitedAbnormallyDialog": {
+    "dialog": {
+      "title": "前回の実行は異常終了しました",
+      "content": "SJMCL は前回の実行時に異常終了しました。ログを<community>コミュニティ</community>に送るか、<github>GitHub</github> で Issue を作成してサポートを求めてください。",
+      "viewLog": "ログを表示"
+    }
+  },
   "LaunchPage": {
     "button": {
       "launch": "ゲーム起動",
@@ -1457,7 +1666,8 @@
       "launchGame": "ゲーム起動中"
     },
     "toast": {
-      "noSelectedPlayer": "キャラクターを追加して選択してください"
+      "noSelectedPlayer": "キャラクターを追加して選択してください",
+      "noSelectedInstance": "インスタンスを追加して選択してください"
     }
   },
   "LoaderSelector": {
@@ -1466,6 +1676,9 @@
     "releaseDate": "リリース日 {{date}}",
     "notCompatibleWith": "{{item}} に非互換",
     "noVersionSelected": "バージョンを選択していない"
+  },
+  "MainWindowTitlebar": {
+    "extensionProvidedPage": "このページは拡張機能 {{name}} によって提供されています"
   },
   "ManageSkinModal": {
     "skinManage": "スキン管理",
@@ -1508,6 +1721,41 @@
   "MenuSelector": {
     "selectedCount": "{{count}} 個選択済み"
   },
+  "MicrosoftFriendsModal": {
+    "title": "Microsoft アカウント {{name}} の Minecraft フレンド",
+    "placeholder": {
+      "playerName": "フレンド追加用のプレイヤー名を入力"
+    },
+    "group": {
+      "requests": "申請",
+      "friends": "フレンド"
+    },
+    "request": {
+      "incoming": "受信したフレンド申請",
+      "outgoing": "送信したフレンド申請"
+    },
+    "button": {
+      "add": "追加",
+      "accept": "承認",
+      "decline": "拒否",
+      "revoke": "取り消し",
+      "remove": "フレンド削除",
+      "xboxSettings": "XBOX 設定"
+    },
+    "empty": {
+      "requests": "申請はありません",
+      "friends": "フレンドはいません"
+    },
+    "status": {
+      "INVITED": "ワールドへの参加に招待されています",
+      "ONLINE": "オンライン",
+      "PLAYING_OFFLINE": "シングルプレイ中",
+      "PLAYING_REALMS": "Realms プレイ中",
+      "PLAYING_SERVER": "サーバー参加中",
+      "PLAYING_HOSTED_SERVER": "LAN ワールド公開中",
+      "OFFLINE": "オフライン"
+    }
+  },
   "NoSuitableJavaDialog": {
     "title": "このインスタンスに適した Java ランタイムが見つかりません",
     "body": "このインスタンスで利用可能な適切な Java ランタイムがありません。「確認」をクリックして Java 管理ページを開き、Java を手動で追加またはダウンロードしてください。"
@@ -1523,18 +1771,6 @@
       "showAll": "すべて表示（+{{left}}）"
     }
   },
-  "PlayerMenu": {
-    "label": {
-      "manageSkin": "スキン管理",
-      "viewSkin": "スキンを見る",
-      "delete": "キャラクター削除",
-      "copyUUID": "UUID コピー"
-    },
-    "toast": {
-      "refreshing": "キャラクター情報を更新中",
-      "deleting": "キャラクターを削除中"
-    }
-  },
   "PingTestPage": {
     "PingServerList": {
       "title": "サービス接続テスト",
@@ -1548,7 +1784,20 @@
       "neoforge": "NeoForge",
       "authlibInjector": "Authlib Injector",
       "github": "GitHub",
-      "sjmclapi": "USTB Launcher API"
+      "sjmclapi": "SJMC Launcher API"
+    }
+  },
+  "PlayerMenu": {
+    "label": {
+      "friends": "フレンド",
+      "manageSkin": "スキン管理",
+      "viewSkin": "スキンを見る",
+      "delete": "キャラクター削除",
+      "copyUUID": "UUID コピー"
+    },
+    "toast": {
+      "refreshing": "キャラクター情報を更新中",
+      "deleting": "キャラクターを削除中"
     }
   },
   "ReLoginPlayerModal": {
@@ -1564,16 +1813,6 @@
     },
     "button": {
       "login": "ログイン"
-    }
-  },
-  "RestartForUpdateConfirmDialog": {
-    "title": "ランチャー更新",
-    "body": "新しいバージョンのダウンロードが完了しました。USTBL を再起動して更新を完了してください",
-    "bodyMSI": "新しいバージョンのダウンロードが完了しました。インストールをクリックすると USTBL が閉じ、インストーラーが実行されます",
-    "button": {
-      "restart": "再起動",
-      "install": "インストール",
-      "later": "後で"
     }
   },
   "ResourceDownloader": {
@@ -1860,6 +2099,16 @@
       "All": "すべて"
     }
   },
+  "RestartForUpdateConfirmDialog": {
+    "title": "ランチャー更新",
+    "body": "新しいバージョンのダウンロードが完了しました。SJMCL を再起動して更新を完了してください",
+    "bodyMSI": "新しいバージョンのダウンロードが完了しました。インストールをクリックすると SJMCL が閉じ、インストーラーが実行されます",
+    "button": {
+      "restart": "再起動",
+      "install": "インストール",
+      "later": "後で"
+    }
+  },
   "RestoreConfigConfirmDialog": {
     "title": "ランチャー設定復元",
     "body": "ランチャーの設定をデフォルトに復元しますか。"
@@ -1876,9 +2125,17 @@
       "setAsBg": "これをランチャーのバックグラウンドにする"
     }
   },
+  "SelectInstanceModal": {
+    "header": {
+      "title": "インスタンスを選択",
+      "titleForLaunch": "起動するインスタンスを選択"
+    }
+  },
   "SelectPlayerModal": {
     "header": {
-      "title": "追加のキャラクターを選んでください。"
+      "title": "キャラクターを選択",
+      "titleForAdd": "追加する新しいキャラクターを選択",
+      "titleForLaunch": "プレイするキャラクターを選択"
     }
   },
   "Services": {
@@ -1988,6 +2245,7 @@
           "title": "オフラインキャラクターの追加に失敗",
           "description": {
             "DUPLICATE": "キャラクターがすでに存在",
+            "FULL_LOGIN_UNAVAILABLE": "この機能を使用するには、まず Microsoft アカウントでログインしてください。",
             "INVALID": "UUID が無効です",
             "TEXTURE_ERROR": "キャラクタースキンの取得に失敗"
           }
@@ -2010,12 +2268,20 @@
           "title": "キャラクターの追加に失敗",
           "description": {
             "DUPLICATE": "キャラクターがすでに存在",
+            "FULL_LOGIN_UNAVAILABLE": "この機能を使用するには、まず Microsoft アカウントでログインしてください。",
             "NETWORK_ERROR": "認証サーバーへの接続に失敗",
             "PARSE_ERROR": "サーバー応答データ形式エラー",
             "NOT_FOUND": "認証サーバーが見つからない",
             "CANCELLED": "キャンセルした",
             "INVALID": "無効な認証サーバーアドレス",
-            "NO_MINECRAFT_PROFILE": "キャラクターが見つかりません。Minecraft を購入済みか確認してください"
+            "NO_MINECRAFT_PROFILE": "キャラクターが見つかりません。Minecraft を購入済みか確認してください",
+            "XSTS_BANNED": "お使いのアカウントは XBOX によって封禁されています",
+            "XSTS_PARENTAL_RESTRICTION": "お使いのアカウントは保護者の制限によりブロックされています",
+            "XSTS_NO_XBOX_ACCOUNT": "Microsoft アカウントに XBOX アカウントが関連付けられていません、minecraft.net で作成してください",
+            "XSTS_TERMS_NOT_ACCEPTED": "続行するには XBOX 利用規約への同意が必要です",
+            "XSTS_REGION_BANNED": "お使いのアカウントは、XBOX Live が利用できない国または地域のものです",
+            "XSTS_CHILD_ACCOUNT": "お使いのアカウントは未成年アカウントです、family.microsoft.com で保護者の承認が必要です",
+            "XSTS_UNKNOWN_ERROR": "XSTS 認証中に不明なエラーが発生しました"
           }
         }
       },
@@ -2030,7 +2296,14 @@
             "NETWORK_ERROR": "認証サーバーに接続できません",
             "INVALID": "オフラインキャラクターの更新に非対応",
             "CANCELLED": "キャンセルしました",
-            "NO_MINECRAFT_PROFILE": "キャラクターが見つかりません。Minecraft を購入し、キャラクターを作成済みであることをご確認ください"
+            "NO_MINECRAFT_PROFILE": "キャラクターが見つかりません。Minecraft を購入し、キャラクターを作成済みであることをご確認ください",
+            "XSTS_BANNED": "お使いのアカウントは XBOX によって封禁されています",
+            "XSTS_PARENTAL_RESTRICTION": "お使いのアカウントは保護者の制限によりブロックされています",
+            "XSTS_NO_XBOX_ACCOUNT": "Microsoft アカウントに XBOX アカウントが関連付けられていません、minecraft.net で作成してください",
+            "XSTS_TERMS_NOT_ACCEPTED": "続行するには XBOX 利用規約への同意が必要です",
+            "XSTS_REGION_BANNED": "お使いのアカウントは、XBOX Live が利用できない国または地域のものです",
+            "XSTS_CHILD_ACCOUNT": "お使いのアカウントは未成年アカウントです、family.microsoft.com で保護者の承認が必要です",
+            "XSTS_UNKNOWN_ERROR": "XSTS 認証中に不明なエラーが発生しました"
           }
         }
       },
@@ -2040,6 +2313,7 @@
           "title": "キャラクターの追加に失敗",
           "description": {
             "DUPLICATE": "キャラクターがすでに存在",
+            "FULL_LOGIN_UNAVAILABLE": "この機能を使用するには、まず Microsoft アカウントでログインしてください。",
             "NETWORK_ERROR": "認証サーバーへの接続に失敗",
             "PARSE_ERROR": "サーバー応答データ形式エラー",
             "INVALID": "ログイン情報が間違っている",
@@ -2067,6 +2341,7 @@
           "title": "キャラクターの追加に失敗",
           "description": {
             "DUPLICATE": "キャラクターがすでに存在",
+            "FULL_LOGIN_UNAVAILABLE": "この機能を使用するには、まず Microsoft アカウントでログインしてください。",
             "NETWORK_ERROR": "認証サーバーに接続できません",
             "PARSE_ERROR": "サーバー応答データ形式エラー",
             "EXPIRED": "トークンの有効期限が切れました。再ログインしてください"
@@ -2114,6 +2389,41 @@
             "PARSE_ERROR": "サーバー応答データ形式エラー",
             "NETWORK_ERROR": "認証サーバーへの接続に失敗",
             "INVALID": "オフラインキャラクターの更新に非対応"
+          }
+        }
+      },
+      "retrieveMicrosoftFriendList": {
+        "success": "フレンド一覧を取得しました",
+        "error": {
+          "title": "Microsoft フレンド一覧の取得に失敗しました",
+          "description": {
+            "NOT_FOUND": "キャラクターが見つかりません",
+            "INVALID": "現在のキャラクターは Microsoft アカウントではありません",
+            "EXPIRED": "トークンの有効期限が切れています。再ログインしてください",
+            "PARSE_ERROR": "サーバー応答データ形式エラー",
+            "NETWORK_ERROR": "Minecraft サービスに接続できませんでした",
+            "FORBIDDEN": "このアカウントではフレンド機能を利用できません",
+            "TOO_MANY_REQUESTS": "リクエストが多すぎます。しばらくしてから再試行してください",
+            "SERVICE_UNAVAILABLE": "Minecraft サービスは一時的に利用できません"
+          }
+        }
+      },
+      "updateMicrosoftFriend": {
+        "success": "フレンド操作が完了しました",
+        "error": {
+          "title": "Microsoft フレンド操作に失敗しました",
+          "description": {
+            "NOT_FOUND": "キャラクターが見つかりません",
+            "INVALID": "フレンド操作のパラメータが無効です",
+            "EXPIRED": "トークンの有効期限が切れています。再ログインしてください",
+            "PARSE_ERROR": "サーバー応答データ形式エラー",
+            "NETWORK_ERROR": "Minecraft サービスに接続できませんでした",
+            "FORBIDDEN": "現在フレンドを追加できません。あなたと相手のアカウント設定を確認してください",
+            "TOO_MANY_REQUESTS": "リクエストが多すぎます。しばらくしてから再試行してください",
+            "SERVICE_UNAVAILABLE": "Minecraft サービスは一時的に利用できません",
+            "UNKNOWN_PROFILE": "対象プレイヤーが存在しません",
+            "CANNOT_ADD_SELF": "自分自身をフレンド追加することはできません",
+            "DUPLICATED_PROFILES": "重複したフレンド操作リクエストです"
           }
         }
       },
@@ -2240,6 +2550,14 @@
             "PARSE_ERROR": "サーバー応答データ形式エラー",
             "NETWORK_ERROR": "サーバーに接続できません",
             "NO_DOWNLOAD_API": "利用可能なダウンロードポリシーがありません。ネットワーク状況を確認してください。"
+          }
+        }
+      },
+      "fetchOptiFineVersionList": {
+        "error": {
+          "title": "OptiFine バージョン一覧の取得に失敗",
+          "description": {
+            "NETWORK_ERROR": "サーバーに接続できません"
           }
         }
       },
@@ -2374,7 +2692,7 @@
           }
         }
       },
-      "copyResourceToInstances": {
+      "copyResourcesToInstances": {
         "success": "リソースをコピーした",
         "error": {
           "title": "リソースのコピーに失敗",
@@ -2509,6 +2827,23 @@
           }
         }
       },
+      "finishOptiFineLoaderInstall": {
+        "loading": "{{instanceName}} に OptiFine をインストール中",
+        "success": "OptiFine のインストールが完了",
+        "error": {
+          "title": "OptiFine のインストールに失敗",
+          "description": {
+            "INSTANCE_NOT_FOUND_BY_ID": "インスタンス ID が存在しません",
+            "INSTALLATION_DUPLICATED": "別のインストール処理がすでに進行中です",
+            "PROCESSOR_EXECUTION_FAILED": "インストール処理の実行に失敗",
+            "LOADER_INSTALLER_NOT_FOUND": "OptiFine インストーラーが見つかりません",
+            "MOD_LOADER_VERSION_PARSE_ERROR": "OptiFine のバージョン情報の解析に失敗",
+            "INVALID_SOURCE_PATH": "ソースパスが無効です",
+            "NO_SUITABLE_JAVA": "適切な Java ランタイムが見つかりません",
+            "SELECTED_JAVA_UNAVAILABLE": "選択した Java ランタイムは利用できません"
+          }
+        }
+      },
       "checkChangeModLoaderAvailablity": {
         "error": {
           "title": "モッドローダーを変更できません",
@@ -2530,14 +2865,58 @@
           "title": "モッドパックリソース情報の取得に失敗",
           "description": {
             "FILE_NOT_FOUND_ERROR": "モッドパックファイルが存在しません。名前変更、移動、または削除された可能性があります",
-            "MODPACK_MANIFEST_PARSE_ERROR": "モッドパックマニフェストファイルの解析エラー"
+            "MODPACK_MANIFEST_PARSE_ERROR": "モッドパックマニフェストファイルの解析エラー",
+            "NETWORK_ERROR": "モッドパックに必要な Mod ローダー情報の取得に失敗しました。ネットワーク接続を確認してください",
+            "MOD_LOADER_VERSION_PARSE_ERROR": "このモッドパックに必要な Mod ローダーのバージョンを判別できません"
           }
+        }
+      },
+      "retrieveExportableFileList": {
+        "error": {
+          "title": "エクスポート可能なファイル一覧の取得に失敗"
+        }
+      },
+      "exportModpack": {
+        "success": "モッドパックをエクスポートした",
+        "error": {
+          "title": "モッドパックのエクスポートに失敗"
         }
       },
       "addCustomInstanceIcon": {
         "success": "カスタムインスタンスアイコンを追加しました",
         "error": {
           "title": "カスタムインスタンスアイコンの追加に失敗しました"
+        }
+      }
+    },
+    "extension": {
+      "retrieveExtensionList": {
+        "error": {
+          "title": "拡張機能一覧の取得に失敗"
+        }
+      },
+      "addExtension": {
+        "success": "拡張機能の追加に成功",
+        "error": {
+          "title": "拡張機能の追加に失敗",
+          "description": {
+            "INVALID_PACKAGE_FORMAT": "拡張機能パッケージの内容形式が無効です",
+            "INVALID_IDENTIFIER": "拡張機能識別子が無効です",
+            "IDENTIFIER_MISMATCH": "拡張機能識別子が想定と一致しません",
+            "INVALID_NAME": "拡張機能名が無効です",
+            "LAUNCHER_VERSION_TOO_LOW": "ランチャーバージョンが低すぎます",
+            "EXTENSION_NOT_FOUND": "対象のパッケージファイルが見つかりません"
+          }
+        }
+      },
+      "deleteExtension": {
+        "success": "拡張機能の削除に成功",
+        "error": {
+          "title": "拡張機能の削除に失敗",
+          "description": {
+            "INVALID_IDENTIFIER": "拡張機能識別子が無効です",
+            "EXTENSION_NOT_FOUND": "拡張機能が見つかりません"
+          }
         }
       }
     },
@@ -2572,9 +2951,9 @@
       "appearance": "表示",
       "download": "ダウンロード",
       "intelligence": "AI",
+      "extension": "拡張機能",
       "help": "マニュアルとヘルプ",
-      "about": "バージョン情報",
-      "dev-test": "開発・テストページ"
+      "about": "バージョン情報"
     }
   },
   "SkinPreview": {
@@ -2622,9 +3001,9 @@
   },
   "StarUsModal": {
     "header": {
-      "title": "GitHub で USTBL をスター"
+      "title": "GitHub で SJMCL をスター"
     },
-    "body": "USTBL にご支援をお考えの場合は、GitHub リポジトリへのスターの付与をご検討ください。コミュニティーからの評価は開発チームの重要な指標となりまして、品質向上の原動力となっております。",
+    "body": "SJMCL にご支援をお考えの場合は、GitHub リポジトリへのスターの付与をご検討ください。コミュニティーからの評価は開発チームの重要な指標となりまして、品質向上の原動力となっております。",
     "button": {
       "later": "あとで",
       "starUs": "スターを付与"
@@ -2658,7 +3037,7 @@
   "UnavailableExePathAlertDialog": {
     "dialog": {
       "title": "安全でない実行パス",
-      "content": "USTBL は一時ディレクトリまたは無効なディレクトリから実行されています。設定やゲームデータが失われる可能性があります。USTBL を別の場所へ移動して再実行してください。",
+      "content": "SJMCL は一時ディレクトリまたは無効なディレクトリから実行されています。設定やゲームデータが失われる可能性があります。SJMCL を別の場所へ移動して再実行してください。",
       "btnContinue": "このまま実行"
     }
   },
@@ -2695,11 +3074,11 @@
       "title": "ようこそ！"
     },
     "body": {
-      "text": "USTBL をご利用いただき、ありがとうございます。開始前に、必ず下記の<terms>利用規約</terms>をお読みいただき、同意をお願いいたします。"
+      "text": "SJMCL をご利用いただき、ありがとうございます。開始前に、必ず下記の<terms>利用規約</terms>をお読みいただき、同意をお願いいたします。"
     },
     "warning": {
-      "unstableVersion": "{{versionLabel}}の USTBL を使用しています。一部の機能が不安定または開発未完了の可能性があります。使用上の問題や機能の提案を報告いただければ幸いです。",
-      "winArm64Notice": "USTBL は Windows on Arm プラットフォームに対応しました。<br/> <b>Qualcomm</b> プラットフォームをご利用の場合、ゲームを起動する前に <glpack>OpenGL 互換パック</glpack> のインストールが必要な場合があります。"
+      "unstableVersion": "{{versionLabel}}の SJMCL を使用しています。一部の機能が不安定または開発未完了の可能性があります。使用上の問題や機能の提案を報告いただければ幸いです。",
+      "winArm64Notice": "SJMCL は Windows on Arm プラットフォームに対応しました。<br/> <b>Qualcomm</b> プラットフォームをご利用の場合、ゲームを起動する前に <glpack>OpenGL 互換パック</glpack> のインストールが必要な場合があります。"
     },
     "button": {
       "agree": "同意して続ける"

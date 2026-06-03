@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "USTBL",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "identifier": "USTBL",
   "build": {
     "frontendDist": "../out",
@@ -10,45 +10,6 @@
     "beforeBuildCommand": "npm run build"
   },
   "app": {
-    "windows": [
-      {
-        "label": "main",
-        "title": " ",
-        "url": "/",
-        "width": 800,
-        "height": 550,
-        "minWidth": 800,
-        "minHeight": 550,
-        "center": true,
-        "decorations": false,
-        "transparent": true,
-        "dragDropEnabled": false
-      },
-      {
-        "label": "game_error",
-        "create": false,
-        "title": "Game Error",
-        "url": "/standalone/game-error",
-        "width": 800,
-        "height": 550,
-        "minWidth": 640,
-        "minHeight": 440,
-        "center": true,
-        "dragDropEnabled": false
-      },
-      {
-        "label": "game_log",
-        "create": false,
-        "title": "Game Log",
-        "url": "/standalone/game-log",
-        "width": 800,
-        "height": 550,
-        "minWidth": 640,
-        "minHeight": 440,
-        "center": true,
-        "dragDropEnabled": false
-      }
-    ],
     "security": {
       "csp": null,
       "assetProtocol": {
@@ -82,19 +43,19 @@
         ]
       }
     },
-    "resources": [
-      "assets/skins/*",
-      "assets/game/*",
-      "assets/icons/icon.ico",
-      "assets/icons/variants/square.png",
-      "assets/db/*"
-    ]
+    "resources": {
+      "assets/skins/*": "assets/skins/",
+      "assets/game/*": "assets/game/",
+      "assets/icons/icon.ico": "assets/icons/icon.ico",
+      "assets/icons/variants/square.png": "assets/icons/variants/square.png",
+      "assets/db/*": "assets/db/"
+    }
   },
   "plugins": {
     "deep-link": {
       "desktop": {
         "schemes": [
-          "sjmcl"
+          "ustbl"
         ]
       }
     },

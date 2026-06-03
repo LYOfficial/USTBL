@@ -34,11 +34,15 @@ const DevTestPage = () => {
       {/* Use this button to navigate to pages awaiting testing but not directly accessible (e.g. game-log) */}
       <Button
         onClick={() => {
-          createWindow("", "/standalone/game-error", {
-            title: "Game Error",
-            minWidth: 640,
-            minHeight: 440,
-          });
+          createWindow(
+            `game_error_dev_${Date.now()}`,
+            "/standalone/game-error",
+            {
+              title: "Game Error",
+              minWidth: 640,
+              minHeight: 440,
+            }
+          );
         }}
       >
         Create New Window

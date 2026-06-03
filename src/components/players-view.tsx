@@ -1,11 +1,11 @@
 import { Box, BoxProps, HStack, Radio, RadioGroup } from "@chakra-ui/react";
-import { useTranslation } from "react-i18next";
 import Empty from "@/components/common/empty";
 import { OptionItemGroup } from "@/components/common/option-item";
 import { WrapCardGroup } from "@/components/common/wrap-card";
 import PlayerAvatar from "@/components/player-avatar";
 import PlayerMenu from "@/components/player-menu";
 import { useLauncherConfig } from "@/contexts/config";
+import { PlayerType } from "@/enums/account";
 import { Player } from "@/models/account";
 import { generatePlayerDesc } from "@/utils/account";
 
@@ -13,6 +13,8 @@ interface PlayersViewProps extends BoxProps {
   players: Player[];
   selectedPlayer: Player | undefined;
   viewType: string;
+  showDesc?: boolean;
+  onSelectPlayer?: (player: Player) => void;
   onSelectCallback?: () => void;
   withMenu?: boolean;
 }
@@ -21,27 +23,32 @@ const PlayersView: React.FC<PlayersViewProps> = ({
   players,
   selectedPlayer,
   viewType,
+  showDesc = true,
+  onSelectPlayer,
   onSelectCallback = () => {},
   withMenu = true,
   ...boxProps
 }) => {
-  const { t } = useTranslation();
   const { config, update } = useLauncherConfig();
   const primaryColor = config.appearance.theme.primaryColor;
 
-  const handleUpdateSelectedPlayer = (playerId: string) => {
-    update("states.shared.selectedPlayerId", playerId);
+  const handleSelectPlayer = (player: Player) => {
+    if (onSelectPlayer) {
+      onSelectPlayer(player);
+    } else {
+      update("states.shared.selectedPlayerId", player.id);
+    }
     onSelectCallback();
   };
 
   const listItems = players.map((player) => ({
     title: player.name,
-    description: generatePlayerDesc(player, true),
+    description: showDesc ? generatePlayerDesc(player, true) : undefined,
     prefixElement: (
       <HStack spacing={2.5}>
         <Radio
           value={player.id}
-          onClick={() => handleUpdateSelectedPlayer(player.id)}
+          onClick={() => handleSelectPlayer(player)}
           colorScheme={primaryColor}
         />
         <PlayerAvatar avatar={player.avatar} boxSize="32px" objectFit="cover" />
@@ -51,7 +58,7 @@ const PlayersView: React.FC<PlayersViewProps> = ({
       ? {}
       : {
           isFullClickZone: true,
-          onClick: () => handleUpdateSelectedPlayer(player.id),
+          onClick: () => handleSelectPlayer(player),
         }),
     children: withMenu ? (
       <PlayerMenu player={player} variant="buttonGroup" />
@@ -63,7 +70,7 @@ const PlayersView: React.FC<PlayersViewProps> = ({
   const gridItems = players.map((player) => ({
     cardContent: {
       title: player.name,
-      description: generatePlayerDesc(player, false),
+      description: showDesc ? generatePlayerDesc(player, false) : "",
       image: (
         <PlayerAvatar avatar={player.avatar} boxSize="36px" objectFit="cover" />
       ),
@@ -71,14 +78,17 @@ const PlayersView: React.FC<PlayersViewProps> = ({
         ? {
             extraContent: (
               <Box position="absolute" top={0.5} right={1}>
-                <PlayerMenu player={player} />
+                <PlayerMenu
+                  player={player}
+                  withFriendsButton={player.playerType === PlayerType.Microsoft}
+                />
               </Box>
             ),
           }
         : {}),
     },
     isSelected: selectedPlayer?.id === player.id,
-    onSelect: () => handleUpdateSelectedPlayer(player.id),
+    onSelect: () => handleSelectPlayer(player),
     radioValue: player.id,
   }));
 

@@ -16,11 +16,11 @@
         "contributors": {
           "title": "開發者名單"
         },
-        "reportIssue": {
-          "title": "報告問題或請求功能"
+        "sourceCode": {
+          "title": "在 GitHub 檢視原始碼"
         },
         "aboutSJMC": {
-          "title": "關於上海交通大學 Minecraft 社（USTB）"
+          "title": "關於上海交通大學 Minecraft 社（SJMC）"
         }
       }
     },
@@ -58,11 +58,11 @@
       "settings": {
         "copyright": {
           "title": "版權",
-          "description": "版權所有 © 2024-2026 USTBL 開發團隊."
+          "description": "版權所有 © 2024-2026 SJMCL 開發團隊."
         },
         "userAgreement": {
           "title": "使用者協議",
-          "url": "https://docs.ustb.world/"
+          "url": "https://mc.sjtu.cn/sjmcl/docs/tos"
         },
         "openSourceLicense": {
           "title": "開源協議",
@@ -112,6 +112,12 @@
         "title": "下載服務端",
         "description": "下載各版本原版遊戲服務端檔案"
       }
+    }
+  },
+  "MainLayout": {
+    "fileDnD": {
+      "title": "匯入模組包",
+      "desc": "將模組包檔案 {{fileName}} 匯入到 SJMCL"
     }
   },
   "AddAuthServerModal": {
@@ -172,7 +178,7 @@
         "title": "高階選項",
         "uuid": {
           "label": "UUID",
-          "placeholder": "（由 USTBL 自動生成）",
+          "placeholder": "（由 SJMCL 自動生成）",
           "errorMessage": "UUID 格式不正確"
         }
       }
@@ -201,7 +207,7 @@
       "description": {
         "start": {
           "3rdparty": "此認證源支援 Yggdrasil Connect 規範提案",
-          "microsoft": "USTBL 支援微軟 OAuth 2.0 裝置許可權授予流"
+          "microsoft": "SJMCL 支援微軟 OAuth 2.0 裝置許可權授予流"
         },
         "next": "請點選繼續登入按鈕跳轉登入頁面，輸入以上程式碼（已自動複製）"
       },
@@ -283,7 +289,8 @@
           "title": "頂部導航欄樣式",
           "type": {
             "standard": "標準",
-            "simplified": "簡約"
+            "simplified": "簡約",
+            "adaptive": "自適應"
           }
         }
       }
@@ -320,17 +327,11 @@
         }
       },
       "presetBgList": {
-        "tyg1200": {
-          "name": "北京科技大學體育館"
-        },
-        "Jokull": {
-          "name": "銀淞雪鎮"
+        "Florwyn": {
+          "name": "櫻滿集"
         },
         "SJTU-eastgate": {
           "name": "SJTU 紫氣東來門"
-        },
-        "GNLXC": {
-          "name": "GNWork 理想城"
         }
       }
     },
@@ -346,16 +347,26 @@
       }
     }
   },
-  "ChangeModLoaderModal": {
+  "ChangeLoaderModal": {
     "header": {
-      "title": {
-        "change": "修改模組載入器",
-        "install": "安裝模組載入器"
+      "modloader": {
+        "title": {
+          "change": "修改模組載入器",
+          "install": "安裝模組載入器"
+        }
+      },
+      "optifine": {
+        "title": {
+          "change": "修改 OptiFine",
+          "install": "安裝 OptiFine"
+        }
       }
     },
     "notSelectedLoader": "未選擇新的載入器",
+    "notSelectedOptifine": "未選擇新的 OptiFine",
     "footer": {
       "installFabricApi": "同時安裝 Fabric API 模組",
+      "installQFAPI": "同時安裝 QFAPI / QSL 模組（如果可用）",
       "reinstall": "重新安裝"
     }
   },
@@ -424,7 +435,8 @@
       "info": "基本設定"
     },
     "footer": {
-      "installFabricApi": "同時安裝 Fabric API 模組"
+      "installFabricApi": "同時安裝 Fabric API 模組",
+      "installQFAPI": "同時安裝 QFAPI / QSL 模組（如果可用）"
     }
   },
   "CreateRenamedInstShortcutAlertDialog": {
@@ -434,6 +446,12 @@
     "dialog": {
       "title": "刪除認證伺服器",
       "content": "確定要刪除認證伺服器「{{name}}」嗎？它將不再出現在你的伺服器清單中。"
+    }
+  },
+  "DeleteGameFriendDialog": {
+    "dialog": {
+      "title": "刪除好友",
+      "content": "確定要刪除好友 “{{name}}” 嗎？"
     }
   },
   "DeleteGameServerAlertDialog": {
@@ -509,7 +527,7 @@
       "type": "類型"
     },
     "warning": {
-      "mojang": "由 Mojang 分發的 Java 執行時將由 USTBL 安裝到特定目錄",
+      "mojang": "由 Mojang 分發的 Java 執行時將由 SJMCL 安裝到特定目錄",
       "oracle": "從 Oracle 源下載可能需要登入"
     }
   },
@@ -575,6 +593,7 @@
     },
     "proxy": {
       "title": "Proxy",
+      "headExtra": "需要重新啟動",
       "settings": {
         "enabled": {
           "title": "啟用 Proxy"
@@ -621,8 +640,10 @@
     },
     "task": {
       "game-client": "遊戲用戶端 {{param}}",
+      "game-client-w-java": "遊戲用戶端 {{param1}}（包含 Java {{param2}}）",
       "game-server": "遊戲服務端 {{param}}",
       "change-mod-loader": "修改模組載入器 {{param}}",
+      "change-optifine": "修改 OptiFine {{param}}",
       "mod": "模組",
       "world": "存檔",
       "resourcepack": "資源包",
@@ -634,7 +655,9 @@
       "retry": "重試",
       "neoforge-libraries": "NeoForge 執行庫",
       "forge-libraries": "Forge 執行庫",
+      "optifine-libraries": "OptiFine 執行庫",
       "launcher-update": "更新啟動器",
+      "extension-update": "更新擴充套件 {{param1}} {{param2}}",
       "mojang-java": "Java {{param}} 執行時"
     }
   },
@@ -690,6 +713,14 @@
   "Empty": {
     "noData": "無資料"
   },
+  "EnableExtensionConfirmDialog": {
+    "title": "啟用擴充套件",
+    "body": "是否確認啟用來自 <hl>{{author}}</hl> 的 <hl>{{name}}</hl>（<hl>{{identifier}}</hl>）擴充套件？",
+    "button": {
+      "enable": "啟用"
+    },
+    "unknownDeveloper": "未知開發者"
+  },
   "Enums": {
     "chakraColors": {
       "gray": "灰色",
@@ -735,6 +766,109 @@
       "windows": "檔案總管"
     }
   },
+  "ExportModpackModal": {
+    "header": {
+      "title": "將 {{param}} 匯出為模組包"
+    },
+    "label": {
+      "exportFormat": "匯出格式",
+      "basicInfo": "基本資訊",
+      "modpackName": "模組包名稱",
+      "modpackVersion": "模組包版本",
+      "author": "作者",
+      "description": "描述",
+      "includedFiles": "包含檔案",
+      "exportOptions": "匯出選項",
+      "packWithLauncher": "打包啟動器",
+      "minMemory": "最低記憶體 (MB)",
+      "noCreateRemoteFiles": "停用遠端檔案",
+      "skipCurseForgeRemoteFiles": "略過 CurseForge 遠端檔案"
+    },
+    "button": {
+      "export": "匯出"
+    },
+    "error": {
+      "invalidName": "請輸入有效的模組包名稱",
+      "invalidVersion": "請輸入有效的版本號",
+      "noFileSelected": "請至少選擇一個要包含的檔案或資料夾"
+    },
+    "errorMessage": {
+      "error-1": "名稱不能為空",
+      "error-2": "名稱包含無效字元",
+      "error-3": "名稱過長（最多 255 個字元）"
+    },
+    "fileTreeTranslation": {
+      "mods": "模組",
+      "config": "模組設定檔",
+      "shaderpacks": "光影",
+      "resourcepacks": "資源包",
+      "optionsTxt": "遊戲設定",
+      "saves": "存檔"
+    },
+    "tooltip": {
+      "exportFormat": {
+        "Modrinth": "封包更小，匯入時會依清單下載所需模組",
+        "MultiMC": "主流啟動器廣泛支援，打包為完整實例"
+      }
+    }
+  },
+  "ExtensionContributionWrapper": {
+    "failedToRender": "擴充套件內容渲染失敗。"
+  },
+  "ExtensionHostContextProvider": {
+    "extensionProvidedDialog": "目前對話框由擴充套件 {{name}} 提供",
+    "toast": {
+      "activateError": "啟用擴充套件 {{name}} 失敗"
+    }
+  },
+  "ExtensionInfoModal": {
+    "label": {
+      "author": "作者",
+      "description": "描述"
+    }
+  },
+  "ExtensionOpenExternalLinkConfirmDialog": {
+    "title": "開啟外部連結",
+    "body": "擴充套件 {{extension}} 想要在外部瀏覽器中開啟 {{link}}",
+    "button": {
+      "open": "開啟"
+    }
+  },
+  "ExtensionSettingsDetailPage": {
+    "title": "{{name}} 設定"
+  },
+  "ExtensionSettingsPage": {
+    "alert": "SJMCL 無法控制第三方擴充套件的行為，包括它們如何處理你的個人資料。請僅安裝並啟用來自可信來源的擴充套件。",
+    "fileDnD": {
+      "title": "安裝 SJMCL 擴充套件",
+      "desc": "將擴充套件檔案 {{fileName}} 安裝到 SJMCL"
+    },
+    "installed": "已安裝擴充套件",
+    "menu": {
+      "info": "檢視資訊"
+    },
+    "top": {
+      "settings": {
+        "extensionDocs": {
+          "title": "擴充套件開發文件",
+          "description": "閱讀擴充套件系統介紹與 API 文件，使用腳手架快速上手",
+          "url": "https://mc.sjtu.cn/sjmcl/dev/extension/"
+        },
+        "awesomeExtensions": {
+          "title": "探索社群擴充套件",
+          "description": "前往 GitHub 瀏覽社群開發的擴充套件列表",
+          "url": "https://github.com/SJMC-Dev/awesome-SJMCL-extensions"
+        }
+      }
+    }
+  },
+  "ExtensionUpdateConfirmDialog": {
+    "title": "更新擴充套件",
+    "body": "擴充套件 {{identifier}} 已從 {{src}} 下載新版本 {{version}}，是否確認安裝？"
+  },
+  "FileDnDProvider": {
+    "fileName": "{{fileName}} 等（共 {{count}} 個）"
+  },
   "GameAdvancedSettingsPage": {
     "title": "高階遊戲設定",
     "topWarning": "高階遊戲設定僅提供給專業玩家使用。修改以下選項可能導致遊戲無法啟動。除非您充分了解其中的意義，否則請不要修改這些選項！",
@@ -762,8 +896,17 @@
     "jvm": {
       "title": "Java 虛擬機器設定",
       "settings": {
-        "args": {
-          "title": "Java 虛擬機器引數"
+        "garbageCollector": {
+          "title": "垃圾回收器",
+          "desc": "較低版本的 Java 可能不包含特定的垃圾回收器",
+          "options": {
+            "auto": "自動（預設）",
+            "g1gc": "G1GC",
+            "zgc": "ZGC",
+            "shenandoah": "ShenandoahGC",
+            "parallel": "ParallelGC",
+            "serial": "SerialGC"
+          }
         },
         "javaPermanentGenerationSpace": {
           "title": "記憶體永久儲存區域",
@@ -771,6 +914,9 @@
         },
         "environmentVariable": {
           "title": "環境變數"
+        },
+        "args": {
+          "title": "Java 虛擬機器引數"
         }
       }
     },
@@ -789,6 +935,10 @@
         },
         "dontPatchNatives": {
           "title": "不嘗試自動取代本機庫"
+        },
+        "useLwjglUnsafeAgent": {
+          "title": "啟用 LWJGL Unsafe Agent",
+          "description": "在受影響的 Minecraft 版本中使用來自 HMCL 的 <hmcl>LWJGL Unsafe Agent</hmcl> 修復效能問題"
         },
         "useNativeGlfw": {
           "title": "使用系統 GLFW（僅 Linux）"
@@ -946,10 +1096,12 @@
     "notice": "提示",
     "open": "開啟",
     "openFolder": "開啟目錄",
+    "optional": "可選",
     "previous": "上一步",
     "refresh": "重新整理",
     "revealFile": "在{{opener}}中顯示",
     "search": "搜尋",
+    "settings": "設定",
     "share": {
       "text": "分享",
       "toast": {
@@ -989,16 +1141,28 @@
     "functions": {
       "title": "功能",
       "settings": {
+        "discoverPage": {
+          "title": "發現頁",
+          "description": "在發現頁便捷地瀏覽 Minecraft 與社群新聞、搜尋與下載遊戲資源",
+          "on": "開啟",
+          "search-only": "僅顯示搜尋",
+          "off": "隱藏"
+        },
         "instancesNavType": {
           "title": "實例頁導航欄模式",
           "description": "更改實例頁左側導航欄是否顯示、分組方式",
           "instance": "按實例",
           "directory": "按目錄",
+          "tag": "按標籤",
           "hidden": "隱藏"
         },
         "launchPageQuickSwitch": {
           "title": "快捷切換實例與帳戶",
           "description": "啟用後，點選啟動頁的切換按鈕可直接選擇帳戶或實例，而無需跳轉頁面"
+        },
+        "autoDownloadJava": {
+          "title": "自動下載可用版本 Java 執行時",
+          "description": "啟用後，新建實例時若不存在可用版本的 Java 執行時，將自動安裝至特定目錄"
         }
       }
     },
@@ -1041,14 +1205,14 @@
         "directories": {
           "special": {
             "CURRENT_DIR": "目前目錄",
-            "APP_DATA_SUBDIR": "USTBL 資料目錄",
+            "APP_DATA_SUBDIR": "SJMCL 資料目錄",
             "OFFICIAL_DIR": "官方啟動器目錄"
           }
         }
       },
       "deleteDialog": {
         "title": "刪除遊戲目錄",
-        "content": "確定要刪除遊戲目錄 {{dirName}} 嗎？（USTBL 將不會掃描此目錄，但不會刪除硬碟上的檔案）"
+        "content": "確定要刪除遊戲目錄 {{dirName}} 嗎？（SJMCL 將不會掃描此目錄，但不會刪除硬碟上的檔案）"
       },
       "directoryNotExist": "該目錄不存在，請刪除並重新新增"
     },
@@ -1142,8 +1306,8 @@
       "content": "在此處新增帳戶，選擇您想要遊玩的角色"
     },
     "step3": {
-      "title": "Minecraft，啟動！",
-      "content": "選中實例與角色、調整好相關設定後，點選啟動按鈕享受遊戲吧 🥳"
+      "title": "發現頁",
+      "content": "在此處瀏覽 Minecraft 與社群新聞，發現並下載各類相關資源，如模組、地圖、整合包等。<br/>另外，您也可以透過鍵盤快捷鍵 <key>{{keyname}}</key> + <key>F</key> 快速開啟「聚合搜尋」。"
     },
     "step4": {
       "title": "啟動 Minecraft！",
@@ -1170,8 +1334,8 @@
           "url": "https://www.mualliance.cn"
         },
         "SJMC": {
-          "title": "上海交通大學 Minecraft 社（USTB）",
-          "url": "https://www.ustb.world/"
+          "title": "上海交通大學 Minecraft 社（SJMC）",
+          "url": "https://mc.sjtu.cn"
         }
       }
     },
@@ -1196,10 +1360,23 @@
     "top": {
       "settings": {
         "LauncherDocs": {
-          "title": "USTB Launcher 文件",
-          "url": "https://docs.ustb.world/"
+          "title": "SJMC Launcher 文件",
+          "url": "https://mc.sjtu.cn/sjmcl/docs"
+        },
+        "UserGroup": {
+          "title": "使用者社群",
+          "description": "歡迎加入 QQ 群或 Discord 伺服器，回報問題、請求功能或取得協助",
+          "url": "https://mc.sjtu.cn/sjmcl/docs/user-group"
         }
       }
+    }
+  },
+  "HomeWidget": {
+    "extraOpMenu": {
+      "moveUp": "上移此卡片",
+      "moveDown": "下移此卡片",
+      "extensionInfo": "檢視擴充套件資訊",
+      "settings": "設定此擴充套件"
     }
   },
   "ImportAccountInfoModal": {
@@ -1207,11 +1384,15 @@
       "title": "從其他啟動器匯入帳戶資訊"
     },
     "launcherDesc": {
-      "HMCL": "Hello Minecraft! Launcher"
+      "HMCL": "Hello Minecraft! Launcher",
+      "MultiMC": "MultiMC"
     },
     "body": {
       "authServers": "認證伺服器",
       "players": "角色"
+    },
+    "footer": {
+      "parentDirHint": "將在已新增遊戲目錄的父目錄尋找帳戶資訊檔案。"
     },
     "tooltips": {
       "existingServer": "已存在相同地址的認證伺服器，匯入將會覆寫資料",
@@ -1267,9 +1448,14 @@
     }
   },
   "InstanceModsPage": {
+    "fileDnD": {
+      "title": "安裝模組",
+      "desc": "將模組檔案 {{fileName}} 安裝到此實例"
+    },
     "modLoaderList": {
       "title": "載入器",
-      "notInstalled": "未安裝"
+      "notInstalled": "未安裝",
+      "installed": "已安裝"
     },
     "modList": {
       "title": "模組",
@@ -1284,11 +1470,24 @@
     }
   },
   "InstanceResourcePacksPage": {
+    "fileDnD": {
+      "title": "新增資源包",
+      "desc": "將資源包檔案 {{fileName}} 新增到此實例"
+    },
     "resourcePackList": {
       "title": "全域性資源包"
     },
     "serverResPackList": {
       "title": "伺服器資源包"
+    }
+  },
+  "InstanceSchematicsPage": {
+    "fileDnD": {
+      "title": "新增原理圖",
+      "desc": "將原理圖檔案 {{fileName}} 新增到此實例"
+    },
+    "schematicList": {
+      "title": "原理圖"
     }
   },
   "InstanceScreenshotsPage": {
@@ -1299,6 +1498,7 @@
   "InstanceSettingsPage": {
     "name": "實例名稱",
     "description": "實例描述",
+    "colorTag": "顏色標籤",
     "icon": "實例圖示",
     "applySettings": "啟用特定遊戲設定",
     "restoreSettings": "重設以下特定設定",
@@ -1314,18 +1514,16 @@
     }
   },
   "InstanceShaderPacksPage": {
+    "fileDnD": {
+      "title": "新增光影包",
+      "desc": "將光影包檔案 {{fileName}} 新增到此實例"
+    },
     "shaderLoaderList": {
       "title": "載入器",
       "notInstalled": "未安裝"
     },
     "shaderPackList": {
       "title": "光影包"
-    }
-  },
-  "InstanceSchematicsPage": {
-    "schematicList": {
-      "title": "原理圖",
-      "preview": "預覽"
     }
   },
   "InstanceWidgets": {
@@ -1351,6 +1549,10 @@
     }
   },
   "InstanceWorldsPage": {
+    "fileDnD": {
+      "title": "新增世界",
+      "desc": "將存檔檔案 {{fileName}} 新增到此實例"
+    },
     "worldList": {
       "title": "本機世界",
       "lastPlayedAt": "上次遊玩於",
@@ -1383,7 +1585,7 @@
     }
   },
   "IntelligenceSettingsPage": {
-    "title": "USTBL 智慧",
+    "title": "SJMCL 智慧",
     "description": "將 AI 模型整合到你的啟動器與 Minecraft 遊玩體驗中。",
     "mcpServer": {
       "title": "MCP 服務",
@@ -1396,7 +1598,7 @@
         "docs": {
           "title": "使用指南",
           "description": "了解如何將啟動器連線到外部 Agent 應用（例如 Claude、Cherry Studio 等）。",
-          "url": "https://docs.ustb.world/"
+          "url": "https://mc.sjtu.cn/sjmcl/docs/intelligence/launcher-mcp"
         },
         "port": {
           "title": "連接埠",
@@ -1425,7 +1627,14 @@
     },
     "confirmDelete": {
       "title": "移除 Java",
-      "description": "確認要移除此版本 Java 嗎？（USTBL 將無法使用此 Java 啟動遊戲，但不會刪除硬碟上的檔案）"
+      "description": "確認要移除此版本 Java 嗎？（SJMCL 將無法使用此 Java 啟動遊戲，但不會刪除硬碟上的檔案）"
+    }
+  },
+  "LastExitedAbnormallyDialog": {
+    "dialog": {
+      "title": "上次執行異常退出",
+      "content": "USTBL 上次執行時異常退出。您可以將日誌發送到<community>使用者社群</community>，或在 <github>GitHub</github> 發起 Issue 以尋求協助",
+      "viewLog": "檢視日誌"
     }
   },
   "LaunchPage": {
@@ -1457,7 +1666,8 @@
       "launchGame": "等待遊戲啟動"
     },
     "toast": {
-      "noSelectedPlayer": "請先新增並選擇遊戲角色"
+      "noSelectedPlayer": "請先新增並選擇遊戲角色",
+      "noSelectedInstance": "請先新增並選擇遊戲實例"
     }
   },
   "LoaderSelector": {
@@ -1466,6 +1676,9 @@
     "releaseDate": "釋出於 {{date}}",
     "notCompatibleWith": "與 {{item}} 不相容",
     "noVersionSelected": "未選擇版本"
+  },
+  "MainWindowTitlebar": {
+    "extensionProvidedPage": "此頁面由擴充套件 {{name}} 提供"
   },
   "ManageSkinModal": {
     "skinManage": "管理外觀",
@@ -1508,6 +1721,41 @@
   "MenuSelector": {
     "selectedCount": "已選 {{count}} 項"
   },
+  "MicrosoftFriendsModal": {
+    "title": "微軟帳戶 {{name}} 的 Minecraft 好友",
+    "placeholder": {
+      "playerName": "輸入玩家名稱以新增好友"
+    },
+    "group": {
+      "requests": "請求",
+      "friends": "好友"
+    },
+    "request": {
+      "incoming": "收到的好友請求",
+      "outgoing": "已發送的好友請求"
+    },
+    "button": {
+      "add": "添加",
+      "accept": "接受",
+      "decline": "拒絕",
+      "revoke": "撤銷",
+      "remove": "刪除好友",
+      "xboxSettings": "XBOX 設定"
+    },
+    "empty": {
+      "requests": "暫無請求",
+      "friends": "暫無好友"
+    },
+    "status": {
+      "INVITED": "邀請你加入其世界",
+      "ONLINE": "在線",
+      "PLAYING_OFFLINE": "單人遊戲中",
+      "PLAYING_REALMS": "正在玩 Realms",
+      "PLAYING_SERVER": "正在伺服器中",
+      "PLAYING_HOSTED_SERVER": "開放區域網路",
+      "OFFLINE": "離線"
+    }
+  },
   "NoSuitableJavaDialog": {
     "title": "未找到合適的 Java 執行時",
     "body": "對於目前實例，沒有合適的 Java 執行時可供選擇。點擊「確定」以前往 Java 管理頁面手動新增或下載 Java。"
@@ -1523,18 +1771,6 @@
       "showAll": "顯示全部（+{{left}}）"
     }
   },
-  "PlayerMenu": {
-    "label": {
-      "manageSkin": "管理外觀",
-      "viewSkin": "檢視外觀",
-      "delete": "刪除此角色",
-      "copyUUID": "複製 UUID"
-    },
-    "toast": {
-      "refreshing": "正在重新整理角色資訊",
-      "deleting": "正在刪除角色"
-    }
-  },
   "PingTestPage": {
     "PingServerList": {
       "title": "服務連通性測試",
@@ -1548,7 +1784,20 @@
       "neoforge": "NeoForge",
       "authlibInjector": "Authlib Injector",
       "github": "GitHub",
-      "sjmclapi": "USTB Launcher API"
+      "sjmclapi": "SJMC Launcher API"
+    }
+  },
+  "PlayerMenu": {
+    "label": {
+      "friends": "好友",
+      "manageSkin": "管理外觀",
+      "viewSkin": "檢視外觀",
+      "delete": "刪除此角色",
+      "copyUUID": "複製 UUID"
+    },
+    "toast": {
+      "refreshing": "正在重新整理角色資訊",
+      "deleting": "正在刪除角色"
     }
   },
   "ReLoginPlayerModal": {
@@ -1564,16 +1813,6 @@
     },
     "button": {
       "login": "登入"
-    }
-  },
-  "RestartForUpdateConfirmDialog": {
-    "title": "啟動器更新",
-    "body": "新版本已完成下載，重新開啟 USTBL 以完成更新",
-    "bodyMSI": "新版本已完成下載，點選安裝將關閉 USTBL 並執行安裝程式",
-    "button": {
-      "restart": "重新啟動",
-      "install": "安裝",
-      "later": "稍後"
     }
   },
   "ResourceDownloader": {
@@ -1860,6 +2099,16 @@
       "All": "全部"
     }
   },
+  "RestartForUpdateConfirmDialog": {
+    "title": "啟動器更新",
+    "body": "新版本已完成下載，重新開啟 SJMCL 以完成更新",
+    "bodyMSI": "新版本已完成下載，點選安裝將關閉 SJMCL 並執行安裝程式",
+    "button": {
+      "restart": "重新啟動",
+      "install": "安裝",
+      "later": "稍後"
+    }
+  },
   "RestoreConfigConfirmDialog": {
     "title": "還原啟動器設定",
     "body": "此操作將會還原啟動器的所有設定為預設值，您確定要繼續嗎？"
@@ -1876,9 +2125,17 @@
       "setAsBg": "設定為啟動器背景"
     }
   },
+  "SelectInstanceModal": {
+    "header": {
+      "title": "選擇實例",
+      "titleForLaunch": "選擇要啟動的實例"
+    }
+  },
   "SelectPlayerModal": {
     "header": {
-      "title": "請選擇想要新增的角色"
+      "title": "選擇角色",
+      "titleForAdd": "選擇要新增的新角色",
+      "titleForLaunch": "選擇要遊玩的角色"
     }
   },
   "Services": {
@@ -1988,6 +2245,7 @@
           "title": "離線角色新增失敗",
           "description": {
             "DUPLICATE": "角色已存在",
+            "FULL_LOGIN_UNAVAILABLE": "請先登入微軟帳戶後使用此功能。",
             "INVALID": "UUID 無效",
             "TEXTURE_ERROR": "角色外觀獲取失敗"
           }
@@ -2010,12 +2268,20 @@
           "title": "角色新增失敗",
           "description": {
             "DUPLICATE": "角色已存在",
+            "FULL_LOGIN_UNAVAILABLE": "請先登入微軟帳戶後使用此功能。",
             "NETWORK_ERROR": "無法連線至認證伺服器",
             "PARSE_ERROR": "伺服器返回資料格式錯誤",
             "NOT_FOUND": "認證伺服器不存在",
             "CANCELLED": "已取消",
             "INVALID": "無效的認證伺服器地址",
-            "NO_MINECRAFT_PROFILE": "未找到角色，請確認是否已購買 Minecraft 並建立角色"
+            "NO_MINECRAFT_PROFILE": "未找到角色，請確認是否已購買 Minecraft 並建立角色",
+            "XSTS_BANNED": "您的帳號已被 XBOX 封禁",
+            "XSTS_PARENTAL_RESTRICTION": "您的帳號受到家長管控限制",
+            "XSTS_NO_XBOX_ACCOUNT": "您的微軟帳號未關聯 XBOX 帳號，請前往 minecraft.net 建立",
+            "XSTS_TERMS_NOT_ACCEPTED": "您需要接受 XBOX 服务条款才能繼續",
+            "XSTS_REGION_BANNED": "您所在的國家或地區不受 XBOX Live 支援",
+            "XSTS_CHILD_ACCOUNT": "您的帳號為未成年帳號，請前往 family.microsoft.com 進行家長授權",
+            "XSTS_UNKNOWN_ERROR": "XSTS 驗證時發生未知錯誤"
           }
         }
       },
@@ -2030,7 +2296,14 @@
             "NETWORK_ERROR": "無法連線至認證伺服器",
             "INVALID": "離線角色不支援重新整理",
             "CANCELLED": "已取消",
-            "NO_MINECRAFT_PROFILE": "未找到角色，請確認是否已購買 Minecraft 並建立角色"
+            "NO_MINECRAFT_PROFILE": "未找到角色，請確認是否已購買 Minecraft 並建立角色",
+            "XSTS_BANNED": "您的帳號已被 XBOX 封禁",
+            "XSTS_PARENTAL_RESTRICTION": "您的帳號受到家長管控限制",
+            "XSTS_NO_XBOX_ACCOUNT": "您的微軟帳號未關聯 XBOX 帳號，請前往 minecraft.net 建立",
+            "XSTS_TERMS_NOT_ACCEPTED": "您需要接受 XBOX 服務條款才能繼續",
+            "XSTS_REGION_BANNED": "您所在的國家或地區不受 XBOX Live 支援",
+            "XSTS_CHILD_ACCOUNT": "您的帳號為未成年帳號，請前往 family.microsoft.com 進行家長授權",
+            "XSTS_UNKNOWN_ERROR": "XSTS 驗證時發生未知錯誤"
           }
         }
       },
@@ -2040,6 +2313,7 @@
           "title": "角色新增失敗",
           "description": {
             "DUPLICATE": "角色已存在",
+            "FULL_LOGIN_UNAVAILABLE": "請先登入微軟帳戶後使用此功能。",
             "NETWORK_ERROR": "無法連線至認證伺服器",
             "PARSE_ERROR": "伺服器返回資料格式錯誤",
             "INVALID": "帳號或密碼錯誤",
@@ -2067,6 +2341,7 @@
           "title": "角色新增失敗",
           "description": {
             "DUPLICATE": "角色已存在",
+            "FULL_LOGIN_UNAVAILABLE": "請先登入微軟帳戶後使用此功能。",
             "NETWORK_ERROR": "無法連線至認證伺服器",
             "PARSE_ERROR": "伺服器返回資料格式錯誤",
             "EXPIRED": "令牌已過期，請重新登入"
@@ -2114,6 +2389,41 @@
             "PARSE_ERROR": "伺服器返回資料格式錯誤",
             "NETWORK_ERROR": "無法連線至認證伺服器",
             "INVALID": "離線角色不支援重新整理"
+          }
+        }
+      },
+      "retrieveMicrosoftFriendList": {
+        "success": "好友清單取得成功",
+        "error": {
+          "title": "取得微軟好友清單失敗",
+          "description": {
+            "NOT_FOUND": "角色不存在",
+            "INVALID": "目前角色不是微軟帳戶",
+            "EXPIRED": "令牌已過期，請重新登入",
+            "PARSE_ERROR": "伺服器返回資料格式錯誤",
+            "NETWORK_ERROR": "無法連線至 Minecraft 服務",
+            "FORBIDDEN": "無權限，請檢查您的帳戶設定",
+            "TOO_MANY_REQUESTS": "請求過於頻繁，請稍後再試",
+            "SERVICE_UNAVAILABLE": "Minecraft 服務暫時不可用"
+          }
+        }
+      },
+      "updateMicrosoftFriend": {
+        "success": "好友操作成功",
+        "error": {
+          "title": "微軟好友操作失敗",
+          "description": {
+            "NOT_FOUND": "角色不存在",
+            "INVALID": "好友參數無效",
+            "EXPIRED": "令牌已過期，請重新登入",
+            "PARSE_ERROR": "伺服器返回資料格式錯誤",
+            "NETWORK_ERROR": "無法連線至 Minecraft 服務",
+            "FORBIDDEN": "目前無法新增好友，請檢查您與對方帳戶的相關設定",
+            "TOO_MANY_REQUESTS": "請求過於頻繁，請稍後再試",
+            "SERVICE_UNAVAILABLE": "Minecraft 服務暫時不可用",
+            "UNKNOWN_PROFILE": "目標玩家不存在",
+            "CANNOT_ADD_SELF": "不能將自己加入好友",
+            "DUPLICATED_PROFILES": "重複的好友操作請求"
           }
         }
       },
@@ -2240,6 +2550,14 @@
             "PARSE_ERROR": "伺服器返回資料格式錯誤",
             "NETWORK_ERROR": "無法連線到伺服器",
             "NO_DOWNLOAD_API": "無可用的下載策略，請檢查網路連線"
+          }
+        }
+      },
+      "fetchOptiFineVersionList": {
+        "error": {
+          "title": "獲取 OptiFine 版本清單失敗",
+          "description": {
+            "NETWORK_ERROR": "無法連線到伺服器"
           }
         }
       },
@@ -2374,7 +2692,7 @@
           }
         }
       },
-      "copyResourceToInstances": {
+      "copyResourcesToInstances": {
         "success": "資源複製成功",
         "error": {
           "title": "複製資源失敗",
@@ -2509,6 +2827,23 @@
           }
         }
       },
+      "finishOptiFineLoaderInstall": {
+        "loading": "正在為 {{instanceName}} 安裝 OptiFine",
+        "success": "OptiFine 安裝完成",
+        "error": {
+          "title": "OptiFine 安裝失敗",
+          "description": {
+            "INSTANCE_NOT_FOUND_BY_ID": "實例 ID 不存在",
+            "INSTALLATION_DUPLICATED": "偵測到另一個程序已在安裝中",
+            "PROCESSOR_EXECUTION_FAILED": "安裝工作執行失敗",
+            "LOADER_INSTALLER_NOT_FOUND": "找不到 OptiFine 安裝程式",
+            "MOD_LOADER_VERSION_PARSE_ERROR": "OptiFine 版本資訊解析失敗",
+            "INVALID_SOURCE_PATH": "資源路徑無效",
+            "NO_SUITABLE_JAVA": "沒有找到可用的 Java 執行時",
+            "SELECTED_JAVA_UNAVAILABLE": "所選 Java 執行時不可用"
+          }
+        }
+      },
       "checkChangeModLoaderAvailablity": {
         "error": {
           "title": "無法更改模組載入器",
@@ -2530,14 +2865,58 @@
           "title": "獲取模組包資源資訊失敗",
           "description": {
             "FILE_NOT_FOUND_ERROR": "模組包檔案不存在，可能已更名、移動或刪除",
-            "MODPACK_MANIFEST_PARSE_ERROR": "模組包清單檔案解析錯誤"
+            "MODPACK_MANIFEST_PARSE_ERROR": "模組包清單檔案解析錯誤",
+            "NETWORK_ERROR": "取得模組包所需的模組載入器資訊失敗，請檢查網路連線",
+            "MOD_LOADER_VERSION_PARSE_ERROR": "無法辨識模組包所需的模組載入器版本"
           }
+        }
+      },
+      "retrieveExportableFileList": {
+        "error": {
+          "title": "取得可匯出檔案清單失敗"
+        }
+      },
+      "exportModpack": {
+        "success": "匯出模組包成功",
+        "error": {
+          "title": "匯出模組包失敗"
         }
       },
       "addCustomInstanceIcon": {
         "success": "自訂實例圖示新增成功",
         "error": {
           "title": "自訂實例圖示新增失敗"
+        }
+      }
+    },
+    "extension": {
+      "retrieveExtensionList": {
+        "error": {
+          "title": "獲取擴充套件列表失敗"
+        }
+      },
+      "addExtension": {
+        "success": "擴充套件新增成功",
+        "error": {
+          "title": "擴充套件新增失敗",
+          "description": {
+            "INVALID_PACKAGE_FORMAT": "擴充套件封包內容格式無效",
+            "INVALID_IDENTIFIER": "擴充套件識別碼無效",
+            "IDENTIFIER_MISMATCH": "擴充套件識別碼與預期不符",
+            "INVALID_NAME": "擴充套件名稱無效",
+            "LAUNCHER_VERSION_TOO_LOW": "啟動器版本過低",
+            "EXTENSION_NOT_FOUND": "找不到要新增的檔案"
+          }
+        }
+      },
+      "deleteExtension": {
+        "success": "擴充套件刪除成功",
+        "error": {
+          "title": "擴充套件刪除失敗",
+          "description": {
+            "INVALID_IDENTIFIER": "擴充套件識別碼無效",
+            "EXTENSION_NOT_FOUND": "找不到對應的擴充套件"
+          }
         }
       }
     },
@@ -2572,9 +2951,9 @@
       "appearance": "外觀",
       "download": "下載資源",
       "intelligence": "智慧",
+      "extension": "擴充套件",
       "help": "文件與幫助",
-      "about": "關於",
-      "dev-test": "開發 - 測試頁"
+      "about": "關於"
     }
   },
   "SkinPreview": {
@@ -2624,7 +3003,7 @@
     "header": {
       "title": "在 GitHub 為我們點亮星標"
     },
-    "body": "如果您喜愛 USTBL，並希望支援我們，可以在 GitHub 為我們點一顆星嗎？這個小小的動作對我們來說意義重大，能激勵我們為您持續提供特性體驗。",
+    "body": "如果您喜愛 SJMCL，並希望支援我們，可以在 GitHub 為我們點一顆星嗎？這個小小的動作對我們來說意義重大，能激勵我們為您持續提供特性體驗。",
     "button": {
       "later": "稍後",
       "starUs": "點亮星標"
@@ -2658,7 +3037,7 @@
   "UnavailableExePathAlertDialog": {
     "dialog": {
       "title": "無效的執行路徑",
-      "content": "您正在暫存或非法目錄下執行 USTBL，您的設定和遊戲資料可能遺失。請將 USTBL 移動到其他位置後再次執行。",
+      "content": "您正在暫存或非法目錄下執行 SJMCL，您的設定和遊戲資料可能遺失。請將 SJMCL 移動到其他位置後再次執行。",
       "btnContinue": "仍要執行"
     }
   },
@@ -2695,11 +3074,11 @@
       "title": "歡迎！"
     },
     "body": {
-      "text": "歡迎使用 USTBL！在開始使用之前，請務必閱讀並同意我們的<terms>使用者協議</terms>。"
+      "text": "歡迎使用 SJMCL！在開始使用之前，請務必閱讀並同意我們的<terms>使用者協議</terms>。"
     },
     "warning": {
       "unstableVersion": "您正在使用{{versionLabel}}的 USTBL，部分功能可能不穩定或未開發完成，歡迎報告使用問題與功能建議。",
-      "winArm64Notice": "USTBL 現已支援 Windows on Arm 平臺。<br/>如您正在使用 <b>高通</b> 平臺，您可能需要安裝 <glpack>OpenGL 相容包</glpack> 後才能進行遊戲。"
+      "winArm64Notice": "SJMCL 現已支援 Windows on Arm 平臺。<br/>如您正在使用 <b>高通</b> 平臺，您可能需要安裝 <glpack>OpenGL 相容包</glpack> 後才能進行遊戲。"
     },
     "button": {
       "agree": "同意並繼續"

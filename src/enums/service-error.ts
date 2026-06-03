@@ -1,6 +1,7 @@
 export enum AccountServiceError {
   Duplicate = "DUPLICATE",
   Expired = "EXPIRED",
+  FullLoginUnavailable = "FULL_LOGIN_UNAVAILABLE",
   Invalid = "INVALID",
   NotFound = "NOT_FOUND",
   TextureError = "TEXTURE_ERROR",
@@ -10,6 +11,13 @@ export enum AccountServiceError {
   NoDownloadApi = "NO_DOWNLOAD_API",
   SaveError = "SAVE_ERROR",
   NoMinecraftProfile = "NO_MINECRAFT_PROFILE",
+  XstsBanned = "XSTS_BANNED",
+  XstsParentalRestriction = "XSTS_PARENTAL_RESTRICTION",
+  XstsNoXboxAccount = "XSTS_NO_XBOX_ACCOUNT",
+  XstsTermsNotAccepted = "XSTS_TERMS_NOT_ACCEPTED",
+  XstsRegionBanned = "XSTS_REGION_BANNED",
+  XstsChildAccount = "XSTS_CHILD_ACCOUNT",
+  XstsUnknownError = "XSTS_UNKNOWN_ERROR",
 }
 
 export enum InstanceError {
@@ -35,6 +43,7 @@ export enum InstanceError {
   InstallProfileParseError = "INSTALL_PROFILE_PARSE_ERROR",
   ModLoaderVersionParseError = "MOD_LOADER_VERSION_PARSE_ERROR",
   ModpackManifestParseError = "MODPACK_MANIFEST_PARSE_ERROR",
+  CurseForgeFileManifestParseError = "CURSE_FORGE_FILE_MANIFEST_PARSE_ERROR",
   NetworkError = "NETWORK_ERROR",
   UnsupportedModLoader = "UNSUPPORTED_MOD_LOADER",
   NotSupportChangeModLoader = "NOT_SUPPORT_CHANGE_MOD_LOADER",

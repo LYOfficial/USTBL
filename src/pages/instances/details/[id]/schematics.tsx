@@ -1,18 +1,19 @@
-import { Center, HStack, useDisclosure } from "@chakra-ui/react";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { Center, HStack } from "@chakra-ui/react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { LuEye } from "react-icons/lu";
+import { LuBookDashed } from "react-icons/lu";
 import { BeatLoader } from "react-spinners";
 import { CommonIconButton } from "@/components/common/common-icon-button";
 import CountTag from "@/components/common/count-tag";
 import Empty from "@/components/common/empty";
 import { OptionItem, OptionItemGroup } from "@/components/common/option-item";
 import { Section } from "@/components/common/section";
-import ViewSchematicModal from "@/components/modals/view-schematic-modal";
+import { useFileDnD } from "@/components/special/file-dnd-overlay";
+import { useExtensionHost } from "@/contexts/extension/host";
 import { useInstanceSharedData } from "@/contexts/instance";
 import { useSharedModals } from "@/contexts/shared-modal";
+import { ExtensionUISlotKey } from "@/enums/extension";
 import { InstanceSubdirType } from "@/enums/instance";
 import { GetStateFlag } from "@/hooks/get-state";
 import { SchematicInfo } from "@/models/instance/misc";
@@ -20,23 +21,17 @@ import { SchematicInfo } from "@/models/instance/misc";
 const InstanceSchematicsPage = () => {
   const { t } = useTranslation();
   const {
+    instanceId,
+    summary,
     openInstanceSubdir,
-    handleImportResource,
+    handleImportResources,
     getSchematicList,
     isSchematicListLoading: isLoading,
   } = useInstanceSharedData();
+  const { getExtensionSlotItems } = useExtensionHost();
   const { openSharedModal } = useSharedModals();
 
   const [schematics, setSchematics] = useState<SchematicInfo[]>([]);
-  const [selectedSchematic, setSelectedSchematic] =
-    useState<SchematicInfo | null>(null);
-
-  const {
-    isOpen: isViewModalOpen,
-    onOpen: onViewModalOpen,
-    onClose: onViewModalClose,
-  } = useDisclosure();
-
   const getSchematicListWrapper = useCallback(
     (sync?: boolean) => {
       getSchematicList(sync)
@@ -53,6 +48,24 @@ const InstanceSchematicsPage = () => {
     getSchematicListWrapper();
   }, [getSchematicListWrapper]);
 
+  useFileDnD({
+    extensions: ["schematic", "litematic"],
+    multiple: true,
+    titleKey: "InstanceSchematicsPage.fileDnD.title",
+    descKey: "InstanceSchematicsPage.fileDnD.desc",
+    icon: LuBookDashed,
+    onDrop: async (paths) => {
+      handleImportResources({
+        filterName: t("InstanceDetailsLayout.instanceTabList.schematics"),
+        filterExt: ["schematic", "litematic"],
+        tgtDirType: InstanceSubdirType.Schematics,
+        paths,
+        multiple: true,
+        onSuccessCallback: () => getSchematicListWrapper(true),
+      });
+    },
+  });
+
   const schemSecMenuOperations = [
     {
       icon: "openFolder",
@@ -63,11 +76,11 @@ const InstanceSchematicsPage = () => {
     {
       icon: "add",
       onClick: () => {
-        handleImportResource({
+        handleImportResources({
           filterName: t("InstanceDetailsLayout.instanceTabList.schematics"),
           filterExt: ["schematic", "litematic"],
           tgtDirType: InstanceSubdirType.Schematics,
-          decompress: false,
+          multiple: true,
           onSuccessCallback: () => getSchematicListWrapper(true),
         });
       },
@@ -79,14 +92,14 @@ const InstanceSchematicsPage = () => {
   ];
 
   const schemItemMenuOperations = (schematic: SchematicInfo) => [
-    {
-      label: t("InstanceSchematicsPage.schematicList.preview"),
-      icon: LuEye,
-      onClick: () => {
-        setSelectedSchematic(schematic);
-        onViewModalOpen();
-      },
-    },
+    ...getExtensionSlotItems(
+      ExtensionUISlotKey.InstanceSchematicItemMenuOperations,
+      {
+        schematic,
+        instanceId,
+        summary,
+      }
+    ),
     {
       label: "",
       icon: "copyOrMove",
@@ -150,11 +163,6 @@ const InstanceSchematicsPage = () => {
           <Empty withIcon={false} size="sm" />
         )}
       </Section>
-      <ViewSchematicModal
-        isOpen={isViewModalOpen}
-        onClose={onViewModalClose}
-        fileUrl={convertFileSrc(selectedSchematic?.filePath || "")}
-      />
     </>
   );
 };

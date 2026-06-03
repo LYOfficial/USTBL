@@ -1,14 +1,14 @@
 use crate::error::{SJMCLError, SJMCLResult};
 use crate::launcher_config::commands::retrieve_launcher_config;
+use crate::tasks::streams::ProgressStream;
 use crate::tasks::streams::desc::{PDesc, PStatus};
 use crate::tasks::streams::reporter::Reporter;
-use crate::tasks::streams::ProgressStream;
 use crate::tasks::*;
 use crate::utils::fs::validate_sha1;
 use crate::utils::web::with_retry;
 use async_speed_limit::Limiter;
-use futures::stream::TryStreamExt;
 use futures::StreamExt;
+use futures::stream::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::future::Future;
@@ -151,12 +151,12 @@ impl DownloadTask {
     current: i64,
     param: &DownloadParam,
   ) -> SJMCLResult<(
-    impl Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send,
+    impl Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send + use<>,
     i64,
   )> {
     let resp = Self::send_request(app_handle, current, param).await?;
     let total_progress = if current == 0 {
-      resp.content_length().unwrap() as i64
+      resp.content_length().map_or(-1, |length| length as i64)
     } else {
       -1
     };

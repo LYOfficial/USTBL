@@ -6,8 +6,13 @@ pub fn tool_routes() -> Vec<ToolRoute<McpContext>> {
   vec![mcp_tool!(
     deeplink "launch_instance",
     "Launch a specific Minecraft instance by its instance_id via SJMCL deeplink. Before launch, check and update, if user requested, the selected player in launcher configuration.",
-    |params| { instance_id: String } => format!(
-      "sjmcl://launch?id={}",
+    |params|
+    #[serde(deny_unknown_fields)]
+    {
+      #[schemars(description = "Minecraft instance ID.")]
+      instance_id: String,
+    } => format!(
+      "ustbl://launch?id={}",
       urlencoding::encode(&params.instance_id)
     )
   )]

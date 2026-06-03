@@ -1,3 +1,4 @@
+pub mod curseforge;
 pub mod loader_meta;
 pub mod misc;
 pub mod mod_db;

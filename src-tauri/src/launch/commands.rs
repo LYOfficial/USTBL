@@ -3,11 +3,11 @@ use crate::account::helpers::offline::yggdrasil_server::YggdrasilServer;
 use crate::account::helpers::{authlib_injector, microsoft};
 use crate::account::models::PlayerType;
 use crate::error::SJMCLResult;
-use crate::instance::helpers::client_json::{replace_native_libraries, McClientInfo};
+use crate::instance::helpers::client_json::{McClientInfo, replace_native_libraries};
 use crate::instance::helpers::misc::{get_instance_game_config, get_instance_subdir_paths};
 use crate::instance::models::misc::{Instance, InstanceError, InstanceSubdirType, ModLoaderStatus};
 use crate::launch::helpers::command_generator::{
-  export_full_launch_command, generate_launch_command, LaunchCommand,
+  LaunchCommand, export_full_launch_command, generate_launch_command,
 };
 use crate::launch::helpers::file_validator::{
   extract_native_libraries, get_invalid_assets, get_invalid_library_files, prepare_legacy_assets,
@@ -20,9 +20,7 @@ use crate::launch::helpers::process_monitor::{
 };
 use crate::launch::models::{LaunchError, LaunchingState};
 use crate::launcher_config::helpers::java::refresh_and_update_javas;
-use crate::launcher_config::models::{
-  FileValidatePolicy, JavaInfo, LauncherConfig, LauncherVisiablity,
-};
+use crate::launcher_config::models::{FileValidatePolicy, LauncherConfig, LauncherVisiablity};
 use crate::resource::helpers::misc::get_source_priority_list;
 use crate::storage::load_json_async;
 use crate::tasks::commands::schedule_progressive_task_group;
@@ -32,11 +30,11 @@ use crate::utils::shell::{execute_command_line, split_command_line};
 use crate::utils::window::create_webview_window;
 use std::collections::HashMap;
 use std::fs;
-use std::io::prelude::*;
 use std::io::BufReader;
+use std::io::prelude::*;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::{mpsc, Mutex};
+use std::sync::{Mutex, mpsc};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Manager, State};
@@ -50,7 +48,6 @@ pub async fn select_suitable_jre(
   app: AppHandle,
   instance_id: String,
   instances_state: State<'_, Mutex<HashMap<String, Instance>>>,
-  javas_state: State<'_, Mutex<Vec<JavaInfo>>>,
   launching_queue_state: State<'_, Mutex<Vec<LaunchingState>>>,
 ) -> SJMCLResult<()> {
   let instance = instances_state
@@ -66,12 +63,10 @@ pub async fn select_suitable_jre(
   let client_info = load_json_async::<McClientInfo>(&client_path).await?;
 
   refresh_and_update_javas(&app).await;
-  let javas = javas_state.lock()?.clone();
 
   let selected_java = select_java_runtime(
     &app,
-    &game_config.game_java,
-    &javas,
+    Some(&game_config.game_java),
     &instance,
     client_info
       .java_version
@@ -198,7 +193,7 @@ pub async fn validate_selected_player(
   launching_queue_state: State<'_, Mutex<Vec<LaunchingState>>>,
   local_ygg_server_state: State<'_, Mutex<YggdrasilServer>>,
 ) -> SJMCLResult<bool> {
-  let mut player = get_selected_player_info(&app)?.clone();
+  let mut player = get_selected_player_info(&app)?;
 
   let metadata = if player.player_type == PlayerType::ThirdParty {
     authlib_injector::jar::check_authlib_jar(&app)
@@ -218,7 +213,7 @@ pub async fn validate_selected_player(
     let local_ygg_server = local_ygg_server_state.lock()?;
     player.auth_server_url = Some(local_ygg_server.root_url.clone());
     local_ygg_server.apply_player(player.clone());
-    Some(local_ygg_server.metadata.to_string())
+    Some(local_ygg_server.metadata().to_string())
   } else {
     None
   };
@@ -360,11 +355,11 @@ pub fn cancel_launch_process(
   let mut launching_queue = launching_queue_state.lock()?;
 
   // kill process if pid exists
-  if let Some(launching) = launching_queue.last_mut() {
-    if launching.pid != 0 {
-      launching.current_step = 0; // mark as manually cancelled to avoid game error window popping up
-      kill_process(launching.pid)?;
-    }
+  if let Some(launching) = launching_queue.last_mut()
+    && launching.pid != 0
+  {
+    launching.current_step = 0; // mark as manually cancelled to avoid game error window popping up
+    kill_process(launching.pid)?;
   }
 
   Ok(())

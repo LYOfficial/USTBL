@@ -2,7 +2,6 @@ import { useRouter } from "next/router";
 import { useCallback, useMemo } from "react";
 import { useSharedModals } from "@/contexts/shared-modal";
 import useDeepLink from "@/hooks/deep-link";
-import { useDragAndDrop } from "@/hooks/drag-and-drop";
 import useKeyboardShortcut from "@/hooks/keyboard-shortcut";
 
 // Handle global keyboard shortcuts, DnD events, etc.
@@ -16,9 +15,9 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
   // ----------------- Keyboard Shortcuts -----------------
   const spotlightShortcuts = useMemo(
     () => ({
-      macos: { metaKey: true, key: "S" },
-      windows: { ctrlKey: true, key: "S" },
-      linux: { ctrlKey: true, key: "S" },
+      macos: { metaKey: true, key: "F" },
+      windows: { ctrlKey: true, key: "F" },
+      linux: { ctrlKey: true, key: "F" },
     }),
     []
   );
@@ -31,28 +30,27 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
 
   // ------------------- Drag and Drops -------------------
 
-  const addAuthServerByDnD = useCallback(
-    (data: string) => {
-      const prefix = "authlib-injector:yggdrasil-server:";
-      if (data.startsWith(prefix)) {
-        const url = data.slice(prefix.length);
-        const decodeUrl = decodeURIComponent(url);
-        if (!isStandAlone && decodeUrl)
-          openSharedModal("add-auth-server", { presetUrl: decodeUrl });
-      }
-    },
-    [isStandAlone, openSharedModal]
-  );
-
-  useDragAndDrop({
-    onDrop: addAuthServerByDnD,
-  });
-
+  // Disabled for now to avoid competing with the global file-drop flow.
   // KNOWN ISSUE: https://github.com/tauri-apps/tauri/issues/14055
-  // useTauriFileDrop({
-  //   pattern: "\\.zip$",
-  //   onMatch: (path) => openSharedModal("import-modpack", { path }),
+
+  // const addAuthServerByDnD = useCallback(
+  //   (data: string) => {
+  //     const prefix = "authlib-injector:yggdrasil-server:";
+  //     if (data.startsWith(prefix)) {
+  //       const url = data.slice(prefix.length);
+  //       const decodeUrl = decodeURIComponent(url);
+  //       if (!isStandAlone && decodeUrl)
+  //         openSharedModal("add-auth-server", { presetUrl: decodeUrl });
+  //     }
+  //   },
+  //   [isStandAlone, openSharedModal]
+  // );
+  //
+  // useDragAndDrop({
+  //   onDrop: addAuthServerByDnD,
   // });
+
+  // File drops are now handled by FileDnDOverlay.
 
   // ---------------------- Deeplinks ---------------------
 
@@ -69,9 +67,8 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
   const addAuthServerByDeeplink = useCallback(
     (path: string | URL) => {
       const url = new URL(path).searchParams.get("url") || "";
-      const decodeUrl = decodeURIComponent(url);
-      if (!isStandAlone && decodeUrl) {
-        openSharedModal("add-auth-server", { presetUrl: decodeUrl });
+      if (!isStandAlone && url) {
+        openSharedModal("add-auth-server", { presetUrl: url });
       }
     },
     [isStandAlone, openSharedModal]
@@ -79,14 +76,24 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
 
   const quickLaunchGame = useCallback(
     (path: string | URL) => {
-      const id = new URL(path).searchParams.get("id") || "";
-      const decodeId = decodeURIComponent(id);
-      if (!isStandAlone && decodeId) {
+      const url = new URL(path);
+      const params = Array.from(url.searchParams.entries()).reduce<
+        Record<string, string>
+      >((acc, [key, value]) => {
+        if (!value) return acc;
+        acc[key] = value;
+        return acc;
+      }, {});
+
+      if (!isStandAlone) {
         // Delay the modal opening to ensure required app state/data (e.g. selected player in global-data context) is ready.
         // This is important when the app is opened via deeplink.
         // FIXME: find a better way to handle this.
         setTimeout(() => {
-          openSharedModal("launch", { instanceId: decodeId });
+          openSharedModal("launch", {
+            ...params, // support quickPlaySingleplayer and quickPlayMultiplayer
+            instanceId: params["id"],
+          });
         }, 500);
       }
     },

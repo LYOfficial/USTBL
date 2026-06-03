@@ -13,10 +13,15 @@ import { useTranslation } from "react-i18next";
 import { IconType } from "react-icons";
 import {
   LuBoxes,
+  LuEarth,
+  LuHaze,
   LuHouse,
   LuMessagesSquare,
   LuNewspaper,
+  LuPackage,
+  LuPuzzle,
   LuSearch,
+  LuSquareLibrary,
 } from "react-icons/lu";
 import NavMenu, { MenuItem } from "@/components/common/nav-menu";
 import { useLauncherConfig } from "@/contexts/config";
@@ -64,9 +69,26 @@ const DiscoverLayout: React.FC<{ children: React.ReactNode }> = ({
     ],
     [
       {
-        key: "install-modpack",
+        key: "modpack",
         icon: LuBoxes,
-        route: "/discover/install-modpack",
+        route: "/discover/resource?type=modpack",
+      },
+      {
+        key: "mod",
+        icon: LuSquareLibrary,
+        route: "/discover/resource?type=mod",
+      },
+      { key: "world", icon: LuEarth, route: "/discover/resource?type=world" },
+      {
+        key: "resourcepack",
+        icon: LuPackage,
+        route: "/discover/resource?type=resourcepack",
+      },
+      { key: "shader", icon: LuHaze, route: "/discover/resource?type=shader" },
+      {
+        key: "datapack",
+        icon: LuPuzzle,
+        route: "/discover/resource?type=datapack",
       },
     ],
   ];
@@ -90,7 +112,7 @@ const DiscoverLayout: React.FC<{ children: React.ReactNode }> = ({
                   }`
                 )}
               </Kbd>
-              <Kbd>S</Kbd>
+              <Kbd>F</Kbd>
             </HStack>
           )}
         </HStack>

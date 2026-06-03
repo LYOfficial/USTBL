@@ -25,14 +25,13 @@ export const CommunityNewsPage = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [masonryKey, setMasonryKey] = useState<number>(0);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
-  const isRssSource = (url: string) => /rss|feed|\.xml/i.test(url);
 
   const fetchFirstPage = useCallback(async () => {
     setVisiblePosts([]);
     setIsLoading(true);
     try {
       const sources: NewsPostRequest[] = config.discoverSourceEndpoints
-        .filter(([url, enabled]) => enabled && isRssSource(url))
+        .filter(([, enabled]) => enabled)
         .map(([url]) => ({
           url,
           cursor: null,
@@ -54,7 +53,7 @@ export const CommunityNewsPage = () => {
 
     const enabledUrls = new Set(
       config.discoverSourceEndpoints
-        .filter(([url, enabled]) => enabled && isRssSource(url))
+        .filter(([, enabled]) => enabled)
         .map(([url]) => url)
     );
 
@@ -79,10 +78,7 @@ export const CommunityNewsPage = () => {
 
   const hasMore = config.discoverSourceEndpoints.some(
     ([url, enabled]) =>
-      enabled &&
-      isRssSource(url) &&
-      sourceCursors[url] !== undefined &&
-      sourceCursors[url] !== null
+      enabled && sourceCursors[url] !== undefined && sourceCursors[url] !== null
   );
 
   const secMenu = [

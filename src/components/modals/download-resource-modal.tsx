@@ -39,12 +39,11 @@ interface DownloadResourceModalProps extends Omit<ModalProps, "children"> {
 const DownloadResourceModal: React.FC<DownloadResourceModalProps> = ({
   initialResourceType = OtherResourceType.Mod,
   initialSearchQuery = "",
-  initialDownloadSource = OtherResourceSource.Modrinth,
+  initialDownloadSource = OtherResourceSource.CurseForge,
   ...modalProps
 }) => {
   const { t } = useTranslation();
-  const { config } = useLauncherConfig();
-  const language = config.general.general.language;
+  const { isZh } = useLauncherConfig();
   const router = useRouter();
   const { getInstanceList } = useGlobalData();
 
@@ -100,12 +99,11 @@ const DownloadResourceModal: React.FC<DownloadResourceModalProps> = ({
                     label={t(
                       `DownloadResourceModal.resourceTypeList.${item.key}`
                     )}
-                    isDisabled={language.startsWith("zh")}
+                    isDisabled={isZh}
                   >
                     <HStack spacing={1.5} fontSize="sm">
                       <Icon as={item.icon} />
-                      {(language.startsWith("zh") ||
-                        selectedResourceType === item.key) && (
+                      {(isZh || selectedResourceType === item.key) && (
                         <Text>
                           {t(
                             `DownloadResourceModal.resourceTypeList.${item.key}`

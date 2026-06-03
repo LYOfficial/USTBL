@@ -1,4 +1,8 @@
 import {
+  Alert,
+  AlertDescription,
+  AlertIcon,
+  AlertTitle,
   Button,
   Flex,
   FormControl,
@@ -85,8 +89,10 @@ const AddPlayerModal: React.FC<AddPlayerModalProps> = ({
   const [showAdvancedOptions, setShowAdvancedOptions] =
     useState<boolean>(false);
   const [candidatePlayers, setCandidatePlayers] = useState<Player[]>([]);
+  const [isOAuthSubmitting, setIsOAuthSubmitting] = useState<boolean>(false);
 
   const initialRef = useRef<HTMLInputElement>(null);
+  const oauthRequestIdRef = useRef(0);
 
   const {
     isOpen: isSelectPlayerModalOpen,
@@ -138,13 +144,25 @@ const AddPlayerModal: React.FC<AddPlayerModalProps> = ({
     setPassword("");
     setShowAdvancedOptions(false);
     setUuid("");
+    setIsOAuthSubmitting(false);
 
     AccountService.cancelOAuth();
   }, [modalProps.isOpen]);
 
   useEffect(() => {
+    if (isOAuthSubmitting) return;
+
+    oauthRequestIdRef.current += 1;
     setOAuthCodeResponse(undefined);
-  }, [showOAuth, playerType, modalProps.isOpen]);
+    setIsLoading(false);
+    AccountService.cancelOAuth();
+  }, [
+    showOAuth,
+    playerType,
+    modalProps.isOpen,
+    authServer?.authUrl,
+    isOAuthSubmitting,
+  ]);
 
   useEffect(() => {
     setCandidatePlayers([]);
@@ -162,10 +180,14 @@ const AddPlayerModal: React.FC<AddPlayerModalProps> = ({
 
   const handleFetchOAuthCode = () => {
     if (playerType === PlayerType.Offline) return;
+    setIsOAuthSubmitting(false);
+    const requestId = ++oauthRequestIdRef.current;
     setOAuthCodeResponse(undefined);
     setIsLoading(true);
     AccountService.fetchOAuthCode(playerType, authServer?.authUrl).then(
       (response) => {
+        if (requestId !== oauthRequestIdRef.current) return;
+
         if (response.status === "success") {
           setOAuthCodeResponse(response.data);
         } else {
@@ -228,6 +250,7 @@ const AddPlayerModal: React.FC<AddPlayerModalProps> = ({
           );
       } else {
         if (!oauthCodeResponse) return;
+        setIsOAuthSubmitting(true);
         openUrl(oauthCodeResponse.verificationUri);
         loginServiceFunction = () =>
           AccountService.addPlayerOAuth(
@@ -239,13 +262,17 @@ const AddPlayerModal: React.FC<AddPlayerModalProps> = ({
 
       setIsLoading(true);
 
-      loginServiceFunction().then((response) => {
-        if (response.status === "success") {
-          afterLogin(response);
-        } else {
-          afterFailure(response);
-        }
-      });
+      loginServiceFunction()
+        .then((response) => {
+          if (response.status === "success") {
+            afterLogin(response);
+          } else {
+            afterFailure(response);
+          }
+        })
+        .finally(() => {
+          if (isOAuth) setIsOAuthSubmitting(false);
+        });
     }
   };
 
@@ -310,10 +337,26 @@ const AddPlayerModal: React.FC<AddPlayerModalProps> = ({
               />
             </FormControl>
 
+            {playerType !== PlayerType.Microsoft &&
+              !config.basicInfo.allowFullLoginFeature && (
+                <Alert status="error" borderRadius="md">
+                  <AlertIcon />
+                  <VStack spacing={0} align="start">
+                    <AlertTitle>
+                      {t("General.alert.noFullLogin.title")}
+                    </AlertTitle>
+                    <AlertDescription>
+                      {t("General.alert.noFullLogin.description")}
+                    </AlertDescription>
+                  </VStack>
+                </Alert>
+              )}
+
             {playerType === PlayerType.Offline && (
               <VStack w="100%" spacing={1}>
                 <FormControl
                   isRequired
+                  isDisabled={!config.basicInfo.allowFullLoginFeature}
                   isInvalid={
                     !!playername.length && !isOfflinePlayernameValid(playername)
                   }
@@ -335,15 +378,19 @@ const AddPlayerModal: React.FC<AddPlayerModalProps> = ({
                     {t("AddPlayerModal.offline.playerName.errorMessage")}
                   </FormErrorMessage>
                 </FormControl>
-                <Section
-                  isAccordion
-                  initialIsOpen={false}
-                  title={t("AddPlayerModal.offline.advancedOptions.title")}
-                  onAccordionToggle={(isOpen) => setShowAdvancedOptions(isOpen)}
-                  w="100%"
-                  mt={2}
-                  mb={-2}
-                />
+                {config.basicInfo.allowFullLoginFeature && (
+                  <Section
+                    isAccordion
+                    initialIsOpen={false}
+                    title={t("AddPlayerModal.offline.advancedOptions.title")}
+                    onAccordionToggle={(isOpen) =>
+                      setShowAdvancedOptions(isOpen)
+                    }
+                    w="100%"
+                    mt={2}
+                    mb={-2}
+                  />
+                )}
                 {showAdvancedOptions && (
                   <FormControl isInvalid={!!uuid.length && !isUuidValid(uuid)}>
                     <FormLabel>
@@ -432,7 +479,8 @@ const AddPlayerModal: React.FC<AddPlayerModalProps> = ({
                         </Text>
                       </HStack>
                     </FormControl>
-                    {authServer?.authUrl &&
+                    {config.basicInfo.allowFullLoginFeature &&
+                      authServer?.authUrl &&
                       (!showOAuth ? (
                         <>
                           <FormControl isRequired>
@@ -508,6 +556,7 @@ const AddPlayerModal: React.FC<AddPlayerModalProps> = ({
           )}
 
           {playerType === PlayerType.ThirdParty &&
+            config.basicInfo.allowFullLoginFeature &&
             authServer?.features.openidConfigurationUrl &&
             (showOAuth ? (
               <HStack spacing={2}>
@@ -549,9 +598,11 @@ const AddPlayerModal: React.FC<AddPlayerModalProps> = ({
                 isDisabled={
                   !playername ||
                   (playerType === PlayerType.Offline &&
+                    config.basicInfo.allowFullLoginFeature &&
                     !isOfflinePlayernameValid(playername)) ||
                   (uuid && !isUuidValid(uuid)) ||
                   (playerType === PlayerType.ThirdParty &&
+                    config.basicInfo.allowFullLoginFeature &&
                     authServerList.length > 0 &&
                     (!authServer || !password))
                 }
@@ -565,6 +616,8 @@ const AddPlayerModal: React.FC<AddPlayerModalProps> = ({
       <SelectPlayerModal
         candidatePlayers={candidatePlayers}
         onPlayerSelected={handlePlayerSelect}
+        modalTitle={t("SelectPlayerModal.header.titleForAdd")}
+        showDesc={false}
         isOpen={isSelectPlayerModalOpen}
         onClose={handleSelectPlayerModalClose}
       />

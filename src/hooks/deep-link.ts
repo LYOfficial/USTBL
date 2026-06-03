@@ -2,7 +2,8 @@ import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import micromatch from "micromatch";
 import { useEffect, useRef } from "react";
 
-const SJMCL_LINK_PREFIX = "sjmcl://";
+const USTBL_LINK_PREFIX = "ustbl://";
+const EMIT_DEEPLINK_EVENT = "deeplink:emit";
 
 type TriggerRule = string | string[] | RegExp | ((subpath: string) => boolean);
 
@@ -10,6 +11,16 @@ interface UseDeepLinkOptions {
   trigger: TriggerRule;
   onCall: (path: string, subpath: string) => void;
 }
+
+// Do not use openUrl so this helper can be used during development.
+export const emitDeepLink = (urls: string[]) => {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent<string[]>(EMIT_DEEPLINK_EVENT, {
+      detail: urls,
+    })
+  );
+};
 
 export const useDeepLink = ({ trigger, onCall }: UseDeepLinkOptions) => {
   const didInit = useRef(false);
@@ -29,13 +40,18 @@ export const useDeepLink = ({ trigger, onCall }: UseDeepLinkOptions) => {
 
     const handleUrls = (urls: string[]) => {
       urls.forEach((url) => {
-        if (url.startsWith(SJMCL_LINK_PREFIX)) {
-          const subpath = url.slice(SJMCL_LINK_PREFIX.length);
+        if (url.startsWith(USTBL_LINK_PREFIX)) {
+          const subpath = url.slice(USTBL_LINK_PREFIX.length);
           if (matchSubpath(subpath, trigger)) {
             onCall(url, subpath);
           }
         }
       });
+    };
+
+    const handleDevUrls = (event: Event) => {
+      const customEvent = event as CustomEvent<string[]>;
+      handleUrls(customEvent.detail || []);
     };
 
     const setup = async () => {
@@ -59,9 +75,11 @@ export const useDeepLink = ({ trigger, onCall }: UseDeepLinkOptions) => {
       }
     };
 
+    window.addEventListener(EMIT_DEEPLINK_EVENT, handleDevUrls);
     setup();
 
     return () => {
+      window.removeEventListener(EMIT_DEEPLINK_EVENT, handleDevUrls);
       if (unlistenRef.current) {
         unlistenRef.current();
       }
