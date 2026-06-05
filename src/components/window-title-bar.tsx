@@ -190,9 +190,9 @@ const WindowTitleBar = () => {
       h="44px"
       px={2}
       borderBottomWidth="1px"
-      borderColor="blackAlpha.200"
-      bg="blackAlpha.200"
-      _dark={{ borderColor: "whiteAlpha.200", bg: "whiteAlpha.100" }}
+      borderColor="gray.200"
+      bg="white"
+      _dark={{ borderColor: "gray.700", bg: "gray.800" }}
       userSelect="none"
       spacing={2}
       onMouseDown={onDragMouseDown}

@@ -314,9 +314,6 @@
         },
         "randomCustom": {
           "title": "随机自定义"
-        },
-        "autoDarken": {
-          "title": "深色模式下调暗背景"
         }
       },
       "presetBgList": {
@@ -1172,7 +1169,7 @@
         },
         "SJMC": {
           "title": "北京科技大学元宇宙体素工作坊",
-          "url": "https://docs.ustb.world"
+          "url": "https://www.ustb.world/"
         }
       }
     },

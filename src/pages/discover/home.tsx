@@ -115,7 +115,7 @@ export const DiscoverHomePage = () => {
     setIsLoadingCommunity(true);
     try {
       const source = [
-        { url: "https://docs.ustb.world/api/rss?lang=zh", cursor: null },
+        { url: "https://www.ustb.world/api/articles/rss", cursor: null },
       ];
       const response = await DiscoverService.fetchNewsPostSummaries(source);
       if (response.status === "success") {

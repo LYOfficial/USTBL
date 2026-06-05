@@ -261,7 +261,7 @@ pub struct AuthServerInfo {
 impl From<AuthServerInfo> for AuthServer {
   fn from(info: AuthServerInfo) -> Self {
     let name = if info.auth_url == USTB_AUTH_SERVER_URL {
-      "USTB Servers".to_string()
+      "像素北科".to_string()
     } else {
       info.metadata["meta"]["serverName"]
         .as_str()

@@ -5,7 +5,7 @@ use reqwest_middleware::ClientWithMiddleware;
 use serde::Deserialize;
 
 const RSS_DEFAULT_PAGE_SIZE: usize = 12;
-const USTB_RSS_ENDPOINT: &str = "https://docs.ustb.world/api/rss?lang=zh";
+const USTB_RSS_ENDPOINT: &str = "https://www.ustb.world/api/articles/rss";
 const USTB_RSS_NAME: &str = "元宇宙体素工作坊";
 const USTB_RSS_FULL_NAME: &str = "北京科技大学元宇宙体素工作坊";
 const USTB_RSS_ICON: &str = "/images/icons/Logo_128x128.png";

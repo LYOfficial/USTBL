@@ -71,13 +71,13 @@ const HelpSettingsPage = () => {
           title: t("HelpSettingsPage.community.settings.SJMC.title"),
           children: (
             <CommonIconButton
-              label="https://docs.ustb.world"
+              label="https://www.ustb.world"
               icon="external"
               withTooltip
               tooltipPlacement="bottom-end"
               size="xs"
               h={18}
-              onClick={() => openUrl("https://docs.ustb.world")}
+              onClick={() => openUrl("https://www.ustb.world")}
             />
           ),
         },

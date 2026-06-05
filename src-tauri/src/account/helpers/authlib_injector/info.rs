@@ -24,7 +24,7 @@ fn apply_ustb_oauth_fallback(metadata: &mut Value) {
   }
 
   if metadata["meta"].get("serverName").is_none() {
-    metadata["meta"]["serverName"] = json!("USTB Servers");
+    metadata["meta"]["serverName"] = json!("像素北科");
   }
 
   if metadata["meta"].get("links").is_none() || !metadata["meta"]["links"].is_object() {

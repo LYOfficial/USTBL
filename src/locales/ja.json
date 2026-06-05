@@ -314,9 +314,6 @@
         },
         "randomCustom": {
           "title": "ランダムカスタム"
-        },
-        "autoDarken": {
-          "title": "ダークモード時にバックグラウンドを暗くする"
         }
       },
       "presetBgList": {

@@ -314,9 +314,6 @@
         },
         "randomCustom": {
           "title": "Aléatoire et personnalisé"
-        },
-        "autoDarken": {
-          "title": "Assombrir l'arrière-plan en mode sombre."
         }
       },
       "presetBgList": {

@@ -28,8 +28,7 @@ const MainLayout = ({ children }: MainLayoutProps) => {
   const isStandAlone = router.pathname.startsWith("/standalone");
   const { config, update } = useLauncherConfig();
   const { colorMode } = useColorMode();
-  const isDarkenBg =
-    colorMode === "dark" && config.appearance.background.autoDarken;
+  const isDarkenBg = colorMode === "dark";
 
   const [bgImgSrc, setBgImgSrc] = useState<string>("");
   const isCheckedRunCount = useRef(false);

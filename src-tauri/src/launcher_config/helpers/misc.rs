@@ -106,7 +106,7 @@ impl LauncherConfig {
 
     // Keep the community-news source list aligned with the built-in RSS source.
     self.discover_source_endpoints =
-      vec![("https://docs.ustb.world/api/rss?lang=zh".to_string(), true)];
+      vec![("https://www.ustb.world/api/articles/rss".to_string(), true)];
 
     self.basic_info = BasicInfo {
       launcher_version: version,

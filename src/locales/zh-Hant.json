@@ -314,9 +314,6 @@
         },
         "randomCustom": {
           "title": "隨機自訂"
-        },
-        "autoDarken": {
-          "title": "深色模式下調暗背景"
         }
       },
       "presetBgList": {

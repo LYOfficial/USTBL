@@ -285,7 +285,7 @@ structstruck::strike! {
       default,
       deserialize_with = "deserialize_discover_sources"
     )]
-    #[default(_code="vec![(\"https://docs.ustb.world/api/rss?lang=zh\".to_string(), true)]")]
+    #[default(_code="vec![(\"https://www.ustb.world/api/articles/rss\".to_string(), true)]")]
     pub discover_source_endpoints: Vec<(String, bool)>,
     pub extra_java_paths: Vec<String>,
     pub suppressed_dialogs: Vec<String>,

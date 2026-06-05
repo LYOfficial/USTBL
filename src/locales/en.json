@@ -314,9 +314,6 @@
         },
         "randomCustom": {
           "title": "Random Custom Image"
-        },
-        "autoDarken": {
-          "title": "Dim Background in Dark Mode"
         }
       },
       "presetBgList": {
@@ -1172,7 +1169,7 @@
         },
         "SJMC": {
           "title": "USTB Metaverse Voxel Workshop",
-          "url": "https://docs.ustb.world"
+          "url": "https://www.ustb.world/"
         }
       }
     },
