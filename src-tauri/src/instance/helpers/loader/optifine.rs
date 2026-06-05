@@ -1,4 +1,4 @@
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use crate::instance::helpers::client_json::{ArgumentsItem, LaunchArgumentTemplate};
 use crate::instance::helpers::client_json::{LibrariesValue, McClientInfo};
 use crate::instance::helpers::loader::common::add_library_entry;
@@ -27,7 +27,7 @@ pub async fn download_optifine_installer(
   optifine: &OptiFineResourceInfo,
   lib_dir: PathBuf,
   task_params: &mut Vec<PTaskParam>,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   // only have BMCLAPI source
   let root = get_download_api(SourceType::BMCLAPIMirror, ResourceType::OptiFine)?;
   let installer_url = root.join(&format!(
@@ -57,7 +57,7 @@ async fn download_optifine_libraries(
   priority: &[SourceType],
   instance: &Instance,
   client_info: &McClientInfo,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let mut client_info = client_info.clone();
   let optifine = instance
     .optifine
@@ -288,7 +288,7 @@ async fn run_optifine_patcher(
   installer_jar: &Path,
   base_client_jar: &Path,
   out_optifine_jar: &Path,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let javas_state = app.state::<Mutex<Vec<JavaInfo>>>();
   let javas = javas_state.lock()?.clone();
 
@@ -335,7 +335,7 @@ pub async fn finish_optifine_install(
   app: &AppHandle,
   instance: &Instance,
   client_info: &McClientInfo,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let subdirs = get_instance_subdir_paths(app, instance, &[&InstanceSubdirType::Libraries])
     .ok_or(InstanceError::InstanceNotFoundByID)?;
   let libraries_dir = subdirs.first().ok_or(InstanceError::InstanceNotFoundByID)?;
@@ -394,7 +394,7 @@ pub async fn finish_optifine_install(
   Ok(())
 }
 
-fn remove_entry_from_zip(zip_path: &Path, entry_name: &str) -> SJMCLResult<()> {
+fn remove_entry_from_zip(zip_path: &Path, entry_name: &str) -> USTBLResult<()> {
   if !zip_path.exists() {
     return Ok(());
   }

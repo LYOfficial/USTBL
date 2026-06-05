@@ -1,4 +1,4 @@
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use crate::instance::helpers::game_version::compare_game_versions;
 use crate::instance::models::misc::Instance;
 use crate::launch::models::LaunchError;
@@ -14,7 +14,7 @@ pub async fn select_java_runtime(
   client_json_req: i32,
   // TODO: pass client and mod loader info to calculate version with more rules, instead of passing require version
   // ref: https://github.com/Hex-Dragon/PCL2/blob/16e09c792ce8c13435fc6827e6da54170aaa3bc0/Plain%20Craft%20Launcher%202/Modules/Minecraft/ModLaunch.vb#L1130
-) -> SJMCLResult<JavaInfo> {
+) -> USTBLResult<JavaInfo> {
   if !game_java.auto {
     return java_list
       .iter()

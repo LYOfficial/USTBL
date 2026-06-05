@@ -1,4 +1,4 @@
-use crate::error::{SJMCLError, SJMCLResult};
+use crate::error::{USTBLError, USTBLResult};
 use std::io;
 use std::process::{Command, ExitStatus};
 
@@ -22,7 +22,7 @@ pub fn execute_command_line(cmdline: &str) -> io::Result<ExitStatus> {
   }
 }
 
-pub fn split_command_line(wrapper: &str) -> SJMCLResult<Option<Command>> {
+pub fn split_command_line(wrapper: &str) -> USTBLResult<Option<Command>> {
   if wrapper.trim().is_empty() {
     return Ok(None);
   }
@@ -30,7 +30,7 @@ pub fn split_command_line(wrapper: &str) -> SJMCLResult<Option<Command>> {
   let parts = match shlex::split(wrapper) {
     Some(p) if !p.is_empty() => p,
     _ => {
-      return Err(SJMCLError("Invalid command line".to_string()));
+      return Err(USTBLError("Invalid command line".to_string()));
     }
   };
 

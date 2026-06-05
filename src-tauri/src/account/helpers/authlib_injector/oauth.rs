@@ -5,7 +5,7 @@ use crate::account::helpers::misc::oauth_polling;
 use crate::account::models::{
   AccountError, DeviceAuthResponse, DeviceAuthResponseInfo, OAuthTokens, PlayerInfo,
 };
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -23,7 +23,7 @@ struct OpenIDConfig {
 async fn fetch_openid_configuration(
   app: &AppHandle,
   openid_configuration_url: String,
-) -> SJMCLResult<OpenIDConfig> {
+) -> USTBLResult<OpenIDConfig> {
   let client = app.state::<reqwest::Client>();
 
   let res = client
@@ -38,7 +38,7 @@ async fn fetch_openid_configuration(
   Ok(res)
 }
 
-async fn fetch_jwks(app: &AppHandle, jwks_uri: String) -> SJMCLResult<Value> {
+async fn fetch_jwks(app: &AppHandle, jwks_uri: String) -> USTBLResult<Value> {
   let client = app.state::<reqwest::Client>();
 
   let res = client
@@ -57,7 +57,7 @@ pub async fn device_authorization(
   app: &AppHandle,
   openid_configuration_url: String,
   client_id: Option<String>,
-) -> SJMCLResult<DeviceAuthResponseInfo> {
+) -> USTBLResult<DeviceAuthResponseInfo> {
   let client = app.state::<reqwest::Client>();
 
   let openid_configuration = fetch_openid_configuration(app, openid_configuration_url).await?;
@@ -100,7 +100,7 @@ async fn parse_token(
   tokens: &OAuthTokens,
   auth_server_url: Option<String>,
   client_id: Option<String>,
-) -> SJMCLResult<PlayerInfo> {
+) -> USTBLResult<PlayerInfo> {
   let key = &jwks["keys"].as_array().ok_or(AccountError::ParseError)?[0];
 
   let e = key["e"].as_str().unwrap_or_default();
@@ -149,7 +149,7 @@ pub async fn login(
   openid_configuration_url: String,
   client_id: Option<String>,
   auth_info: DeviceAuthResponseInfo,
-) -> SJMCLResult<PlayerInfo> {
+) -> USTBLResult<PlayerInfo> {
   let client = app.state::<reqwest::Client>();
   let openid_configuration = fetch_openid_configuration(app, openid_configuration_url).await?;
   let jwks = fetch_jwks(app, openid_configuration.jwks_uri).await?;
@@ -170,7 +170,7 @@ pub async fn refresh(
   player: &PlayerInfo,
   client_id: Option<String>,
   openid_configuration_url: String,
-) -> SJMCLResult<PlayerInfo> {
+) -> USTBLResult<PlayerInfo> {
   let openid_configuration = fetch_openid_configuration(app, openid_configuration_url).await?;
   let jwks = fetch_jwks(app, openid_configuration.jwks_uri).await?;
 

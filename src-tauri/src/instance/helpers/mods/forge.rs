@@ -1,7 +1,7 @@
 // This file is used to read mod info for Forge or NeoForge (structure almost identical)
 // https://forge.gemwire.uk/wiki/Mods.toml
 // https://docs.neoforged.net/docs/gettingstarted/modfiles/#neoforgemodstoml
-use crate::error::{SJMCLError, SJMCLResult};
+use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::mods::common::{compress_icon, LocalModMetadataParser};
 use crate::instance::models::misc::{LocalModInfo, ModLoaderType};
 use crate::utils::image::{load_image_from_dir_async, load_image_from_jar, ImageWrapper};
@@ -23,7 +23,7 @@ pub struct ForgeModMetadata {
   pub mods: Vec<ForgeModSubItem>,
   // some non-standard mods write logo_file field in toml meta section.
   pub logo_file: Option<String>,
-  // not in file, added by sjmcl
+  // not in file, added by ustbl
   pub valid_logo_file: Option<ImageWrapper>,
 }
 
@@ -63,7 +63,7 @@ impl LocalModMetadataParser for ForgeModMetadataParser {
 
   fn get_mod_metadata_from_jar<R: Read + Seek>(
     jar: &mut ZipArchive<R>,
-  ) -> SJMCLResult<Self::Metadata> {
+  ) -> USTBLResult<Self::Metadata> {
     let mut meta_result = None;
     if let Ok(mut file) = jar.by_name("META-INF/mods.toml") {
       let mut buf = String::new();
@@ -84,13 +84,13 @@ impl LocalModMetadataParser for ForgeModMetadataParser {
     let mut meta = match meta_result {
       Some(val) => val,
       None => {
-        return Err(SJMCLError(
+        return Err(USTBLError(
           "no mods.toml or neoforge.mods.toml found".to_string(),
         ));
       }
     };
     if meta.mods.is_empty() {
-      return Err(SJMCLError("forge mod len(mods) == 0".to_string()));
+      return Err(USTBLError("forge mod len(mods) == 0".to_string()));
     }
     // seek logo
     let mut logo_candidates = vec![];
@@ -127,7 +127,7 @@ impl LocalModMetadataParser for ForgeModMetadataParser {
     Ok(meta)
   }
 
-  async fn get_mod_metadata_from_dir(dir_path: &Path) -> SJMCLResult<Self::Metadata> {
+  async fn get_mod_metadata_from_dir(dir_path: &Path) -> USTBLResult<Self::Metadata> {
     let mut meta_result = None;
     if let Ok(val) = tokio::fs::read_to_string(dir_path.join("META-INF/mods.toml")).await {
       let mut meta = toml::from_str::<ForgeModMetadata>(val.as_str())?;
@@ -145,13 +145,13 @@ impl LocalModMetadataParser for ForgeModMetadataParser {
     let mut meta = match meta_result {
       Some(val) => val,
       None => {
-        return Err(SJMCLError(
+        return Err(USTBLError(
           "no mods.toml or neoforge.mods.toml found".to_string(),
         ));
       }
     };
     if meta.mods.is_empty() {
-      return Err(SJMCLError("forge mod len(mods) == 0".to_string()));
+      return Err(USTBLError("forge mod len(mods) == 0".to_string()));
     }
     // seek logo
     let mut logo_candidates = vec![];

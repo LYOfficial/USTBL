@@ -1,4 +1,4 @@
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use crate::instance::helpers::client_jar::load_game_version_from_jar;
 use crate::instance::helpers::client_json::{libraries_to_info, patches_to_info, McClientInfo};
 use crate::instance::helpers::loader::forge::download_forge_libraries;
@@ -58,7 +58,7 @@ pub fn get_instance_subdir_paths(
         InstanceSubdirType::Screenshots => path.join("screenshots"),
         InstanceSubdirType::ServerResourcePacks => path.join("server-resource-packs"),
         InstanceSubdirType::ShaderPacks => path.join("shaderpacks"),
-        // native libraries extracted by SJMCL
+        // native libraries extracted by USTBL
         InstanceSubdirType::NativeLibraries => version_path.join(format!(
           "natives-{}-{}",
           tauri_plugin_os::platform(),
@@ -90,7 +90,7 @@ pub fn get_instance_subdir_path_by_id(
   get_instance_subdir_paths(app, instance, &[directory_type]).and_then(|mut paths| paths.pop())
 }
 
-pub fn unify_instance_name(src_version_path: &PathBuf, tgt_name: &String) -> SJMCLResult<PathBuf> {
+pub fn unify_instance_name(src_version_path: &PathBuf, tgt_name: &String) -> USTBLResult<PathBuf> {
   if !sanitize_filename::is_sanitized(tgt_name) {
     return Err(InstanceError::InvalidNameError.into());
   }
@@ -132,7 +132,7 @@ pub async fn refresh_instances(
   app: &AppHandle,
   game_directory: &GameDirectory,
   is_first_run: bool,
-) -> SJMCLResult<Vec<Instance>> {
+) -> USTBLResult<Vec<Instance>> {
   let mut instances = vec![];
   // traverse the "versions" directory
   let versions_dir = game_directory.dir.join("versions");
@@ -336,7 +336,7 @@ pub fn create_instance_shortcut_icon(
   app: &AppHandle,
   instance: &Instance,
   icon_src: &str,
-) -> SJMCLResult<PathBuf> {
+) -> USTBLResult<PathBuf> {
   use crate::utils::fs::get_app_resource_filepath;
 
   let mut img = if icon_src == "custom" {
@@ -347,7 +347,7 @@ pub fn create_instance_shortcut_icon(
     let asset = app
       .asset_resolver()
       .get(icon_src.to_string())
-      .ok_or_else(|| crate::error::SJMCLError(format!("Icon asset not found: {}", icon_src)))?;
+      .ok_or_else(|| crate::error::USTBLError(format!("Icon asset not found: {}", icon_src)))?;
     image::load_from_memory(asset.bytes())?
   };
 

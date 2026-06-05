@@ -8,7 +8,7 @@ use crate::account::helpers::offline::load_preset_skin;
 use crate::account::models::{
   AccountError, PlayerInfo, PlayerType, PresetRole, SkinModel, Texture, TextureType,
 };
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::fs;
@@ -68,7 +68,7 @@ pub enum HmclAccountEntry {
   ThirdParty(HmclThirdPartyAccount),
 }
 
-async fn offline_to_player(app: &AppHandle, acc: &HmclOfflineAccount) -> SJMCLResult<PlayerInfo> {
+async fn offline_to_player(app: &AppHandle, acc: &HmclOfflineAccount) -> USTBLResult<PlayerInfo> {
   let uuid = uuid::Uuid::parse_str(&acc.uuid).map_err(|_| AccountError::ParseError)?;
   let textures = load_preset_skin(app, PresetRole::Steve)?;
   Ok(
@@ -91,7 +91,7 @@ async fn offline_to_player(app: &AppHandle, acc: &HmclOfflineAccount) -> SJMCLRe
 async fn microsoft_to_player(
   app: &AppHandle,
   acc: &HmclMicrosoftAccount,
-) -> SJMCLResult<PlayerInfo> {
+) -> USTBLResult<PlayerInfo> {
   let profile_result = fetch_minecraft_profile(app, acc.access_token.clone()).await;
   let profile = match profile_result {
     Ok(p) => p,
@@ -165,7 +165,7 @@ async fn microsoft_to_player(
 async fn thirdparty_to_player(
   app: &AppHandle,
   acc: &HmclThirdPartyAccount,
-) -> SJMCLResult<PlayerInfo> {
+) -> USTBLResult<PlayerInfo> {
   let profile = MinecraftProfile {
     id: acc.uuid.clone(),
     name: acc.display_name.clone(),
@@ -188,7 +188,7 @@ async fn thirdparty_to_player(
 
 pub async fn retrieve_hmcl_account_info(
   app: &AppHandle,
-) -> SJMCLResult<(Vec<PlayerInfo>, Vec<Url>)> {
+) -> USTBLResult<(Vec<PlayerInfo>, Vec<Url>)> {
   let hmcl_json_path = if cfg!(target_os = "linux") {
     app
       .path()

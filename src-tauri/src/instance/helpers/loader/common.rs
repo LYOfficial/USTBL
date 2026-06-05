@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 use zip::ZipArchive;
 
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use crate::instance::helpers::client_json::{LibrariesValue, McClientInfo};
 use crate::instance::helpers::loader::fabric::install_fabric_loader;
 use crate::instance::helpers::loader::forge::{install_forge_loader, InstallProfile};
@@ -23,7 +23,7 @@ pub fn add_library_entry(
   libraries: &mut Vec<LibrariesValue>,
   lib_path: &str,
   params: Option<LibrariesValue>,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let new_library = LibrariesValue {
     name: lib_path.to_string(),
     ..params.unwrap_or_default()
@@ -42,7 +42,7 @@ pub async fn install_mod_loader(
   client_info: &mut McClientInfo,
   task_params: &mut Vec<PTaskParam>,
   is_install_fabric_api: Option<bool>,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   match loader.loader_type {
     ModLoaderType::Fabric => {
       install_fabric_loader(
@@ -73,7 +73,7 @@ pub async fn execute_processors(
   instance: &Instance,
   client_info: &McClientInfo,
   install_profile: &InstallProfile,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let javas_state = app.state::<Mutex<Vec<JavaInfo>>>();
   let javas = javas_state.lock()?.clone();
 

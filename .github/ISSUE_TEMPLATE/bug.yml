@@ -8,7 +8,7 @@ body:
       value: |
         Thank you for taking the time to report a bug!
         Before submitting a bug report, please make sure that:
-          * You have verified that this issue is related to SJMCL itself and NOT caused by Minecraft or any installed mods
+          * You have verified that this issue is related to USTBL itself and NOT caused by Minecraft or any installed mods
           * You have searched through [existing issues](https://github.com/USTB-SkyCode/USTBL/issues) and confirmed this bug hasn't been reported before
 
         Please provide a clear and descriptive title for your issue.
@@ -33,8 +33,8 @@ body:
   - type: input
     id: launcherVersion
     attributes:
-      label: SJMCL Version (Optional)
-      description: "Please enter the version(s) of SJMCL that you found where this bug occurs."
+      label: USTBL Version (Optional)
+      description: "Please enter the version(s) of USTBL that you found where this bug occurs."
       placeholder: "0.0.0"
     validations:
       required: false
@@ -60,7 +60,7 @@ body:
     id: config
     attributes:
       label: Environment (Optional)
-      description: "Provide your launcher settings (from `sjmcl.conf.json`), or development environment information (full `tauri info` output) to help us better resolve the issue."
+      description: "Provide your launcher settings (from `ustbl.conf.json`), or development environment information (full `tauri info` output) to help us better resolve the issue."
     validations:
       required: false
 

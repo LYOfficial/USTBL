@@ -10,7 +10,7 @@ use tauri_plugin_http::reqwest;
 use url::Url;
 use zip::ZipArchive;
 
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use crate::instance::helpers::client_json::{LaunchArgumentTemplate, LibrariesValue, McClientInfo};
 use crate::instance::helpers::loader::common::add_library_entry;
 use crate::instance::helpers::misc::get_instance_subdir_paths;
@@ -52,7 +52,7 @@ pub async fn install_forge_loader(
   loader: &ModLoader,
   lib_dir: PathBuf,
   task_params: &mut Vec<PTaskParam>,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let loader_ver = &loader.version;
 
   let root = get_download_api(priority[0], ResourceType::ForgeInstall)?;
@@ -96,7 +96,7 @@ pub async fn download_forge_libraries(
   priority: &[SourceType],
   instance: &Instance,
   client_info: &mut McClientInfo,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let subdirs = get_instance_subdir_paths(
     app,
     instance,

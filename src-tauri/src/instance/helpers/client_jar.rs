@@ -76,7 +76,7 @@ pub fn load_game_version_from_jar<R: Read + Seek>(jar: &mut ZipArchive<R>) -> Op
   None
 }
 
-// pub fn load_image_from_jar<R: Read + Seek>(jar: &mut ZipArchive<R>) -> SJMCLResult<String> {
+// pub fn load_image_from_jar<R: Read + Seek>(jar: &mut ZipArchive<R>) -> USTBLResult<String> {
 //   if let Ok(mut file) = jar.by_name("pack.png") {
 //     let mut buffer = Vec::new();
 //     file.read_to_end(&mut buffer)?;
@@ -88,5 +88,5 @@ pub fn load_game_version_from_jar<R: Read + Seek>(jar: &mut ZipArchive<R>) -> Op
 //       return Ok(b64);
 //     }
 //   }
-//   Err(SJMCLError("pack.png not found in jar".to_string()))
+//   Err(USTBLError("pack.png not found in jar".to_string()))
 // }

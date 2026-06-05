@@ -1,3 +1,4 @@
+use crate::account::helpers::authlib_injector::constants::PRESET_AUTH_SERVERS;
 use crate::account::helpers::authlib_injector::info::{
   fetch_auth_server_info, fetch_auth_url, get_auth_server_info_by_url,
 };
@@ -10,7 +11,7 @@ use crate::account::models::{
   AccountError, AccountInfo, AuthServer, DeviceAuthResponseInfo, Player, PlayerInfo, PlayerType,
   PresetRole, SkinModel, TextureType,
 };
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use crate::launcher_config::models::LauncherConfig;
 use crate::storage::Storage;
 use crate::utils::fs::get_app_resource_filepath;
@@ -21,7 +22,7 @@ use tauri::{AppHandle, Manager};
 use url::Url;
 
 #[tauri::command]
-pub fn retrieve_player_list(app: AppHandle) -> SJMCLResult<Vec<Player>> {
+pub fn retrieve_player_list(app: AppHandle) -> USTBLResult<Vec<Player>> {
   let account_binding = app.state::<Mutex<AccountInfo>>();
   let account_state = account_binding.lock()?;
 
@@ -53,7 +54,7 @@ pub fn retrieve_player_list(app: AppHandle) -> SJMCLResult<Vec<Player>> {
 }
 
 #[tauri::command]
-pub async fn add_player_offline(app: AppHandle, username: String, uuid: String) -> SJMCLResult<()> {
+pub async fn add_player_offline(app: AppHandle, username: String, uuid: String) -> USTBLResult<()> {
   let new_player = offline::login(&app, username, uuid).await?;
 
   let account_binding = app.state::<Mutex<AccountInfo>>();
@@ -87,7 +88,7 @@ pub async fn fetch_oauth_code(
   app: AppHandle,
   server_type: PlayerType,
   auth_server_url: String,
-) -> SJMCLResult<DeviceAuthResponseInfo> {
+) -> USTBLResult<DeviceAuthResponseInfo> {
   if server_type == PlayerType::ThirdParty {
     let auth_server = AuthServer::from(get_auth_server_info_by_url(&app, auth_server_url)?);
 
@@ -110,7 +111,7 @@ pub async fn add_player_oauth(
   server_type: PlayerType,
   auth_info: DeviceAuthResponseInfo,
   auth_server_url: String,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let new_player = match server_type {
     PlayerType::ThirdParty => {
       let _ = check_authlib_jar(&app).await; // ignore the error when logging in
@@ -169,7 +170,7 @@ pub async fn relogin_player_oauth(
   app: AppHandle,
   player_id: String,
   auth_info: DeviceAuthResponseInfo,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let account_binding = app.state::<Mutex<AccountInfo>>();
 
   let cloned_account_state = account_binding.lock()?.clone();
@@ -221,7 +222,7 @@ pub async fn relogin_player_oauth(
 }
 
 #[tauri::command]
-pub fn cancel_oauth(app: AppHandle) -> SJMCLResult<()> {
+pub fn cancel_oauth(app: AppHandle) -> USTBLResult<()> {
   let account_binding = app.state::<Mutex<AccountInfo>>();
   let mut account_state = account_binding.lock()?;
   account_state.is_oauth_processing = false;
@@ -235,7 +236,7 @@ pub async fn add_player_3rdparty_password(
   auth_server_url: String,
   username: String,
   password: String,
-) -> SJMCLResult<Vec<Player>> {
+) -> USTBLResult<Vec<Player>> {
   let _ = check_authlib_jar(&app).await; // ignore the error when logging in
 
   let (mut new_players, is_token_binded) =
@@ -298,7 +299,7 @@ pub async fn relogin_player_3rdparty_password(
   app: AppHandle,
   player_id: String,
   password: String,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let account_binding = app.state::<Mutex<AccountInfo>>();
 
   let cloned_account_state = account_binding.lock()?.clone();
@@ -347,7 +348,7 @@ pub async fn relogin_player_3rdparty_password(
 }
 
 #[tauri::command]
-pub async fn add_player_from_selection(app: AppHandle, player: Player) -> SJMCLResult<()> {
+pub async fn add_player_from_selection(app: AppHandle, player: Player) -> USTBLResult<()> {
   let player_info: PlayerInfo = player.into();
   let refreshed_player = authlib_injector::password::refresh(&app, &player_info, true).await?;
 
@@ -385,7 +386,7 @@ pub fn update_player_skin_offline_preset(
   app: AppHandle,
   player_id: String,
   preset_role: PresetRole,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let account_binding = app.state::<Mutex<AccountInfo>>();
   let mut account_state = account_binding.lock()?;
 
@@ -409,7 +410,7 @@ pub fn update_player_skin_offline_local(
   image_path: String,
   texture_type: TextureType,
   skin_model: SkinModel,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let image_path = if image_path == "dummy" {
     // this is an Easter Egg :)
     get_app_resource_filepath(&app, "assets/skins/dummy.png")
@@ -449,7 +450,7 @@ pub fn update_player_skin_offline_local(
 }
 
 #[tauri::command]
-pub async fn delete_player(app: AppHandle, player_id: String) -> SJMCLResult<()> {
+pub async fn delete_player(app: AppHandle, player_id: String) -> USTBLResult<()> {
   {
     let account_binding = app.state::<Mutex<AccountInfo>>();
     let mut account_state = account_binding.lock()?;
@@ -485,7 +486,7 @@ pub async fn delete_player(app: AppHandle, player_id: String) -> SJMCLResult<()>
 }
 
 #[tauri::command]
-pub async fn refresh_player(app: AppHandle, player_id: String) -> SJMCLResult<()> {
+pub async fn refresh_player(app: AppHandle, player_id: String) -> USTBLResult<()> {
   let account_binding = app.state::<Mutex<AccountInfo>>();
 
   let cloned_account_state = account_binding.lock()?.clone();
@@ -528,7 +529,7 @@ pub async fn refresh_player(app: AppHandle, player_id: String) -> SJMCLResult<()
 }
 
 #[tauri::command]
-pub fn retrieve_auth_server_list(app: AppHandle) -> SJMCLResult<Vec<AuthServer>> {
+pub fn retrieve_auth_server_list(app: AppHandle) -> USTBLResult<Vec<AuthServer>> {
   let binding = app.state::<Mutex<AccountInfo>>();
   let state = binding.lock()?;
   let auth_servers = state
@@ -540,7 +541,7 @@ pub fn retrieve_auth_server_list(app: AppHandle) -> SJMCLResult<Vec<AuthServer>>
 }
 
 #[tauri::command]
-pub async fn fetch_auth_server(app: AppHandle, url: String) -> SJMCLResult<AuthServer> {
+pub async fn fetch_auth_server(app: AppHandle, url: String) -> USTBLResult<AuthServer> {
   // check the url integrity following the standard
   // https://github.com/yushijinhun/authlib-injector/wiki/%E5%90%AF%E5%8A%A8%E5%99%A8%E6%8A%80%E6%9C%AF%E8%A7%84%E8%8C%83#%E5%9C%A8%E5%90%AF%E5%8A%A8%E5%99%A8%E4%B8%AD%E8%BE%93%E5%85%A5%E5%9C%B0%E5%9D%80
   let parsed_url = Url::parse(&url)
@@ -559,7 +560,7 @@ pub async fn fetch_auth_server(app: AppHandle, url: String) -> SJMCLResult<AuthS
 }
 
 #[tauri::command]
-pub async fn add_auth_server(app: AppHandle, auth_url: String) -> SJMCLResult<()> {
+pub async fn add_auth_server(app: AppHandle, auth_url: String) -> USTBLResult<()> {
   if get_auth_server_info_by_url(&app, auth_url.clone()).is_ok() {
     return Err(AccountError::Duplicate.into());
   }
@@ -574,7 +575,12 @@ pub async fn add_auth_server(app: AppHandle, auth_url: String) -> SJMCLResult<()
 }
 
 #[tauri::command]
-pub fn delete_auth_server(app: AppHandle, url: String) -> SJMCLResult<()> {
+pub fn delete_auth_server(app: AppHandle, url: String) -> USTBLResult<()> {
+  // prevent deletion of preset auth servers
+  if PRESET_AUTH_SERVERS.iter().any(|s| normalize_url(s) == normalize_url(&url)) {
+    return Err(AccountError::Invalid.into());
+  }
+
   let account_binding = app.state::<Mutex<AccountInfo>>();
   let mut account_state = account_binding.lock()?;
 
@@ -628,7 +634,7 @@ pub fn delete_auth_server(app: AppHandle, url: String) -> SJMCLResult<()> {
 pub async fn retrieve_other_launcher_account_info(
   app: AppHandle,
   launcher_type: ImportLauncherType,
-) -> SJMCLResult<(Vec<Player>, Vec<AuthServer>)> {
+) -> USTBLResult<(Vec<Player>, Vec<AuthServer>)> {
   let (mut player_infos, urls) = match launcher_type {
     ImportLauncherType::HMCL => retrieve_hmcl_account_info(&app).await?,
     _ => return Ok((vec![], vec![])),
@@ -669,7 +675,7 @@ pub async fn import_external_account_info(
   app: AppHandle,
   players: Vec<Player>,
   auth_servers: Vec<AuthServer>,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   // fetch auth servers
   let fetch_tasks = auth_servers.into_iter().map(|server| {
     let app = app.clone();

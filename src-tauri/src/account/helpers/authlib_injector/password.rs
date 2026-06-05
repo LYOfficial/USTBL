@@ -1,6 +1,6 @@
 use crate::account::helpers::authlib_injector::common::{parse_profile, retrieve_profile};
 use crate::account::models::{AccountError, PlayerInfo};
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::{AppHandle, Manager};
@@ -26,7 +26,7 @@ pub async fn login(
   auth_server_url: String,
   username: String,
   password: String,
-) -> SJMCLResult<(Vec<PlayerInfo>, bool)> {
+) -> USTBLResult<(Vec<PlayerInfo>, bool)> {
   let client = app.state::<reqwest::Client>();
 
   let response = client
@@ -103,7 +103,7 @@ pub async fn refresh(
   app: &AppHandle,
   player: &PlayerInfo,
   is_new_bind: bool,
-) -> SJMCLResult<PlayerInfo> {
+) -> USTBLResult<PlayerInfo> {
   let client = app.state::<reqwest::Client>();
 
   let response = client

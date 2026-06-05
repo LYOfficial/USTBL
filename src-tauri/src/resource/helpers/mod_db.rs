@@ -1,4 +1,4 @@
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use crate::resource::models::{OtherResourceSource, ResourceError};
 use crate::utils::fs::get_app_resource_filepath;
 use std::collections::{HashMap, HashSet};
@@ -288,7 +288,7 @@ impl ModDataBase {
   }
 }
 
-pub async fn initialize_mod_db(app: &AppHandle) -> SJMCLResult<()> {
+pub async fn initialize_mod_db(app: &AppHandle) -> USTBLResult<()> {
   let csv_path = get_app_resource_filepath(app, "assets/db/mod_data.csv")
     .ok()
     .unwrap_or_default();
@@ -352,7 +352,7 @@ pub async fn initialize_mod_db(app: &AppHandle) -> SJMCLResult<()> {
   Ok(())
 }
 
-pub async fn handle_search_query(app: &AppHandle, query: &str) -> SJMCLResult<String> {
+pub async fn handle_search_query(app: &AppHandle, query: &str) -> USTBLResult<String> {
   let query = query.split_whitespace().collect::<Vec<_>>().join(" ");
 
   // Only process Chinese queries

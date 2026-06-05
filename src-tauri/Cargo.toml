@@ -1,8 +1,8 @@
 [package]
 name = "USTBL"
-version = "0.1.1"
-description = "A Minecraft launcher from SJMC"
-authors = ["SJMCL Team"]
+version = "0.2.0"
+description = "A Minecraft launcher for USTB Servers"
+authors = ["USTBL Team"]
 license = "GNU General Public License v3.0 (with additional terms)"
 repository = "https://github.com/USTB-SkyCode/USTBL"
 edition = "2021"

@@ -1,5 +1,5 @@
 use crate::account::models::{PlayerInfo, SkinModel};
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use crate::utils::image::ImageWrapper;
 use crate::utils::sys_info::find_free_port;
 use axum::{
@@ -134,8 +134,8 @@ impl YggdrasilServer {
         "signaturePublickey": public_key,
         "skinDomains": ["127.0.0.1", "localhost"],
         "meta": {
-          "serverName": "SJMCL",
-          "implementationName": "SJMCL",
+          "serverName": "USTBL",
+          "implementationName": "USTBL",
           "implementationVersion": "1.0",
           "feature.non_email_login": true
         }
@@ -144,7 +144,7 @@ impl YggdrasilServer {
     }
   }
 
-  pub async fn run(self) -> SJMCLResult<()> {
+  pub async fn run(self) -> USTBLResult<()> {
     let app = self.clone().create_router();
     let addr = SocketAddr::from_str(&format!("127.0.0.1:{}", self.port))?;
 

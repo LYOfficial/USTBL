@@ -1,6 +1,6 @@
-# SJMCL Developer VSCode Extension
+# USTBL Developer VSCode Extension
 
-Developer extension for SJMCL workspace, created with ❤️ and 🤖 (Codex).
+Developer extension for USTBL workspace, created with ❤️ and 🤖 (Codex).
 
 ## Compile
 

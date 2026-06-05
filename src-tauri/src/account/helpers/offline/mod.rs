@@ -3,7 +3,7 @@ pub mod yggdrasil_server;
 use crate::account::models::{
   AccountError, PlayerInfo, PlayerType, PresetRole, SkinModel, Texture, TextureType,
 };
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use crate::utils::fs::get_app_resource_filepath;
 use crate::utils::image::load_image_from_dir;
 use rand::seq::IteratorRandom;
@@ -11,7 +11,7 @@ use strum::IntoEnumIterator;
 use tauri::AppHandle;
 use uuid::Uuid;
 
-pub fn load_preset_skin(app: &AppHandle, preset_role: PresetRole) -> SJMCLResult<Vec<Texture>> {
+pub fn load_preset_skin(app: &AppHandle, preset_role: PresetRole) -> USTBLResult<Vec<Texture>> {
   let texture_path = get_app_resource_filepath(app, &format!("assets/skins/{}.png", preset_role))
     .map_err(|_| AccountError::TextureError)?;
 
@@ -29,7 +29,7 @@ pub fn load_preset_skin(app: &AppHandle, preset_role: PresetRole) -> SJMCLResult
   }])
 }
 
-pub async fn login(app: &AppHandle, username: String, raw_uuid: String) -> SJMCLResult<PlayerInfo> {
+pub async fn login(app: &AppHandle, username: String, raw_uuid: String) -> USTBLResult<PlayerInfo> {
   let name_with_prefix = format!("OfflinePlayer:{}", username);
   let uuid = if let Ok(id) = Uuid::parse_str(&raw_uuid) {
     id

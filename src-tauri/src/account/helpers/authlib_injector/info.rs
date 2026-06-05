@@ -2,7 +2,7 @@ use crate::account::helpers::authlib_injector::constants::{
   CLIENT_IDS, USTB_AUTH_SERVER_URL, USTB_HOMEPAGE_URL, USTB_OPENID_CONFIGURATION_URL,
 };
 use crate::account::models::{AccountError, AccountInfo, AuthServerInfo};
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use crate::utils::web::normalize_url;
 use serde_json::{json, Value};
 use std::sync::Mutex;
@@ -54,7 +54,7 @@ fn apply_ustb_oauth_fallback(metadata: &mut Value) {
 pub async fn fetch_auth_server_info(
   app: &AppHandle,
   auth_url: String,
-) -> SJMCLResult<AuthServerInfo> {
+) -> USTBLResult<AuthServerInfo> {
   let client = app.state::<reqwest::Client>();
   match client.get(&auth_url).send().await {
     Ok(response) => {
@@ -103,7 +103,7 @@ pub fn get_client_id(domain: String) -> Option<String> {
     .map(|(_, id)| id.to_string())
 }
 
-pub async fn fetch_auth_url(app: &AppHandle, root: Url) -> SJMCLResult<String> {
+pub async fn fetch_auth_url(app: &AppHandle, root: Url) -> USTBLResult<String> {
   let client = app.state::<reqwest::Client>();
   let response = client
     .get(root.clone())
@@ -125,7 +125,7 @@ pub async fn fetch_auth_url(app: &AppHandle, root: Url) -> SJMCLResult<String> {
   }
 }
 
-pub async fn refresh_and_update_auth_servers(app: &AppHandle) -> SJMCLResult<()> {
+pub async fn refresh_and_update_auth_servers(app: &AppHandle) -> USTBLResult<()> {
   let account_binding = app.state::<Mutex<AccountInfo>>();
   let cloned_account_state = account_binding.lock()?.clone();
 
@@ -150,7 +150,7 @@ pub async fn refresh_and_update_auth_servers(app: &AppHandle) -> SJMCLResult<()>
 pub fn get_auth_server_info_by_url(
   app: &AppHandle,
   auth_url: String,
-) -> SJMCLResult<AuthServerInfo> {
+) -> USTBLResult<AuthServerInfo> {
   let target = normalize_url(&auth_url);
 
   let account_binding = app.state::<Mutex<AccountInfo>>();

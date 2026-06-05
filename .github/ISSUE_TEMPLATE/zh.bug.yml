@@ -8,7 +8,7 @@ body:
       value: |
         感谢您抽出时间报告问题！
         在提交错误报告之前，请确保：
-          * 您已验证此问题与 SJMCL 本身有关，而不是由 Minecraft 或已安装的模组导致
+          * 您已验证此问题与 USTBL 本身有关，而不是由 Minecraft 或已安装的模组导致
           * 您已搜索过[现有问题](https://github.com/USTB-SkyCode/USTBL/issues)并确认该问题此前未被报告
 
         请为您的问题提供一个简洁、清晰的标题。
@@ -33,8 +33,8 @@ body:
   - type: input
     id: launcherVersion
     attributes:
-      label: SJMCL 版本（可选）
-      description: "请输入您使用的 SJMCL 版本。"
+      label: USTBL 版本（可选）
+      description: "请输入您使用的 USTBL 版本。"
       placeholder: "0.0.0"
     validations:
       required: false
@@ -60,7 +60,7 @@ body:
     id: config
     attributes:
       label: 环境信息（可选）
-      description: "请提供您的启动器设置（`sjmcl.conf.json`的文件内容）或开发环境信息（完整的`tauri info`输出），这将有助于我们更好地解决问题。"
+      description: "请提供您的启动器设置（`ustbl.conf.json`的文件内容）或开发环境信息（完整的`tauri info`输出），这将有助于我们更好地解决问题。"
     validations:
       required: false
 

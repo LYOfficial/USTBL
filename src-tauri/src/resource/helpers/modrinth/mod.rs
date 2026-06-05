@@ -1,6 +1,6 @@
 pub mod misc;
 
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use crate::resource::helpers::misc::apply_other_resource_enhancements;
 use crate::resource::helpers::mod_db::handle_search_query;
 use crate::resource::models::{
@@ -27,7 +27,7 @@ const ALL_FILTER: &str = "All";
 pub async fn fetch_resource_list_by_name_modrinth(
   app: &AppHandle,
   query: &OtherResourceSearchQuery,
-) -> SJMCLResult<OtherResourceSearchRes> {
+) -> USTBLResult<OtherResourceSearchRes> {
   let url = get_modrinth_api(OtherResourceApiEndpoint::Search, None)?;
 
   let OtherResourceSearchQuery {
@@ -81,7 +81,7 @@ pub async fn fetch_resource_list_by_name_modrinth(
 pub async fn fetch_resource_version_packs_modrinth(
   app: &AppHandle,
   query: &OtherResourceVersionPackQuery,
-) -> SJMCLResult<Vec<OtherResourceVersionPack>> {
+) -> USTBLResult<Vec<OtherResourceVersionPack>> {
   let OtherResourceVersionPackQuery {
     resource_id,
     mod_loader,
@@ -127,7 +127,7 @@ pub async fn fetch_resource_version_packs_modrinth(
 pub async fn fetch_remote_resource_by_local_modrinth(
   app: &AppHandle,
   file_path: &str,
-) -> SJMCLResult<OtherResourceFileInfo> {
+) -> USTBLResult<OtherResourceFileInfo> {
   let file_content = fs::read(file_path).map_err(|_| ResourceError::ParseError)?;
 
   let mut hasher = Sha1::new();
@@ -171,7 +171,7 @@ pub async fn fetch_remote_resource_by_local_modrinth(
 pub async fn fetch_remote_resource_by_id_modrinth(
   app: &AppHandle,
   resource_id: &str,
-) -> SJMCLResult<OtherResourceInfo> {
+) -> USTBLResult<OtherResourceInfo> {
   let url = get_modrinth_api(OtherResourceApiEndpoint::ById, Some(resource_id))?;
   let client = app.state::<reqwest::Client>();
 
@@ -189,7 +189,7 @@ pub async fn get_latest_fabric_api_mod_download(
   app: &AppHandle,
   game_version: &str,
   mods_dir: PathBuf,
-) -> SJMCLResult<Option<DownloadParam>> {
+) -> USTBLResult<Option<DownloadParam>> {
   const FABRIC_API_MOD_ID: &str = "P7dR8mSH"; // Fabric API Mod Id in Modrinth
 
   let query = OtherResourceVersionPackQuery {

@@ -39,7 +39,7 @@ const PingTestPage = () => {
         },
         {
           github: "https://www.github.com",
-          sjmclapi: "https://mc.sjtu.cn/api-sjmcl",
+          ustblapi: "https://mc.sjtu.cn/api-sjmcl",
         },
       ] as Record<string, string>[],
     []

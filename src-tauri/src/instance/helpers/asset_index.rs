@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_http::reqwest;
 
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use crate::instance::models::misc::InstanceError;
 use crate::storage::{load_json_async, save_json_async};
 
@@ -26,7 +26,7 @@ pub async fn load_asset_index(
   app: &AppHandle,
   asset_index_path: &Path,
   asset_index_url: &str,
-) -> SJMCLResult<AssetIndex> {
+) -> USTBLResult<AssetIndex> {
   if asset_index_path.exists() {
     let asset_index = load_json_async::<AssetIndex>(asset_index_path)
       .await

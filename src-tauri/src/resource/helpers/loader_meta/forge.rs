@@ -1,4 +1,4 @@
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use crate::instance::models::misc::ModLoaderType;
 use crate::resource::helpers::misc::get_download_api;
 use crate::resource::models::{ModLoaderResourceInfo, ResourceError, ResourceType, SourceType};
@@ -20,7 +20,7 @@ struct ForgeMetaItem {
 async fn get_forge_meta_by_game_version_bmcl(
   app: &AppHandle,
   game_version: &str,
-) -> SJMCLResult<Vec<ModLoaderResourceInfo>> {
+) -> USTBLResult<Vec<ModLoaderResourceInfo>> {
   let client = app.state::<reqwest::Client>();
   let url = get_download_api(SourceType::BMCLAPIMirror, ResourceType::ForgeMeta)?
     .join("minecraft/")?
@@ -56,7 +56,7 @@ async fn get_forge_meta_by_game_version_bmcl(
 async fn get_forge_meta_by_game_version_official(
   _app: &AppHandle,
   _game_version: &str,
-) -> SJMCLResult<Vec<ModLoaderResourceInfo>> {
+) -> USTBLResult<Vec<ModLoaderResourceInfo>> {
   Err(ResourceError::NoDownloadApi.into()) // TODO
 }
 
@@ -64,7 +64,7 @@ pub async fn get_forge_meta_by_game_version(
   app: &AppHandle,
   priority_list: &[SourceType],
   game_version: &str,
-) -> SJMCLResult<Vec<ModLoaderResourceInfo>> {
+) -> USTBLResult<Vec<ModLoaderResourceInfo>> {
   for source_type in priority_list.iter() {
     match *source_type {
       SourceType::BMCLAPIMirror => {

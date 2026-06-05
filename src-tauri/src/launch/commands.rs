@@ -2,7 +2,7 @@ use crate::account::helpers::misc::get_selected_player_info;
 use crate::account::helpers::offline::yggdrasil_server::YggdrasilServer;
 use crate::account::helpers::{authlib_injector, microsoft};
 use crate::account::models::PlayerType;
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use crate::instance::helpers::client_json::{replace_native_libraries, McClientInfo};
 use crate::instance::helpers::misc::{get_instance_game_config, get_instance_subdir_paths};
 use crate::instance::models::misc::{Instance, InstanceError, InstanceSubdirType, ModLoaderStatus};
@@ -52,7 +52,7 @@ pub async fn select_suitable_jre(
   instances_state: State<'_, Mutex<HashMap<String, Instance>>>,
   javas_state: State<'_, Mutex<Vec<JavaInfo>>>,
   launching_queue_state: State<'_, Mutex<Vec<LaunchingState>>>,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let instance = instances_state
     .lock()?
     .get(&instance_id)
@@ -100,7 +100,7 @@ pub async fn validate_game_files(
   app: AppHandle,
   launcher_config_state: State<'_, Mutex<LauncherConfig>>,
   launching_queue_state: State<'_, Mutex<Vec<LaunchingState>>>,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let (instance, mut client_info, workaround) = {
     let mut launching_queue = launching_queue_state.lock()?;
     let launching = launching_queue
@@ -197,7 +197,7 @@ pub async fn validate_selected_player(
   app: AppHandle,
   launching_queue_state: State<'_, Mutex<Vec<LaunchingState>>>,
   local_ygg_server_state: State<'_, Mutex<YggdrasilServer>>,
-) -> SJMCLResult<bool> {
+) -> USTBLResult<bool> {
   let mut player = get_selected_player_info(&app)?.clone();
 
   let metadata = if player.player_type == PlayerType::ThirdParty {
@@ -246,7 +246,7 @@ pub async fn launch_game(
   launching_queue_state: State<'_, Mutex<Vec<LaunchingState>>>,
   quick_play_singleplayer: Option<String>,
   quick_play_multiplayer: Option<String>,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let (id, selected_java, game_config, instance) = {
     let mut launching_queue = launching_queue_state.lock()?;
     let launching = launching_queue
@@ -356,7 +356,7 @@ pub async fn launch_game(
 #[tauri::command]
 pub fn cancel_launch_process(
   launching_queue_state: State<'_, Mutex<Vec<LaunchingState>>>,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let mut launching_queue = launching_queue_state.lock()?;
 
   // kill process if pid exists
@@ -371,14 +371,14 @@ pub fn cancel_launch_process(
 }
 
 #[tauri::command]
-pub async fn open_game_log_window(app: AppHandle, launching_id: u64) -> SJMCLResult<()> {
+pub async fn open_game_log_window(app: AppHandle, launching_id: u64) -> USTBLResult<()> {
   create_webview_window(&app, &format!("game_log_{launching_id}"), "game_log", None).await?;
 
   Ok(())
 }
 
 #[tauri::command]
-pub fn retrieve_game_log(app: AppHandle, launching_id: u64) -> SJMCLResult<Vec<String>> {
+pub fn retrieve_game_log(app: AppHandle, launching_id: u64) -> USTBLResult<Vec<String>> {
   let log_file_dir = app.path().resolve::<PathBuf>(
     format!("game/game_log_{launching_id}.log").into(),
     BaseDirectory::AppLog,
@@ -395,7 +395,7 @@ pub fn retrieve_game_log(app: AppHandle, launching_id: u64) -> SJMCLResult<Vec<S
 pub fn retrieve_game_launching_state(
   launching_queue_state: State<'_, Mutex<Vec<LaunchingState>>>,
   launching_id: u64,
-) -> SJMCLResult<LaunchingState> {
+) -> USTBLResult<LaunchingState> {
   let launching_queue = launching_queue_state.lock()?;
   if let Some(launching) = launching_queue.iter().find(|l| l.id == launching_id) {
     Ok(launching.clone())
@@ -410,7 +410,7 @@ pub fn export_game_crash_info(
   launching_queue_state: State<'_, Mutex<Vec<LaunchingState>>>,
   launching_id: u64,
   save_path: String,
-) -> SJMCLResult<String> {
+) -> USTBLResult<String> {
   // game log
   let game_log_path = app.path().resolve::<PathBuf>(
     format!("game/game_log_{launching_id}.log").into(),
@@ -421,7 +421,7 @@ pub fn export_game_crash_info(
   let crash_report_path =
     parse_crash_report_path_from_log(&game_log_path).filter(|path| path.exists());
 
-  // version json and sjmcl instance config
+  // version json and ustbl instance config
   let launching_queue = launching_queue_state.lock()?;
   let launching = launching_queue
     .iter()

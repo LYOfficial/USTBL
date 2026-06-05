@@ -1,9 +1,9 @@
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use crate::launcher_config::commands::retrieve_launcher_config;
 use crate::tasks::download::DownloadTask;
 use crate::tasks::events::{GEvent, GEventStatus, PEvent, TEvent};
 use crate::tasks::streams::desc::PStatus;
-use crate::tasks::{SJMCLFuture, *};
+use crate::tasks::{USTBLFuture, *};
 use async_speed_limit::Limiter;
 use flume::{Receiver as FlumeReceiver, Sender as FlumeSender};
 use glob::glob;
@@ -29,10 +29,10 @@ pub struct TaskMonitor {
   ths: RwLock<HashMap<u32, THandle>>,
   tasks: Arc<Mutex<HashMap<u32, JoinHandle<()>>>>,
   concurrency: Arc<Semaphore>,
-  tx: FlumeSender<SJMCLFuture>,
-  rx: FlumeReceiver<SJMCLFuture>,
+  tx: FlumeSender<USTBLFuture>,
+  rx: FlumeReceiver<USTBLFuture>,
   group_map: Arc<RwLock<HashMap<String, GroupMonitor>>>,
-  stopped_futures: Arc<Mutex<Vec<SJMCLFuture>>>,
+  stopped_futures: Arc<Mutex<Vec<USTBLFuture>>>,
   pub download_rate_limiter: Option<Limiter>,
 }
 
@@ -123,7 +123,7 @@ impl TaskMonitor {
     task: T,
     p_handle: Arc<RwLock<PTaskHandle>>,
   ) where
-    T: Future<Output = SJMCLResult<()>> + Send + 'static,
+    T: Future<Output = USTBLResult<()>> + Send + 'static,
   {
     p_handle.write().unwrap().desc.status = PStatus::Waiting;
     self.phs.write().unwrap().insert(id, p_handle.clone());
@@ -171,7 +171,7 @@ impl TaskMonitor {
 
     self
       .tx
-      .send_async(SJMCLFuture {
+      .send_async(USTBLFuture {
         task_id: id,
         task_group: task_group.clone(),
         f: task,
@@ -180,7 +180,7 @@ impl TaskMonitor {
       .unwrap();
   }
 
-  pub async fn enqueue_task_group(&self, task_group: String, futures: Vec<SJMCLFutureDesc>) {
+  pub async fn enqueue_task_group(&self, task_group: String, futures: Vec<USTBLFutureDesc>) {
     let mut hvec: Vec<(u32, Arc<RwLock<PTaskHandle>>)> = Vec::new();
 
     for future in futures.iter() {
@@ -222,7 +222,7 @@ impl TaskMonitor {
       });
       self
         .tx
-        .send_async(SJMCLFuture {
+        .send_async(USTBLFuture {
           task_id: future.task_id,
           task_group: Some(task_group.clone()),
           f: task,

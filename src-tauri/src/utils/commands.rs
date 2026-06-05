@@ -1,4 +1,4 @@
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use crate::launcher_config::models::{LauncherConfigError, MemoryInfo};
 use crate::utils::fs::extract_filename as extract_filename_helper;
 use crate::utils::sys_info::get_memory_info;
@@ -9,27 +9,27 @@ use tokio::time::Instant;
 use url::Url;
 
 #[tauri::command]
-pub fn retrieve_memory_info() -> SJMCLResult<MemoryInfo> {
+pub fn retrieve_memory_info() -> USTBLResult<MemoryInfo> {
   Ok(get_memory_info())
 }
 
 #[tauri::command]
-pub fn extract_filename(path_str: String, with_ext: bool) -> SJMCLResult<String> {
+pub fn extract_filename(path_str: String, with_ext: bool) -> USTBLResult<String> {
   Ok(extract_filename_helper(&path_str, with_ext))
 }
 
 #[tauri::command]
-pub fn delete_file(path: String) -> SJMCLResult<()> {
+pub fn delete_file(path: String) -> USTBLResult<()> {
   fs::remove_file(&path).map_err(Into::into)
 }
 
 #[tauri::command]
-pub fn delete_directory(path: String) -> SJMCLResult<()> {
+pub fn delete_directory(path: String) -> USTBLResult<()> {
   fs::remove_dir_all(&path).map_err(Into::into)
 }
 
 #[tauri::command]
-pub fn retrieve_truetype_font_list() -> SJMCLResult<Vec<String>> {
+pub fn retrieve_truetype_font_list() -> USTBLResult<Vec<String>> {
   let sysfonts = system_fonts::query_all();
   Ok(sysfonts)
 }
@@ -38,7 +38,7 @@ pub fn retrieve_truetype_font_list() -> SJMCLResult<Vec<String>> {
 pub async fn check_service_availability(
   client: tauri::State<'_, reqwest::Client>,
   url: String,
-) -> SJMCLResult<u128> {
+) -> USTBLResult<u128> {
   let parsed_url = Url::parse(&url)
     .or_else(|_| Url::parse(&format!("https://{}", url)))
     .map_err(|_| LauncherConfigError::FetchError)?;

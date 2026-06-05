@@ -1,4 +1,4 @@
-use crate::error::{SJMCLError, SJMCLResult};
+use crate::error::{USTBLError, USTBLResult};
 use crate::resource::helpers::misc::version_pack_sort;
 use crate::resource::models::{
   OtherResourceApiEndpoint, OtherResourceDependency, OtherResourceFileInfo, OtherResourceInfo,
@@ -13,7 +13,7 @@ pub async fn make_modrinth_request<T, P>(
   client: &reqwest::Client,
   url: &str,
   request_type: OtherResourceRequestType<'_, P>,
-) -> SJMCLResult<T>
+) -> USTBLResult<T>
 where
   T: serde::de::DeserializeOwned,
   P: serde::Serialize,
@@ -42,7 +42,7 @@ where
 pub fn get_modrinth_api(
   endpoint: OtherResourceApiEndpoint,
   param: Option<&str>,
-) -> SJMCLResult<String> {
+) -> USTBLResult<String> {
   let base_url = "https://api.modrinth.com/v2";
 
   let url_str = match endpoint {
@@ -271,7 +271,7 @@ impl From<ModrinthSearchRes> for OtherResourceSearchRes {
 pub async fn translate_description_modrinth(
   app: &AppHandle,
   resource_id: &str,
-) -> SJMCLResult<Option<String>> {
+) -> USTBLResult<Option<String>> {
   let result = async {
     let url = get_modrinth_api(OtherResourceApiEndpoint::TranslateDesc, Some(resource_id))?;
     let client = app.state::<reqwest::Client>();
@@ -283,7 +283,7 @@ pub async fn translate_description_modrinth(
       .json::<ModrinthTranslationRes>()
       .await?;
 
-    Ok::<_, SJMCLError>(translation_res.translated)
+    Ok::<_, USTBLError>(translation_res.translated)
   }
   .await;
 

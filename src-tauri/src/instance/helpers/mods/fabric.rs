@@ -1,5 +1,5 @@
 // see https://wiki.fabricmc.net/zh_cn:documentation:fabric_mod_json
-use crate::error::{SJMCLError, SJMCLResult};
+use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::mods::common::{compress_icon, LocalModMetadataParser};
 use crate::instance::models::misc::{LocalModInfo, ModLoaderType};
 use crate::utils::image::{load_image_from_dir_async, load_image_from_jar, ImageWrapper};
@@ -45,25 +45,25 @@ impl LocalModMetadataParser for FabricModMetadataParser {
 
   fn get_mod_metadata_from_jar<R: Read + Seek>(
     jar: &mut ZipArchive<R>,
-  ) -> SJMCLResult<Self::Metadata> {
+  ) -> USTBLResult<Self::Metadata> {
     let meta: FabricModMetadata = match jar.by_name("fabric.mod.json") {
       Ok(val) => match serde_json::from_reader(val) {
         Ok(val) => val,
-        Err(e) => return Err(SJMCLError::from(e)),
+        Err(e) => return Err(USTBLError::from(e)),
       },
-      Err(e) => return Err(SJMCLError::from(e)),
+      Err(e) => return Err(USTBLError::from(e)),
     };
     Ok(meta)
   }
 
-  async fn get_mod_metadata_from_dir(dir_path: &Path) -> SJMCLResult<Self::Metadata> {
+  async fn get_mod_metadata_from_dir(dir_path: &Path) -> USTBLResult<Self::Metadata> {
     let fabric_file_path = dir_path.join("fabric.mod.json");
     let meta: FabricModMetadata = match tokio::fs::read_to_string(fabric_file_path).await {
       Ok(val) => match serde_json::from_str(val.as_str()) {
         Ok(val) => val,
-        Err(e) => return Err(SJMCLError::from(e)),
+        Err(e) => return Err(USTBLError::from(e)),
       },
-      Err(e) => return Err(SJMCLError::from(e)),
+      Err(e) => return Err(USTBLError::from(e)),
     };
     Ok(meta)
   }

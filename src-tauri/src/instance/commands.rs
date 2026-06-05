@@ -1,5 +1,5 @@
 use super::helpers::loader::fabric::remove_fabric_api_mods;
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use crate::instance::constants::TRANSLATION_CACHE_EXPIRY_HOURS;
 use crate::instance::helpers::client_json::{replace_native_libraries, McClientInfo};
 use crate::instance::helpers::game_version::{build_game_version_cmp_fn, compare_game_versions};
@@ -69,7 +69,7 @@ use url::Url;
 use zip::read::ZipArchive;
 
 #[tauri::command]
-pub async fn retrieve_instance_list(app: AppHandle) -> SJMCLResult<Vec<InstanceSummary>> {
+pub async fn retrieve_instance_list(app: AppHandle) -> USTBLResult<Vec<InstanceSummary>> {
   refresh_and_update_instances(&app, false).await; // firstly refresh and update
   let global_version_isolation = get_global_game_config(&app).version_isolation;
   let mut summary_list = Vec::new();
@@ -138,7 +138,7 @@ pub async fn update_instance_config(
   instance_id: String,
   key_path: String,
   value: String,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let instance = {
     let binding = app.state::<Mutex<HashMap<String, Instance>>>();
     let mut state = binding.lock().unwrap();
@@ -186,7 +186,7 @@ pub async fn update_instance_config(
 pub fn retrieve_instance_game_config(
   app: AppHandle,
   instance_id: String,
-) -> SJMCLResult<GameConfig> {
+) -> USTBLResult<GameConfig> {
   let binding = app.state::<Mutex<HashMap<String, Instance>>>();
   let state = binding.lock().unwrap();
   let instance = state
@@ -197,7 +197,7 @@ pub fn retrieve_instance_game_config(
 }
 
 #[tauri::command]
-pub async fn restore_instance_game_config(app: AppHandle, instance_id: String) -> SJMCLResult<()> {
+pub async fn restore_instance_game_config(app: AppHandle, instance_id: String) -> USTBLResult<()> {
   let instance = {
     let binding = app.state::<Mutex<HashMap<String, Instance>>>();
     let mut state = binding.lock().unwrap();
@@ -216,7 +216,7 @@ pub fn retrieve_instance_subdir_path(
   app: AppHandle,
   instance_id: String,
   dir_type: InstanceSubdirType,
-) -> SJMCLResult<PathBuf> {
+) -> USTBLResult<PathBuf> {
   match get_instance_subdir_path_by_id(&app, &instance_id, &dir_type) {
     Some(path) => Ok(path),
     None => Err(InstanceError::InstanceNotFoundByID.into()),
@@ -224,7 +224,7 @@ pub fn retrieve_instance_subdir_path(
 }
 
 #[tauri::command]
-pub fn delete_instance(app: AppHandle, instance_id: String) -> SJMCLResult<()> {
+pub fn delete_instance(app: AppHandle, instance_id: String) -> USTBLResult<()> {
   let instance_binding = app.state::<Mutex<HashMap<String, Instance>>>();
   let instance_state = instance_binding.lock().unwrap();
 
@@ -266,7 +266,7 @@ pub async fn rename_instance(
   app: AppHandle,
   instance_id: String,
   new_name: String,
-) -> SJMCLResult<PathBuf> {
+) -> USTBLResult<PathBuf> {
   let binding = app.state::<Mutex<HashMap<String, Instance>>>();
   let mut state = binding.lock().unwrap();
   let instance = match state.get_mut(&instance_id) {
@@ -287,7 +287,7 @@ pub fn copy_resource_to_instances(
   tgt_inst_ids: Vec<String>,
   tgt_dir_type: InstanceSubdirType,
   decompress: bool,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let src_path = Path::new(&src_file_path);
 
   if src_path.is_file() {
@@ -353,7 +353,7 @@ pub fn move_resource_to_instance(
   src_file_path: String,
   tgt_inst_id: String,
   tgt_dir_type: InstanceSubdirType,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let tgt_path = match get_instance_subdir_path_by_id(&app, &tgt_inst_id, &tgt_dir_type) {
     Some(path) => path,
     None => return Err(InstanceError::InstanceNotFoundByID.into()),
@@ -381,7 +381,7 @@ pub fn move_resource_to_instance(
 pub async fn retrieve_world_list(
   app: AppHandle,
   instance_id: String,
-) -> SJMCLResult<Vec<WorldInfo>> {
+) -> USTBLResult<Vec<WorldInfo>> {
   let game_version = {
     let binding = app.state::<Mutex<HashMap<String, Instance>>>();
     let state = binding.lock()?;
@@ -419,7 +419,7 @@ pub async fn retrieve_game_server_list(
   app: AppHandle,
   instance_id: String,
   query_online: bool,
-) -> SJMCLResult<Vec<GameServerInfo>> {
+) -> USTBLResult<Vec<GameServerInfo>> {
   // query_online is false, return local data from nbt (servers.dat)
   let nbt_path = match get_servers_nbt_path_by_instance_id(&app, &instance_id) {
     Some(path) => path,
@@ -446,7 +446,7 @@ pub async fn delete_game_server(
   app: AppHandle,
   instance_id: String,
   server_addr: String,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let nbt_path = match get_servers_nbt_path_by_instance_id(&app, &instance_id) {
     Some(path) => path,
     None => return Err(InstanceError::InstanceNotFoundByID.into()),
@@ -467,7 +467,7 @@ pub async fn add_game_server(
   instance_id: String,
   server_addr: String,
   server_name: String,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let nbt_path = match get_servers_nbt_path_by_instance_id(&app, &instance_id) {
     Some(path) => path,
     None => return Err(InstanceError::InstanceNotFoundByID.into()),
@@ -497,7 +497,7 @@ pub async fn add_game_server(
 pub async fn retrieve_local_mod_list(
   app: AppHandle,
   instance_id: String,
-) -> SJMCLResult<Vec<LocalModInfo>> {
+) -> USTBLResult<Vec<LocalModInfo>> {
   let expected_loader_type = {
     let binding = app.state::<Mutex<HashMap<String, Instance>>>();
     let state = binding.lock().unwrap();
@@ -631,7 +631,7 @@ pub async fn retrieve_local_mod_list(
 pub async fn retrieve_resource_pack_list(
   app: AppHandle,
   instance_id: String,
-) -> SJMCLResult<Vec<ResourcePackInfo>> {
+) -> USTBLResult<Vec<ResourcePackInfo>> {
   // Get the resource packs list based on the instance
   let resource_packs_dir =
     match get_instance_subdir_path_by_id(&app, &instance_id, &InstanceSubdirType::ResourcePacks) {
@@ -681,7 +681,7 @@ pub async fn retrieve_resource_pack_list(
 pub async fn retrieve_server_resource_pack_list(
   app: AppHandle,
   instance_id: String,
-) -> SJMCLResult<Vec<ResourcePackInfo>> {
+) -> USTBLResult<Vec<ResourcePackInfo>> {
   let resource_packs_dir = match get_instance_subdir_path_by_id(
     &app,
     &instance_id,
@@ -734,7 +734,7 @@ pub async fn retrieve_server_resource_pack_list(
 pub fn retrieve_schematic_list(
   app: AppHandle,
   instance_id: String,
-) -> SJMCLResult<Vec<SchematicInfo>> {
+) -> USTBLResult<Vec<SchematicInfo>> {
   let schematics_dir =
     match get_instance_subdir_path_by_id(&app, &instance_id, &InstanceSubdirType::Schematics) {
       Some(path) => path,
@@ -767,7 +767,7 @@ pub fn retrieve_schematic_list(
 pub fn retrieve_shader_pack_list(
   app: AppHandle,
   instance_id: String,
-) -> SJMCLResult<Vec<ShaderPackInfo>> {
+) -> USTBLResult<Vec<ShaderPackInfo>> {
   // Get the shaderpacks directory based on the instance
   let shaderpacks_dir =
     match get_instance_subdir_path_by_id(&app, &instance_id, &InstanceSubdirType::ShaderPacks) {
@@ -798,7 +798,7 @@ pub fn retrieve_shader_pack_list(
 pub fn retrieve_screenshot_list(
   app: AppHandle,
   instance_id: String,
-) -> SJMCLResult<Vec<ScreenshotInfo>> {
+) -> USTBLResult<Vec<ScreenshotInfo>> {
   let screenshots_dir =
     match get_instance_subdir_path_by_id(&app, &instance_id, &InstanceSubdirType::Screenshots) {
       Some(path) => path,
@@ -841,7 +841,7 @@ lazy_static! {
 }
 
 #[tauri::command]
-pub fn toggle_mod_by_extension(file_path: PathBuf, enable: bool) -> SJMCLResult<()> {
+pub fn toggle_mod_by_extension(file_path: PathBuf, enable: bool) -> USTBLResult<()> {
   let _lock = RENAME_LOCK.lock().expect("Failed to acquire lock");
   if !file_path.is_file() {
     return Err(InstanceError::FileNotFoundError.into());
@@ -882,7 +882,7 @@ pub async fn retrieve_world_details(
   app: AppHandle,
   instance_id: String,
   world_name: String,
-) -> SJMCLResult<LevelData> {
+) -> USTBLResult<LevelData> {
   let worlds_dir =
     match get_instance_subdir_path_by_id(&app, &instance_id, &InstanceSubdirType::Saves) {
       Some(path) => path,
@@ -904,7 +904,7 @@ pub fn create_launch_desktop_shortcut(
   app: AppHandle,
   instance_id: String,
   icon_src: String,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let binding = app.state::<Mutex<HashMap<String, Instance>>>();
   let state = binding
     .lock()
@@ -918,7 +918,7 @@ pub fn create_launch_desktop_shortcut(
     .append_pair("id", &instance.id)
     .finish()
     .replace("+", "%20");
-  let url = format!("sjmcl://launch?{}", encoded_id);
+  let url = format!("ustbl://launch?{}", encoded_id);
 
   #[cfg(any(target_os = "windows", target_os = "linux"))]
   let icon_path = {
@@ -949,7 +949,7 @@ pub async fn create_instance(
   optifine: Option<OptiFineResourceInfo>,
   modpack_path: Option<String>,
   is_install_fabric_api: Option<bool>,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let client = app.state::<reqwest::Client>();
   let launcher_config_state = app.state::<Mutex<LauncherConfig>>();
   // Get priority list
@@ -1131,7 +1131,7 @@ pub async fn create_instance(
 
   // Save the edited client json
   save_json_async(&version_info, &version_path.join(format!("{}.json", name))).await?;
-  // Save the SJMCL instance config json
+  // Save the USTBL instance config json
   instance
     .save_json_cfg()
     .await
@@ -1142,7 +1142,7 @@ pub async fn create_instance(
 }
 
 #[tauri::command]
-pub async fn finish_mod_loader_install(app: AppHandle, instance_id: String) -> SJMCLResult<()> {
+pub async fn finish_mod_loader_install(app: AppHandle, instance_id: String) -> USTBLResult<()> {
   let instance = {
     let binding = app.state::<Mutex<HashMap<String, Instance>>>();
     let state = binding.lock()?;
@@ -1232,7 +1232,7 @@ pub async fn finish_mod_loader_install(app: AppHandle, instance_id: String) -> S
 pub async fn check_change_mod_loader_availablity(
   app: AppHandle,
   instance_id: String,
-) -> SJMCLResult<bool> {
+) -> USTBLResult<bool> {
   let instance = {
     let binding = app.state::<Mutex<HashMap<String, Instance>>>();
     let launcher_config_state = binding.lock()?;
@@ -1266,7 +1266,7 @@ pub async fn change_mod_loader(
   instance_id: String,
   new_mod_loader: ModLoaderResourceInfo,
   is_install_fabric_api: Option<bool>,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let mut instance = {
     let binding = app.state::<Mutex<HashMap<String, Instance>>>();
     let state = binding.lock()?;
@@ -1369,7 +1369,7 @@ pub async fn change_mod_loader(
 pub async fn retrieve_modpack_meta_info(
   app: AppHandle,
   path: String,
-) -> SJMCLResult<ModpackMetaInfo> {
+) -> USTBLResult<ModpackMetaInfo> {
   let path = PathBuf::from(path);
   let file = fs::File::open(&path).map_err(|_| InstanceError::FileNotFoundError)?;
   ModpackMetaInfo::from_archive(&app, &file).await
@@ -1380,7 +1380,7 @@ pub fn add_custom_instance_icon(
   app: AppHandle,
   instance_id: String,
   source_src: String,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let version_path = {
     let binding = app.state::<Mutex<HashMap<String, Instance>>>();
     let state = binding.lock()?;

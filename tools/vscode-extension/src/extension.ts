@@ -10,7 +10,7 @@ export async function activate(
   context: vscode.ExtensionContext
 ): Promise<void> {
   const outputChannel = vscode.window.createOutputChannel(
-    "SJMCL Dev Extension"
+    "USTBL Dev Extension"
   );
   context.subscriptions.push(outputChannel);
 

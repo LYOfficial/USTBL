@@ -11,7 +11,7 @@ use crate::account::models::{
   AccountError, DeviceAuthResponse, DeviceAuthResponseInfo, OAuthTokens, PlayerInfo, PlayerType,
   PresetRole, SkinModel, Texture, TextureType,
 };
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use serde_json::{json, Value};
 use std::ops::Add;
 use std::str::FromStr;
@@ -20,7 +20,7 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_http::reqwest;
 use uuid::Uuid;
 
-pub async fn device_authorization(app: &AppHandle) -> SJMCLResult<DeviceAuthResponseInfo> {
+pub async fn device_authorization(app: &AppHandle) -> USTBLResult<DeviceAuthResponseInfo> {
   let client = app.state::<reqwest::Client>();
   let response = client
     .post(DEVICE_AUTH_ENDPOINT)
@@ -51,7 +51,7 @@ pub async fn device_authorization(app: &AppHandle) -> SJMCLResult<DeviceAuthResp
   })
 }
 
-async fn fetch_xbl_token(app: &AppHandle, microsoft_token: String) -> SJMCLResult<String> {
+async fn fetch_xbl_token(app: &AppHandle, microsoft_token: String) -> USTBLResult<String> {
   let client = app.state::<reqwest::Client>();
 
   let response = client
@@ -78,7 +78,7 @@ async fn fetch_xbl_token(app: &AppHandle, microsoft_token: String) -> SJMCLResul
   Ok(response["Token"].as_str().unwrap_or("").to_string())
 }
 
-async fn fetch_xsts_token(app: &AppHandle, xbl_token: String) -> SJMCLResult<(String, String)> {
+async fn fetch_xsts_token(app: &AppHandle, xbl_token: String) -> USTBLResult<(String, String)> {
   let client = app.state::<reqwest::Client>();
 
   let response = client
@@ -139,7 +139,7 @@ async fn fetch_minecraft_token(
   app: &AppHandle,
   xsts_userhash: String,
   xsts_token: String,
-) -> SJMCLResult<(String, chrono::DateTime<chrono::Utc>)> {
+) -> USTBLResult<(String, chrono::DateTime<chrono::Utc>)> {
   let client = app.state::<reqwest::Client>();
 
   let response: Value = client
@@ -164,7 +164,7 @@ async fn fetch_minecraft_token(
 pub async fn fetch_minecraft_profile(
   app: &AppHandle,
   minecraft_token: String,
-) -> SJMCLResult<MinecraftProfile> {
+) -> USTBLResult<MinecraftProfile> {
   let client = app.state::<reqwest::Client>();
 
   let response = client
@@ -182,7 +182,7 @@ pub async fn fetch_minecraft_profile(
   )
 }
 
-async fn parse_profile(app: &AppHandle, tokens: &OAuthTokens) -> SJMCLResult<PlayerInfo> {
+async fn parse_profile(app: &AppHandle, tokens: &OAuthTokens) -> USTBLResult<PlayerInfo> {
   let xbl_token = fetch_xbl_token(app, tokens.access_token.clone()).await?;
   let (xsts_userhash, xsts_token) = fetch_xsts_token(app, xbl_token).await?;
   let (minecraft_token, minecraft_token_expires_in) =
@@ -237,7 +237,7 @@ async fn parse_profile(app: &AppHandle, tokens: &OAuthTokens) -> SJMCLResult<Pla
   )
 }
 
-pub async fn login(app: &AppHandle, auth_info: DeviceAuthResponseInfo) -> SJMCLResult<PlayerInfo> {
+pub async fn login(app: &AppHandle, auth_info: DeviceAuthResponseInfo) -> USTBLResult<PlayerInfo> {
   let client = app.state::<reqwest::Client>();
   let sender = client.post(OAUTH_TOKEN_ENDPOINT).form(&[
     ("client_id", CLIENT_ID),
@@ -248,7 +248,7 @@ pub async fn login(app: &AppHandle, auth_info: DeviceAuthResponseInfo) -> SJMCLR
   parse_profile(app, &tokens).await
 }
 
-pub async fn refresh(app: &AppHandle, player: &PlayerInfo) -> SJMCLResult<PlayerInfo> {
+pub async fn refresh(app: &AppHandle, player: &PlayerInfo) -> USTBLResult<PlayerInfo> {
   let client = app.state::<reqwest::Client>();
 
   let token_response = client
@@ -277,7 +277,7 @@ pub async fn refresh(app: &AppHandle, player: &PlayerInfo) -> SJMCLResult<Player
   parse_profile(app, &tokens).await
 }
 
-pub async fn validate(app: &AppHandle, player: &PlayerInfo) -> SJMCLResult<bool> {
+pub async fn validate(app: &AppHandle, player: &PlayerInfo) -> USTBLResult<bool> {
   let client = app.state::<reqwest::Client>();
   let response = client
     .get(PROFILE_ENDPOINT)
@@ -293,7 +293,7 @@ pub async fn validate(app: &AppHandle, player: &PlayerInfo) -> SJMCLResult<bool>
 }
 
 /// Returns the access token for the player, refreshing it if necessary.
-pub async fn get_access_token(app: &AppHandle, player: &PlayerInfo) -> SJMCLResult<String> {
+pub async fn get_access_token(app: &AppHandle, player: &PlayerInfo) -> USTBLResult<String> {
   if player.player_type != PlayerType::Microsoft {
     return Err(AccountError::Invalid.into());
   }

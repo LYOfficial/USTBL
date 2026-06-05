@@ -44,7 +44,7 @@ export class FrontendI18nHoverFeature implements ExtensionFeature {
             const message =
               error instanceof Error ? error.message : String(error);
             void vscode.window.showErrorMessage(
-              `SJMCL Dev Extension: ${message}`
+              `USTBL Dev Extension: ${message}`
             );
           }
         }

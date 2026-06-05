@@ -1,4 +1,4 @@
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use crate::launcher_config::models::LauncherConfig;
 use crate::resource::helpers::mod_db::ModDataBase;
 use crate::resource::helpers::modrinth::misc::translate_description_modrinth;
@@ -25,7 +25,7 @@ pub fn get_source_priority_list(launcher_config: &LauncherConfig) -> Vec<SourceT
 }
 
 // https://bmclapidoc.bangbang93.com/
-pub fn get_download_api(source: SourceType, resource_type: ResourceType) -> SJMCLResult<Url> {
+pub fn get_download_api(source: SourceType, resource_type: ResourceType) -> USTBLResult<Url> {
   match source {
     SourceType::Official => match resource_type {
       ResourceType::VersionManifest => Ok(Url::parse("https://launchermeta.mojang.com/mc/game/version_manifest.json")?),
@@ -81,7 +81,7 @@ pub fn convert_url_source_type(
   resource_type: &ResourceType,
   src_type: &SourceType,
   dst_type: &SourceType,
-) -> SJMCLResult<Url> {
+) -> USTBLResult<Url> {
   let url_str = url.as_str();
   let src_api = get_download_api(*src_type, *resource_type)?;
   let dst_api = get_download_api(*dst_type, *resource_type)?;
@@ -100,7 +100,7 @@ pub fn convert_url_to_target_source(
   url: &Url,
   resource_types: &[ResourceType],
   dst_type: &SourceType,
-) -> SJMCLResult<Url> {
+) -> USTBLResult<Url> {
   let url_str = url.as_str();
   let resource_candidates = if resource_types.is_empty() {
     ResourceType::iter().collect::<Vec<_>>()
@@ -185,7 +185,7 @@ pub fn version_pack_sort(a: &OtherResourceVersionPack, b: &OtherResourceVersionP
 pub async fn apply_other_resource_enhancements(
   app: &AppHandle,
   resource_info: &mut OtherResourceInfo,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   // Extract data from cache in a limited scope to avoid holding lock across await
   let (translated_name, mcmod_id) = {
     if let Ok(cache) = app.state::<Mutex<ModDataBase>>().lock() {

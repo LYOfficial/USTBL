@@ -5,7 +5,7 @@ pub mod events;
 pub mod monitor;
 pub mod streams;
 
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use download::DownloadParam;
 use events::TauriEventSink;
 use futures::stream::Stream;
@@ -16,17 +16,17 @@ use std::sync::{Arc, RwLock};
 use streams::{GDesc, PDesc, PHandle};
 use tokio::time::Duration;
 
-pub type SJMCLBoxedFuture = Pin<Box<dyn Future<Output = SJMCLResult<()>> + Send>>;
+pub type USTBLBoxedFuture = Pin<Box<dyn Future<Output = USTBLResult<()>> + Send>>;
 
-pub struct SJMCLFuture {
+pub struct USTBLFuture {
   pub task_id: u32,
   pub task_group: Option<String>,
-  pub f: SJMCLBoxedFuture,
+  pub f: USTBLBoxedFuture,
 }
 
-pub struct SJMCLFutureDesc {
+pub struct USTBLFutureDesc {
   pub task_id: u32,
-  pub f: SJMCLBoxedFuture,
+  pub f: USTBLBoxedFuture,
   pub h: Arc<RwLock<PTaskHandle>>,
 }
 

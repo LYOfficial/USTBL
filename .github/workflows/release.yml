@@ -170,7 +170,7 @@ jobs:
       # Only upload to SJMC server for the main repository
       # We need to upload the SHA256SUMS file as well, but don't want to keep it in the release-artifacts folder
       - name: Upload artifacts to SJMC server
-        if: github.repository == 'UNIkeEN/SJMCL'
+        if: github.repository == 'USTB-SkyCode/USTBL'
         timeout-minutes: 10
         env:
           SJMC_SECRET_KEY: ${{ secrets.SJMC_DEPLOY_SECRET_KEY }}

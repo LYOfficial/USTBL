@@ -1,4 +1,4 @@
-use crate::error::{SJMCLError, SJMCLResult};
+use crate::error::{USTBLError, USTBLResult};
 use crate::instance::models::misc::ModLoaderType;
 use crate::resource::helpers::misc::get_download_api;
 use crate::resource::models::{ModLoaderResourceInfo, ResourceError, ResourceType, SourceType};
@@ -28,7 +28,7 @@ pub async fn get_fabric_meta_by_game_version(
   app: &AppHandle,
   priority_list: &[SourceType],
   game_version: &str,
-) -> SJMCLResult<Vec<ModLoaderResourceInfo>> {
+) -> USTBLResult<Vec<ModLoaderResourceInfo>> {
   let client = app.state::<reqwest::Client>();
   for source_type in priority_list.iter() {
     let url = get_download_api(*source_type, ResourceType::FabricMeta)?
@@ -60,5 +60,5 @@ pub async fn get_fabric_meta_by_game_version(
       Err(_) => continue,
     }
   }
-  Err(SJMCLError(String::new()))
+  Err(USTBLError(String::new()))
 }

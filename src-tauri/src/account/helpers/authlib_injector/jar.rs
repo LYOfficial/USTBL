@@ -1,6 +1,6 @@
 use crate::account::helpers::authlib_injector::constants::AUTHLIB_INJECTOR_JAR_NAME;
 use crate::account::models::AccountError;
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use crate::launcher_config::models::LauncherConfig;
 use crate::resource::helpers::misc::{get_download_api, get_source_priority_list};
 use crate::resource::models::{ResourceType, SourceType};
@@ -19,7 +19,7 @@ pub struct AuthlibInjectorMeta {
   pub download_url: String,
 }
 
-pub fn get_jar_path(app: &AppHandle) -> SJMCLResult<PathBuf> {
+pub fn get_jar_path(app: &AppHandle) -> USTBLResult<PathBuf> {
   Ok(
     app
       .path()
@@ -30,7 +30,7 @@ pub fn get_jar_path(app: &AppHandle) -> SJMCLResult<PathBuf> {
 async fn get_latest_meta(
   app: &AppHandle,
   priority_list: &[SourceType],
-) -> SJMCLResult<AuthlibInjectorMeta> {
+) -> USTBLResult<AuthlibInjectorMeta> {
   let client = app.state::<reqwest::Client>();
 
   for source in priority_list.iter() {
@@ -54,7 +54,7 @@ async fn get_latest_meta(
   Err(AccountError::NoDownloadApi.into())
 }
 
-fn get_local_version(app: &AppHandle) -> SJMCLResult<String> {
+fn get_local_version(app: &AppHandle) -> USTBLResult<String> {
   let jar_path = get_jar_path(app)?;
   if !jar_path.exists() {
     return Err(AccountError::NotFound.into());
@@ -83,7 +83,7 @@ fn get_local_version(app: &AppHandle) -> SJMCLResult<String> {
   Ok(version)
 }
 
-async fn download(app: &AppHandle, url: Url) -> SJMCLResult<()> {
+async fn download(app: &AppHandle, url: Url) -> USTBLResult<()> {
   let client = app.state::<reqwest::Client>();
   let jar_path = get_jar_path(app)?;
 
@@ -106,7 +106,7 @@ async fn download(app: &AppHandle, url: Url) -> SJMCLResult<()> {
   }
 }
 
-pub async fn check_authlib_jar(app: &AppHandle) -> SJMCLResult<()> {
+pub async fn check_authlib_jar(app: &AppHandle) -> USTBLResult<()> {
   let latest_meta = {
     let config_state = app.state::<Mutex<LauncherConfig>>();
     let launcher_config = config_state.lock()?.clone();

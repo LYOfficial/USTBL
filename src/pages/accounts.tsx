@@ -43,6 +43,13 @@ import { PlayerType } from "@/enums/account";
 import { AuthServer, Player } from "@/models/account";
 import { AccountService } from "@/services/account";
 
+const USTB_AUTH_SERVER_URL = "https://www.ustb.world/skinapi/";
+
+// Fixed types that don't show auth URL as description and don't show homepage/delete buttons
+const FIXED_PLAYER_TYPES = ["all", "offline", "microsoft"];
+// Preset auth servers that show homepage but can't be deleted
+const isPresetAuthServer = (url: string) => url === USTB_AUTH_SERVER_URL;
+
 const AccountsPage = () => {
   const { t } = useTranslation();
   const { config, update } = useLauncherConfig();
@@ -57,6 +64,14 @@ const AccountsPage = () => {
   const [selectedPlayerType, setSelectedPlayerType] = useState<string>("all");
   const [playerList, setPlayerList] = useState<Player[]>([]);
   const [authServerList, setAuthServerList] = useState<AuthServer[]>([]);
+
+  // extract "像素北科" as a pinned entry, separate from dynamic auth server list
+  const ustbAuthServer = authServerList.find(
+    (server) => server.authUrl === USTB_AUTH_SERVER_URL
+  );
+  const otherAuthServerList = authServerList.filter(
+    (server) => server.authUrl !== USTB_AUTH_SERVER_URL
+  );
 
   const {
     isOpen: isAddPlayerModalOpen,
@@ -98,7 +113,16 @@ const AccountsPage = () => {
       icon: LuGrid2X2,
       label: t("Enums.playerTypes.microsoft"),
     },
-    ...authServerList.map((server) => ({
+    ...(ustbAuthServer
+      ? [
+          {
+            key: USTB_AUTH_SERVER_URL,
+            icon: LuServer,
+            label: ustbAuthServer.name,
+          },
+        ]
+      : []),
+    ...otherAuthServerList.map((server) => ({
       key: server.authUrl,
       icon: LuServer,
       label: server.name,
@@ -228,13 +252,13 @@ const AccountsPage = () => {
                 ?.label
             }
             description={
-              !["all", "offline", "microsoft"].includes(selectedPlayerType)
+              !FIXED_PLAYER_TYPES.includes(selectedPlayerType)
                 ? selectedPlayerType
                 : undefined
             }
             headExtra={
               <HStack spacing={2} alignItems="flex-start">
-                {!["all", "offline", "microsoft"].includes(
+                {!FIXED_PLAYER_TYPES.includes(
                   selectedPlayerType
                 ) && (
                   <Tooltip label={t("AccountsPage.button.sourceHomepage")}>
@@ -255,9 +279,8 @@ const AccountsPage = () => {
                     />
                   </Tooltip>
                 )}
-                {!["all", "offline", "microsoft"].includes(
-                  selectedPlayerType
-                ) && (
+                {!FIXED_PLAYER_TYPES.includes(selectedPlayerType) &&
+                  !isPresetAuthServer(selectedPlayerType) && (
                   <Tooltip label={t("AccountsPage.button.deleteServer")}>
                     <IconButton
                       aria-label="home"
@@ -334,7 +357,7 @@ const AccountsPage = () => {
               : PlayerType.ThirdParty
         }
         initialAuthServerUrl={
-          ["all", "offline", "microsoft"].includes(selectedPlayerType)
+          FIXED_PLAYER_TYPES.includes(selectedPlayerType)
             ? ""
             : selectedPlayerType
         }

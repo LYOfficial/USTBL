@@ -1,4 +1,4 @@
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use crate::resource::helpers::misc::get_download_api;
 use crate::resource::models::{GameClientResourceInfo, ResourceError, ResourceType, SourceType};
 use serde::{Deserialize, Serialize};
@@ -32,7 +32,7 @@ struct LatestVersion {
 pub async fn get_game_version_manifest(
   app: &AppHandle,
   priority_list: &[SourceType],
-) -> SJMCLResult<Vec<GameClientResourceInfo>> {
+) -> USTBLResult<Vec<GameClientResourceInfo>> {
   let client = app.state::<reqwest::Client>();
 
   for source_type in priority_list.iter() {

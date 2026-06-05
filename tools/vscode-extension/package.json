@@ -1,10 +1,10 @@
 {
-  "name": "sjmcl-dev-extension",
-  "displayName": "SJMCL Dev Extension",
-  "description": "Developer extension for SJMCL workspace",
+  "name": "ustbl-dev-extension",
+  "displayName": "USTBL Dev Extension",
+  "description": "Developer extension for USTBL workspace",
   "icon": "logo.png",
   "version": "0.2.0",
-  "publisher": "SJMCL-Team",
+  "publisher": "USTBL-Team",
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -21,8 +21,8 @@
   "contributes": {
     "commands": [
       {
-        "command": "sjmclDevtools.invokeCommandJump.rebuildIndex",
-        "title": "SJMCL Dev Extension: Rebuild Invoke Command Index"
+        "command": "ustblDevtools.invokeCommandJump.rebuildIndex",
+        "title": "USTBL Dev Extension: Rebuild Invoke Command Index"
       }
     ]
   },

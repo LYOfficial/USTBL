@@ -1,4 +1,4 @@
-use crate::error::{SJMCLError, SJMCLResult};
+use crate::error::{USTBLError, USTBLResult};
 use tauri::{AppHandle, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_utils::config::WindowConfig;
 use url::Url;
@@ -28,14 +28,14 @@ pub async fn create_webview_window(
   label: &str,
   config_label: &str,
   url: Option<Url>,
-) -> SJMCLResult<WebviewWindow> {
+) -> USTBLResult<WebviewWindow> {
   let window_config = app
     .config()
     .app
     .windows
     .iter()
     .find(|cfg| cfg.label == config_label)
-    .ok_or_else(|| SJMCLError(format!("Config label '{}' not found", config_label)))?;
+    .ok_or_else(|| USTBLError(format!("Config label '{}' not found", config_label)))?;
 
   let mut window_config = window_config.clone();
   window_config.label = label.to_string();
@@ -71,9 +71,9 @@ pub async fn create_webview_window(
 pub async fn create_webview_window_with_config(
   app: &AppHandle,
   config: &WindowConfig,
-) -> SJMCLResult<WebviewWindow> {
-  let builder = WebviewWindowBuilder::from_config(app, config).map_err(SJMCLError::from)?;
-  let window = builder.build().map_err(SJMCLError::from)?;
+) -> USTBLResult<WebviewWindow> {
+  let builder = WebviewWindowBuilder::from_config(app, config).map_err(USTBLError::from)?;
+  let window = builder.build().map_err(USTBLError::from)?;
 
   Ok(window)
 }

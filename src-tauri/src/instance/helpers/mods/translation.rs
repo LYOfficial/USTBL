@@ -1,4 +1,4 @@
-use crate::error::{SJMCLError, SJMCLResult};
+use crate::error::{USTBLError, USTBLResult};
 use crate::instance::constants::{TRANSLATION_CACHE_EXPIRY_HOURS, TRANSLATION_CACHE_FILE_NAME};
 use crate::instance::models::misc::LocalModInfo;
 use crate::resource::helpers::modrinth::{
@@ -60,7 +60,7 @@ impl LocalModTranslationEntry {
 pub async fn add_local_mod_translations(
   app: &AppHandle,
   mod_info: &mut LocalModInfo,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let cache = {
     let translation_cache_state = app.state::<Mutex<LocalModTranslationsCache>>();
     let cache = translation_cache_state.lock()?.clone();
@@ -86,7 +86,7 @@ pub async fn add_local_mod_translations(
       let file_info = fetch_remote_resource_by_local_modrinth(&app_clone, &file_path_clone).await?;
       let resource_info =
         fetch_remote_resource_by_id_modrinth(&app_clone, &file_info.resource_id).await?;
-      Ok::<_, SJMCLError>(resource_info)
+      Ok::<_, USTBLError>(resource_info)
     })
   };
 

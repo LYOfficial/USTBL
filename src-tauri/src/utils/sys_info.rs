@@ -1,4 +1,4 @@
-use crate::error::{SJMCLError, SJMCLResult};
+use crate::error::{USTBLError, USTBLResult};
 use crate::launcher_config::models::MemoryInfo;
 use serde_json::json;
 use std::net::{SocketAddr, TcpListener};
@@ -145,7 +145,7 @@ pub fn get_all_drive_mount_points() -> Vec<PathBuf> {
 /// let available_port = find_free_port(None).unwrap();
 /// println!("Found free port: {}", available_port);
 /// ```
-pub fn find_free_port(start_port: Option<u16>) -> SJMCLResult<u16> {
+pub fn find_free_port(start_port: Option<u16>) -> USTBLResult<u16> {
   let start = start_port.unwrap_or(0); // Default to 0 if no start_port is provided
 
   for port in start..=u16::MAX {
@@ -156,5 +156,5 @@ pub fn find_free_port(start_port: Option<u16>) -> SJMCLResult<u16> {
   }
 
   log::error!("No free port found.");
-  Err(SJMCLError("No free port found".to_string()))
+  Err(USTBLError("No free port found".to_string()))
 }

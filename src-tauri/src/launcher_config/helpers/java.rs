@@ -1,4 +1,4 @@
-use crate::error::{SJMCLError, SJMCLResult};
+use crate::error::{USTBLError, USTBLResult};
 use crate::launcher_config::models::{JavaInfo, LauncherConfig};
 use crate::resource::helpers::misc::{get_download_api, get_source_priority_list};
 use crate::resource::models::ResourceType;
@@ -125,8 +125,8 @@ pub fn get_java_paths(app: &AppHandle) -> Vec<String> {
     paths.insert(java_path);
   }
 
-  // Scan Mojang Java downloaded by SJMCL itself
-  for java_path in scan_java_paths_in_sjmcl_data_directory(app) {
+  // Scan Mojang Java downloaded by USTBL itself
+  for java_path in scan_java_paths_in_ustbl_data_directory(app) {
     paths.insert(java_path);
   }
 
@@ -181,7 +181,7 @@ pub fn get_java_paths(app: &AppHandle) -> Vec<String> {
   }
 }
 
-fn resolve_java_home(path: PathBuf) -> SJMCLResult<String> {
+fn resolve_java_home(path: PathBuf) -> USTBLResult<String> {
   #[cfg(target_os = "windows")]
   let java_bin = path.join(r"bin\java.exe");
   #[cfg(not(target_os = "windows"))]
@@ -296,7 +296,7 @@ fn scan_java_paths_in_common_directories(app: &AppHandle) -> Vec<String> {
   java_paths
 }
 
-fn scan_java_paths_in_sjmcl_data_directory(app: &AppHandle) -> Vec<String> {
+fn scan_java_paths_in_ustbl_data_directory(app: &AppHandle) -> Vec<String> {
   let mut java_paths = Vec::new();
   #[cfg(any(target_os = "linux", target_os = "windows"))]
   {
@@ -478,7 +478,7 @@ pub fn parse_java_major_version(full_version: &str) -> (i32, bool) {
 pub async fn build_mojang_java_download_params(
   app: &AppHandle,
   version: &str,
-) -> SJMCLResult<Vec<PTaskParam>> {
+) -> USTBLResult<Vec<PTaskParam>> {
   let config = app.state::<Mutex<LauncherConfig>>().lock()?.clone();
   let client = app.state::<reqwest::Client>();
 
@@ -513,10 +513,10 @@ pub async fn build_mojang_java_download_params(
   }
 
   let json =
-    json.ok_or_else(|| SJMCLError("Failed to fetch Mojang Java runtime manifest".into()))?;
+    json.ok_or_else(|| USTBLError("Failed to fetch Mojang Java runtime manifest".into()))?;
   let manifest_url = json[platform][runtime_type][0]["manifest"]["url"]
     .as_str()
-    .ok_or_else(|| SJMCLError("Failed to parse manifest URL".into()))?;
+    .ok_or_else(|| USTBLError("Failed to parse manifest URL".into()))?;
 
   let manifest: Value = client.get(manifest_url).send().await?.json().await?;
   let runtime_dir = app.path().resolve(
@@ -526,7 +526,7 @@ pub async fn build_mojang_java_download_params(
 
   let download_params: Vec<_> = manifest["files"]
     .as_object()
-    .ok_or_else(|| SJMCLError("Invalid files data".into()))?
+    .ok_or_else(|| USTBLError("Invalid files data".into()))?
     .iter()
     .filter_map(|(path, info)| {
       let raw = info["downloads"]["raw"].as_object()?;

@@ -1,4 +1,4 @@
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use crate::instance::models::misc::Instance;
 use crate::launch::constants::*;
 use crate::launch::models::{LaunchError, LaunchingState};
@@ -92,7 +92,7 @@ pub async fn monitor_process(
   launcher_visibility: LauncherVisiablity,
   ready_tx: Sender<()>,
   post_exit_command: Option<String>,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   // create unique log window
   let label = format!("game_log_{id}");
   let log_file_path = app
@@ -265,7 +265,7 @@ pub async fn monitor_process(
   Ok(())
 }
 
-pub fn kill_process(pid: u32) -> SJMCLResult<()> {
+pub fn kill_process(pid: u32) -> USTBLResult<()> {
   // KNOWN ISSUE: kill process means exit abnormally, which will not close the game-log window automatically.
   #[cfg(any(target_os = "linux", target_os = "macos"))]
   {
@@ -289,7 +289,7 @@ pub fn kill_process(pid: u32) -> SJMCLResult<()> {
   Ok(())
 }
 
-pub fn set_process_priority(pid: u32, priority: &ProcessPriority) -> SJMCLResult<()> {
+pub fn set_process_priority(pid: u32, priority: &ProcessPriority) -> USTBLResult<()> {
   #[cfg(any(target_os = "macos", target_os = "linux"))]
   {
     let nice_value = match *priority {
@@ -344,7 +344,7 @@ pub fn set_process_priority(pid: u32, priority: &ProcessPriority) -> SJMCLResult
   Ok(())
 }
 
-pub fn change_process_window_title(pid: u32, new_title: &str) -> SJMCLResult<()> {
+pub fn change_process_window_title(pid: u32, new_title: &str) -> USTBLResult<()> {
   if new_title.trim().is_empty() {
     return Ok(());
   }

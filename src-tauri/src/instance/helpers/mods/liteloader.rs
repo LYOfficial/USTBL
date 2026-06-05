@@ -1,5 +1,5 @@
 // https://www.mcmod.cn/class/610.html
-use crate::error::{SJMCLError, SJMCLResult};
+use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::mods::common::LocalModMetadataParser;
 use crate::instance::models::misc::{LocalModInfo, ModLoaderType};
 use async_trait::async_trait;
@@ -47,18 +47,18 @@ impl LocalModMetadataParser for LiteLoaderModMetadataParser {
 
   fn get_mod_metadata_from_jar<R: Read + Seek>(
     jar: &mut ZipArchive<R>,
-  ) -> SJMCLResult<Self::Metadata> {
+  ) -> USTBLResult<Self::Metadata> {
     let meta: LiteloaderModMetadata = match jar.by_name("litemod.json") {
       Ok(val) => match serde_json::from_reader(val) {
         Ok(val) => val,
-        Err(e) => return Err(SJMCLError::from(e)),
+        Err(e) => return Err(USTBLError::from(e)),
       },
-      Err(e) => return Err(SJMCLError::from(e)),
+      Err(e) => return Err(USTBLError::from(e)),
     };
     Ok(meta)
   }
 
-  async fn get_mod_metadata_from_dir(dir_path: &Path) -> SJMCLResult<Self::Metadata> {
+  async fn get_mod_metadata_from_dir(dir_path: &Path) -> USTBLResult<Self::Metadata> {
     let liteloader_file_path = dir_path.join("litemod.json");
     let meta: LiteloaderModMetadata = serde_json::from_str(
       tokio::fs::read_to_string(liteloader_file_path)

@@ -1,4 +1,4 @@
-use crate::error::{SJMCLError, SJMCLResult};
+use crate::error::{USTBLError, USTBLResult};
 use crate::instance::models::misc::{Instance, ModLoaderType};
 #[cfg(not(any(
   all(
@@ -164,12 +164,12 @@ pub struct InstructionRule {
 }
 
 impl InstructionRule {
-  pub fn is_allowed(&self, target_feature: &FeaturesInfo) -> SJMCLResult<(bool, bool)> {
+  pub fn is_allowed(&self, target_feature: &FeaturesInfo) -> USTBLResult<(bool, bool)> {
     let mut positive = match self.action.to_lowercase().as_str() {
       "allow" => true,
       "disallow" => false,
       _ => {
-        return Err(SJMCLError(format!(
+        return Err(USTBLError(format!(
           "unknown action format: {}",
           self.action
         )))
@@ -447,7 +447,7 @@ pub async fn libraries_to_info(
   (game_version, loader_version, loader_type, None)
 }
 
-fn rules_is_allowed(rules: &Vec<InstructionRule>, feature: &FeaturesInfo) -> SJMCLResult<bool> {
+fn rules_is_allowed(rules: &Vec<InstructionRule>, feature: &FeaturesInfo) -> USTBLResult<bool> {
   let mut weak_allowed = true;
   for rule in rules {
     let (allow, strong) = rule.is_allowed(feature)?;
@@ -460,23 +460,23 @@ fn rules_is_allowed(rules: &Vec<InstructionRule>, feature: &FeaturesInfo) -> SJM
 }
 
 pub trait IsAllowed {
-  fn is_allowed(&self, feature: &FeaturesInfo) -> SJMCLResult<bool>;
+  fn is_allowed(&self, feature: &FeaturesInfo) -> USTBLResult<bool>;
 }
 
 impl IsAllowed for ArgumentsItem {
-  fn is_allowed(&self, feature: &FeaturesInfo) -> SJMCLResult<bool> {
+  fn is_allowed(&self, feature: &FeaturesInfo) -> USTBLResult<bool> {
     rules_is_allowed(&self.rules, feature)
   }
 }
 
 impl IsAllowed for LibrariesValue {
-  fn is_allowed(&self, feature: &FeaturesInfo) -> SJMCLResult<bool> {
+  fn is_allowed(&self, feature: &FeaturesInfo) -> USTBLResult<bool> {
     rules_is_allowed(&self.rules, feature)
   }
 }
 
 impl LaunchArgumentTemplate {
-  pub fn to_jvm_arguments(&self, feature: &FeaturesInfo) -> SJMCLResult<Vec<String>> {
+  pub fn to_jvm_arguments(&self, feature: &FeaturesInfo) -> USTBLResult<Vec<String>> {
     let mut arguments = Vec::new();
     for argument in &self.jvm {
       if argument.is_allowed(feature).unwrap_or_default() {
@@ -485,7 +485,7 @@ impl LaunchArgumentTemplate {
     }
     Ok(arguments)
   }
-  pub fn to_game_arguments(&self, feature: &FeaturesInfo) -> SJMCLResult<Vec<String>> {
+  pub fn to_game_arguments(&self, feature: &FeaturesInfo) -> USTBLResult<Vec<String>> {
     let mut arguments = Vec::new();
     for argument in &self.game {
       if argument.is_allowed(feature).unwrap_or_default() {
@@ -508,12 +508,12 @@ impl LaunchArgumentTemplate {
 )))]
 pub fn load_native_libraries_replace_map(
   app: &AppHandle,
-) -> SJMCLResult<HashMap<String, HashMap<String, Option<LibrariesValue>>>> {
+) -> USTBLResult<HashMap<String, HashMap<String, Option<LibrariesValue>>>> {
   let path = get_app_resource_filepath(app, "assets/game/natives.json")?;
   let txt =
-    fs::read_to_string(&path).map_err(|e| SJMCLError(format!("read natives.json failed: {e}")))?;
+    fs::read_to_string(&path).map_err(|e| USTBLError(format!("read natives.json failed: {e}")))?;
   let map: HashMap<String, HashMap<String, Option<LibrariesValue>>> = serde_json::from_str(&txt)
-    .map_err(|e| SJMCLError(format!("parse natives.json failed: {e}")))?;
+    .map_err(|e| USTBLError(format!("parse natives.json failed: {e}")))?;
   Ok(map)
 }
 
@@ -522,7 +522,7 @@ pub async fn replace_native_libraries(
   app: &AppHandle,
   client_info: &mut McClientInfo,
   instance: &Instance,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   #[cfg(any(
     all(
       any(target_arch = "x86", target_arch = "x86_64"),

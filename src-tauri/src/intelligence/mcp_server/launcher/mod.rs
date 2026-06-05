@@ -1,7 +1,7 @@
 mod r#macro;
 pub mod tools;
 
-use crate::error::{SJMCLError, SJMCLResult};
+use crate::error::{USTBLError, USTBLResult};
 use crate::launcher_config::models::LauncherMcpServerConfig;
 use crate::utils::sys_info::find_free_port;
 use rmcp::handler::server::router::Router;
@@ -32,15 +32,15 @@ impl ServerHandler for McpContext {
     ServerInfo {
       capabilities: ServerCapabilities::builder().enable_tools().build(),
       server_info: Implementation {
-        name: "sjmcl-mcp".to_string(),
-        title: Some("SJMCL MCP".to_string()),
+        name: "ustbl-mcp".to_string(),
+        title: Some("USTBL MCP".to_string()),
         version: env!("CARGO_PKG_VERSION").to_string(),
-        description: Some("MCP tools exposed by SJMCL, a modern Minecraft launcher".to_string()),
+        description: Some("MCP tools exposed by USTBL, a modern Minecraft launcher".to_string()),
         icons: None,
         website_url: None,
       },
       instructions: Some(
-        "Use tools to query Minecraft instances and accounts managed by SJMC Launcher. For tools requiring instance_id (for example retrieve_game_server_list), call retrieve_instance_list first and pass one returned id. This server is intended for local trusted clients."
+        "Use tools to query Minecraft instances and accounts managed by USTBL. For tools requiring instance_id (for example retrieve_game_server_list), call retrieve_instance_list first and pass one returned id. This server is intended for local trusted clients."
           .to_string(),
       ),
       ..Default::default()
@@ -49,7 +49,7 @@ impl ServerHandler for McpContext {
 }
 
 pub fn command_result_to_tool_result<T>(
-  command_result: SJMCLResult<T>,
+  command_result: USTBLResult<T>,
 ) -> Result<CallToolResult, McpError>
 where
   T: Serialize,
@@ -126,7 +126,7 @@ async fn serve(
   app_handle: AppHandle,
   listener: tokio::net::TcpListener,
   port: u16,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let service_app_handle = app_handle.clone();
   let service: StreamableHttpService<Router<McpContext>, LocalSessionManager> =
     StreamableHttpService::new(
@@ -153,7 +153,7 @@ async fn serve(
 
   axum::serve(listener, axum_router)
     .await
-    .map_err(|e| SJMCLError(e.to_string()))?;
+    .map_err(|e| USTBLError(e.to_string()))?;
 
   Ok(())
 }

@@ -1,7 +1,7 @@
 use crate::discover::helpers::mc_news::{fetch_mc_news_page, MC_NEWS_ENDPOINT};
 use crate::discover::helpers::rss::{fetch_rss_page, fetch_rss_source_info, is_rss_source};
 use crate::discover::models::{NewsPostRequest, NewsPostResponse, NewsSourceInfo};
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use crate::launcher_config::models::LauncherConfig;
 use crate::utils::web::with_retry;
 use futures::future;
@@ -11,7 +11,7 @@ use tauri::{AppHandle, Manager};
 use tauri_plugin_http::reqwest;
 
 #[tauri::command]
-pub async fn fetch_news_sources_info(app: AppHandle) -> SJMCLResult<Vec<NewsSourceInfo>> {
+pub async fn fetch_news_sources_info(app: AppHandle) -> USTBLResult<Vec<NewsSourceInfo>> {
   let post_sources = {
     let binding = app.state::<Mutex<LauncherConfig>>();
     let state = binding.lock().unwrap();
@@ -71,7 +71,7 @@ pub async fn fetch_news_sources_info(app: AppHandle) -> SJMCLResult<Vec<NewsSour
 pub async fn fetch_news_post_summaries(
   app: AppHandle,
   requests: Vec<NewsPostRequest>,
-) -> SJMCLResult<NewsPostResponse> {
+) -> USTBLResult<NewsPostResponse> {
   let client = with_retry(app.state::<reqwest::Client>().inner().clone());
   let tasks: Vec<_> = requests
     .into_iter()

@@ -1,4 +1,4 @@
-use crate::error::{SJMCLError, SJMCLResult};
+use crate::error::{USTBLError, USTBLResult};
 use crate::utils::image::{load_image_from_dir_async, load_image_from_jar};
 use image::RgbaImage;
 use std::fs;
@@ -6,21 +6,21 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use zip::ZipArchive;
 
-pub fn load_resourcepack_from_zip(path: &PathBuf) -> SJMCLResult<(String, Option<RgbaImage>)> {
+pub fn load_resourcepack_from_zip(path: &PathBuf) -> USTBLResult<(String, Option<RgbaImage>)> {
   let file = match fs::File::open(path) {
     Ok(val) => val,
-    Err(e) => return Err(SJMCLError::from(e)),
+    Err(e) => return Err(USTBLError::from(e)),
   };
   let mut zip = match ZipArchive::new(file) {
     Ok(val) => val,
-    Err(e) => return Err(SJMCLError::from(e)),
+    Err(e) => return Err(USTBLError::from(e)),
   };
   let mut description = String::new();
 
   if let Ok(mut file) = zip.by_name("pack.mcmeta") {
     let mut contents = String::new();
     if let Err(e) = file.read_to_string(&mut contents) {
-      return Err(SJMCLError::from(e));
+      return Err(USTBLError::from(e));
     } else {
       // Check for and remove the UTF-8 BOM if present
       if contents.starts_with('\u{FEFF}') {
@@ -39,12 +39,12 @@ pub fn load_resourcepack_from_zip(path: &PathBuf) -> SJMCLResult<(String, Option
           }
         }
         Err(e) => {
-          return Err(SJMCLError::from(e));
+          return Err(USTBLError::from(e));
         }
       }
     }
   } else {
-    return Err(SJMCLError(format!(
+    return Err(USTBLError(format!(
       "pack.mcmeta not found in zip file '{}'",
       path.to_str().unwrap_or("")
     )));
@@ -54,7 +54,7 @@ pub fn load_resourcepack_from_zip(path: &PathBuf) -> SJMCLResult<(String, Option
   Ok((description, icon_src))
 }
 
-pub async fn load_resourcepack_from_dir(path: &Path) -> SJMCLResult<(String, Option<RgbaImage>)> {
+pub async fn load_resourcepack_from_dir(path: &Path) -> USTBLResult<(String, Option<RgbaImage>)> {
   let mut description = String::new();
 
   if let Ok(mut contents) = tokio::fs::read_to_string(path.join("pack.mcmeta")).await {
@@ -75,11 +75,11 @@ pub async fn load_resourcepack_from_dir(path: &Path) -> SJMCLResult<(String, Opt
         }
       }
       Err(e) => {
-        return Err(SJMCLError::from(e));
+        return Err(USTBLError::from(e));
       }
     }
   } else {
-    return Err(SJMCLError("pack.mcmeta not found in ''".to_string()));
+    return Err(USTBLError("pack.mcmeta not found in ''".to_string()));
   }
 
   let icon_src = load_image_from_dir_async(&path.join("pack.png")).await;

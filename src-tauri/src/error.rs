@@ -2,15 +2,15 @@ use serde::Serialize;
 use std::error::Error;
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
-pub struct SJMCLError(pub String);
+pub struct USTBLError(pub String);
 
-pub type SJMCLResult<T> = Result<T, SJMCLError>;
+pub type USTBLResult<T> = Result<T, USTBLError>;
 
-impl<T> From<T> for SJMCLError
+impl<T> From<T> for USTBLError
 where
   T: Error,
 {
   fn from(err: T) -> Self {
-    SJMCLError(err.to_string())
+    USTBLError(err.to_string())
   }
 }

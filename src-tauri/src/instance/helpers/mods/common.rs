@@ -1,4 +1,4 @@
-use crate::error::{SJMCLError, SJMCLResult};
+use crate::error::{USTBLError, USTBLResult};
 use crate::instance::constants::COMPRESSED_ICON_SIZE;
 use crate::instance::helpers::mods::{fabric, forge, legacy_forge, liteloader, quilt};
 use crate::instance::models::misc::{LocalModInfo, ModLoaderType};
@@ -27,9 +27,9 @@ pub trait LocalModMetadataParser {
 
   fn get_mod_metadata_from_jar<R: Read + Seek>(
     jar: &mut ZipArchive<R>,
-  ) -> SJMCLResult<Self::Metadata>;
+  ) -> USTBLResult<Self::Metadata>;
 
-  async fn get_mod_metadata_from_dir(dir_path: &Path) -> SJMCLResult<Self::Metadata>;
+  async fn get_mod_metadata_from_dir(dir_path: &Path) -> USTBLResult<Self::Metadata>;
 
   fn get_icon_from_jar<R: Read + Seek>(
     _meta: &mut Self::Metadata,
@@ -96,7 +96,7 @@ impl LocalModMetadataParser for FallbackManifestModMetadataParser {
 
   fn get_mod_metadata_from_jar<R: Read + Seek>(
     jar: &mut ZipArchive<R>,
-  ) -> SJMCLResult<Self::Metadata> {
+  ) -> USTBLResult<Self::Metadata> {
     let manifest_file = jar.by_name("META-INF/MANIFEST.MF")?;
     let manifest = java_properties::read(manifest_file)?;
     Ok(build_fallback_manifest_local_mod_info(|key| {
@@ -104,7 +104,7 @@ impl LocalModMetadataParser for FallbackManifestModMetadataParser {
     }))
   }
 
-  async fn get_mod_metadata_from_dir(dir_path: &Path) -> SJMCLResult<Self::Metadata> {
+  async fn get_mod_metadata_from_dir(dir_path: &Path) -> USTBLResult<Self::Metadata> {
     let manifest_string = tokio::fs::read_to_string(dir_path.join("META-INF/MANIFEST.MF")).await?;
     let manifest = java_properties::read(Cursor::new(manifest_string))?;
     Ok(build_fallback_manifest_local_mod_info(|key| {
@@ -155,12 +155,12 @@ impl ModLoaderType {
 pub async fn get_mod_info_from_jar(
   path: &PathBuf,
   prior_loader_type: Option<ModLoaderType>,
-) -> SJMCLResult<LocalModInfo> {
+) -> USTBLResult<LocalModInfo> {
   let file = Cursor::new(tokio::fs::read(path).await?);
   let file_name = path
     .file_name()
     .map(|name| name.to_string_lossy().to_string())
-    .ok_or_else(|| SJMCLError(format!("invalid mod file path: {}", path.display())))?;
+    .ok_or_else(|| USTBLError(format!("invalid mod file path: {}", path.display())))?;
   let normalized_file_name = file_name.strip_suffix(".disabled").unwrap_or(&file_name);
   let file_stem = Path::new(normalized_file_name)
     .file_stem()
@@ -182,7 +182,7 @@ pub async fn get_mod_info_from_jar(
     }
   }
 
-  Err(SJMCLError(format!(
+  Err(USTBLError(format!(
     "{} cannot be recognized as known",
     file_name
   )))
@@ -191,7 +191,7 @@ pub async fn get_mod_info_from_jar(
 pub async fn get_mod_info_from_dir(
   path: &Path,
   prior_loader_type: Option<ModLoaderType>,
-) -> SJMCLResult<LocalModInfo> {
+) -> USTBLResult<LocalModInfo> {
   let dir_name = path
     .file_name()
     .map(|name| name.to_string_lossy().to_string())
@@ -215,7 +215,7 @@ pub async fn get_mod_info_from_dir(
     }
   }
 
-  Err(SJMCLError(format!(
+  Err(USTBLError(format!(
     "{} cannot be recognized as known",
     dir_name
   )))

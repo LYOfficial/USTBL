@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use zip::ZipArchive;
 
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use crate::instance::helpers::modpack::misc::{ModpackManifest, ModpackMetaInfo};
 use crate::instance::models::misc::{InstanceError, ModLoader, ModLoaderType};
 use crate::resource::models::OtherResourceSource;
@@ -45,7 +45,7 @@ pub struct ModrinthManifest {
 
 #[async_trait]
 impl ModpackManifest for ModrinthManifest {
-  fn from_archive(file: &File) -> SJMCLResult<Self> {
+  fn from_archive(file: &File) -> USTBLResult<Self> {
     let mut archive = ZipArchive::new(file)?;
     let mut manifest_file = archive.by_name("modrinth.index.json")?;
     let mut manifest_content = String::new();
@@ -56,7 +56,7 @@ impl ModpackManifest for ModrinthManifest {
     Ok(manifest)
   }
 
-  async fn get_meta_info(&self, app: &AppHandle) -> SJMCLResult<ModpackMetaInfo> {
+  async fn get_meta_info(&self, app: &AppHandle) -> USTBLResult<ModpackMetaInfo> {
     let client_version = self.get_client_version()?;
     let mod_loader = if let Ok((loader_type, version)) = self.get_mod_loader_type_version() {
       Some(
@@ -82,7 +82,7 @@ impl ModpackManifest for ModrinthManifest {
     })
   }
 
-  fn get_client_version(&self) -> SJMCLResult<String> {
+  fn get_client_version(&self) -> USTBLResult<String> {
     Ok(
       self
         .dependencies
@@ -92,7 +92,7 @@ impl ModpackManifest for ModrinthManifest {
     )
   }
 
-  fn get_mod_loader_type_version(&self) -> SJMCLResult<(ModLoaderType, String)> {
+  fn get_mod_loader_type_version(&self) -> USTBLResult<(ModLoaderType, String)> {
     for (key, val) in &self.dependencies {
       match key.as_str() {
         "minecraft" => continue,
@@ -109,7 +109,7 @@ impl ModpackManifest for ModrinthManifest {
     &self,
     _app: &AppHandle,
     instance_path: &Path,
-  ) -> SJMCLResult<Vec<PTaskParam>> {
+  ) -> USTBLResult<Vec<PTaskParam>> {
     self
       .files
       .iter()
@@ -125,7 +125,7 @@ impl ModpackManifest for ModrinthManifest {
           filename: None,
         }))
       })
-      .collect::<SJMCLResult<Vec<_>>>()
+      .collect::<USTBLResult<Vec<_>>>()
   }
 
   fn get_overrides_path(&self) -> String {

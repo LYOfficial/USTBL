@@ -1,4 +1,4 @@
-use crate::error::{SJMCLError, SJMCLResult};
+use crate::error::{USTBLError, USTBLResult};
 use crate::IS_PORTABLE;
 use regex::Regex;
 use sha1::{Digest, Sha1};
@@ -129,7 +129,7 @@ pub fn extract_filename(path_str: &str, with_ext: bool) -> String {
 /// ```rust
 /// let sub_dirs = get_subdirectories(&directory).unwrap_or_default();
 /// ```
-pub fn get_subdirectories<P: AsRef<Path>>(path: P) -> SJMCLResult<Vec<PathBuf>> {
+pub fn get_subdirectories<P: AsRef<Path>>(path: P) -> USTBLResult<Vec<PathBuf>> {
   fs::read_dir(path)?
     .filter_map(|entry| match entry {
       Ok(entry) => {
@@ -140,7 +140,7 @@ pub fn get_subdirectories<P: AsRef<Path>>(path: P) -> SJMCLResult<Vec<PathBuf>> 
         }
         None
       }
-      Err(e) => Some(Err(SJMCLError(format!("Entry Error: {}", e)))),
+      Err(e) => Some(Err(USTBLError(format!("Entry Error: {}", e)))),
     })
     .collect()
 }
@@ -152,19 +152,19 @@ pub fn get_subdirectories<P: AsRef<Path>>(path: P) -> SJMCLResult<Vec<PathBuf>> 
 /// ```rust
 /// let mod_paths = get_files_with_regex(&mods_dir, &valid_extensions).unwrap_or_default();
 /// ```
-pub fn get_files_with_regex<P: AsRef<Path>>(path: P, pattern: &Regex) -> SJMCLResult<Vec<PathBuf>> {
+pub fn get_files_with_regex<P: AsRef<Path>>(path: P, pattern: &Regex) -> USTBLResult<Vec<PathBuf>> {
   let dir_entries = fs::read_dir(&path).map_err(|e| {
     let error_message = match e.kind() {
       io::ErrorKind::NotFound => "Path does not exist".to_string(),
       _ => format!("IO Error: {}", e),
     };
-    SJMCLError(error_message)
+    USTBLError(error_message)
   })?;
 
   let mut matching_files = Vec::new();
 
   for entry in dir_entries {
-    let entry = entry.map_err(|e| SJMCLError(format!("Read Entry Error: {}", e)))?;
+    let entry = entry.map_err(|e| USTBLError(format!("Read Entry Error: {}", e)))?;
     let path = entry.path();
 
     if let Some(file_name) = path.file_name() {
@@ -224,7 +224,7 @@ pub fn get_app_resource_filepath(
 ///
 /// - `app`: Tauri AppHandle
 /// - `name`: File name (without extension)
-/// - `url`: Target deeplink or custom URL (e.g. `sjmcl://...`)
+/// - `url`: Target deeplink or custom URL (e.g. `ustbl://...`)
 /// - `icon_path`: Optional icon override
 ///
 /// # Examples
@@ -233,14 +233,14 @@ pub fn get_app_resource_filepath(
 /// create_url_shortcut(
 ///     app,
 ///     "Add Auth Server".to_string(),
-///     "sjmcl://add-auth-server?url=https%3A%2F%2Fexample.com".to_string(),
+///     "ustbl://add-auth-server?url=https%3A%2F%2Fexample.com".to_string(),
 ///     None,
 /// )?;
 ///
 /// create_url_shortcut(
 ///     app,
 ///     "Launch".to_string(),
-///     "sjmcl://launch?id=OFFICIAL_DIR:1.20.1".to_string(),
+///     "ustbl://launch?id=OFFICIAL_DIR:1.20.1".to_string(),
 ///     Some(PathBuf::from("/path/to/custom/icon.png")),
 /// )?;
 /// ```
@@ -249,11 +249,11 @@ pub fn create_url_shortcut(
   name: String,
   url: String,
   icon_path: Option<PathBuf>,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let desktop = app
     .path()
     .desktop_dir()
-    .map_err(|e| SJMCLError(format!("Failed to get desktop path: {}", e)))?;
+    .map_err(|e| USTBLError(format!("Failed to get desktop path: {}", e)))?;
 
   #[cfg(target_os = "windows")]
   let shortcut_ext = "url";
@@ -265,7 +265,7 @@ pub fn create_url_shortcut(
 
   let path = desktop.join(format!("{}.{}", name, shortcut_ext));
 
-  // process icon, use SJMCL icon as default (macOS webloc does not support icon)
+  // process icon, use USTBL icon as default (macOS webloc does not support icon)
   #[cfg(target_os = "macos")]
   {
     let _ = icon_path; // suppress unused warning of params
@@ -281,15 +281,15 @@ pub fn create_url_shortcut(
       let icon_name = "icon.png";
 
       let resource_icon = get_app_resource_filepath(app, &format!("assets/icons/{}", icon_name))
-        .map_err(|e| SJMCLError(format!("Failed to resolve resource icon: {}", e)))?;
+        .map_err(|e| USTBLError(format!("Failed to resolve resource icon: {}", e)))?;
 
       let appdata_icon = app
         .path()
         .resolve(icon_name, BaseDirectory::AppData)
-        .map_err(|e| SJMCLError(format!("Failed to resolve appdata icon path: {}", e)))?;
+        .map_err(|e| USTBLError(format!("Failed to resolve appdata icon path: {}", e)))?;
 
       fs::copy(&resource_icon, &appdata_icon)
-        .map_err(|e| SJMCLError(format!("Failed to copy default icon: {}", e)))?;
+        .map_err(|e| USTBLError(format!("Failed to copy default icon: {}", e)))?;
 
       appdata_icon
     }
@@ -304,7 +304,7 @@ pub fn create_url_shortcut(
       url, icon_line
     );
 
-    fs::write(&path, content).map_err(|e| SJMCLError(e.to_string()))?;
+    fs::write(&path, content).map_err(|e| USTBLError(e.to_string()))?;
   }
 
   // #[cfg(target_os = "macos")]
@@ -315,8 +315,8 @@ pub fn create_url_shortcut(
   //   dict.insert("URL".to_string(), Value::String(url.to_string()));
   //   let plist_value = Value::Dictionary(dict);
 
-  //   let file = fs::File::create(&path).map_err(|e| SJMCLError(e.to_string()))?;
-  //   plist_value.to_writer_xml(file).map_err(|e| SJMCLError(e.to_string()))?;
+  //   let file = fs::File::create(&path).map_err(|e| USTBLError(e.to_string()))?;
+  //   plist_value.to_writer_xml(file).map_err(|e| USTBLError(e.to_string()))?;
   // }
 
   #[cfg(target_os = "macos")]
@@ -326,17 +326,17 @@ pub fn create_url_shortcut(
 
     let content = format!("#!/bin/bash\nopen \"{}\"\n", url);
 
-    let mut file = fs::File::create(&path).map_err(|e| SJMCLError(e.to_string()))?;
+    let mut file = fs::File::create(&path).map_err(|e| USTBLError(e.to_string()))?;
     file
       .write_all(content.as_bytes())
-      .map_err(|e| SJMCLError(e.to_string()))?;
+      .map_err(|e| USTBLError(e.to_string()))?;
 
     let mut perms = file
       .metadata()
-      .map_err(|e| SJMCLError(e.to_string()))?
+      .map_err(|e| USTBLError(e.to_string()))?
       .permissions();
     perms.set_mode(0o755);
-    fs::set_permissions(&path, perms).map_err(|e| SJMCLError(e.to_string()))?;
+    fs::set_permissions(&path, perms).map_err(|e| USTBLError(e.to_string()))?;
   }
 
   #[cfg(target_os = "linux")]
@@ -357,30 +357,30 @@ Terminal=false
       name, url, icon_line
     );
 
-    let mut file = fs::File::create(&path).map_err(|e| SJMCLError(e.to_string()))?;
+    let mut file = fs::File::create(&path).map_err(|e| USTBLError(e.to_string()))?;
     file
       .write_all(content.as_bytes())
-      .map_err(|e| SJMCLError(e.to_string()))?;
+      .map_err(|e| USTBLError(e.to_string()))?;
 
     let mut perms = file
       .metadata()
-      .map_err(|e| SJMCLError(e.to_string()))?
+      .map_err(|e| USTBLError(e.to_string()))?
       .permissions();
     perms.set_mode(0o755);
-    fs::set_permissions(&path, perms).map_err(|e| SJMCLError(e.to_string()))?;
+    fs::set_permissions(&path, perms).map_err(|e| USTBLError(e.to_string()))?;
   }
 
   Ok(())
 }
 
-pub fn validate_sha1(dest_path: PathBuf, truth: String) -> SJMCLResult<()> {
+pub fn validate_sha1(dest_path: PathBuf, truth: String) -> USTBLResult<()> {
   let mut f = std::fs::File::options()
     .read(true)
     .create(false)
     .write(false)
     .open(&dest_path)
     .map_err(|e| {
-      SJMCLError(format!(
+      USTBLError(format!(
         "Failed to open file {}: {}",
         dest_path.display(),
         e
@@ -388,11 +388,11 @@ pub fn validate_sha1(dest_path: PathBuf, truth: String) -> SJMCLResult<()> {
     })?;
   let mut hasher = Sha1::new();
   std::io::copy(&mut f, &mut hasher)
-    .map_err(|e| SJMCLError(format!("Failed to copy data for SHA1 validation: {}", e)))?;
+    .map_err(|e| USTBLError(format!("Failed to copy data for SHA1 validation: {}", e)))?;
 
   let sha1 = hex::encode(hasher.finalize());
   if sha1 != truth {
-    Err(SJMCLError(format!(
+    Err(USTBLError(format!(
       "SHA1 mismatch for {}: expected {}, got {}",
       dest_path.display(),
       truth,
@@ -409,8 +409,8 @@ pub fn validate_sha1(dest_path: PathBuf, truth: String) -> SJMCLResult<()> {
 /// - `path`: The file path to hash
 ///
 /// # Returns
-/// - `SJMCLResult<String>`: The SHA256 hash as a hexadecimal string, or an error
-pub fn calculate_sha256(path: &Path) -> SJMCLResult<String> {
+/// - `USTBLResult<String>`: The SHA256 hash as a hexadecimal string, or an error
+pub fn calculate_sha256(path: &Path) -> USTBLResult<String> {
   match std::fs::File::open(path) {
     Ok(mut file) => {
       let mut hasher = Sha256::new();
@@ -422,7 +422,7 @@ pub fn calculate_sha256(path: &Path) -> SJMCLResult<String> {
           Ok(0) => break,
           Ok(n) => hasher.update(&buffer[..n]),
           Err(e) => {
-            return Err(SJMCLError(format!(
+            return Err(USTBLError(format!(
               "Error reading file {} for hashing: {}",
               path.display(),
               e
@@ -433,7 +433,7 @@ pub fn calculate_sha256(path: &Path) -> SJMCLResult<String> {
 
       Ok(format!("{:x}", hasher.finalize()))
     }
-    Err(e) => Err(SJMCLError(format!(
+    Err(e) => Err(USTBLError(format!(
       "Failed to open file {} for hashing: {}",
       path.display(),
       e
@@ -441,9 +441,9 @@ pub fn calculate_sha256(path: &Path) -> SJMCLResult<String> {
   }
 }
 
-pub fn create_zip_from_dirs(paths: Vec<PathBuf>, zip_file_path: PathBuf) -> SJMCLResult<String> {
+pub fn create_zip_from_dirs(paths: Vec<PathBuf>, zip_file_path: PathBuf) -> USTBLResult<String> {
   let zip_file = std::fs::File::create(&zip_file_path)
-    .map_err(|e| SJMCLError(format!("Failed to create zip file: {}", e)))?;
+    .map_err(|e| USTBLError(format!("Failed to create zip file: {}", e)))?;
   let mut zip = ZipWriter::new(zip_file);
   let options = FileOptions::<ExtendedFileOptions>::default()
     .compression_method(CompressionMethod::Deflated)
@@ -454,15 +454,15 @@ pub fn create_zip_from_dirs(paths: Vec<PathBuf>, zip_file_path: PathBuf) -> SJMC
       let file_name = path.file_name().and_then(OsStr::to_str).unwrap_or_default();
       zip.start_file(file_name, options.clone())?;
       let mut file = std::fs::File::open(&path)
-        .map_err(|e| SJMCLError(format!("Failed to open file {}: {}", path.display(), e)))?;
+        .map_err(|e| USTBLError(format!("Failed to open file {}: {}", path.display(), e)))?;
       std::io::copy(&mut file, &mut zip)
-        .map_err(|e| SJMCLError(format!("Failed to copy data to zip: {}", e)))?;
+        .map_err(|e| USTBLError(format!("Failed to copy data to zip: {}", e)))?;
     }
   }
 
   zip
     .finish()
-    .map_err(|e| SJMCLError(format!("Failed to finalize zip file: {}", e)))?;
+    .map_err(|e| USTBLError(format!("Failed to finalize zip file: {}", e)))?;
 
   Ok(zip_file_path.to_string_lossy().to_string())
 }
@@ -498,7 +498,7 @@ pub fn manage_permissions_unix<P>(
   path: P,
   perm_mask: u32,
   operation: PermissionOperation,
-) -> SJMCLResult<()>
+) -> USTBLResult<()>
 where
   P: AsRef<Path>,
 {
@@ -514,7 +514,7 @@ pub fn manage_permissions_unix<P>(
   path: P,
   perm_mask: u32,
   operation: PermissionOperation,
-) -> SJMCLResult<()>
+) -> USTBLResult<()>
 where
   P: AsRef<Path>,
 {

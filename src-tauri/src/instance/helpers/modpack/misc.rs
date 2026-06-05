@@ -1,4 +1,4 @@
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use crate::instance::helpers::modpack::modrinth::ModrinthManifest;
 use crate::instance::helpers::modpack::multimc::MultiMcManifest;
 use crate::instance::models::misc::{InstanceError, ModLoader, ModLoaderType};
@@ -15,22 +15,22 @@ use zip::ZipArchive;
 
 #[async_trait]
 pub trait ModpackManifest {
-  fn from_archive(file: &File) -> SJMCLResult<Self>
+  fn from_archive(file: &File) -> USTBLResult<Self>
   where
     Self: Sized;
-  fn get_client_version(&self) -> SJMCLResult<String>;
-  fn get_mod_loader_type_version(&self) -> SJMCLResult<(ModLoaderType, String)>;
-  async fn get_meta_info(&self, app: &AppHandle) -> SJMCLResult<ModpackMetaInfo>;
+  fn get_client_version(&self) -> USTBLResult<String>;
+  fn get_mod_loader_type_version(&self) -> USTBLResult<(ModLoaderType, String)>;
+  async fn get_meta_info(&self, app: &AppHandle) -> USTBLResult<ModpackMetaInfo>;
   async fn get_download_params(
     &self,
     app: &AppHandle,
     instance_path: &Path,
-  ) -> SJMCLResult<Vec<PTaskParam>>;
+  ) -> USTBLResult<Vec<PTaskParam>>;
   fn get_overrides_path(&self) -> String;
 }
 
 type ManifestBox = Box<dyn ModpackManifest + Send + Sync>;
-type Parser = Box<dyn Fn(&File) -> SJMCLResult<ManifestBox> + Send + Sync>;
+type Parser = Box<dyn Fn(&File) -> USTBLResult<ManifestBox> + Send + Sync>;
 
 fn get_parsers() -> Vec<Parser> {
   vec![
@@ -50,7 +50,7 @@ fn get_parsers() -> Vec<Parser> {
 }
 
 impl ModLoader {
-  pub async fn with_branch(&self, app: &AppHandle, mc_version: String) -> SJMCLResult<Self> {
+  pub async fn with_branch(&self, app: &AppHandle, mc_version: String) -> USTBLResult<Self> {
     let version_list =
       fetch_mod_loader_version_list(app.clone(), mc_version, self.loader_type).await?;
     if let Some(version) = version_list.iter().find(|v| v.version == self.version) {
@@ -76,7 +76,7 @@ pub struct ModpackMetaInfo {
 }
 
 impl ModpackMetaInfo {
-  pub async fn from_archive(app: &AppHandle, file: &File) -> SJMCLResult<Self> {
+  pub async fn from_archive(app: &AppHandle, file: &File) -> USTBLResult<Self> {
     for parser in get_parsers() {
       if let Ok(manifest) = parser(file) {
         return manifest.get_meta_info(app).await;
@@ -91,7 +91,7 @@ pub async fn get_download_params(
   app: &AppHandle,
   file: &File,
   instance_path: &Path,
-) -> SJMCLResult<Vec<PTaskParam>> {
+) -> USTBLResult<Vec<PTaskParam>> {
   for parser in get_parsers() {
     if let Ok(manifest) = parser(file) {
       return manifest.get_download_params(app, instance_path).await;
@@ -101,7 +101,7 @@ pub async fn get_download_params(
   Err(InstanceError::ModpackManifestParseError.into())
 }
 
-pub fn extract_overrides(file: &File, instance_path: &Path) -> SJMCLResult<()> {
+pub fn extract_overrides(file: &File, instance_path: &Path) -> USTBLResult<()> {
   let get_overrides_path = |file| {
     for parser in get_parsers() {
       if let Ok(manifest) = parser(file) {

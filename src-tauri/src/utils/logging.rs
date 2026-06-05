@@ -1,4 +1,4 @@
-use crate::error::{SJMCLError, SJMCLResult};
+use crate::error::{USTBLError, USTBLResult};
 use crate::utils::fs::get_files_with_regex;
 use regex::Regex;
 use std::fmt::Arguments;
@@ -42,7 +42,7 @@ pub fn get_launcher_log_path(app: AppHandle) -> PathBuf {
   ))
 }
 
-pub fn setup_with_app(app: AppHandle) -> SJMCLResult<()> {
+pub fn setup_with_app(app: AppHandle) -> USTBLResult<()> {
   let is_dev = cfg!(debug_assertions);
   let folder = get_launcher_logs_folder(&app);
   let mut targetkinds = vec![
@@ -109,12 +109,12 @@ pub fn setup_with_app(app: AppHandle) -> SJMCLResult<()> {
 
   app
     .plugin(p.format(formatter).build())
-    .map_err(|e| SJMCLError(format!("Failed to setup log plugin: {}", e)))?;
+    .map_err(|e| USTBLError(format!("Failed to setup log plugin: {}", e)))?;
 
   Ok(())
 }
 
-pub async fn purge_old_launcher_logs(app: AppHandle, days: u64) -> SJMCLResult<()> {
+pub async fn purge_old_launcher_logs(app: AppHandle, days: u64) -> USTBLResult<()> {
   let folder = get_launcher_logs_folder(&app);
   if !folder.exists() {
     return Ok(());
@@ -127,7 +127,7 @@ pub async fn purge_old_launcher_logs(app: AppHandle, days: u64) -> SJMCLResult<(
     .saturating_sub(days.saturating_mul(24 * 60 * 60));
 
   let re = Regex::new(r"^launcher_log_(\d+)\.log$")
-    .map_err(|e| SJMCLError(format!("Invalid regex: {e}")))?;
+    .map_err(|e| USTBLError(format!("Invalid regex: {e}")))?;
   let files = get_files_with_regex(&folder, &re)?;
 
   for path in files {

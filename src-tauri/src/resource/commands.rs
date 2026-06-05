@@ -1,4 +1,4 @@
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use crate::instance::helpers::client_json::McClientInfo;
 use crate::instance::helpers::misc::get_instance_subdir_path_by_id;
 use crate::instance::models::misc::{InstanceSubdirType, ModLoaderType};
@@ -26,7 +26,7 @@ use tauri::{AppHandle, Manager, State};
 use tauri_plugin_http::reqwest;
 
 #[tauri::command]
-pub async fn fetch_game_version_list(app: AppHandle) -> SJMCLResult<Vec<GameClientResourceInfo>> {
+pub async fn fetch_game_version_list(app: AppHandle) -> USTBLResult<Vec<GameClientResourceInfo>> {
   let priority_list = {
     let launcher_config_state = app.state::<Mutex<LauncherConfig>>();
     let launcher_config = launcher_config_state.lock()?;
@@ -39,7 +39,7 @@ pub async fn fetch_game_version_list(app: AppHandle) -> SJMCLResult<Vec<GameClie
 pub async fn fetch_game_version_specific(
   app: AppHandle,
   game_version: String,
-) -> SJMCLResult<GameClientResourceInfo> {
+) -> USTBLResult<GameClientResourceInfo> {
   let all_versions = fetch_game_version_list(app.clone()).await?;
 
   all_versions
@@ -53,7 +53,7 @@ pub async fn fetch_mod_loader_version_list(
   app: AppHandle,
   game_version: String,
   mod_loader_type: ModLoaderType,
-) -> SJMCLResult<Vec<ModLoaderResourceInfo>> {
+) -> USTBLResult<Vec<ModLoaderResourceInfo>> {
   let priority_list = {
     let launcher_config_state = app.state::<Mutex<LauncherConfig>>();
     let launcher_config = launcher_config_state.lock()?;
@@ -78,7 +78,7 @@ pub async fn fetch_mod_loader_version_list(
 pub async fn fetch_optifine_version_list(
   app: AppHandle,
   game_version: String,
-) -> SJMCLResult<Vec<OptiFineResourceInfo>> {
+) -> USTBLResult<Vec<OptiFineResourceInfo>> {
   let priority_list = {
     let launcher_config_state = app.state::<Mutex<LauncherConfig>>();
     let launcher_config = launcher_config_state.lock()?;
@@ -92,7 +92,7 @@ pub async fn fetch_resource_list_by_name(
   app: AppHandle,
   download_source: OtherResourceSource,
   query: OtherResourceSearchQuery,
-) -> SJMCLResult<OtherResourceSearchRes> {
+) -> USTBLResult<OtherResourceSearchRes> {
   match download_source {
     OtherResourceSource::Modrinth => Ok(fetch_resource_list_by_name_modrinth(&app, &query).await?),
     _ => Err(ResourceError::NoDownloadApi.into()),
@@ -104,7 +104,7 @@ pub async fn fetch_resource_version_packs(
   app: AppHandle,
   download_source: OtherResourceSource,
   query: OtherResourceVersionPackQuery,
-) -> SJMCLResult<Vec<OtherResourceVersionPack>> {
+) -> USTBLResult<Vec<OtherResourceVersionPack>> {
   match download_source {
     OtherResourceSource::Modrinth => Ok(fetch_resource_version_packs_modrinth(&app, &query).await?),
     _ => Err(ResourceError::NoDownloadApi.into()),
@@ -117,7 +117,7 @@ pub async fn download_game_server(
   client: State<'_, reqwest::Client>,
   resource_info: GameClientResourceInfo,
   dest: String,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   let version_details = client
     .get(&resource_info.url)
     .send()
@@ -153,7 +153,7 @@ pub async fn fetch_remote_resource_by_local(
   app: AppHandle,
   download_source: OtherResourceSource,
   file_path: String,
-) -> SJMCLResult<OtherResourceFileInfo> {
+) -> USTBLResult<OtherResourceFileInfo> {
   match download_source {
     OtherResourceSource::Modrinth => {
       Ok(fetch_remote_resource_by_local_modrinth(&app, &file_path).await?)
@@ -167,7 +167,7 @@ pub async fn update_mods(
   app: AppHandle,
   instance_id: String,
   queries: Vec<ModUpdateQuery>,
-) -> SJMCLResult<()> {
+) -> USTBLResult<()> {
   if queries.is_empty() {
     return Ok(());
   }
@@ -213,7 +213,7 @@ pub async fn fetch_remote_resource_by_id(
   app: AppHandle,
   download_source: OtherResourceSource,
   resource_id: String,
-) -> SJMCLResult<OtherResourceInfo> {
+) -> USTBLResult<OtherResourceInfo> {
   match download_source {
     OtherResourceSource::Modrinth => {
       Ok(fetch_remote_resource_by_id_modrinth(&app, &resource_id).await?)

@@ -1,4 +1,4 @@
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use crate::instance::helpers::misc::get_instance_subdir_path_by_id;
 use crate::instance::models::misc::InstanceSubdirType;
 use mc_server_status::{McClient, McError, ServerData, ServerEdition, ServerInfo, ServerStatus};
@@ -81,7 +81,7 @@ pub fn get_servers_nbt_path_by_instance_id(
   Some(game_root_dir.join(SERVERS_DAT_FILENAME))
 }
 
-pub async fn load_servers_info_from_nbt(path: &Path) -> SJMCLResult<Vec<GameServerInfo>> {
+pub async fn load_servers_info_from_nbt(path: &Path) -> USTBLResult<Vec<GameServerInfo>> {
   if !path.exists() {
     return Ok(Vec::new());
   }
@@ -97,7 +97,7 @@ pub async fn load_servers_info_from_nbt(path: &Path) -> SJMCLResult<Vec<GameServ
   Ok(game_server_list)
 }
 
-pub async fn save_servers_to_nbt(path: &Path, servers: &[GameServerInfo]) -> SJMCLResult<()> {
+pub async fn save_servers_to_nbt(path: &Path, servers: &[GameServerInfo]) -> USTBLResult<()> {
   let servers_info = NbtServersInfo {
     servers: servers.iter().map(NbtServerInfo::from).collect(),
   };
@@ -110,7 +110,7 @@ pub async fn save_servers_to_nbt(path: &Path, servers: &[GameServerInfo]) -> SJM
 /// Query multiple servers online status in parallel.
 pub async fn query_servers_online(
   mut servers: Vec<GameServerInfo>,
-) -> SJMCLResult<Vec<GameServerInfo>> {
+) -> USTBLResult<Vec<GameServerInfo>> {
   if servers.is_empty() {
     return Ok(servers);
   }

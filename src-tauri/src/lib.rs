@@ -27,7 +27,7 @@ use std::sync::{LazyLock, Mutex, OnceLock};
 use storage::Storage;
 use tasks::monitor::TaskMonitor;
 use utils::portable::is_portable;
-use utils::web::build_sjmcl_client;
+use utils::web::build_ustbl_client;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 use tauri::path::BaseDirectory;
@@ -207,7 +207,7 @@ pub async fn run() -> i32 {
       let local_mod_translations = LocalModTranslationsCache::load().unwrap_or_default();
       app.manage(Mutex::new(local_mod_translations));
 
-      let client = build_sjmcl_client(app.handle(), true);
+      let client = build_ustbl_client(app.handle(), true);
       app.manage(client);
 
       let launching_queue = Vec::<LaunchingState>::new();

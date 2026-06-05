@@ -13,4 +13,4 @@ export const TAURI_SOURCE_EXCLUDE_GLOB =
 export const INVOKE_FUNCTION_NAMES = ["invoke"];
 
 export const COMMAND_REBUILD_INVOKE_COMMAND_INDEX =
-  "sjmclDevtools.invokeCommandJump.rebuildIndex";
+  "ustblDevtools.invokeCommandJump.rebuildIndex";

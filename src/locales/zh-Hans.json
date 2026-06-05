@@ -1546,7 +1546,7 @@
       "neoforge": "NeoForge",
       "authlibInjector": "Authlib Injector",
       "github": "GitHub",
-      "sjmclapi": "USTB Launcher API"
+      "ustblapi": "USTB Launcher API"
     }
   },
   "ReLoginPlayerModal": {

@@ -1,6 +1,6 @@
 use crate::account::helpers::authlib_injector::jar::get_jar_path as get_authlib_injector_jar_path;
 use crate::account::models::{AccountError, PlayerType};
-use crate::error::{SJMCLError, SJMCLResult};
+use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::client_json::FeaturesInfo;
 use crate::instance::helpers::game_version::compare_game_versions;
 use crate::instance::helpers::misc::get_instance_subdir_paths;
@@ -63,12 +63,12 @@ pub struct LaunchArguments {
 }
 
 impl LaunchArguments {
-  pub fn into_hashmap(self) -> SJMCLResult<HashMap<String, String>> {
+  pub fn into_hashmap(self) -> USTBLResult<HashMap<String, String>> {
     let value =
-      serde_json::to_value(self).map_err(|e| SJMCLError(format!("Serialization error: {}", e)))?;
+      serde_json::to_value(self).map_err(|e| USTBLError(format!("Serialization error: {}", e)))?;
     let obj = value
       .as_object()
-      .ok_or_else(|| SJMCLError("Failed to convert LaunchParams to HashMap".to_string()))?;
+      .ok_or_else(|| USTBLError("Failed to convert LaunchParams to HashMap".to_string()))?;
 
     let mut map = HashMap::new();
 
@@ -97,7 +97,7 @@ pub async fn generate_launch_command(
   app: &AppHandle,
   quick_play_singleplayer: Option<String>,
   quick_play_multiplayer: Option<String>,
-) -> SJMCLResult<LaunchCommand> {
+) -> USTBLResult<LaunchCommand> {
   let launcher_config = { app.state::<Mutex<LauncherConfig>>().lock()?.clone() };
   let launching_queue = { app.state::<Mutex<Vec<LaunchingState>>>().lock()?.clone() };
 
@@ -181,10 +181,10 @@ pub async fn generate_launch_command(
     version_type: if !game_config.game_window.custom_info.is_empty() {
       game_config.game_window.custom_info.clone()
     } else {
-      format!("SJMCL {}", basic_info.launcher_version)
+      format!("USTBL {}", basic_info.launcher_version)
     },
     natives_directory: natives_dir.to_string_lossy().to_string(),
-    launcher_name: format!("SJMCL {}", basic_info.launcher_version),
+    launcher_name: format!("USTBL {}", basic_info.launcher_version),
     launcher_version: basic_info.launcher_version,
     library_directory: libraries_dir.to_string_lossy().to_string(),
     classpath_separator: get_separator().to_string(),

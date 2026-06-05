@@ -1,5 +1,5 @@
 // https://github.com/QuiltMC/rfcs/blob/main/specification/0002-quilt.mod.json.md
-use crate::error::{SJMCLError, SJMCLResult};
+use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::mods::common::{compress_icon, LocalModMetadataParser};
 use crate::instance::models::misc::{LocalModInfo, ModLoaderType};
 use crate::utils::image::{load_image_from_dir_async, load_image_from_jar, ImageWrapper};
@@ -59,18 +59,18 @@ impl LocalModMetadataParser for QuiltModMetadataParser {
 
   fn get_mod_metadata_from_jar<R: Read + Seek>(
     jar: &mut ZipArchive<R>,
-  ) -> SJMCLResult<Self::Metadata> {
+  ) -> USTBLResult<Self::Metadata> {
     let meta: QuiltLoader = match jar.by_name("quilt.mod.json") {
       Ok(val) => match serde_json::from_reader(val) {
         Ok(val) => val,
-        Err(e) => return Err(SJMCLError::from(e)),
+        Err(e) => return Err(USTBLError::from(e)),
       },
-      Err(e) => return Err(SJMCLError::from(e)),
+      Err(e) => return Err(USTBLError::from(e)),
     };
     Ok(meta)
   }
 
-  async fn get_mod_metadata_from_dir(dir_path: &Path) -> SJMCLResult<Self::Metadata> {
+  async fn get_mod_metadata_from_dir(dir_path: &Path) -> USTBLResult<Self::Metadata> {
     let quilt_file_path = dir_path.join("quilt.mod.json");
     let content = tokio::fs::read_to_string(quilt_file_path).await?;
     let meta: QuiltLoader = serde_json::from_str(&content)?;

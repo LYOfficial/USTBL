@@ -254,7 +254,7 @@ jobs:
           
           # Create the pre-release with nightly tag
           gh release create "nightly" \
-            --title "SJMCL Nightly (${{ env.NIGHTLY_VERSION }})" \
+            --title "USTBL Nightly (${{ env.NIGHTLY_VERSION }})" \
             --notes-file release_notes.md \
             --prerelease \
             --target nightly \

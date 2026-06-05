@@ -1,5 +1,5 @@
 // https://mc1122modtutorialdocs-sphinx.readthedocs.io/zh-cn/latest/mainclass/01_mcmodinfo.html
-use crate::error::{SJMCLError, SJMCLResult};
+use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::mods::common::{compress_icon, LocalModMetadataParser};
 use crate::instance::models::misc::{LocalModInfo, ModLoaderType};
 use crate::utils::image::{load_image_from_dir_async, load_image_from_jar, ImageWrapper};
@@ -47,32 +47,32 @@ impl LocalModMetadataParser for LegacyForgeModMetadataParser {
 
   fn get_mod_metadata_from_jar<R: Read + Seek>(
     jar: &mut ZipArchive<R>,
-  ) -> SJMCLResult<Self::Metadata> {
+  ) -> USTBLResult<Self::Metadata> {
     let mut meta: Vec<LegacyForgeModMetadata> = match jar.by_name("mcmod.info") {
       Ok(val) => match serde_json::from_reader(val) {
         Ok(val) => val,
-        Err(e) => return Err(SJMCLError::from(e)),
+        Err(e) => return Err(USTBLError::from(e)),
       },
-      Err(e) => return Err(SJMCLError::from(e)),
+      Err(e) => return Err(USTBLError::from(e)),
     };
     if meta.is_empty() {
-      return Err(SJMCLError("len of LegacyForgeModMetadata is 0".to_string()));
+      return Err(USTBLError("len of LegacyForgeModMetadata is 0".to_string()));
     }
     Ok(meta.remove(0))
   }
 
-  async fn get_mod_metadata_from_dir(dir_path: &Path) -> SJMCLResult<Self::Metadata> {
+  async fn get_mod_metadata_from_dir(dir_path: &Path) -> USTBLResult<Self::Metadata> {
     let legacy_forge_file_path = dir_path.join("mcmod.info");
     let mut meta: Vec<LegacyForgeModMetadata> =
       match tokio::fs::read_to_string(legacy_forge_file_path).await {
         Ok(val) => match serde_json::from_str(val.as_str()) {
           Ok(val) => val,
-          Err(e) => return Err(SJMCLError::from(e)),
+          Err(e) => return Err(USTBLError::from(e)),
         },
-        Err(e) => return Err(SJMCLError::from(e)),
+        Err(e) => return Err(USTBLError::from(e)),
       };
     if meta.is_empty() {
-      return Err(SJMCLError("len of LegacyForgeModMetadata is 0".to_string()));
+      return Err(USTBLError("len of LegacyForgeModMetadata is 0".to_string()));
     }
     Ok(meta.remove(0))
   }

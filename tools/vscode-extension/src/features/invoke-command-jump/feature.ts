@@ -39,7 +39,7 @@ export class InvokeCommandJumpFeature implements ExtensionFeature {
         async () => {
           await indexManager.rebuildAll();
           void vscode.window.showInformationMessage(
-            "SJMCL Dev Extension: Invoke command index rebuilt."
+            "USTBL Dev Extension: Invoke command index rebuilt."
           );
         }
       )

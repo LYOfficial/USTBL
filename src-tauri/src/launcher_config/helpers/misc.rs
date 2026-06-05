@@ -1,4 +1,4 @@
-use crate::error::SJMCLResult;
+use crate::error::USTBLResult;
 use crate::launcher_config::commands::retrieve_custom_background_list;
 use crate::launcher_config::models::{BasicInfo, GameConfig, GameDirectory, LauncherConfig};
 use crate::partial::{PartialAccess, PartialUpdate};
@@ -13,7 +13,7 @@ use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Manager};
 
 impl LauncherConfig {
-  pub fn setup_with_app(&mut self, app: &AppHandle) -> SJMCLResult<()> {
+  pub fn setup_with_app(&mut self, app: &AppHandle) -> USTBLResult<()> {
     // same as lib.rs
     let is_dev = cfg!(debug_assertions);
     let package_version = app.package_info().version.to_string();

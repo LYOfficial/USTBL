@@ -31,9 +31,9 @@ use url::Url;
 /// # Example
 ///
 /// ```rust
-/// let client = build_sjmcl_client(&app, true);
+/// let client = build_ustbl_client(&app, true);
 /// ```
-pub fn build_sjmcl_client(app: &AppHandle, use_proxy: bool) -> Client {
+pub fn build_ustbl_client(app: &AppHandle, use_proxy: bool) -> Client {
   let mut builder = ClientBuilder::new()
     .timeout(Duration::from_secs(10))
     .tcp_keepalive(Duration::from_secs(10));
@@ -42,7 +42,7 @@ pub fn build_sjmcl_client(app: &AppHandle, use_proxy: bool) -> Client {
     // According to the User-Agent requirements of mozilla and BMCLAPI, the User-Agent is set to start with ${NAME}/${VERSION}
     // https://github.com/MCLF-CN/docs/issues/2
     // https://developer.mozilla.org/zh-CN/docs/Web/HTTP/Reference/Headers/User-Agent
-    if let Ok(header_value) = format!("SJMCL/{}", &config.basic_info.launcher_version).parse() {
+    if let Ok(header_value) = format!("USTBL/{}", &config.basic_info.launcher_version).parse() {
       let mut headers = HeaderMap::new();
       headers.insert("User-Agent", header_value);
       builder = builder.default_headers(headers);
@@ -64,9 +64,9 @@ pub fn build_sjmcl_client(app: &AppHandle, use_proxy: bool) -> Client {
   builder.build().unwrap_or_else(|_| Client::new())
 }
 
-struct SJMCLRetryableStrategy;
+struct USTBLRetryableStrategy;
 
-impl RetryableStrategy for SJMCLRetryableStrategy {
+impl RetryableStrategy for USTBLRetryableStrategy {
   fn handle(
     &self,
     res: &Result<tauri_plugin_http::reqwest::Response, reqwest_middleware::Error>,
@@ -90,7 +90,7 @@ pub fn with_retry(client: Client) -> ClientWithMiddleware {
   ClientWithMiddlewareBuilder::new(client)
     .with(RetryTransientMiddleware::new_with_policy_and_strategy(
       ExponentialBackoff::builder().build_with_total_retry_duration(Duration::from_secs(3600)),
-      SJMCLRetryableStrategy {},
+      USTBLRetryableStrategy {},
     ))
     .build()
 }

@@ -15,7 +15,7 @@ from opencc import OpenCC
 
 def is_preserved(text):
     # URLs and Deeplinks
-    return text.startswith(('http://', 'https://', 'ftp://', '//', 'sjmcl://', 'mailto:'))
+    return text.startswith(('http://', 'https://', 'ftp://', '//', 'ustbl://', 'mailto:'))
 
 def convert_simplified_to_traditional(obj, existing_obj=None, align_only=False):
     if isinstance(obj, dict):
