@@ -15,8 +15,6 @@ import {
 import { InvokeResponse } from "@/models/response";
 import { responseHandler } from "@/utils/response";
 
-export const RESOURCE_REFRESH_EVENT = "instance:refresh-resource-list";
-
 /**
  * Service class for managing game & mod loader resources.
  */
@@ -199,7 +197,7 @@ export class ResourceService {
     callback: (payload: OtherResourceType) => void
   ): () => void {
     const unlisten = getCurrentWebview().listen<OtherResourceType>(
-      RESOURCE_REFRESH_EVENT,
+      "instance:refresh-resource-list",
       (event) => {
         callback(event.payload);
       }

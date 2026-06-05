@@ -86,7 +86,6 @@ structstruck::strike! {
     pub id: String,
     pub name: String,
     pub description: String,
-    pub tag: Option<String>,
     pub icon_src: String,
     pub starred: bool,
     pub play_time: u128,
@@ -129,7 +128,6 @@ pub struct InstanceSummary {
   pub id: String,
   pub name: String,
   pub description: String,
-  pub tag: Option<String>,
   pub icon_src: String,
   pub starred: bool,
   pub play_time: u128,
@@ -154,7 +152,6 @@ impl InstanceSummary {
       id,
       name: instance.name.clone(),
       description: instance.description.clone(),
-      tag: instance.tag.clone(),
       icon_src: instance.icon_src.clone(),
       starred: instance.starred,
       play_time: instance.play_time,
@@ -269,7 +266,6 @@ pub enum InstanceError {
   InstallProfileParseError,
   ModLoaderVersionParseError,
   ModpackManifestParseError,
-  CurseForgeFileManifestParseError,
   NetworkError,
   UnsupportedModLoader,
   NotSupportChangeModLoader,
@@ -289,10 +285,3 @@ pub struct OptiFine {
 }
 
 impl std::error::Error for InstanceError {}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ModpackFileList {
-  pub all: Vec<String>,
-  pub unchecked: Vec<String>,
-}

@@ -1,9 +1,11 @@
-use crate::APP_DATA_DIR;
 use crate::account::constants::ACCOUNTS_FILE_NAME;
-use crate::account::helpers::authlib_injector::constants::PRESET_AUTH_SERVERS;
+use crate::account::helpers::authlib_injector::constants::{
+  PRESET_AUTH_SERVERS, USTB_AUTH_SERVER_URL,
+};
 use crate::account::helpers::skin::draw_avatar;
 use crate::storage::Storage;
 use crate::utils::image::ImageWrapper;
+use crate::APP_DATA_DIR;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
@@ -86,7 +88,6 @@ pub struct Player {
   pub auth_account: Option<String>,
   pub auth_server: Option<AuthServer>,
   pub access_token: Option<String>,
-  pub access_token_expires: Option<chrono::DateTime<chrono::Utc>>,
   pub refresh_token: Option<String>,
   pub textures: Vec<Texture>,
 }
@@ -124,7 +125,6 @@ impl Player {
       player_type: player_info.player_type,
       auth_account: player_info.auth_account,
       access_token: player_info.access_token,
-      access_token_expires: player_info.access_token_expires,
       refresh_token: player_info.refresh_token,
       auth_server,
       textures: player_info.textures,
@@ -149,7 +149,6 @@ pub struct PlayerInfo {
   pub auth_account: Option<String>,
   pub auth_server_url: Option<String>,
   pub access_token: Option<String>,
-  pub access_token_expires: Option<chrono::DateTime<chrono::Utc>>,
   pub refresh_token: Option<String>,
   pub textures: Vec<Texture>,
 }
@@ -177,7 +176,6 @@ impl From<Player> for PlayerInfo {
       auth_account: player.auth_account,
       textures: player.textures,
       access_token: player.access_token,
-      access_token_expires: player.access_token_expires,
       refresh_token: player.refresh_token,
       auth_server_url: player
         .auth_server
@@ -258,11 +256,17 @@ pub struct AuthServerInfo {
 
 impl From<AuthServerInfo> for AuthServer {
   fn from(info: AuthServerInfo) -> Self {
-    AuthServer {
-      name: info.metadata["meta"]["serverName"]
+    let name = if info.auth_url == USTB_AUTH_SERVER_URL {
+      "USTB Servers".to_string()
+    } else {
+      info.metadata["meta"]["serverName"]
         .as_str()
         .unwrap_or_default()
-        .to_string(),
+        .to_string()
+    };
+
+    AuthServer {
+      name,
       auth_url: info.auth_url,
       homepage_url: info.metadata["meta"]["links"]["homepage"]
         .as_str()
@@ -329,29 +333,15 @@ impl Storage for AccountInfo {
 pub enum AccountError {
   Duplicate,
   Expired,
-  FullLoginUnavailable,
   Invalid,
   NotFound,
   TextureError,
   NetworkError,
-  ServiceUnavailable,
-  TooManyRequests,
-  Forbidden,
-  UnknownProfile,
-  CannotAddSelf,
-  DuplicatedProfiles,
   ParseError,
   Cancelled,
   NoDownloadApi,
   SaveError,
   NoMinecraftProfile,
-  XstsBanned,
-  XstsParentalRestriction,
-  XstsNoXboxAccount,
-  XstsTermsNotAccepted,
-  XstsRegionBanned,
-  XstsChildAccount,
-  XstsUnknownError,
 }
 
 impl std::error::Error for AccountError {}

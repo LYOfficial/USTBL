@@ -64,8 +64,8 @@ impl<T: Read + Send + 'static> OutputPipe<T> {
 pub async fn record_play_time(app: AppHandle, start_time: Instant, instance_id: String) {
   let instance_in_mem = {
     let binding = app.state::<Mutex<HashMap<String, Instance>>>();
-
-    binding.lock().unwrap().get(&instance_id).cloned()
+    let inst = binding.lock().unwrap().get(&instance_id).cloned();
+    inst
   };
 
   if let Some(instance_in_mem) = instance_in_mem {
@@ -214,12 +214,10 @@ pub async fn monitor_process(
         let main_window = app.get_webview_window("main").expect("no main window");
         if let Ok(is_visible) = main_window.is_visible() {
           if !is_visible {
-            app.exit(0);
-            return;
+            std::process::exit(0);
           }
         } else {
-          app.exit(0);
-          return;
+          std::process::exit(0);
         }
       }
       _ => {}
@@ -374,7 +372,7 @@ pub fn change_process_window_title(pid: u32, new_title: &str) -> SJMCLResult<()>
     type ForEachCallback<'a> = Box<dyn FnMut(HWND) + 'a>;
     let wrapper: ForEachCallback = Box::new(closure);
     unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
-      if let Some(boxed) = unsafe { (lparam as *mut ForEachCallback).as_mut() } {
+      if let Some(boxed) = (lparam as *mut ForEachCallback).as_mut() {
         (*boxed)(hwnd);
       }
       TRUE

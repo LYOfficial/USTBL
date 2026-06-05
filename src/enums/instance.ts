@@ -20,5 +20,3 @@ export enum ModLoaderType {
   LiteLoader = "LiteLoader",
   Quilt = "Quilt",
 }
-
-export type ExportModpackFormat = "Modrinth" | "MultiMC";

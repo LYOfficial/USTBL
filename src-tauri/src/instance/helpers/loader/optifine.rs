@@ -6,17 +6,21 @@ use crate::instance::helpers::misc::{get_instance_game_config, get_instance_subd
 use crate::instance::models::misc::{Instance, InstanceError, InstanceSubdirType, ModLoaderType};
 use crate::launch::helpers::file_validator::convert_library_name_to_path;
 use crate::launch::helpers::jre_selector::select_java_runtime;
+use crate::launcher_config::models::JavaInfo;
+use crate::launcher_config::models::LauncherConfig;
+use crate::resource::helpers::misc::get_source_priority_list;
 use crate::resource::helpers::misc::{convert_url_to_target_source, get_download_api};
 use crate::resource::models::{OptiFineResourceInfo, ResourceType, SourceType};
-use crate::tasks::PTaskParam;
 use crate::tasks::commands::schedule_progressive_task_group;
 use crate::tasks::download::DownloadParam;
+use crate::tasks::PTaskParam;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use tauri::AppHandle;
-use zip::{ZipArchive, ZipWriter, write::FileOptions};
+use std::sync::Mutex;
+use tauri::{AppHandle, Manager};
+use zip::{write::FileOptions, ZipArchive, ZipWriter};
 
 pub async fn download_optifine_installer(
   game_version: &str,
@@ -48,12 +52,13 @@ pub async fn download_optifine_installer(
   Ok(())
 }
 
-pub async fn download_optifine_libraries(
+async fn download_optifine_libraries(
   app: &AppHandle,
   priority: &[SourceType],
   instance: &Instance,
-  client_info: &mut McClientInfo,
+  client_info: &McClientInfo,
 ) -> SJMCLResult<()> {
+  let mut client_info = client_info.clone();
   let optifine = instance
     .optifine
     .as_ref()
@@ -70,10 +75,7 @@ pub async fn download_optifine_libraries(
   };
 
   let mut task_params: Vec<PTaskParam> = vec![];
-  let installer_coord = format!(
-    "net.minecraftforge:optifine:{}-installer",
-    optifine.filename
-  );
+  let installer_coord = format!("net.minecraftforge:optifine:{}", optifine.filename);
   let installer_rel = convert_library_name_to_path(&installer_coord, None)?;
   let installer_path = lib_dir.join(&installer_rel);
 
@@ -90,7 +92,11 @@ pub async fn download_optifine_libraries(
         let mut s = String::new();
         txt.read_to_string(&mut s)?;
         let v = s.trim().to_string();
-        if v.is_empty() { None } else { Some(v) }
+        if v.is_empty() {
+          None
+        } else {
+          Some(v)
+        }
       }
       Err(_) => None,
     };
@@ -103,10 +109,10 @@ pub async fn download_optifine_libraries(
         lw_coord = lwo_coord.clone();
         let lwo_rel = convert_library_name_to_path(&lwo_coord, None)?;
         let lwo_path = lib_dir.join(lwo_rel);
-        if let Some(p) = lwo_path.parent()
-          && !p.exists()
-        {
-          fs::create_dir_all(p)?;
+        if let Some(p) = lwo_path.parent() {
+          if !p.exists() {
+            fs::create_dir_all(p)?;
+          }
         }
         let mut out = std::fs::File::create(&lwo_path)?;
         std::io::copy(&mut lwo, &mut out)?;
@@ -116,45 +122,46 @@ pub async fn download_optifine_libraries(
       }
     }
 
-    if !has_launchwrapper && let Ok(mut lw2) = archive.by_name("launchwrapper-2.0.jar") {
-      let lw2_coord = "optifine:launchwrapper:2.0".to_string();
-      lw_coord = lw2_coord.clone();
-      let lw2_rel = convert_library_name_to_path(&lw2_coord, None)?;
-      let lw2_path = lib_dir.join(lw2_rel);
-      if let Some(p) = lw2_path.parent()
-        && !p.exists()
-      {
-        fs::create_dir_all(p)?;
-      }
-      let mut out = std::fs::File::create(&lw2_path)?;
-      std::io::copy(&mut lw2, &mut out)?;
-      has_launchwrapper = true;
+    if !has_launchwrapper {
+      if let Ok(mut lw2) = archive.by_name("launchwrapper-2.0.jar") {
+        let lw2_coord = "optifine:launchwrapper:2.0".to_string();
+        lw_coord = lw2_coord.clone();
+        let lw2_rel = convert_library_name_to_path(&lw2_coord, None)?;
+        let lw2_path = lib_dir.join(lw2_rel);
+        if let Some(p) = lw2_path.parent() {
+          if !p.exists() {
+            fs::create_dir_all(p)?;
+          }
+        }
+        let mut out = std::fs::File::create(&lw2_path)?;
+        std::io::copy(&mut lw2, &mut out)?;
+        has_launchwrapper = true;
 
-      add_library_entry(&mut client_info.libraries, &lw2_coord, None)?;
+        add_library_entry(&mut client_info.libraries, &lw2_coord, None)?;
+      }
     }
   }
 
-  let temp_lw_coord = "net.minecraft:launchwrapper:1.12".to_string();
-  let lw_rel = convert_library_name_to_path(&temp_lw_coord, None)?;
-  let lw_dest = lib_dir.join(&lw_rel);
-
-  let base = get_download_api(priority[0], ResourceType::Libraries)?;
-  let src = convert_url_to_target_source(
-    &base.join(&lw_rel)?,
-    &[ResourceType::Libraries],
-    &priority[0],
-  )?;
-
-  task_params.push(PTaskParam::Download(DownloadParam {
-    src,
-    dest: lw_dest,
-    filename: None,
-    sha1: None,
-  }));
-
   if !has_launchwrapper {
     lw_coord = "net.minecraft:launchwrapper:1.12".to_string();
-    add_library_entry(&mut client_info.libraries, &temp_lw_coord, None)?;
+    add_library_entry(&mut client_info.libraries, &lw_coord, None)?;
+
+    let lw_rel = convert_library_name_to_path(&lw_coord, None)?;
+    let lw_dest = lib_dir.join(&lw_rel);
+
+    let base = get_download_api(priority[0], ResourceType::Libraries)?;
+    let src = convert_url_to_target_source(
+      &base.join(&lw_rel)?,
+      &[ResourceType::Libraries],
+      &priority[0],
+    )?;
+
+    task_params.push(PTaskParam::Download(DownloadParam {
+      src,
+      dest: lw_dest,
+      filename: None,
+      sha1: None,
+    }));
   }
 
   let optifine_runtime_coord = format!("net.minecraftforge:optifine:{}", optifine.filename);
@@ -256,17 +263,20 @@ pub async fn download_optifine_libraries(
     client_info.main_class = Some(lw_main.clone());
   }
 
-  if task_params.is_empty() {
-    return Ok(());
+  if !task_params.is_empty() {
+    schedule_progressive_task_group(
+      app.clone(),
+      format!("optifine-libraries?{}", instance.id),
+      task_params,
+      true,
+    )
+    .await?;
   }
 
-  schedule_progressive_task_group(
-    app.clone(),
-    format!("optifine-libraries?{}", instance.id),
-    task_params,
-    true,
-  )
-  .await?;
+  let vjson_path = instance
+    .version_path
+    .join(format!("{}.json", instance.name));
+  fs::write(vjson_path, serde_json::to_vec_pretty(&client_info)?)?;
 
   Ok(())
 }
@@ -279,11 +289,15 @@ async fn run_optifine_patcher(
   base_client_jar: &Path,
   out_optifine_jar: &Path,
 ) -> SJMCLResult<()> {
+  let javas_state = app.state::<Mutex<Vec<JavaInfo>>>();
+  let javas = javas_state.lock()?.clone();
+
   let game_config = get_instance_game_config(app, instance);
 
   let selected_java = select_java_runtime(
     app,
-    Some(&game_config.game_java),
+    &game_config.game_java,
+    &javas,
     instance,
     client_info
       .java_version
@@ -368,6 +382,14 @@ pub async fn finish_optifine_install(
   }
 
   remove_entry_from_zip(&optifine_path, "META-INF/mods.toml")?;
+
+  let priority_list = {
+    let launcher_config_state = app.state::<Mutex<LauncherConfig>>();
+    let launcher_config = launcher_config_state.lock()?;
+    get_source_priority_list(&launcher_config)
+  };
+
+  download_optifine_libraries(app, &priority_list, instance, client_info).await?;
 
   Ok(())
 }

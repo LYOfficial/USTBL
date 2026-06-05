@@ -4,8 +4,6 @@ import { LaunchingState } from "@/models/launch";
 import { InvokeResponse } from "@/models/response";
 import { responseHandler } from "@/utils/response";
 
-export const GAME_PROCESS_OUTPUT_EVENT = "launch:game-process-output";
-
 /**
  * Service class for launching process.
  */
@@ -127,7 +125,7 @@ export class LaunchService {
    */
   static onGameProcessOutput(callback: (payload: string) => void) {
     const unlisten = getCurrentWebview().listen<string>(
-      GAME_PROCESS_OUTPUT_EVENT,
+      "launch:game-process-output",
       (event) => {
         callback(event.payload);
       }

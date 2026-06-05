@@ -2,7 +2,6 @@ import { i18nConfig } from "../../next-i18next.config.mjs";
 import en from "./en.json";
 import fr from "./fr.json";
 import ja from "./ja.json";
-import lzh from "./lzh.json";
 import zh_Hans from "./zh-Hans.json";
 import zh_Hant from "./zh-Hant.json";
 
@@ -33,10 +32,6 @@ export const localeResources: LocaleResources = {
   "zh-Hant": {
     translation: zh_Hant,
     display_name: "繁體中文",
-  },
-  lzh: {
-    translation: lzh,
-    display_name: "文言",
   },
 };
 

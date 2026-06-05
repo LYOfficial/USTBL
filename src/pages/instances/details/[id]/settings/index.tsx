@@ -12,7 +12,6 @@ import {
 import { useRouter } from "next/router";
 import { useCallback } from "react";
 import { Trans, useTranslation } from "react-i18next";
-import { ChakraColorSelectPopover } from "@/components/chakra-color-selector";
 import Editable from "@/components/common/editable";
 import {
   OptionItemGroup,
@@ -31,7 +30,7 @@ const InstanceSettingsPage = () => {
   const router = useRouter();
   const toast = useToast();
   const { t } = useTranslation();
-  const { config, update } = useLauncherConfig();
+  const { config } = useLauncherConfig();
   const primaryColor = config.appearance.theme.primaryColor;
   const { openGenericConfirmDialog } = useSharedModals();
 
@@ -48,44 +47,21 @@ const InstanceSettingsPage = () => {
   const useSpecGameConfig = summary?.useSpecGameConfig || false;
 
   const handleRenameInstance = useCallback(
-    async (name: string) => {
+    (name: string) => {
       if (!instanceId) return;
-      const response = await InstanceService.renameInstance(instanceId, name);
-      if (response.status === "success") {
-        const newInstanceId = instanceId.replace(/:[^:]*$/, `:${name}`);
-
-        await router.replace(
-          {
-            pathname: router.pathname,
-            query: { ...router.query, id: newInstanceId },
-          },
-          undefined,
-          { shallow: true }
-        );
-
-        // Sync frontend state after both backend state and route id are updated.
-        updateSummaryInContext("versionPath", response.data);
-        updateSummaryInContext("name", name);
-        updateSummaryInContext("id", newInstanceId);
-
-        if (config.states.shared.selectedInstanceId === instanceId) {
-          update("states.shared.selectedInstanceId", newInstanceId);
-        } // update in frontend to prevent error toast
-      } else
-        toast({
-          title: response.message,
-          description: response.details,
-          status: "error",
-        });
+      InstanceService.renameInstance(instanceId, name).then((response) => {
+        if (response.status === "success") {
+          updateSummaryInContext("versionPath", response.data);
+          updateSummaryInContext("name", name);
+        } else
+          toast({
+            title: response.message,
+            description: response.details,
+            status: "error",
+          });
+      });
     },
-    [
-      config.states.shared.selectedInstanceId,
-      instanceId,
-      router,
-      toast,
-      update,
-      updateSummaryInContext,
-    ]
+    [instanceId, toast, updateSummaryInContext]
   );
 
   const instanceSpecSettingsGroups: OptionItemGroupProps[] = [
@@ -141,22 +117,6 @@ const InstanceSettingsPage = () => {
                 instanceId={summary?.id}
               />
             </HStack>
-          ),
-        },
-        {
-          title: t("InstanceSettingsPage.colorTag"),
-          children: (
-            <ChakraColorSelectPopover
-              current={summary?.tag || ""}
-              size="xs"
-              withUnselectButton
-              onColorSelect={(value) => {
-                handleUpdateInstanceConfig("tag", value);
-              }}
-              onUnselect={() => {
-                handleUpdateInstanceConfig("tag", null);
-              }}
-            />
           ),
         },
         {
@@ -241,7 +201,7 @@ const InstanceSettingsPage = () => {
 
   return (
     <Box height="100%" overflowY="auto">
-      <VStack overflow="clip" align="stretch" spacing={4} flex="1">
+      <VStack overflow="auto" align="stretch" spacing={4} flex="1">
         {instanceSpecSettingsGroups.map((group, index) => (
           <OptionItemGroup
             title={group.title}

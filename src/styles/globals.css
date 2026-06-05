@@ -6,15 +6,23 @@ html {
   overscroll-behavior: none;
 }
 
+html,
+body,
+#__next {
+  height: 100%;
+  width: 100%;
+  background: transparent !important;
+}
+
 /* root */
 body {
   margin: 0;
+  background-color: transparent !important;
   font-family: -apple-system, Sinter, ui-sans-serif, BlinkMacSystemFont, "Segoe UI Variable Display", "Segoe UI", Helvetica, "Apple Color Emoji", Arial, sans-serif, "Segoe UI Emoji", "Segoe UI Symbol" !important;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow: hidden !important;
   user-select: none;
-  background: transparent !important;
 }
 
 body[use-custom-font] {

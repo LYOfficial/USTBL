@@ -23,7 +23,6 @@ interface LauncherConfigContextType {
   config: LauncherConfig;
   setConfig: React.Dispatch<React.SetStateAction<LauncherConfig>>;
   update: (path: string, value: any) => void;
-  isZh: boolean; // value shortcut, true if language is zh-Hans / zh-Hant / lzh
   newerVersion: VersionMetaInfo;
   // other shared data associated with the launcher config.
   getJavaInfos: (sync?: boolean) => JavaInfo[] | undefined;
@@ -42,8 +41,6 @@ export const LauncherConfigContextProvider: React.FC<{
   const { colorMode, toggleColorMode } = useColorMode();
 
   const [config, setConfig] = useState<LauncherConfig>(defaultConfig);
-  const language = config.general.general.language;
-  const isZh = language.startsWith("zh") || language === "lzh";
   const userSelectedColorMode = config.appearance.theme.colorMode;
 
   const [javaInfos, setJavaInfos] = useState<JavaInfo[]>();
@@ -65,9 +62,37 @@ export const LauncherConfigContextProvider: React.FC<{
     });
   }, [setConfig, toast]);
 
+  useEffect(() => {
+    handleRetrieveLauncherConfig();
+  }, [handleRetrieveLauncherConfig]);
+
+  useEffect(() => {
+    i18n.changeLanguage(config.general.general.language);
+  }, [config.general.general.language]);
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const applyColorMode = () => {
+      let target: "light" | "dark";
+      if (userSelectedColorMode === "system") {
+        target = media.matches ? "dark" : "light";
+      } else {
+        target = userSelectedColorMode;
+      }
+      if (target !== colorMode) toggleColorMode();
+    };
+
+    applyColorMode();
+
+    if (userSelectedColorMode === "system") {
+      media.addEventListener("change", applyColorMode);
+      return () => media.removeEventListener("change", applyColorMode);
+    }
+  }, [userSelectedColorMode, colorMode, toggleColorMode]);
+
   // from frontend to call backend update
   const handleUpdateLauncherConfig = (path: string, value: any) => {
-    // save to the backend
+    // Save to the backend
     ConfigService.updateLauncherConfig(path, value).then((response) => {
       // if success, backend will emit signal, the logic below will be executed
       if (response.status !== "success") {
@@ -90,54 +115,12 @@ export const LauncherConfigContextProvider: React.FC<{
     });
   }, []);
 
-  // retrieve config after partial update listener is set, to avoid missing updates during the initial loading phase. (#1615)
   useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-
-    void ConfigService.onConfigPartialUpdate(handleConfigPartialUpdate)
-      .then((cleanup) => {
-        unlisten = cleanup;
-        if (cancelled) {
-          unlisten();
-          return;
-        }
-
-        handleRetrieveLauncherConfig();
-      })
-      .catch(() => {
-        handleRetrieveLauncherConfig();
-      });
-
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, [handleConfigPartialUpdate, handleRetrieveLauncherConfig]);
-
-  useEffect(() => {
-    i18n.changeLanguage(language);
-  }, [language]);
-
-  useEffect(() => {
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const applyColorMode = () => {
-      let target: "light" | "dark";
-      if (userSelectedColorMode === "system") {
-        target = media.matches ? "dark" : "light";
-      } else {
-        target = userSelectedColorMode;
-      }
-      if (target !== colorMode) toggleColorMode();
-    };
-
-    applyColorMode();
-
-    if (userSelectedColorMode === "system") {
-      media.addEventListener("change", applyColorMode);
-      return () => media.removeEventListener("change", applyColorMode);
-    }
-  }, [userSelectedColorMode, colorMode, toggleColorMode]);
+    const unlisten = ConfigService.onConfigPartialUpdate(
+      handleConfigPartialUpdate
+    );
+    return () => unlisten();
+  }, [handleConfigPartialUpdate]);
 
   // java list cache and retriever
   const handleRetrieveJavaList = useCallback(() => {
@@ -182,7 +165,6 @@ export const LauncherConfigContextProvider: React.FC<{
         config,
         setConfig,
         update: handleUpdateLauncherConfig,
-        isZh,
         newerVersion,
         getJavaInfos,
         handleCheckLauncherUpdate,

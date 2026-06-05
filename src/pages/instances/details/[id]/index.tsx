@@ -15,17 +15,13 @@ const InstanceDetailIndexPage = () => {
 
     const instanceId = Array.isArray(id) ? id[0] : id;
     const encodedId = encodeURIComponent(instanceId);
-    const fallbackRoute = {
-      pathname: "/instances/details/[id]/overview",
-      query: { id: instanceId },
-    };
 
     router.replace(
       [...history]
         .reverse()
         .find((route) =>
           route.startsWith(`/instances/details/${encodedId}/`)
-        ) || fallbackRoute
+        ) || `/instances/details/${encodedId}/overview`
     );
   }, [history, router, id]);
 

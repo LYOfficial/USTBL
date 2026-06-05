@@ -1,9 +1,9 @@
 import { Button, HStack, Switch, useDisclosure } from "@chakra-ui/react";
-import { appLogDir, join } from "@tauri-apps/api/path";
+import { appLogDir } from "@tauri-apps/api/path";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { LuCompass, LuLanguages } from "react-icons/lu";
+import { LuLanguages } from "react-icons/lu";
 import { MenuSelector } from "@/components/common/menu-selector";
 import {
   OptionItemGroup,
@@ -40,8 +40,7 @@ const GeneralSettingsPage = () => {
     onClose: onSyncConfigImportModalClose,
   } = useDisclosure();
 
-  const instancesNavTypes = ["instance", "directory", "tag", "hidden"];
-  const discoverPageModes = ["on", "search-only", "off"];
+  const instancesNavTypes = ["instance", "directory", "hidden"];
 
   const handleRestoreLauncherConfig = useCallback(async () => {
     ConfigService.restoreLauncherConfig().then((response) => {
@@ -154,37 +153,6 @@ const GeneralSettingsPage = () => {
       title: t("GeneralSettingsPage.functions.title"),
       items: [
         {
-          title: t("GeneralSettingsPage.functions.settings.discoverPage.title"),
-          description: t(
-            "GeneralSettingsPage.functions.settings.discoverPage.description"
-          ),
-          prefixElement: <LuCompass />,
-          children: (
-            <MenuSelector
-              options={discoverPageModes.map((mode) => ({
-                value: mode,
-                label: t(
-                  `GeneralSettingsPage.functions.settings.discoverPage.${mode}`
-                ),
-              }))}
-              value={generalConfigs.functionality.discoverPage}
-              onSelect={(value) => {
-                update("general.functionality.discoverPage", value as string);
-              }}
-              placeholder={t(
-                `GeneralSettingsPage.functions.settings.discoverPage.${generalConfigs.functionality.discoverPage}`
-              )}
-              buttonProps={{
-                flex: "0 0 auto",
-              }}
-            />
-          ),
-        },
-      ],
-    },
-    {
-      items: [
-        {
           title: t(
             "GeneralSettingsPage.functions.settings.instancesNavType.title"
           ),
@@ -207,6 +175,12 @@ const GeneralSettingsPage = () => {
                 );
                 removeHistory("/instances");
               }}
+              placeholder={t(
+                `GeneralSettingsPage.functions.settings.instancesNavType.${generalConfigs.functionality.instancesNavType}`
+              )}
+              buttonProps={{
+                flex: "0 0 auto",
+              }}
             />
           ),
         },
@@ -224,26 +198,6 @@ const GeneralSettingsPage = () => {
               onChange={(e) => {
                 update(
                   "general.functionality.launchPageQuickSwitch",
-                  e.target.checked
-                );
-              }}
-            />
-          ),
-        },
-        {
-          title: t(
-            "GeneralSettingsPage.functions.settings.autoDownloadJava.title"
-          ),
-          description: t(
-            "GeneralSettingsPage.functions.settings.autoDownloadJava.description"
-          ),
-          children: (
-            <Switch
-              colorScheme={primaryColor}
-              isChecked={generalConfigs.functionality.autoDownloadJava}
-              onChange={(e) => {
-                update(
-                  "general.functionality.autoDownloadJava",
                   e.target.checked
                 );
               }}
@@ -328,8 +282,7 @@ const GeneralSettingsPage = () => {
               size="xs"
               onClick={async () => {
                 const _appLogDir = await appLogDir();
-                const launcherLogDir = await join(_appLogDir, "launcher");
-                await openPath(launcherLogDir);
+                openPath(_appLogDir + "/launcher");
               }}
             >
               {t("General.open")}

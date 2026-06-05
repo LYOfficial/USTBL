@@ -1,12 +1,7 @@
 {
   "identifier": "desktop-capability",
   "platforms": ["macOS", "windows", "linux"],
-  "windows": [
-    "main", 
-    "game_error*", 
-    "game_log*", 
-    "extension_standalone*"
-  ],
+  "windows": ["main", "game_error*", "game_log*"],
   "permissions": [
     "window-state:default",
     "fs:default",
@@ -44,14 +39,6 @@
       "allow": [
         {
           "url": "ms-windows-store:*"
-        }
-      ]
-    },
-    {
-      "identifier": "http:default",
-      "allow": [
-        {
-          "url": "*://*:*"
         }
       ]
     }

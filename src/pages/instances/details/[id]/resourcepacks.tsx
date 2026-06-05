@@ -2,7 +2,6 @@ import { Center, HStack, Image } from "@chakra-ui/react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { LuPackage } from "react-icons/lu";
 import { BeatLoader } from "react-spinners";
 import { CommonIconButton } from "@/components/common/common-icon-button";
 import CountTag from "@/components/common/count-tag";
@@ -10,12 +9,9 @@ import Empty from "@/components/common/empty";
 import { FormattedMCText } from "@/components/common/formatted-mc-text";
 import { OptionItem, OptionItemGroup } from "@/components/common/option-item";
 import { Section } from "@/components/common/section";
-import { useFileDnD } from "@/components/special/file-dnd-overlay";
 import { useLauncherConfig } from "@/contexts/config";
-import { useExtensionHost } from "@/contexts/extension/host";
 import { useInstanceSharedData } from "@/contexts/instance";
 import { useSharedModals } from "@/contexts/shared-modal";
-import { ExtensionUISlotKey } from "@/enums/extension";
 import { InstanceSubdirType } from "@/enums/instance";
 import { OtherResourceType } from "@/enums/resource";
 import { GetStateFlag } from "@/hooks/get-state";
@@ -27,16 +23,13 @@ const InstanceResourcePacksPage = () => {
   const { t } = useTranslation();
   const { config, update } = useLauncherConfig();
   const {
-    instanceId,
-    summary,
     openInstanceSubdir,
-    handleImportResources,
+    handleImportResource,
     getResourcePackList,
     isResourcePackListLoading,
     getServerResourcePackList,
     isServerResourcePackListLoading,
   } = useInstanceSharedData();
-  const { getExtensionSlotItems } = useExtensionHost();
   const accordionStates =
     config.states.instanceResourcePacksPage.accordionStates;
   const { openSharedModal } = useSharedModals();
@@ -76,24 +69,6 @@ const InstanceResourcePacksPage = () => {
     getServerResourcePackListWrapper();
   }, [getServerResourcePackListWrapper]);
 
-  useFileDnD({
-    extensions: ["zip"],
-    multiple: true,
-    titleKey: "InstanceResourcePacksPage.fileDnD.title",
-    descKey: "InstanceResourcePacksPage.fileDnD.desc",
-    icon: LuPackage,
-    onDrop: async (paths) => {
-      handleImportResources({
-        filterName: t("InstanceDetailsLayout.instanceTabList.resourcepacks"),
-        filterExt: ["zip"],
-        tgtDirType: InstanceSubdirType.ResourcePacks,
-        paths,
-        multiple: true,
-        onSuccessCallback: () => getResourcePackListWrapper(true),
-      });
-    },
-  });
-
   useEffect(() => {
     const unlisten = ResourceService.onResourceRefresh(
       (payload: OtherResourceType) => {
@@ -131,13 +106,13 @@ const InstanceResourcePacksPage = () => {
         {
           icon: "add",
           onClick: () => {
-            handleImportResources({
+            handleImportResource({
               filterName: t(
                 "InstanceDetailsLayout.instanceTabList.resourcepacks"
               ),
               filterExt: ["zip"],
               tgtDirType: InstanceSubdirType.ResourcePacks,
-              multiple: true,
+              decompress: false,
               onSuccessCallback: () => getResourcePackListWrapper(true),
             });
           },
@@ -160,45 +135,6 @@ const InstanceResourcePacksPage = () => {
       ],
     },
   };
-
-  const resourcePackItemMenuOperations = (pack: ResourcePackInfo) => [
-    ...getExtensionSlotItems(
-      ExtensionUISlotKey.InstanceResourcePackItemMenuOperations,
-      {
-        pack,
-        instanceId,
-        summary,
-      }
-    ),
-    {
-      icon: "copyOrMove",
-      onClick: () => {
-        openSharedModal("copy-or-move", {
-          srcResName: pack.name,
-          srcFilePath: pack.filePath,
-        });
-      },
-    },
-    {
-      icon: "revealFile",
-      onClick: () => revealItemInDir(pack.filePath),
-    },
-  ];
-
-  const serverResPackItemMenuOperations = (pack: ResourcePackInfo) => [
-    ...getExtensionSlotItems(
-      ExtensionUISlotKey.InstanceServerResPackItemMenuOperations,
-      {
-        pack,
-        instanceId,
-        summary,
-      }
-    ),
-    {
-      icon: "revealFile",
-      onClick: () => revealItemInDir(pack.filePath),
-    },
-  ];
 
   return (
     <>
@@ -263,17 +199,21 @@ const InstanceResourcePacksPage = () => {
                     }
                   >
                     <HStack spacing={0}>
-                      {(value.locale === "resourcePackList"
-                        ? resourcePackItemMenuOperations(pack)
-                        : serverResPackItemMenuOperations(pack)
-                      ).map((item, index) => (
+                      {value.locale === "resourcePackList" && (
                         <CommonIconButton
-                          key={index}
-                          icon={item.icon}
-                          label={item.label}
-                          onClick={item.onClick}
+                          icon="copyOrMove"
+                          onClick={() => {
+                            openSharedModal("copy-or-move", {
+                              srcResName: pack.name,
+                              srcFilePath: pack.filePath,
+                            });
+                          }}
                         />
-                      ))}
+                      )}
+                      <CommonIconButton
+                        icon="revealFile"
+                        onClick={() => revealItemInDir(pack.filePath)}
+                      />
                     </HStack>
                   </OptionItem>
                 ))}

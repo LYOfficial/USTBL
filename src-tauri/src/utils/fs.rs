@@ -1,11 +1,11 @@
-use crate::IS_PORTABLE;
 use crate::error::{SJMCLError, SJMCLResult};
+use crate::IS_PORTABLE;
 use regex::Regex;
 use sha1::{Digest, Sha1};
 use sha2::Sha256;
 use std::ffi::OsStr;
 use std::io::Read;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::{fs, io};
 use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Manager};
@@ -122,37 +122,6 @@ pub fn extract_filename(path_str: &str, with_ext: bool) -> String {
   }
 }
 
-/// Normalizes a relative path by removing `.` segments and rejecting invalid components.
-///
-/// Rejects:
-/// - parent directory traversal (`..`)
-/// - absolute path prefixes or roots
-/// - empty / current-directory-only paths
-///
-/// # Examples
-///
-/// ```rust
-/// let path = normalize_relative_path(Path::new("./config/options.txt"))?;
-/// assert_eq!(path, PathBuf::from("config/options.txt"));
-/// ```
-pub fn normalize_relative_path(path: &Path) -> SJMCLResult<PathBuf> {
-  let mut normalized = PathBuf::new();
-
-  for component in path.components() {
-    match component {
-      Component::Normal(part) => normalized.push(part),
-      Component::CurDir => {}
-      _ => return Err(SJMCLError("Invalid relative path".into())),
-    }
-  }
-
-  if normalized.as_os_str().is_empty() {
-    return Err(SJMCLError("Invalid relative path".into()));
-  }
-
-  Ok(normalized)
-}
-
 /// Retrieves a list of subdirectories within a given path.
 ///
 /// # Examples
@@ -164,10 +133,10 @@ pub fn get_subdirectories<P: AsRef<Path>>(path: P) -> SJMCLResult<Vec<PathBuf>> 
   fs::read_dir(path)?
     .filter_map(|entry| match entry {
       Ok(entry) => {
-        if let Ok(file_type) = entry.file_type()
-          && file_type.is_dir()
-        {
-          return Some(Ok(entry.path()));
+        if let Ok(file_type) = entry.file_type() {
+          if file_type.is_dir() {
+            return Some(Ok(entry.path()));
+          }
         }
         None
       }
@@ -198,11 +167,12 @@ pub fn get_files_with_regex<P: AsRef<Path>>(path: P, pattern: &Regex) -> SJMCLRe
     let entry = entry.map_err(|e| SJMCLError(format!("Read Entry Error: {}", e)))?;
     let path = entry.path();
 
-    if let Some(file_name) = path.file_name()
-      && let Some(file_name_str) = file_name.to_str()
-      && pattern.is_match(file_name_str)
-    {
-      matching_files.push(path);
+    if let Some(file_name) = path.file_name() {
+      if let Some(file_name_str) = file_name.to_str() {
+        if pattern.is_match(file_name_str) {
+          matching_files.push(path);
+        }
+      }
     }
   }
 
@@ -234,20 +204,10 @@ pub fn get_app_resource_filepath(
     BaseDirectory::Resource
   };
 
-  let path = app
+  app
     .path()
     .resolve(relative_path, dir)
-    .map_err(io::Error::other)?;
-
-  #[cfg(target_os = "windows")]
-  {
-    let path_str = path.to_string_lossy();
-    if let Some(stripped) = path_str.strip_prefix(r"\\?\") {
-      return Ok(PathBuf::from(stripped));
-    }
-  }
-
-  Ok(path)
+    .map_err(io::Error::other)
 }
 
 /// Creates a cross-platform desktop shortcut that points to a URL (include deeplink).
@@ -264,7 +224,7 @@ pub fn get_app_resource_filepath(
 ///
 /// - `app`: Tauri AppHandle
 /// - `name`: File name (without extension)
-/// - `url`: Target deeplink or custom URL (e.g. `ustbl://...`)
+/// - `url`: Target deeplink or custom URL (e.g. `sjmcl://...`)
 /// - `icon_path`: Optional icon override
 ///
 /// # Examples
@@ -273,14 +233,14 @@ pub fn get_app_resource_filepath(
 /// create_url_shortcut(
 ///     app,
 ///     "Add Auth Server".to_string(),
-///     "ustbl://add-auth-server?url=https%3A%2F%2Fexample.com".to_string(),
+///     "sjmcl://add-auth-server?url=https%3A%2F%2Fexample.com".to_string(),
 ///     None,
 /// )?;
 ///
 /// create_url_shortcut(
 ///     app,
 ///     "Launch".to_string(),
-///     "ustbl://launch?id=OFFICIAL_DIR:1.20.1".to_string(),
+///     "sjmcl://launch?id=OFFICIAL_DIR:1.20.1".to_string(),
 ///     Some(PathBuf::from("/path/to/custom/icon.png")),
 /// )?;
 /// ```
@@ -586,34 +546,4 @@ where
   }
 
   Ok(())
-}
-
-/// RAII guard that removes a directory on drop unless [`commit`](RemoveDirGuard::commit) is called.
-///
-/// Useful for transactional directory creation: create the guard after verifying the path is
-/// free, do fallible work, and call `commit()` only on success. Any early `?` return
-/// automatically triggers cleanup.
-pub struct RemoveDirGuard {
-  path: Option<PathBuf>,
-}
-
-impl RemoveDirGuard {
-  pub fn new(path: PathBuf) -> Self {
-    Self { path: Some(path) }
-  }
-
-  /// Disarms the guard so the directory is kept on drop.
-  pub fn commit(mut self) {
-    self.path = None;
-  }
-}
-
-impl Drop for RemoveDirGuard {
-  fn drop(&mut self) {
-    if let Some(path) = &self.path
-      && path.exists()
-    {
-      let _ = fs::remove_dir_all(path);
-    }
-  }
 }

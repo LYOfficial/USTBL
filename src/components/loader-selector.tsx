@@ -7,7 +7,7 @@ import {
   Tag,
   VStack,
 } from "@chakra-ui/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BeatLoader } from "react-spinners";
 import Empty from "@/components/common/empty";
@@ -35,7 +35,6 @@ export const modLoaderTypes: ModLoaderType[] = [
   ModLoaderType.Forge,
   ModLoaderType.Fabric,
   ModLoaderType.NeoForge,
-  ModLoaderType.Quilt,
 ];
 
 export const modLoaderTypesToIcon: Record<string, string> = {
@@ -43,7 +42,6 @@ export const modLoaderTypesToIcon: Record<string, string> = {
   Fabric: "Fabric.png",
   Forge: "Forge.png",
   NeoForge: "NeoForge.png",
-  Quilt: "Quilt.png",
 };
 
 interface LoaderSelectorProps {
@@ -52,7 +50,6 @@ interface LoaderSelectorProps {
   onSelectModLoader: (v: ModLoaderResourceInfo) => void;
   selectedOptiFine?: OptiFineResourceInfo | undefined;
   onSelectOptiFine?: (v: OptiFineResourceInfo | undefined) => void;
-  mode?: "all" | "optifine";
 }
 
 export const LoaderSelector: React.FC<LoaderSelectorProps> = ({
@@ -61,7 +58,6 @@ export const LoaderSelector: React.FC<LoaderSelectorProps> = ({
   onSelectModLoader,
   selectedOptiFine,
   onSelectOptiFine,
-  mode = "all",
   ...props
 }) => {
   const { t } = useTranslation();
@@ -75,27 +71,16 @@ export const LoaderSelector: React.FC<LoaderSelectorProps> = ({
   );
   const [selectedId, setSelectedId] = useState("");
 
-  const selectableCardListRef = useRef<HTMLDivElement>(null);
-
   useEffect(() => {
-    if (mode === "optifine") {
+    if (selectedOptiFine) {
       setSelectedType("OptiFine");
-      setSelectedId(selectedOptiFine?.filename || "");
-      return;
-    }
-    const externalType = selectedModLoader.loaderType;
-    if (
-      externalType !== ModLoaderType.Unknown &&
-      selectedType !== externalType
-    ) {
-      setSelectedType(externalType);
-
-      if (selectedModLoader.version) {
-        setSelectedId(selectedModLoader.version);
-      }
+      setSelectedId(selectedOptiFine ? selectedOptiFine.filename : "");
+    } else {
+      setSelectedType(selectedModLoader.loaderType);
+      setSelectedId(selectedModLoader.version);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, selectedModLoader.loaderType]);
+  }, [selectedModLoader.loaderType]);
 
   function isModLoaderResourceInfo(
     version: ModLoaderResourceInfo | OptiFineResourceInfo
@@ -235,13 +220,8 @@ export const LoaderSelector: React.FC<LoaderSelectorProps> = ({
       },
       onCancel: () => {
         if (selectedType === type) {
-          if (!!selectedOptiFine) {
-            setSelectedType("OptiFine");
-            setSelectedId(selectedOptiFine!.filename);
-          } else {
-            setSelectedType(ModLoaderType.Unknown);
-            setSelectedId("");
-          }
+          setSelectedType(ModLoaderType.Unknown);
+          setSelectedId("");
         }
         onSelectModLoader(defaultModLoaderResourceInfo);
       },
@@ -271,32 +251,28 @@ export const LoaderSelector: React.FC<LoaderSelectorProps> = ({
       onSelect: () => {
         setSelectedType("OptiFine");
         if (!selectedOptiFine) {
-          onSelectOptiFine?.({ filename: "", patch: "", type: "" });
+          onSelectOptiFine?.({
+            filename: "",
+            patch: "",
+            type: "",
+          });
           setSelectedId("");
         } else {
           setSelectedId(selectedOptiFine.filename);
         }
+
         if (
           selectedModLoader.loaderType !== ModLoaderType.Unknown &&
           !selectedModLoader.version
         ) {
+          // When some mod loader was selected without a version, clear it
           onSelectModLoader(defaultModLoaderResourceInfo);
         }
       },
       onCancel: () => {
-        const hasValidModLoader =
-          selectedModLoader.loaderType !== ModLoaderType.Unknown &&
-          !!selectedModLoader.version;
-
         if (selectedType === "OptiFine") {
-          if (hasValidModLoader) {
-            setSelectedType(selectedModLoader.loaderType);
-            setSelectedId(selectedModLoader.version);
-          } else {
-            setSelectedType(ModLoaderType.Unknown);
-            setSelectedId("");
-            onSelectModLoader(defaultModLoaderResourceInfo);
-          }
+          setSelectedType(ModLoaderType.Unknown);
+          setSelectedId("");
         }
         onSelectOptiFine?.(undefined);
       },
@@ -311,50 +287,25 @@ export const LoaderSelector: React.FC<LoaderSelectorProps> = ({
     } else {
       setVersionList([]);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedType]);
-
-  // Scroll selected item into view when version list changes or selected item changes
-  useEffect(() => {
-    const list = selectableCardListRef.current;
-    if (!list) return;
-    const selectedCard = list.querySelector<HTMLElement>(
-      '[data-loader-selected="true"]'
-    );
-    if (!selectedCard) return;
-
-    const frame = requestAnimationFrame(() => {
-      selectedCard.scrollIntoView({
-        block: "nearest",
-        inline: "nearest",
-      });
-    });
-
-    return () => cancelAnimationFrame(frame);
-  }, [selectedModLoader.loaderType, selectedOptiFine?.filename, selectedType]);
+  }, [
+    handleFetchModLoaderVersionList,
+    handleFetchOptiFineVersionList,
+    selectedType,
+  ]);
 
   return (
     <HStack {...props} w="100%" h="100%" spacing={4} overflow="hidden">
-      {mode !== "optifine" && (
-        <VStack
-          spacing={3.5}
-          h="100%"
-          overflowY="auto"
-          overflowX="hidden"
-          flexShrink={0}
-          ref={selectableCardListRef}
-        >
-          {selectableCardItems.map((item, index) => (
-            <SelectableCard
-              key={index}
-              {...item}
-              minW="3xs"
-              w="100%"
-              data-loader-selected={item.isSelected ? "true" : undefined}
-            />
-          ))}
-        </VStack>
-      )}
+      <VStack
+        spacing={3.5}
+        h="100%"
+        overflowY="auto"
+        overflowX="hidden"
+        flexShrink={0}
+      >
+        {selectableCardItems.map((item, index) => (
+          <SelectableCard key={index} {...item} minW="3xs" w="100%" />
+        ))}
+      </VStack>
       <Section overflow="auto" flexGrow={1} w="100%" h="100%">
         {isLoading ? (
           <Center h="100%">

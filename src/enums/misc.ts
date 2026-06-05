@@ -1,4 +1,5 @@
 export const ChakraColorEnums = [
+  "gray",
   "red",
   "orange",
   "yellow",
@@ -8,12 +9,6 @@ export const ChakraColorEnums = [
   // "cyan",  // to close to blue, hide in color-selector
   "purple",
   "pink",
-  "gray",
 ] as const;
 
 export type ColorSelectorType = (typeof ChakraColorEnums)[number];
-
-export const isChakraColor = (value?: string): value is ColorSelectorType => {
-  if (!value) return false;
-  return ChakraColorEnums.includes(value as ColorSelectorType);
-};

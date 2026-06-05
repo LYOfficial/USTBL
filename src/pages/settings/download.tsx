@@ -1,5 +1,4 @@
 import {
-  Box,
   Button,
   HStack,
   Icon,
@@ -330,8 +329,8 @@ const DownloadSettingsPage = () => {
               <Button
                 variant="subtle"
                 size="xs"
-                onClick={async () => {
-                  await openPath(downloadConfigs.cache.directory);
+                onClick={() => {
+                  openPath(downloadConfigs.cache.directory);
                 }}
               >
                 {t("General.open")}
@@ -375,13 +374,6 @@ const DownloadSettingsPage = () => {
     },
     {
       title: t("DownloadSettingPage.proxy.title"),
-      headExtra: (
-        <Box display="flex" alignItems="center">
-          <Text fontSize="xs" className="secondary-text">
-            {t("DownloadSettingPage.proxy.headExtra")}
-          </Text>
-        </Box>
-      ),
       items: [
         {
           title: t("DownloadSettingPage.proxy.settings.enabled.title"),
@@ -463,7 +455,7 @@ const DownloadSettingsPage = () => {
   return (
     <>
       {downloadSettingGroups.map((group, index) => (
-        <OptionItemGroup key={index} {...group} />
+        <OptionItemGroup title={group.title} items={group.items} key={index} />
       ))}
     </>
   );

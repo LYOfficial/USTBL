@@ -32,7 +32,6 @@ import React, {
 } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { useLauncherConfig } from "@/contexts/config";
-import { clamp } from "@/utils/math";
 
 export type Placement = "top" | "right" | "bottom" | "left";
 
@@ -178,10 +177,11 @@ export const GuidedTourProvider: React.FC<TourProviderProps> = ({
     });
   }, [close, STEPS.length]);
 
-  const currentId = current?.id;
+  const clamp = (n: number, min: number, max: number) =>
+    Math.max(min, Math.min(max, n));
   const getTarget = useCallback(
-    () => (currentId ? document.getElementById(currentId) : null),
-    [currentId]
+    () => (current?.id ? document.getElementById(current.id) : null),
+    [current?.id]
   );
 
   // calc mask hole and modal position in the same frame

@@ -11,7 +11,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { LuCheck, LuEarth, LuX } from "react-icons/lu";
+import { LuCheck, LuX } from "react-icons/lu";
 import { BeatLoader } from "react-spinners";
 import { CommonIconButton } from "@/components/common/common-icon-button";
 import CountTag from "@/components/common/count-tag";
@@ -20,13 +20,10 @@ import { OptionItem, OptionItemGroup } from "@/components/common/option-item";
 import { Section } from "@/components/common/section";
 import AddGameServerModal from "@/components/modals/add-game-server-modal";
 import WorldLevelDataModal from "@/components/modals/world-level-data-modal";
-import { useFileDnD } from "@/components/special/file-dnd-overlay";
 import { useLauncherConfig } from "@/contexts/config";
-import { useExtensionHost } from "@/contexts/extension/host";
 import { useInstanceSharedData } from "@/contexts/instance";
 import { useSharedModals } from "@/contexts/shared-modal";
 import { useToast } from "@/contexts/toast";
-import { ExtensionUISlotKey } from "@/enums/extension";
 import { InstanceSubdirType } from "@/enums/instance";
 import { OtherResourceType } from "@/enums/resource";
 import { GetStateFlag } from "@/hooks/get-state";
@@ -43,13 +40,12 @@ const InstanceWorldsPage = () => {
     instanceId,
     summary,
     openInstanceSubdir,
-    handleImportResources,
+    handleImportResource,
     getWorldList,
     isWorldListLoading: isLoading,
   } = useInstanceSharedData();
   const accordionStates = config.states.instanceWorldsPage.accordionStates;
   const toast = useToast();
-  const { getExtensionSlotItems } = useExtensionHost();
   const { openSharedModal, openGenericConfirmDialog } = useSharedModals();
   const [worlds, setWorlds] = useState<WorldInfo[]>([]);
   const [selectedWorldName, setSelectedWorldName] = useState<string>();
@@ -82,25 +78,6 @@ const InstanceWorldsPage = () => {
   useEffect(() => {
     getWorldListWrapper();
   }, [getWorldListWrapper]);
-
-  useFileDnD({
-    extensions: ["zip"],
-    multiple: true,
-    titleKey: "InstanceWorldsPage.fileDnD.title",
-    descKey: "InstanceWorldsPage.fileDnD.desc",
-    icon: LuEarth,
-    onDrop: async (paths) => {
-      handleImportResources({
-        filterName: t("InstanceDetailsLayout.instanceTabList.worlds"),
-        filterExt: ["zip"],
-        tgtDirType: InstanceSubdirType.Saves,
-        paths,
-        multiple: true,
-        decompress: true,
-        onSuccessCallback: () => getWorldListWrapper(true),
-      });
-    },
-  });
 
   const handleRetrieveGameServerList = useCallback(
     (queryOnline: boolean) => {
@@ -181,11 +158,10 @@ const InstanceWorldsPage = () => {
     {
       icon: "add",
       onClick: () => {
-        handleImportResources({
+        handleImportResource({
           filterName: t("InstanceDetailsLayout.instanceTabList.worlds"),
           filterExt: ["zip"],
           tgtDirType: InstanceSubdirType.Saves,
-          multiple: true,
           decompress: true,
           onSuccessCallback: () => getWorldListWrapper(true),
         });
@@ -216,14 +192,6 @@ const InstanceWorldsPage = () => {
   ];
 
   const worldItemMenuOperations = (save: WorldInfo) => [
-    ...getExtensionSlotItems(
-      ExtensionUISlotKey.InstanceWorldItemMenuOperations,
-      {
-        save,
-        instanceId,
-        summary,
-      }
-    ),
     {
       label: "",
       icon: "copyOrMove",
@@ -237,7 +205,7 @@ const InstanceWorldsPage = () => {
     {
       label: "",
       icon: "revealFile",
-      onClick: async () => await openPath(save.dirPath),
+      onClick: () => openPath(save.dirPath),
     },
     {
       label: t("InstanceWorldsPage.worldList.viewLevelData"),
@@ -264,14 +232,6 @@ const InstanceWorldsPage = () => {
   ];
 
   const serverItemMenuOperations = (server: GameServerInfo) => [
-    ...getExtensionSlotItems(
-      ExtensionUISlotKey.InstanceServerItemMenuOperations,
-      {
-        server,
-        instanceId,
-        summary,
-      }
-    ),
     {
       icon: "delete",
       danger: true,
@@ -454,37 +414,22 @@ const InstanceWorldsPage = () => {
                         : `${server.playersOnline} / ${server.playersMax} ${t("InstanceWorldsPage.serverList.players")}`}
                     </Text>
                   )}
-                  {server.isQueried && (
-                    <Tag
-                      colorScheme={
-                        server.online
-                          ? (server.latency || 0) < 300
-                            ? "green"
-                            : "yellow"
-                          : "red"
-                      }
-                    >
-                      <HStack spacing={0.5}>
-                        {server.online ? (
-                          <>
-                            <LuCheck />
-                            <TagLabel>
-                              {server.latency != null
-                                ? `${server.latency} ms`
-                                : t("InstanceWorldsPage.serverList.tag.online")}
-                            </TagLabel>
-                          </>
-                        ) : (
-                          <>
-                            <LuX />
-                            <TagLabel>
-                              {t("InstanceWorldsPage.serverList.tag.offline")}
-                            </TagLabel>
-                          </>
-                        )}
-                      </HStack>
-                    </Tag>
-                  )}
+                  {server.isQueried &&
+                    (server.online ? (
+                      <Tag colorScheme="green">
+                        <LuCheck />
+                        <TagLabel ml={0.5}>
+                          {t("InstanceWorldsPage.serverList.tag.online")}
+                        </TagLabel>
+                      </Tag>
+                    ) : (
+                      <Tag colorScheme="red">
+                        <LuX />
+                        <TagLabel ml={0.5}>
+                          {t("InstanceWorldsPage.serverList.tag.offline")}
+                        </TagLabel>
+                      </Tag>
+                    ))}
                   <HStack spacing={0}>
                     {serverItemMenuOperations(server).map((item, index) => (
                       <CommonIconButton

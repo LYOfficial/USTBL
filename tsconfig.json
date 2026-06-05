@@ -15,7 +15,7 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "jsx": "react-jsx",
+    "jsx": "preserve",
     "incremental": true,
     "plugins": [
       {
@@ -31,7 +31,6 @@
   },
   "include": [
     "next-env.d.ts",
-    "**/*.d.ts",
     "**/*.ts",
     "**/*.tsx",
     ".next/types/**/*.ts",
@@ -39,7 +38,6 @@
   ],
   "exclude": [
     "node_modules",
-    "tools",
-    "src-tauri"
+    "tools"
   ]
 }

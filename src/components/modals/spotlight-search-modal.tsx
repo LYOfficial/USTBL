@@ -19,11 +19,11 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import Fuse from "fuse.js";
 import { useRouter } from "next/router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LuSearch } from "react-icons/lu";
+import stringSimilarity from "string-similarity";
 import CountTag from "@/components/common/count-tag";
 import Empty from "@/components/common/empty";
 import { OptionItem, OptionItemGroup } from "@/components/common/option-item";
@@ -36,11 +36,11 @@ import { OtherResourceSource, OtherResourceType } from "@/enums/resource";
 import { OtherResourceInfo } from "@/models/resource";
 import { ResourceService } from "@/services/resource";
 import { generatePlayerDesc } from "@/utils/account";
-import { generateInstanceDesc, getInstanceIconSrc } from "@/utils/instance";
+import { generateInstanceDesc } from "@/utils/instance";
 import { translateTag } from "@/utils/resource";
 
 interface SearchResult {
-  type: "page" | "instance" | "player" | "curseforge" | "modrinth";
+  type: "page" | "instance" | "player" | "modrinth";
   icon?: string | React.ReactNode;
   title: string;
   description: string;
@@ -54,16 +54,12 @@ interface SearchResult {
   resourceType?: OtherResourceType;
 }
 
-const normalizeText = (value: string): string =>
-  value.normalize("NFKC").toLowerCase().trim();
-
 const SpotlightSearchModal: React.FC<Omit<ModalProps, "children">> = ({
   ...props
 }) => {
   // constants for online resource search
-  const RESOURCES_PER_REQUEST = 6;
-  const FUSE_THRESHOLD = 0.4;
-  const MAX_SEARCH_RESULT_SCORE = 0.4;
+  const RESOURCES_PER_REQUEST = 3;
+  const MIN_RELEVANCE_SCORE = 0.45;
   const MAX_SEARCH_RESULTS = 3;
 
   const { t } = useTranslation();
@@ -88,10 +84,7 @@ const SpotlightSearchModal: React.FC<Omit<ModalProps, "children">> = ({
 
   const convertResourceToSearchResult = useCallback(
     (resource: OtherResourceInfo): SearchResult => ({
-      type:
-        resource.source === OtherResourceSource.CurseForge
-          ? "curseforge"
-          : "modrinth",
+      type: "modrinth",
       icon: resource.iconSrc,
       title: resource.name,
       translatedTitle: resource.translatedName,
@@ -173,23 +166,16 @@ const SpotlightSearchModal: React.FC<Omit<ModalProps, "children">> = ({
             (instance) =>
               ({
                 type: "instance",
-                icon: getInstanceIconSrc(
-                  instance.iconSrc,
-                  instance.versionPath
-                ),
+                icon: instance.iconSrc,
                 title: instance.name,
                 description: generateInstanceDesc(instance),
-                action: () =>
-                  router.push({
-                    pathname: "/instances/details/[id]",
-                    query: { id: instance.id },
-                  }),
+                url: `/instances/details/${encodeURIComponent(instance.id)}`,
               }) as SearchResult
           ) || [];
 
       return [...routingHistoryMatches, ...playerMatches, ...instanceMatches];
     },
-    [getPlayerList, getInstanceList, history, router, t]
+    [getPlayerList, getInstanceList, history, t]
   );
 
   const handleResourceSearch = useCallback(
@@ -207,7 +193,7 @@ const SpotlightSearchModal: React.FC<Omit<ModalProps, "children">> = ({
       ];
 
       const createResult =
-        (platform: "curseforge" | "modrinth", source: OtherResourceSource) =>
+        (platform: "modrinth", source: OtherResourceSource) =>
         (type: OtherResourceType): SearchResult => ({
           type: platform,
           description: "",
@@ -228,9 +214,6 @@ const SpotlightSearchModal: React.FC<Omit<ModalProps, "children">> = ({
         });
 
       const resourceSearchResults: SearchResult[] = [
-        ...resourceTypes.map(
-          createResult("curseforge", OtherResourceSource.CurseForge)
-        ),
         ...resourceTypes
           .filter((type) => type !== OtherResourceType.World) // Modrinth doesn't host worlds
           .map(createResult("modrinth", OtherResourceSource.Modrinth)),
@@ -252,18 +235,17 @@ const SpotlightSearchModal: React.FC<Omit<ModalProps, "children">> = ({
 
   const performNetworkSearch = useCallback(
     async (query: string, signal?: AbortSignal): Promise<SearchResult[]> => {
-      const normalizedQuery = normalizeText(query);
-      if (normalizedQuery.length < 2) return [];
+      if (!query.trim()) return [];
 
       // Priority resource types for network search - performs concurrent searches
-      // 4 resource types * 2 sources * 6 results per request = 48 results before filtering
+      // 4 resource types * 2 sources * 3 results per request = 24 results before filtering
       const priorityResourceTypes = [
         OtherResourceType.Mod,
         OtherResourceType.ModPack,
         OtherResourceType.ResourcePack,
         OtherResourceType.ShaderPack,
       ];
-      const sources = Object.values(OtherResourceSource);
+      const sources = [OtherResourceSource.Modrinth];
 
       try {
         const searchPromises = priorityResourceTypes.flatMap((resourceType) =>
@@ -275,9 +257,7 @@ const SpotlightSearchModal: React.FC<Omit<ModalProps, "children">> = ({
               query,
               "All",
               "All",
-              source === OtherResourceSource.CurseForge
-                ? "Popularity"
-                : "downloads",
+              "downloads",
               source,
               0,
               RESOURCES_PER_REQUEST
@@ -287,36 +267,25 @@ const SpotlightSearchModal: React.FC<Omit<ModalProps, "children">> = ({
               return [];
             }
 
-            const fuse = new Fuse(response.data.list, {
-              includeScore: true,
-              ignoreLocation: true,
-              minMatchCharLength: 2,
-              threshold: FUSE_THRESHOLD,
-              keys: [
-                { name: "name", weight: 0.5 },
-                { name: "translatedName", weight: 0.5 },
-                { name: "tags", weight: 0.1 },
-              ],
-              getFn: (resource, path) => {
-                switch (Array.isArray(path) ? path[0] : path) {
-                  case "name":
-                    return normalizeText(resource.name);
-                  case "translatedName":
-                    return normalizeText(resource.translatedName || "");
-                  case "tags":
-                    return Array.isArray(resource.tags)
-                      ? resource.tags.map((tag) => normalizeText(tag))
-                      : [];
-                  default:
-                    return "";
-                }
-              },
-            });
+            return response.data.list
+              .map((resource) => {
+                const relevanceScore = Math.max(
+                  stringSimilarity.compareTwoStrings(
+                    query.toLowerCase(),
+                    resource.name.toLowerCase()
+                  ),
+                  stringSimilarity.compareTwoStrings(
+                    query,
+                    resource.translatedName || ""
+                  )
+                );
 
-            return fuse
-              .search(normalizedQuery)
-              .filter(({ score }) => (score ?? 1) <= MAX_SEARCH_RESULT_SCORE)
-              .map(({ item }) => convertResourceToSearchResult(item));
+                return { resource, relevanceScore };
+              })
+              .filter(
+                ({ relevanceScore }) => relevanceScore > MIN_RELEVANCE_SCORE
+              )
+              .map(({ resource }) => convertResourceToSearchResult(resource));
           })
         );
 
@@ -329,14 +298,11 @@ const SpotlightSearchModal: React.FC<Omit<ModalProps, "children">> = ({
           }
         });
 
-        const cfResults = results
-          .filter((res) => res.source === OtherResourceSource.CurseForge)
-          .slice(0, MAX_SEARCH_RESULTS);
         const mrResults = results
           .filter((res) => res.source === OtherResourceSource.Modrinth)
           .slice(0, MAX_SEARCH_RESULTS);
 
-        return [...cfResults, ...mrResults];
+        return mrResults;
       } catch (error) {
         if (!signal?.aborted) {
           logger.error("Network search error:", error);
@@ -357,8 +323,7 @@ const SpotlightSearchModal: React.FC<Omit<ModalProps, "children">> = ({
       searchAbortControllerRef.current.abort();
     }
 
-    const normalizedQuery = normalizeText(queryText);
-    if (!normalizedQuery || normalizedQuery.length < 2) {
+    if (!queryText.trim()) {
       setNetworkSearchResults([]);
       setIsSearching(false);
       searchAbortControllerRef.current = null;

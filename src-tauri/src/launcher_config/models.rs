@@ -1,13 +1,17 @@
-use crate::launcher_config::constants::{CONFIG_PARTIAL_UPDATE_EVENT, LAUNCHER_CFG_FILE_NAME};
-use crate::launcher_config::migrations::{deserialize_background, deserialize_discover_sources};
+use crate::launcher_config::constants::{
+  CONFIG_PARTIAL_UPDATE_EVENT, LAUNCHER_CFG_FILE_NAME, LEGACY_LAUNCHER_CFG_FILE_NAME,
+};
 use crate::partial::PartialUpdate;
 use crate::storage::Storage;
 use crate::utils::string::snake_to_camel_case;
 use crate::utils::sys_info;
 use crate::{APP_DATA_DIR, EXE_DIR, IS_PORTABLE};
 use partial_derive::Partial;
+use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use smart_default::SmartDefault;
+use std::fs;
 use std::path::PathBuf;
 use strum_macros::Display;
 use tauri::{AppHandle, Emitter};
@@ -57,9 +61,9 @@ pub enum ProcessPriority {
 #[serde(rename_all = "camelCase")]
 pub enum FileValidatePolicy {
   Disable,
-  Full,
-  #[serde(other)]
   Normal,
+  #[serde(other)]
+  Full,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
@@ -68,18 +72,6 @@ pub enum LauncherVisiablity {
   StartHidden,
   RunningHidden,
   Always,
-}
-
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
-#[serde(rename_all = "lowercase")]
-pub enum GarbageCollector {
-  G1gc,
-  Zgc,
-  Shenandoah,
-  Parallel,
-  Serial,
-  #[serde(other)]
-  Auto,
 }
 
 // Partial Derive is used for these structs and we can use it for key value storage.
@@ -104,9 +96,9 @@ structstruck::strike! {
     },
     pub game_window: struct {
       pub resolution: struct {
-        #[default = 854]
+        #[default = 1280]
         pub width: u32,
-        #[default = 480]
+        #[default = 720]
         pub height: u32,
         pub fullscreen: bool,
       },
@@ -141,20 +133,16 @@ structstruck::strike! {
         pub post_exit_command: String,
       },
       pub jvm: struct {
-        #[default(GarbageCollector::Auto)]
-        pub garbage_collector: GarbageCollector,
+        pub args: String,
         pub java_permanent_generation_space: u32,
         pub environment_variable: String,
-        pub args: String,
       },
-      pub workaround: struct GameWorkaroundConfig {
+      pub workaround: struct {
         pub no_jvm_args: bool,
-        #[default(FileValidatePolicy::Normal)]
+        #[default(FileValidatePolicy::Full)]
         pub game_file_validate_policy: FileValidatePolicy,
         pub dont_check_jvm_validity: bool,
         pub dont_patch_natives: bool,
-        #[default = true]
-        pub use_lwjgl_unsafe_agent: bool,
         pub use_native_glfw: bool,
         pub use_native_openal: bool,
       },
@@ -204,8 +192,6 @@ structstruck::strike! {
     // mocked: false when invoked from the backend, true when the frontend placeholder data is used during loading.
     pub mocked: bool,
     pub run_count: usize,
-    #[default = true]
-    pub last_run_exited_normally: bool,
     pub appearance: struct AppearanceConfig {
       pub theme: struct {
         #[default = "blue"]
@@ -213,7 +199,7 @@ structstruck::strike! {
         #[default = "light"]
         pub color_mode: String,
         pub use_liquid_glass_design: bool,
-        #[default = "adaptive"]
+        #[default = "standard"]
         pub head_nav_style: String,
       },
       pub font: struct {
@@ -222,14 +208,11 @@ structstruck::strike! {
         #[default = 100]
         pub font_size: usize, // as percent
       },
-      #[serde(
-        default,
-        deserialize_with = "deserialize_background"
-      )]
-      pub background: struct AppearanceBackgroundConfig {
-        #[default = "%built-in:Florwyn"]
+      pub background: struct {
+        #[default = "%built-in:tyg1200"]
         pub choice: String,
         pub random_custom: bool,
+        #[default = true]
         pub auto_darken: bool,
       },
       pub accessibility: struct {
@@ -269,14 +252,10 @@ structstruck::strike! {
         pub language: String,
       },
       pub functionality: struct {
-        #[default = "on"]
-        pub discover_page: String,
         #[default = "instance"]
         pub instances_nav_type: String,
         #[default = true]
         pub launch_page_quick_switch: bool,
-        #[default = true]
-        pub auto_download_java: bool,
         #[default = true]
         pub resource_translation: bool, // only available in zh-Hans
         #[default = true]
@@ -289,7 +268,7 @@ structstruck::strike! {
         pub auto_purge_launcher_logs: bool,
       }
     },
-    pub intelligence: struct IntelligenceConfig {
+    pub intelligence: struct Intelligence {
       pub mcp_server: struct {
         pub launcher: struct LauncherMcpServerConfig{
           #[default = true]
@@ -299,18 +278,13 @@ structstruck::strike! {
         },
       }
     },
-    pub extension: struct ExtensionConfig {
-      pub enabled: Vec<String>,
-      #[serde(default)]
-      pub home_widget_state: Vec<(String, u32, bool)>,  // widget_key, width, collapsed
-    },
     pub global_game_config: GameConfig,
     pub local_game_directories: Vec<GameDirectory>,
+    // Changed from Vec<String> to Vec<(String, bool)> with default enabled=true
     #[serde(
       default,
       deserialize_with = "deserialize_discover_sources"
     )]
-    // USTBL: Use USTB RSS as default news source
     #[default(_code="vec![(\"https://docs.ustb.world/api/rss?lang=zh\".to_string(), true)]")]
     pub discover_source_endpoints: Vec<(String, bool)>,
     pub extra_java_paths: Vec<String>,
@@ -349,7 +323,7 @@ structstruck::strike! {
       pub instance_shader_packs_page: struct {
         #[default([true, true])]
         pub accordion_states: [bool; 2],
-      },
+      }
     }
   }
 }
@@ -380,6 +354,44 @@ impl LauncherConfig {
 }
 
 impl Storage for LauncherConfig {
+  fn load() -> Result<Self, std::io::Error>
+  where
+    Self: Sized + serde::de::DeserializeOwned,
+  {
+    let file_path = Self::file_path();
+    if file_path.exists() {
+      let json_string = fs::read_to_string(file_path)?;
+      let value = serde_json::from_str(&json_string)?;
+      return Ok(value);
+    }
+
+    let legacy_path = if *IS_PORTABLE {
+      EXE_DIR.join(LEGACY_LAUNCHER_CFG_FILE_NAME)
+    } else {
+      APP_DATA_DIR
+        .get()
+        .unwrap()
+        .join(LEGACY_LAUNCHER_CFG_FILE_NAME)
+    };
+
+    let json_string = fs::read_to_string(&legacy_path)?;
+    let value = serde_json::from_str(&json_string)?;
+
+    if let Some(parent) = file_path.parent() {
+      fs::create_dir_all(parent)?;
+    }
+
+    if let Err(err) = fs::rename(&legacy_path, &file_path) {
+      log::warn!(
+        "Failed to rename legacy launcher config to new path: {err}. Falling back to copy-write migration."
+      );
+      fs::write(&file_path, &json_string)?;
+      let _ = fs::remove_file(&legacy_path);
+    }
+
+    Ok(value)
+  }
+
   fn file_path() -> PathBuf {
     if *IS_PORTABLE {
       EXE_DIR.join(LAUNCHER_CFG_FILE_NAME)
@@ -404,3 +416,39 @@ pub enum LauncherConfigError {
 }
 
 impl std::error::Error for LauncherConfigError {}
+
+// deserializing discover sources from old and new formats.
+// TODO: unify to migration system later.
+fn deserialize_discover_sources<'de, D>(deserializer: D) -> Result<Vec<(String, bool)>, D::Error>
+where
+  D: Deserializer<'de>,
+{
+  let v = match Value::deserialize(deserializer) {
+    Ok(v) => v,
+    Err(_) => return Ok(Vec::default()),
+  };
+
+  let arr = match v.as_array() {
+    Some(a) => a,
+    None => return Ok(Vec::default()),
+  };
+
+  fn parse_item(item: &Value) -> Option<(String, bool)> {
+    // old (<=0.6.3) format: String(url)
+    if let Some(s) = item.as_str() {
+      return Some((s.to_string(), true));
+    }
+
+    // new format: (String, bool)
+    let t = item.as_array()?;
+    if t.len() != 2 {
+      log::error!("Invalid discover source item format: {:?}", item);
+      return None;
+    }
+    let url = t[0].as_str()?;
+    let enabled = t[1].as_bool()?;
+    Some((url.to_string(), enabled))
+  }
+
+  Ok(arr.iter().filter_map(parse_item).collect())
+}

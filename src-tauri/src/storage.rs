@@ -1,5 +1,5 @@
-use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde::Serialize;
 use std::fs;
 use std::path::Path;
 

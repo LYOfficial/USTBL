@@ -14,6 +14,7 @@ const SettingsPage = () => {
     const replacements: [string, string][] = [
       ["/advanced", "/"],
       ["/ping-test", "/download"],
+      ["/intelligence", "/general"],
     ];
     replacements.forEach(([suffix, replacement]) => {
       if (lastRecord.endsWith(suffix)) {

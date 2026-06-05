@@ -23,8 +23,6 @@ import {
   ModalOverlay,
   ModalProps,
   Stack,
-  Tag,
-  TagLabel,
   useDisclosure,
 } from "@chakra-ui/react";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -35,7 +33,6 @@ import { useGlobalData } from "@/contexts/global-data";
 import { useRoutingHistory } from "@/contexts/routing-history";
 import { useToast } from "@/contexts/toast";
 import { ConfigService } from "@/services/config";
-import { getGameDirName, isSpecialGameDir } from "@/utils/instance";
 import { isPathSanitized } from "@/utils/string";
 
 interface ActionSelectDialogProps extends Omit<ModalProps, "children"> {
@@ -248,20 +245,16 @@ const EditGameDirectoryModal: React.FC<EditGameDirectoryModalProps> = ({
       if (currentPath === _dirPath) {
         // only update dir name, instance not changed
         replaceHistory(
-          `/instances/details/${encodeURIComponent(`${currentName}:`)}`,
-          `/instances/details/${encodeURIComponent(`${dirName}:`)}`
+          `/instances/details/${currentName}:`,
+          `/instances/details/${dirName}:`
         );
       } else {
         // update dir path, instance may change, remove all route history
-        removeHistory(
-          `/instances/details/${encodeURIComponent(`${currentName}:`)}`
-        );
+        removeHistory(`/instances/details/${currentName}:`);
       }
-      const encodedCurrentName = encodeURIComponent(currentName);
-      const encodedDirName = encodeURIComponent(dirName);
       replaceHistory(
-        `/instances/list?dir=${encodedCurrentName}`,
-        `/instances/list?dir=${encodedDirName}`
+        `/instances/list/${currentName}`,
+        `/instances/list/${dirName}`
       );
     }
     getInstanceList(true); // refresh frontend state of instance list
@@ -313,46 +306,30 @@ const EditGameDirectoryModal: React.FC<EditGameDirectoryModalProps> = ({
               }
             >
               <FormLabel>{t("EditGameDirectoryModal.label.dirName")}</FormLabel>
-              <InputGroup>
-                <Input
-                  placeholder={t("EditGameDirectoryModal.placeholder.dirName")}
-                  value={dirName}
-                  pr={
-                    isSpecialGameDir(dirName)
-                      ? `${getGameDirName(dirName).length}ch`
-                      : undefined
-                  }
-                  onChange={(e) => setDirName(e.target.value)}
-                  onBlur={() => {
-                    setIsDirNameEmpty(dirName.length === 0);
-                    setIsDirNameTooLong(dirName.length > 20);
-                    setIsDirNameExist(
-                      config.localGameDirectories
-                        .map((dir) => dir.name)
-                        .includes(dirName) && dirName !== currentName
-                    );
-                    setIsDirNameInvalid(/[\/:\\?#&%]/.test(dirName));
-                  }}
-                  onFocus={() => {
-                    setIsDirNameEmpty(false);
-                    setIsDirNameTooLong(false);
-                    setIsDirNameExist(false);
-                    setIsDirNameInvalid(false);
-                  }}
-                  required
-                  ref={initialRef}
-                  focusBorderColor={`${primaryColor}.500`}
-                />
-                {isSpecialGameDir(dirName) && (
-                  <InputRightElement width="auto" pr={2}>
-                    <Tag title={getGameDirName(dirName)}>
-                      <TagLabel overflow="hidden" textOverflow="ellipsis">
-                        {getGameDirName(dirName)}
-                      </TagLabel>
-                    </Tag>
-                  </InputRightElement>
-                )}
-              </InputGroup>
+              <Input
+                placeholder={t("EditGameDirectoryModal.placeholder.dirName")}
+                value={dirName}
+                onChange={(e) => setDirName(e.target.value)}
+                onBlur={() => {
+                  setIsDirNameEmpty(dirName.length === 0);
+                  setIsDirNameTooLong(dirName.length > 20);
+                  setIsDirNameExist(
+                    config.localGameDirectories
+                      .map((dir) => dir.name)
+                      .includes(dirName) && dirName !== currentName
+                  );
+                  setIsDirNameInvalid(/[\/:\\?#&%]/.test(dirName));
+                }}
+                onFocus={() => {
+                  setIsDirNameEmpty(false);
+                  setIsDirNameTooLong(false);
+                  setIsDirNameExist(false);
+                  setIsDirNameInvalid(false);
+                }}
+                required
+                ref={initialRef}
+                focusBorderColor={`${primaryColor}.500`}
+              />
               {isDirNameTooLong && (
                 <FormErrorMessage>
                   {t("EditGameDirectoryModal.errorMessage.dirName.tooLong")}

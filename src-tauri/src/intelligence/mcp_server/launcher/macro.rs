@@ -1,35 +1,11 @@
 #[macro_export]
-macro_rules! __mcp_tool_input_schema_inline_params {
-  ($(#[$struct_meta:meta])* { $($(#[$field_meta:meta])* $arg:ident : $ty:ty),* $(,)? }) => {
-    #[derive(::serde::Deserialize, ::schemars::JsonSchema)]
-    $(#[$struct_meta])*
-    struct __McpToolParams {
-      $(
-        $(#[$field_meta])*
-        pub $arg: $ty,
-      )*
-    }
-  };
-}
-
-#[macro_export]
-macro_rules! __mcp_tool_input_schema_empty {
-  () => {{
-    #[derive(::serde::Deserialize, ::schemars::JsonSchema)]
-    struct __McpToolNoParams {}
-
-    rmcp::handler::server::tool::schema_for_type::<__McpToolNoParams>()
-  }};
-}
-
-#[macro_export]
 macro_rules! mcp_tool {
   (sync $name:expr, $command:path, $description:expr) => {{
     rmcp::handler::server::tool::ToolRoute::new_dyn(
       rmcp::model::Tool::new(
         $name,
         $description,
-        $crate::__mcp_tool_input_schema_empty!(),
+        rmcp::handler::server::tool::schema_for_type::<rmcp::model::JsonObject>(),
       ),
       move |context: rmcp::handler::server::tool::ToolCallContext<
         '_,
@@ -50,7 +26,7 @@ macro_rules! mcp_tool {
       rmcp::model::Tool::new(
         $name,
         $description,
-        $crate::__mcp_tool_input_schema_empty!(),
+        rmcp::handler::server::tool::schema_for_type::<rmcp::model::JsonObject>(),
       ),
       move |context: rmcp::handler::server::tool::ToolCallContext<
         '_,
@@ -66,11 +42,11 @@ macro_rules! mcp_tool {
       },
     )
   }};
-  (sync $name:expr, $command:path, $description:expr, $(#[$struct_meta:meta])* { $($(#[$field_meta:meta])* $arg:ident : $ty:ty),* $(,)? }) => {{
-    $crate::__mcp_tool_input_schema_inline_params!(
-      $(#[$struct_meta])*
-      { $($(#[$field_meta])* $arg : $ty),* }
-    );
+  (sync $name:expr, $command:path, $description:expr, { $($arg:ident : $ty:ty),* $(,)? }) => {{
+    #[derive(::serde::Deserialize, ::schemars::JsonSchema)]
+    struct __McpToolParams {
+      $(pub $arg: $ty),*
+    }
 
     rmcp::handler::server::tool::ToolRoute::new_dyn(
       rmcp::model::Tool::new(
@@ -96,11 +72,11 @@ macro_rules! mcp_tool {
       },
     )
   }};
-  ($name:expr, $command:path, $description:expr, $(#[$struct_meta:meta])* { $($(#[$field_meta:meta])* $arg:ident : $ty:ty),* $(,)? }) => {{
-    $crate::__mcp_tool_input_schema_inline_params!(
-      $(#[$struct_meta])*
-      { $($(#[$field_meta])* $arg : $ty),* }
-    );
+  ($name:expr, $command:path, $description:expr, { $($arg:ident : $ty:ty),* $(,)? }) => {{
+    #[derive(::serde::Deserialize, ::schemars::JsonSchema)]
+    struct __McpToolParams {
+      $(pub $arg: $ty),*
+    }
 
     rmcp::handler::server::tool::ToolRoute::new_dyn(
       rmcp::model::Tool::new(
@@ -133,7 +109,7 @@ macro_rules! mcp_tool {
       rmcp::model::Tool::new(
         $name,
         $description,
-        rmcp::handler::server::tool::schema_for_type::<$params_ty>(),
+        rmcp::handler::server::tool::schema_for_type::<rmcp::model::JsonObject>(),
       ),
       move |context: rmcp::handler::server::tool::ToolCallContext<
         '_,
@@ -153,42 +129,12 @@ macro_rules! mcp_tool {
       },
     )
   }};
-  ($name:expr, $description:expr, |$app:ident, $params:ident| $(#[$struct_meta:meta])* { $($(#[$field_meta:meta])* $arg:ident : $ty:ty),* $(,)? } => $call:expr) => {{
-    $crate::__mcp_tool_input_schema_inline_params!(
-      $(#[$struct_meta])*
-      { $($(#[$field_meta])* $arg : $ty),* }
-    );
-
-    rmcp::handler::server::tool::ToolRoute::new_dyn(
-      rmcp::model::Tool::new(
-        $name,
-        $description,
-        rmcp::handler::server::tool::schema_for_type::<__McpToolParams>(),
-      ),
-      move |context: rmcp::handler::server::tool::ToolCallContext<
-        '_,
-        $crate::intelligence::mcp_server::launcher::McpContext,
-      >| {
-        use futures::FutureExt;
-
-        async move {
-          let mut context = context;
-          let $params: __McpToolParams = rmcp::handler::server::tool::parse_json_object(
-            context.arguments.take().unwrap_or_default(),
-          )?;
-          let $app = context.service.app_handle.clone();
-          $crate::intelligence::mcp_server::launcher::command_result_to_tool_result($call.await)
-        }
-        .boxed()
-      },
-    )
-  }};
   (raw $name:expr, $handler:path, $description:expr) => {{
     rmcp::handler::server::tool::ToolRoute::new_dyn(
       rmcp::model::Tool::new(
         $name,
         $description,
-        $crate::__mcp_tool_input_schema_empty!(),
+        rmcp::handler::server::tool::schema_for_type::<rmcp::model::JsonObject>(),
       ),
       move |context: rmcp::handler::server::tool::ToolCallContext<
         '_,
@@ -199,11 +145,11 @@ macro_rules! mcp_tool {
       },
     )
   }};
-  (deeplink $name:expr, $description:expr, |$params:ident| $(#[$struct_meta:meta])* { $($(#[$field_meta:meta])* $arg:ident : $ty:ty),* $(,)? } => $deeplink:expr) => {{
-    $crate::__mcp_tool_input_schema_inline_params!(
-      $(#[$struct_meta])*
-      { $($(#[$field_meta])* $arg : $ty),* }
-    );
+  (deeplink $name:expr, $description:expr, |$params:ident| { $($arg:ident : $ty:ty),* $(,)? } => $deeplink:expr) => {{
+    #[derive(::serde::Deserialize, ::schemars::JsonSchema)]
+    struct __McpToolParams {
+      $(pub $arg: $ty),*
+    }
 
     rmcp::handler::server::tool::ToolRoute::new_dyn(
       rmcp::model::Tool::new(
@@ -244,7 +190,7 @@ macro_rules! mcp_tool {
       rmcp::model::Tool::new(
         $name,
         $description,
-        $crate::__mcp_tool_input_schema_empty!(),
+        rmcp::handler::server::tool::schema_for_type::<rmcp::model::JsonObject>(),
       ),
       move |context: rmcp::handler::server::tool::ToolCallContext<
         '_,

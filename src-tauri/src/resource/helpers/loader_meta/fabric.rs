@@ -1,4 +1,4 @@
-use crate::error::SJMCLResult;
+use crate::error::{SJMCLError, SJMCLResult};
 use crate::instance::models::misc::ModLoaderType;
 use crate::resource::helpers::misc::get_download_api;
 use crate::resource::models::{ModLoaderResourceInfo, ResourceError, ResourceType, SourceType};
@@ -60,5 +60,5 @@ pub async fn get_fabric_meta_by_game_version(
       Err(_) => continue,
     }
   }
-  Err(ResourceError::NetworkError.into())
+  Err(SJMCLError(String::new()))
 }

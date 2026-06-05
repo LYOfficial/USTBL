@@ -51,7 +51,7 @@ impl LauncherConfig {
     }
 
     if self.appearance.background.choice.trim().is_empty() {
-      self.appearance.background.choice = "%built-in:Florwyn".to_string();
+      self.appearance.background.choice = "%built-in:tyg1200".to_string();
     }
 
     // Set default local game directories
@@ -104,11 +104,8 @@ impl LauncherConfig {
       let _ = extract_assets(app);
     }
 
-    // Ensure USTB RSS source is included in the discover source list
-    let ustb_rss = "https://docs.ustb.world/api/rss?lang=zh".to_string();
-    if !self.discover_source_endpoints.iter().any(|(url, _)| url == &ustb_rss) {
-      self.discover_source_endpoints.insert(0, (ustb_rss, true));
-    }
+    // Keep the community-news source list aligned with the built-in RSS source.
+    self.discover_source_endpoints = vec![("https://docs.ustb.world/api/rss?lang=zh".to_string(), true)];
 
     self.basic_info = BasicInfo {
       launcher_version: version,

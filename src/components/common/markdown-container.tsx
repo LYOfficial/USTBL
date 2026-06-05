@@ -7,14 +7,7 @@ import {
   Link,
   ListItem,
   OrderedList,
-  Table,
-  TableContainer,
-  Tbody,
-  Td,
   Text,
-  Th,
-  Thead,
-  Tr,
   UnorderedList,
 } from "@chakra-ui/react";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -171,19 +164,6 @@ const MarkdownContainer: React.FC<MarkdownContainerProps> = ({
         {...rest}
       />
     ),
-    // tables
-    table: ({ node, children, ...rest }) => (
-      <TableContainer>
-        <Table variant="simple" size="sm" {...rest}>
-          {children}
-        </Table>
-      </TableContainer>
-    ),
-    thead: ({ node, children, ...rest }) => <Thead {...rest}>{children}</Thead>,
-    tbody: ({ node, children, ...rest }) => <Tbody {...rest}>{children}</Tbody>,
-    tr: ({ node, children, ...rest }) => <Tr {...rest}>{children}</Tr>,
-    th: ({ node, children, ...rest }) => <Th {...rest}>{children}</Th>,
-    td: ({ node, children, ...rest }) => <Td {...rest}>{children}</Td>,
   };
 
   return (

@@ -2,19 +2,20 @@ use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::Command;
-use tauri::AppHandle;
+use std::sync::Mutex;
+use tauri::{AppHandle, Manager};
 use zip::ZipArchive;
 
 use crate::error::SJMCLResult;
 use crate::instance::helpers::client_json::{LibrariesValue, McClientInfo};
 use crate::instance::helpers::loader::fabric::install_fabric_loader;
-use crate::instance::helpers::loader::forge::{InstallProfile, install_forge_loader};
+use crate::instance::helpers::loader::forge::{install_forge_loader, InstallProfile};
 use crate::instance::helpers::loader::neoforge::install_neoforge_loader;
-use crate::instance::helpers::loader::quilt::install_quilt_loader;
 use crate::instance::helpers::misc::get_instance_game_config;
 use crate::instance::models::misc::{Instance, InstanceError, ModLoader, ModLoaderType};
 use crate::launch::helpers::file_validator::merge_library_lists;
 use crate::launch::helpers::jre_selector::select_java_runtime;
+use crate::launcher_config::models::JavaInfo;
 use crate::resource::models::SourceType;
 use crate::tasks::PTaskParam;
 
@@ -41,7 +42,6 @@ pub async fn install_mod_loader(
   client_info: &mut McClientInfo,
   task_params: &mut Vec<PTaskParam>,
   is_install_fabric_api: Option<bool>,
-  is_install_qf_api: Option<bool>,
 ) -> SJMCLResult<()> {
   match loader.loader_type {
     ModLoaderType::Fabric => {
@@ -55,20 +55,6 @@ pub async fn install_mod_loader(
         client_info,
         task_params,
         is_install_fabric_api,
-      )
-      .await
-    }
-    ModLoaderType::Quilt => {
-      install_quilt_loader(
-        app,
-        priority,
-        game_version,
-        loader,
-        lib_dir,
-        mods_dir,
-        client_info,
-        task_params,
-        is_install_qf_api,
       )
       .await
     }
@@ -88,11 +74,15 @@ pub async fn execute_processors(
   client_info: &McClientInfo,
   install_profile: &InstallProfile,
 ) -> SJMCLResult<()> {
+  let javas_state = app.state::<Mutex<Vec<JavaInfo>>>();
+  let javas = javas_state.lock()?.clone();
+
   let game_config = get_instance_game_config(app, instance);
 
   let selected_java = select_java_runtime(
     app,
-    Some(&game_config.game_java),
+    &game_config.game_java,
+    &javas,
     instance,
     client_info
       .java_version

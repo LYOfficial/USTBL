@@ -9,9 +9,6 @@ import {
 } from "@/models/task";
 import { responseHandler } from "@/utils/response";
 
-export const TASK_PROGRESS_UPDATE_EVENT = "task:progress-update";
-export const TASK_GROUP_UPDATE_EVENT = "task:group-update";
-
 /**
  * Service class for managing tasks.
  */
@@ -143,7 +140,7 @@ export class TaskService {
     callback: (payload: PTaskEventPayload) => void
   ): () => void {
     const unlisten = getCurrentWebview().listen<PTaskEventPayload>(
-      TASK_PROGRESS_UPDATE_EVENT,
+      "task:progress-update",
       (event) => {
         callback(event.payload);
       }
@@ -163,7 +160,7 @@ export class TaskService {
     callback: (payload: GTaskEventPayload) => void
   ): () => void {
     const unlisten = getCurrentWebview().listen<GTaskEventPayload>(
-      TASK_GROUP_UPDATE_EVENT,
+      "task:group-update",
       (event) => {
         callback(event.payload);
       }

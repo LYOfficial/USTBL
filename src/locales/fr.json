@@ -16,11 +16,11 @@
         "contributors": {
           "title": "Liste des développeurs"
         },
-        "sourceCode": {
-          "title": "Voir le code source sur GitHub"
+        "reportIssue": {
+          "title": "Signaler un problème ou demander une fonctionnalité"
         },
         "aboutSJMC": {
-          "title": "À propos de Minecraft society à l’université jiao tong shanghai (SJMC)"
+          "title": "À propos de Minecraft society à l’université jiao tong shanghai (USTB)"
         }
       }
     },
@@ -58,11 +58,11 @@
       "settings": {
         "copyright": {
           "title": "Droits d'auteur",
-          "description": "Copyright © 2024-2026 Équipe de développement SJMCL."
+          "description": "Copyright © 2024-2026 Équipe de développement USTBL."
         },
         "userAgreement": {
           "title": "Accord d'utilisateur",
-          "url": "https://mc.sjtu.cn/sjmcl/en/docs/tos"
+          "url": "https://docs.ustb.world/"
         },
         "openSourceLicense": {
           "title": "Licence open source",
@@ -112,12 +112,6 @@
         "title": "Télécharger le serveur",
         "description": "Télécharger les fichiers serveur de toutes les versions officielles du jeu"
       }
-    }
-  },
-  "MainLayout": {
-    "fileDnD": {
-      "title": "Importer un modpack",
-      "desc": "Importer le fichier de modpack {{fileName}} dans SJMCL"
     }
   },
   "AddAuthServerModal": {
@@ -178,7 +172,7 @@
         "title": "Options avancées",
         "uuid": {
           "label": "UUID",
-          "placeholder": "(Généré automatiquement par SJMCL)",
+          "placeholder": "(Généré automatiquement par USTBL)",
           "errorMessage": "Format UUID incorrect"
         }
       }
@@ -207,7 +201,7 @@
       "description": {
         "start": {
           "3rdparty": "Cette source d'authentification prend en charge la proposition Yggdrasil Connect",
-          "microsoft": "SJMCL prend en charge le flux d'autorisation d'appareil OAuth 2.0 de Microsoft"
+          "microsoft": "USTBL prend en charge le flux d'autorisation d'appareil OAuth 2.0 de Microsoft"
         },
         "next": "Veuillez cliquer sur le bouton Continuer la connexion pour ouvrir la fenêtre de connexion et saisir le code ci-dessus (déjà copié)"
       },
@@ -289,8 +283,7 @@
           "title": "Style de la barre de navigation supérieure",
           "type": {
             "standard": "Standard",
-            "simplified": "Simplifié",
-            "adaptive": "Adaptatif"
+            "simplified": "Simplifié"
           }
         }
       }
@@ -327,11 +320,14 @@
         }
       },
       "presetBgList": {
-        "Florwyn": {
-          "name": "Florwyn"
+        "Jokull": {
+          "name": "La ville de neige"
         },
         "SJTU-eastgate": {
           "name": "Porte Est SJTU"
+        },
+        "GNLXC": {
+          "name": "La ville idéale de GNWork"
         }
       }
     },
@@ -347,26 +343,16 @@
       }
     }
   },
-  "ChangeLoaderModal": {
+  "ChangeModLoaderModal": {
     "header": {
-      "modloader": {
-        "title": {
-          "change": "Modifier le chargeur de mods",
-          "install": "Installer le chargeur de mods"
-        }
-      },
-      "optifine": {
-        "title": {
-          "change": "Modifier OptiFine",
-          "install": "Installer OptiFine"
-        }
+      "title": {
+        "change": "Modifier le chargeur de mods",
+        "install": "Installer le chargeur de mods"
       }
     },
     "notSelectedLoader": "Aucun nouveau chargeur sélectionné",
-    "notSelectedOptifine": "Aucun nouvel OptiFine sélectionné",
     "footer": {
       "installFabricApi": "Installer également le mod Fabric API",
-      "installQFAPI": "Installer aussi le mod QFAPI / QSL (si disponible)",
       "reinstall": "Réinstaller"
     }
   },
@@ -435,8 +421,7 @@
       "info": "Paramètres de base"
     },
     "footer": {
-      "installFabricApi": "Installez également le mod Fabric API.",
-      "installQFAPI": "Installer aussi le mod QFAPI / QSL (si disponible)"
+      "installFabricApi": "Installez également le mod Fabric API."
     }
   },
   "CreateRenamedInstShortcutAlertDialog": {
@@ -446,12 +431,6 @@
     "dialog": {
       "title": "Supprimer le serveur d'authentification",
       "content": "Êtes-vous sûr de vouloir supprimer le serveur d'authentification « {{name}} » ? Il ne figurera plus dans votre liste de serveurs."
-    }
-  },
-  "DeleteGameFriendDialog": {
-    "dialog": {
-      "title": "Supprimer l'ami",
-      "content": "Confirmer la suppression de l'ami \"{{name}}\" ?"
     }
   },
   "DeleteGameServerAlertDialog": {
@@ -527,7 +506,7 @@
       "type": "Type"
     },
     "warning": {
-      "mojang": "Le runtime Java distribué par Mojang sera installé par SJMCL dans un répertoire spécifique.",
+      "mojang": "Le runtime Java distribué par Mojang sera installé par USTBL dans un répertoire spécifique.",
       "oracle": "Le téléchargement à partir de la source Oracle peut nécessiter une connexion."
     }
   },
@@ -593,7 +572,6 @@
     },
     "proxy": {
       "title": "Proxy",
-      "headExtra": "Redémarrage requis",
       "settings": {
         "enabled": {
           "title": "Activer le proxy"
@@ -640,10 +618,8 @@
     },
     "task": {
       "game-client": "Client {{param}}",
-      "game-client-w-java": "Client du jeu {{param1}} (avec Java {{param2}})",
       "game-server": "Serveur {{param}}",
       "change-mod-loader": "Modifier le chargeur de mods {{param}}",
-      "change-optifine": "Modifier OptiFine {{param}}",
       "mod": "Mod",
       "world": "Sauvegarde",
       "resourcepack": "Pack de ressources",
@@ -653,11 +629,9 @@
       "patch-files": "Réparer les fichiers du jeu {{param}}",
       "mod-update": "Mettre à jour les mods.",
       "retry": "Réessayer",
-      "neoforge-libraries": "Bibliothèques d'exécution de NeoForge",
+      "neoforge-libraries": "Bibliothèques d'exécution de NeoForge ",
       "forge-libraries": "Bibliothèques d'exécution de Forge",
-      "optifine-libraries": "Bibliothèques d'exécution d'OptiFine",
       "launcher-update": "Mettre à jour le lanceur",
-      "extension-update": "Mettre à jour l'extension {{param1}} {{param2}}",
       "mojang-java": "Java {{param}} fonctionne"
     }
   },
@@ -713,14 +687,6 @@
   "Empty": {
     "noData": " donnée"
   },
-  "EnableExtensionConfirmDialog": {
-    "title": "Activer l'extension",
-    "body": "Voulez-vous vraiment activer l'extension <hl>{{name}}</hl> (<hl>{{identifier}}</hl>) de <hl>{{author}}</hl> ? ",
-    "button": {
-      "enable": "Activer"
-    },
-    "unknownDeveloper": "Développeur inconnu"
-  },
   "Enums": {
     "chakraColors": {
       "gray": "Gris",
@@ -766,109 +732,6 @@
       "windows": "Explorateur de fichiers"
     }
   },
-  "ExportModpackModal": {
-    "header": {
-      "title": "Exporter {{param}} en pack de mods"
-    },
-    "label": {
-      "exportFormat": "Format d'exportation",
-      "basicInfo": "Informations de base",
-      "modpackName": "Nom du pack de mods",
-      "modpackVersion": "Version du pack de mods",
-      "author": "Auteur",
-      "description": "Description",
-      "includedFiles": "Fichiers inclus",
-      "exportOptions": "Options d'exportation",
-      "packWithLauncher": "Inclure le lanceur",
-      "minMemory": "Mémoire minimale (MB)",
-      "noCreateRemoteFiles": "Désactiver les fichiers distants",
-      "skipCurseForgeRemoteFiles": "Ignorer les fichiers distants CurseForge"
-    },
-    "button": {
-      "export": "Exporter"
-    },
-    "error": {
-      "invalidName": "Veuillez saisir un nom de pack de mods valide",
-      "invalidVersion": "Veuillez saisir un numéro de version valide",
-      "noFileSelected": "Veuillez sélectionner au moins un fichier ou dossier à inclure"
-    },
-    "errorMessage": {
-      "error-1": "Le nom ne peut pas être vide",
-      "error-2": "Le nom contient des caractères invalides",
-      "error-3": "Le nom est trop long (255 caractères max)"
-    },
-    "fileTreeTranslation": {
-      "mods": "Mods",
-      "config": "Fichiers de configuration des mods",
-      "shaderpacks": "Shaders",
-      "resourcepacks": "Packs de ressources",
-      "optionsTxt": "Paramètres du jeu",
-      "saves": "Sauvegardes"
-    },
-    "tooltip": {
-      "exportFormat": {
-        "Modrinth": "Taille de package plus petite ; les mods requis sont téléchargés depuis un manifeste lors de l'importation.",
-        "MultiMC": "Largement pris en charge par les principaux lanceurs ; empaqueté comme une instance complète."
-      }
-    }
-  },
-  "ExtensionContributionWrapper": {
-    "failedToRender": "Impossible d'afficher le contenu de cette extension."
-  },
-  "ExtensionHostContextProvider": {
-    "extensionProvidedDialog": "Cette boîte de dialogue est fournie par l'extension {{name}}",
-    "toast": {
-      "activateError": "Échec de l'activation de l'extension {{name}}"
-    }
-  },
-  "ExtensionInfoModal": {
-    "label": {
-      "author": "Auteur",
-      "description": "Description"
-    }
-  },
-  "ExtensionOpenExternalLinkConfirmDialog": {
-    "title": "Ouvrir un lien externe",
-    "body": "L'extension {{extension}} souhaite ouvrir {{link}} dans votre navigateur externe.",
-    "button": {
-      "open": "Ouvrir"
-    }
-  },
-  "ExtensionSettingsDetailPage": {
-    "title": "Paramètres de {{name}}"
-  },
-  "ExtensionSettingsPage": {
-    "alert": "SJMCL ne peut pas contrôler le comportement des extensions tierces, y compris la manière dont elles traitent vos données personnelles. N'installez et n'activez que des extensions provenant de sources fiables.",
-    "fileDnD": {
-      "title": "Installer une extension SJMCL",
-      "desc": "Installer le fichier d'extension {{fileName}} dans SJMCL"
-    },
-    "installed": "Extensions installées",
-    "menu": {
-      "info": "Informations de l'extension"
-    },
-    "top": {
-      "settings": {
-        "extensionDocs": {
-          "title": "Documentation de développement des extensions",
-          "description": "Découvrez le système d'extensions et la documentation de l'API, puis démarrez rapidement avec le scaffold.",
-          "url": "https://mc.sjtu.cn/sjmcl/en/dev/extension/"
-        },
-        "awesomeExtensions": {
-          "title": "Découvrir les extensions de la communauté",
-          "description": "Parcourez sur GitHub la liste des extensions développées par la communauté.",
-          "url": "https://github.com/SJMC-Dev/awesome-SJMCL-extensions"
-        }
-      }
-    }
-  },
-  "ExtensionUpdateConfirmDialog": {
-    "title": "Mettre à jour l'extension",
-    "body": "L'extension {{identifier}} a téléchargé la nouvelle version {{version}} depuis {{src}}. Confirmer l'installation ?"
-  },
-  "FileDnDProvider": {
-    "fileName": "{{fileName}} et autres ({{count}} au total)"
-  },
   "GameAdvancedSettingsPage": {
     "title": "Paramètres avancés du jeu",
     "topWarning": "Les paramètres avancés sont réservés aux utilisateurs expérimentés. Modifier ces options peut empêcher le jeu de démarrer. Ne modifiez pas ces options à moins de bien comprendre leur signification !",
@@ -896,17 +759,8 @@
     "jvm": {
       "title": "Paramètres de la machine virtuelle Java",
       "settings": {
-        "garbageCollector": {
-          "title": "Ramasse-miettes",
-          "desc": "Les anciennes versions de Java peuvent ne pas inclure certains ramasse-miettes",
-          "options": {
-            "auto": "Automatique (par défaut)",
-            "g1gc": "G1GC",
-            "zgc": "ZGC",
-            "shenandoah": "ShenandoahGC",
-            "parallel": "ParallelGC",
-            "serial": "SerialGC"
-          }
+        "args": {
+          "title": "Arguments JVM"
         },
         "javaPermanentGenerationSpace": {
           "title": "Espace de génération permanente",
@@ -914,9 +768,6 @@
         },
         "environmentVariable": {
           "title": "Variable d'environnement"
-        },
-        "args": {
-          "title": "Arguments JVM"
         }
       }
     },
@@ -935,10 +786,6 @@
         },
         "dontPatchNatives": {
           "title": "Ne pas tenter de remplacer automatiquement les bibliothèques natives"
-        },
-        "useLwjglUnsafeAgent": {
-          "title": "Activer LWJGL Unsafe Agent",
-          "description": "Utiliser automatiquement le <hmcl>LWJGL Unsafe Agent</hmcl> de HMCL sur les versions de Minecraft concernées pour corriger les problèmes de performances."
         },
         "useNativeGlfw": {
           "title": "Utiliser GLFW du système (Linux uniquement)"
@@ -1096,12 +943,10 @@
     "notice": "Remarque",
     "open": "Ouvrir",
     "openFolder": "Ouvrir le dossier",
-    "optional": "Optionnel",
     "previous": "Précédent",
     "refresh": "Rafraîchir",
     "revealFile": "Afficher dans {{opener}}",
     "search": "Rechercher",
-    "settings": "Paramètres",
     "share": {
       "text": "Partager",
       "toast": {
@@ -1141,28 +986,16 @@
     "functions": {
       "title": "Fonctionnalités",
       "settings": {
-        "discoverPage": {
-          "title": "Page Découvrir",
-          "description": "Consultez facilement les actualités Minecraft et de la communauté, puis recherchez et téléchargez des ressources de jeu depuis la page Découvrir.",
-          "on": "Activée",
-          "search-only": "Recherche seulement",
-          "off": "Masquée"
-        },
         "instancesNavType": {
           "title": "Mode de la barre latérale des instances",
           "description": "Modifier l'affichage et le mode de regroupement de la barre latérale des instances",
           "instance": "Par instance",
           "directory": "Par répertoire",
-          "tag": "Par étiquette",
           "hidden": "Masqué"
         },
         "launchPageQuickSwitch": {
           "title": "Basculement rapide entre instances et comptes",
           "description": "Si activé, cliquer sur le bouton de changement de la page de lancement permet de choisir directement un compte ou une instance sans changer de page"
-        },
-        "autoDownloadJava": {
-          "title": "Télécharger automatiquement un runtime Java adapté",
-          "description": "Une fois activé, si aucun runtime Java adapté n'est disponible lors de la création d'une nouvelle instance, il sera installé automatiquement dans un répertoire dédié"
         }
       }
     },
@@ -1205,14 +1038,14 @@
         "directories": {
           "special": {
             "CURRENT_DIR": "Dossier actuel",
-            "APP_DATA_SUBDIR": "Dossier de données SJMCL",
+            "APP_DATA_SUBDIR": "Dossier de données USTBL",
             "OFFICIAL_DIR": "Dossier du lanceur officiel"
           }
         }
       },
       "deleteDialog": {
         "title": "Supprimer le répertoire du jeu",
-        "content": "Êtes-vous sûr de vouloir supprimer le répertoire du jeu {{dirName}} ? (SJMCL ne le scannera plus, mais les fichiers ne seront pas supprimés du disque)"
+        "content": "Êtes-vous sûr de vouloir supprimer le répertoire du jeu {{dirName}} ? (USTBL ne le scannera plus, mais les fichiers ne seront pas supprimés du disque)"
       },
       "directoryNotExist": "Ce répertoire n'existe pas, veuillez le supprimer et l'ajouter à nouveau"
     },
@@ -1306,8 +1139,8 @@
       "content": "Ajoutez un compte ici et sélectionnez le personnage avec lequel vous souhaitez jouer."
     },
     "step3": {
-      "title": "Page de découverte",
-      "content": "Ici, vous pouvez parcourir les actualités Minecraft et de la communauté, découvrir et télécharger diverses ressources telles que des mods, des cartes et des modpacks.<br/>Vous pouvez également ouvrir rapidement la « Recherche globale » avec le raccourci clavier <key>{{keyname}}</key> + <key>F</key>."
+      "title": "Minecraft, démarre !",
+      "content": "Après avoir sélectionné l'instance et le personnage, et ajusté les paramètres, cliquez sur le bouton de démarrage pour profiter du jeu ! 🥳"
     },
     "step4": {
       "title": "Lancer Minecraft !",
@@ -1334,8 +1167,8 @@
           "url": "https://www.mualliance.cn/en"
         },
         "SJMC": {
-          "title": "Club Minecraft de l'Université Jiao Tong de Shanghai (SJMC)",
-          "url": "https://mc.sjtu.cn/en/"
+          "title": "Club Minecraft de l'Université Jiao Tong de Shanghai (USTB)",
+          "url": "https://www.ustb.world/"
         }
       }
     },
@@ -1360,23 +1193,10 @@
     "top": {
       "settings": {
         "LauncherDocs": {
-          "title": "Documentation du lanceur SJMC",
-          "url": "https://mc.sjtu.cn/sjmcl/en/docs"
-        },
-        "UserGroup": {
-          "title": "Communauté des utilisateurs",
-          "description": "Rejoignez le groupe QQ ou le serveur Discord pour signaler des problèmes, demander des fonctionnalités ou obtenir de l'aide",
-          "url": "https://mc.sjtu.cn/sjmcl/en/docs/user-group"
+          "title": "Documentation du lanceur USTB",
+          "url": "https://docs.ustb.world/"
         }
       }
-    }
-  },
-  "HomeWidget": {
-    "extraOpMenu": {
-      "moveUp": "Déplacer ce widget vers le haut",
-      "moveDown": "Déplacer cette carte vers le bas",
-      "extensionInfo": "Infos sur l'extension",
-      "settings": "Ouvrir les paramètres de l'extension"
     }
   },
   "ImportAccountInfoModal": {
@@ -1384,15 +1204,11 @@
       "title": "Importer des comptes depuis d'autres launchers"
     },
     "launcherDesc": {
-      "HMCL": "Hello Minecraft! Launcher",
-      "MultiMC": "MultiMC"
+      "HMCL": "Hello Minecraft! Launcher"
     },
     "body": {
       "authServers": "Serveurs d'authentification",
       "players": "Joueurs"
-    },
-    "footer": {
-      "parentDirHint": "Les fichiers d'informations de compte seront recherchés dans les dossiers parents des répertoires de jeu ajoutés."
     },
     "tooltips": {
       "existingServer": "Les données d'un serveur d'authentification avec la même adresse existent déjà et seront écrasées.",
@@ -1448,14 +1264,9 @@
     }
   },
   "InstanceModsPage": {
-    "fileDnD": {
-      "title": "Installer des mods",
-      "desc": "Installer le fichier de mod {{fileName}} dans cette instance"
-    },
     "modLoaderList": {
       "title": "Chargeur",
-      "notInstalled": "Non installé",
-      "installed": "Installé"
+      "notInstalled": "Non installé"
     },
     "modList": {
       "title": "Mods",
@@ -1470,24 +1281,11 @@
     }
   },
   "InstanceResourcePacksPage": {
-    "fileDnD": {
-      "title": "Ajouter des packs de ressources",
-      "desc": "Ajouter le fichier de pack de ressources {{fileName}} à cette instance"
-    },
     "resourcePackList": {
       "title": "Packs de ressources globaux"
     },
     "serverResPackList": {
       "title": "Packs de ressources du serveur"
-    }
-  },
-  "InstanceSchematicsPage": {
-    "fileDnD": {
-      "title": "Ajouter des schémas",
-      "desc": "Ajouter le fichier de schéma {{fileName}} à cette instance"
-    },
-    "schematicList": {
-      "title": "Schémas"
     }
   },
   "InstanceScreenshotsPage": {
@@ -1498,7 +1296,6 @@
   "InstanceSettingsPage": {
     "name": "Nom de l'instance",
     "description": "Description de l'instance",
-    "colorTag": "Étiquette de couleur",
     "icon": "Icône de l'instance",
     "applySettings": "Utiliser des paramètres de jeu spécifiques",
     "restoreSettings": "Réinitialiser les paramètres spécifiques ci-dessous",
@@ -1514,16 +1311,18 @@
     }
   },
   "InstanceShaderPacksPage": {
-    "fileDnD": {
-      "title": "Ajouter des packs de shaders",
-      "desc": "Ajouter le fichier de shader {{fileName}} à cette instance"
-    },
     "shaderLoaderList": {
       "title": "Loaders",
       "notInstalled": "Non installé"
     },
     "shaderPackList": {
       "title": "Packs de shaders"
+    }
+  },
+  "InstanceSchematicsPage": {
+    "schematicList": {
+      "title": "Schémas",
+      "preview": "Aperçu"
     }
   },
   "InstanceWidgets": {
@@ -1549,10 +1348,6 @@
     }
   },
   "InstanceWorldsPage": {
-    "fileDnD": {
-      "title": "Ajouter des mondes",
-      "desc": "Ajouter le fichier de sauvegarde {{fileName}} à cette instance"
-    },
     "worldList": {
       "title": "Mondes locaux",
       "lastPlayedAt": "Dernière partie le",
@@ -1585,7 +1380,7 @@
     }
   },
   "IntelligenceSettingsPage": {
-    "title": "Intelligence SJMCL",
+    "title": "Intelligence USTBL",
     "description": "Intégrez des modèles d'IA à votre lanceur et à votre expérience de jeu Minecraft.",
     "mcpServer": {
       "title": "Service MCP",
@@ -1598,7 +1393,7 @@
         "docs": {
           "title": "Guide d'utilisation",
           "description": "Découvrez comment connecter le lanceur à des applications d'agent externes (comme Claude, Cherry Studio, etc.).",
-          "url": "https://mc.sjtu.cn/sjmcl/en/docs/intelligence/launcher-mcp"
+          "url": "https://docs.ustb.world/"
         },
         "port": {
           "title": "Port",
@@ -1627,14 +1422,7 @@
     },
     "confirmDelete": {
       "title": "Supprimer Java",
-      "description": "Êtes-vous sûr de vouloir supprimer cette version de Java ? (SJMCL ne pourra plus l'utiliser pour lancer le jeu, mais les fichiers ne seront pas supprimés du disque)"
-    }
-  },
-  "LastExitedAbnormallyDialog": {
-    "dialog": {
-      "title": "La dernière exécution s'est terminée anormalement",
-      "content": "SJMCL s'est terminé anormalement lors de la dernière exécution. Vous pouvez envoyer les journaux à la <community>communauté</community> ou ouvrir une issue sur <github>GitHub</github> pour obtenir de l'aide.",
-      "viewLog": "Voir les journaux"
+      "description": "Êtes-vous sûr de vouloir supprimer cette version de Java ? (USTBL ne pourra plus l'utiliser pour lancer le jeu, mais les fichiers ne seront pas supprimés du disque)"
     }
   },
   "LaunchPage": {
@@ -1666,8 +1454,7 @@
       "launchGame": "En attente du lancement du jeu"
     },
     "toast": {
-      "noSelectedPlayer": "Veuillez d'abord ajouter et sélectionner un joueur",
-      "noSelectedInstance": "Veuillez d'abord ajouter et sélectionner une instance de jeu"
+      "noSelectedPlayer": "Veuillez d'abord ajouter et sélectionner un joueur"
     }
   },
   "LoaderSelector": {
@@ -1676,9 +1463,6 @@
     "releaseDate": "Publié le {{date}}",
     "notCompatibleWith": "Incompatible avec {{item}}",
     "noVersionSelected": "Version non sélectionnée"
-  },
-  "MainWindowTitlebar": {
-    "extensionProvidedPage": "Cette page est fournie par l'extension {{name}}"
   },
   "ManageSkinModal": {
     "skinManage": "Gérer les skins",
@@ -1721,41 +1505,6 @@
   "MenuSelector": {
     "selectedCount": "{{count}} élément sélectionné"
   },
-  "MicrosoftFriendsModal": {
-    "title": "Amis Minecraft du compte Microsoft {{name}}",
-    "placeholder": {
-      "playerName": "Entrez un nom de joueur à ajouter en ami"
-    },
-    "group": {
-      "requests": "Demandes",
-      "friends": "Amis"
-    },
-    "request": {
-      "incoming": "Invitation reçue",
-      "outgoing": "Invitation envoyée"
-    },
-    "button": {
-      "add": "Ajouter",
-      "accept": "Accepter",
-      "decline": "Refuser",
-      "revoke": "Annuler",
-      "remove": "Supprimer l'ami",
-      "xboxSettings": "Paramètres XBOX"
-    },
-    "empty": {
-      "requests": "Aucune demande",
-      "friends": "Aucun ami"
-    },
-    "status": {
-      "INVITED": "Vous a invité à rejoindre son monde",
-      "ONLINE": "En ligne",
-      "PLAYING_OFFLINE": "En solo",
-      "PLAYING_REALMS": "Sur Realms",
-      "PLAYING_SERVER": "Sur un serveur",
-      "PLAYING_HOSTED_SERVER": "Monde LAN ouvert",
-      "OFFLINE": "Hors ligne"
-    }
-  },
   "NoSuitableJavaDialog": {
     "title": "Aucun environnement Java compatible trouvé pour cette instance",
     "body": "Aucun environnement Java compatible n'est disponible pour cette instance. Cliquez sur « Confirmer » pour ouvrir la page de gestion Java et ajouter ou télécharger Java manuellement."
@@ -1771,6 +1520,18 @@
       "showAll": "Tout afficher (+{{left}})"
     }
   },
+  "PlayerMenu": {
+    "label": {
+      "manageSkin": "Gérer les skins",
+      "viewSkin": "Voir le skin",
+      "delete": "Supprimer ce joueur",
+      "copyUUID": "Copier l'UUID"
+    },
+    "toast": {
+      "refreshing": "Actualisation des informations du personnage en cours",
+      "deleting": "Suppression du personnage en cours"
+    }
+  },
   "PingTestPage": {
     "PingServerList": {
       "title": "Test de connectivité des services",
@@ -1784,20 +1545,7 @@
       "neoforge": "NeoForge",
       "authlibInjector": "Authlib Injector",
       "github": "GitHub",
-      "sjmclapi": "API du lanceur SJMC"
-    }
-  },
-  "PlayerMenu": {
-    "label": {
-      "friends": "Amis",
-      "manageSkin": "Gérer les skins",
-      "viewSkin": "Voir le skin",
-      "delete": "Supprimer ce joueur",
-      "copyUUID": "Copier l'UUID"
-    },
-    "toast": {
-      "refreshing": "Actualisation des informations du personnage en cours",
-      "deleting": "Suppression du personnage en cours"
+      "sjmclapi": "API du lanceur USTB"
     }
   },
   "ReLoginPlayerModal": {
@@ -1813,6 +1561,16 @@
     },
     "button": {
       "login": "Connexion"
+    }
+  },
+  "RestartForUpdateConfirmDialog": {
+    "title": "Mise à jour du lanceur",
+    "body": "La nouvelle version a été téléchargée. Redémarrez USTBL pour finaliser la mise à jour.",
+    "bodyMSI": "La nouvelle version a été téléchargée. Cliquer sur « Installer » fermera USTBL et exécutera le programme d'installation.",
+    "button": {
+      "restart": "Redémarrer",
+      "install": "Installer",
+      "later": "Plus tard"
     }
   },
   "ResourceDownloader": {
@@ -2099,16 +1857,6 @@
       "All": "Tous"
     }
   },
-  "RestartForUpdateConfirmDialog": {
-    "title": "Mise à jour du lanceur",
-    "body": "La nouvelle version a été téléchargée. Redémarrez SJMCL pour finaliser la mise à jour.",
-    "bodyMSI": "La nouvelle version a été téléchargée. Cliquer sur « Installer » fermera SJMCL et exécutera le programme d'installation.",
-    "button": {
-      "restart": "Redémarrer",
-      "install": "Installer",
-      "later": "Plus tard"
-    }
-  },
   "RestoreConfigConfirmDialog": {
     "title": "Restaurer les paramètres du lanceur",
     "body": "Cette opération restaurera tous les paramètres du lanceur à leur valeur par défaut. Voulez-vous continuer ?"
@@ -2125,17 +1873,9 @@
       "setAsBg": "Définir comme fond du lanceur"
     }
   },
-  "SelectInstanceModal": {
-    "header": {
-      "title": "Sélectionner une instance",
-      "titleForLaunch": "Sélectionner l'instance à lancer"
-    }
-  },
   "SelectPlayerModal": {
     "header": {
-      "title": "Sélectionner un joueur",
-      "titleForAdd": "Sélectionner le nouveau joueur à ajouter",
-      "titleForLaunch": "Sélectionner le joueur à utiliser"
+      "title": "Veuillez sélectionner le joueur à ajouter"
     }
   },
   "Services": {
@@ -2245,7 +1985,6 @@
           "title": "Échec de l'ajout du joueur hors ligne",
           "description": {
             "DUPLICATE": "Le joueur existe déjà",
-            "FULL_LOGIN_UNAVAILABLE": "Veuillez vous connecter avec votre compte Microsoft avant d'accéder à cette fonctionnalité.",
             "INVALID": "UUID invalide",
             "TEXTURE_ERROR": "Impossible d'obtenir la texture du joueur"
           }
@@ -2268,20 +2007,12 @@
           "title": "Échec de l'ajout du joueur",
           "description": {
             "DUPLICATE": "Le joueur existe déjà",
-            "FULL_LOGIN_UNAVAILABLE": "Veuillez vous connecter avec votre compte Microsoft avant d'accéder à cette fonctionnalité.",
             "NETWORK_ERROR": "Impossible de se connecter au serveur d'authentification",
             "PARSE_ERROR": "Format de données du serveur incorrect",
             "NOT_FOUND": "Serveur d'authentification introuvable",
             "CANCELLED": "Annulé",
             "INVALID": "Adresse du serveur d'authentification invalide",
-            "NO_MINECRAFT_PROFILE": "Personnage non trouvé. Veuillez vérifier si vous avez acheté Minecraft et créé un personnage.",
-            "XSTS_BANNED": "Votre compte a été banni des services XBOX",
-            "XSTS_PARENTAL_RESTRICTION": "Votre compte est bloqué par le contrôle parental",
-            "XSTS_NO_XBOX_ACCOUNT": "Votre compte Microsoft n'est pas associé à un compte XBOX, veuillez en créer un sur minecraft.net",
-            "XSTS_TERMS_NOT_ACCEPTED": "Vous devez accepter les conditions d'utilisation XBOX pour continuer",
-            "XSTS_REGION_BANNED": "Votre compte provient d'un pays ou d'une région où XBOX Live n'est pas disponible",
-            "XSTS_CHILD_ACCOUNT": "Votre compte est un compte mineur et nécessite le consentement parental sur family.microsoft.com",
-            "XSTS_UNKNOWN_ERROR": "Une erreur XSTS inconnue s'est produite lors de l'authentification"
+            "NO_MINECRAFT_PROFILE": "Personnage non trouvé. Veuillez vérifier si vous avez acheté Minecraft et créé un personnage."
           }
         }
       },
@@ -2296,14 +2027,7 @@
             "NETWORK_ERROR": "Impossible de se connecter au serveur d'authentification",
             "INVALID": "Impossible d'actualiser un joueur hors ligne",
             "CANCELLED": "Annulé",
-            "NO_MINECRAFT_PROFILE": "Personnage non trouvé. Veuillez vérifier si vous avez acheté Minecraft et créé un personnage.",
-            "XSTS_BANNED": "Votre compte a été banni des services XBOX",
-            "XSTS_PARENTAL_RESTRICTION": "Votre compte est bloqué par le contrôle parental",
-            "XSTS_NO_XBOX_ACCOUNT": "Votre compte Microsoft n'est pas associé à un compte XBOX, veuillez en créer un sur minecraft.net",
-            "XSTS_TERMS_NOT_ACCEPTED": "Vous devez accepter les conditions d'utilisation XBOX pour continuer",
-            "XSTS_REGION_BANNED": "Votre compte provient d'un pays ou d'une région où XBOX Live n'est pas disponible",
-            "XSTS_CHILD_ACCOUNT": "Votre compte est un compte mineur et nécessite le consentement parental sur family.microsoft.com",
-            "XSTS_UNKNOWN_ERROR": "Une erreur XSTS inconnue s'est produite lors de l'authentification"
+            "NO_MINECRAFT_PROFILE": "Personnage non trouvé. Veuillez vérifier si vous avez acheté Minecraft et créé un personnage."
           }
         }
       },
@@ -2313,7 +2037,6 @@
           "title": "Échec de l'ajout du joueur",
           "description": {
             "DUPLICATE": "Le joueur existe déjà",
-            "FULL_LOGIN_UNAVAILABLE": "Veuillez vous connecter avec votre compte Microsoft avant d'accéder à cette fonctionnalité.",
             "NETWORK_ERROR": "Impossible de se connecter au serveur d'authentification",
             "PARSE_ERROR": "Format de données du serveur incorrect",
             "INVALID": "Nom d'utilisateur ou mot de passe incorrect",
@@ -2341,7 +2064,6 @@
           "title": "Échec de l'ajout du joueur",
           "description": {
             "DUPLICATE": "Le joueur existe déjà",
-            "FULL_LOGIN_UNAVAILABLE": "Veuillez vous connecter avec votre compte Microsoft avant d'accéder à cette fonctionnalité.",
             "NETWORK_ERROR": "Impossible de se connecter au serveur d'authentification.",
             "PARSE_ERROR": "Le serveur a renvoyé des données dans un format incorrect.",
             "EXPIRED": "Le jeton a expiré. Veuillez vous reconnecter."
@@ -2389,41 +2111,6 @@
             "PARSE_ERROR": "Format de données du serveur incorrect",
             "NETWORK_ERROR": "Impossible de se connecter au serveur d'authentification",
             "INVALID": "Impossible d'actualiser un joueur hors ligne"
-          }
-        }
-      },
-      "retrieveMicrosoftFriendList": {
-        "success": "Liste d'amis récupérée avec succès",
-        "error": {
-          "title": "Échec de la récupération de la liste d'amis Microsoft",
-          "description": {
-            "NOT_FOUND": "Le joueur n'existe pas",
-            "INVALID": "Le joueur actuel n'est pas un compte Microsoft",
-            "EXPIRED": "Le jeton d'accès a expiré, veuillez vous reconnecter",
-            "PARSE_ERROR": "Le serveur a renvoyé des données dans un format incorrect",
-            "NETWORK_ERROR": "Impossible de se connecter aux services Minecraft",
-            "FORBIDDEN": "Ce compte n'est pas autorisé à utiliser les amis",
-            "TOO_MANY_REQUESTS": "Trop de requêtes, veuillez réessayer plus tard",
-            "SERVICE_UNAVAILABLE": "Les services Minecraft sont temporairement indisponibles"
-          }
-        }
-      },
-      "updateMicrosoftFriend": {
-        "success": "Opération d'ami effectuée avec succès",
-        "error": {
-          "title": "Échec de l'opération d'ami Microsoft",
-          "description": {
-            "NOT_FOUND": "Le joueur n'existe pas",
-            "INVALID": "Les paramètres de l'opération d'ami sont invalides",
-            "EXPIRED": "Le jeton d'accès a expiré, veuillez vous reconnecter",
-            "PARSE_ERROR": "Le serveur a renvoyé des données dans un format incorrect",
-            "NETWORK_ERROR": "Impossible de se connecter aux services Minecraft",
-            "FORBIDDEN": "Impossible d'ajouter cet ami pour le moment. Veuillez vérifier les paramètres de votre compte et de celui de l'autre joueur",
-            "TOO_MANY_REQUESTS": "Trop de requêtes, veuillez réessayer plus tard",
-            "SERVICE_UNAVAILABLE": "Les services Minecraft sont temporairement indisponibles",
-            "UNKNOWN_PROFILE": "Le joueur cible n'existe pas",
-            "CANNOT_ADD_SELF": "Vous ne pouvez pas vous ajouter vous-même",
-            "DUPLICATED_PROFILES": "Demande d'opération d'ami en double"
           }
         }
       },
@@ -2550,14 +2237,6 @@
             "PARSE_ERROR": "Format de données du serveur incorrect",
             "NETWORK_ERROR": "Échec du démarrage du jeu",
             "NO_DOWNLOAD_API": "Aucune stratégie de téléchargement disponible, veuillez vérifier la connexion réseau"
-          }
-        }
-      },
-      "fetchOptiFineVersionList": {
-        "error": {
-          "title": "Échec de la récupération de la liste des versions d'OptiFine",
-          "description": {
-            "NETWORK_ERROR": "Échec de la connexion au serveur"
           }
         }
       },
@@ -2692,7 +2371,7 @@
           }
         }
       },
-      "copyResourcesToInstances": {
+      "copyResourceToInstances": {
         "success": "Ressource copiée avec succès",
         "error": {
           "title": "Échec de la copie de la ressource",
@@ -2827,23 +2506,6 @@
           }
         }
       },
-      "finishOptiFineLoaderInstall": {
-        "loading": "Installation d'OptiFine pour {{instanceName}}",
-        "success": "OptiFine installé avec succès",
-        "error": {
-          "title": "Échec de l'installation d'OptiFine",
-          "description": {
-            "INSTANCE_NOT_FOUND_BY_ID": "L'identifiant de l'instance n'existe pas",
-            "INSTALLATION_DUPLICATED": "Un autre processus d'installation est déjà en cours",
-            "PROCESSOR_EXECUTION_FAILED": "Échec de l'exécution du processus d'installation",
-            "LOADER_INSTALLER_NOT_FOUND": "Fichier d'installation d'OptiFine introuvable",
-            "MOD_LOADER_VERSION_PARSE_ERROR": "Échec de l'analyse des informations de version d'OptiFine",
-            "INVALID_SOURCE_PATH": "Chemin source invalide",
-            "NO_SUITABLE_JAVA": "Aucun runtime Java adapté trouvé",
-            "SELECTED_JAVA_UNAVAILABLE": "Le runtime Java sélectionné est indisponible"
-          }
-        }
-      },
       "checkChangeModLoaderAvailablity": {
         "error": {
           "title": "Impossible de changer le chargeur de mods",
@@ -2865,58 +2527,14 @@
           "title": "Échec de la récupération des informations de ressources du pack de mods",
           "description": {
             "FILE_NOT_FOUND_ERROR": "Le fichier du pack de mods n'existe pas. Il a peut-être été renommé, déplacé ou supprimé",
-            "MODPACK_MANIFEST_PARSE_ERROR": "Erreur d'analyse du fichier de manifeste du pack de mods",
-            "NETWORK_ERROR": "Impossible de récupérer les informations du mod loader requises par le pack de mods. Vérifiez votre connexion réseau",
-            "MOD_LOADER_VERSION_PARSE_ERROR": "Impossible d'identifier la version du mod loader requise par ce pack de mods"
+            "MODPACK_MANIFEST_PARSE_ERROR": "Erreur d'analyse du fichier de manifeste du pack de mods"
           }
-        }
-      },
-      "retrieveExportableFileList": {
-        "error": {
-          "title": "Échec de la récupération de la liste des fichiers exportables"
-        }
-      },
-      "exportModpack": {
-        "success": "Pack de mods exporté avec succès",
-        "error": {
-          "title": "Échec de l'exportation du pack de mods"
         }
       },
       "addCustomInstanceIcon": {
         "success": "L’icône d’instance personnalisée a été ajoutée avec succès",
         "error": {
           "title": "Échec de l’ajout d’icônes d’instance personnalisées"
-        }
-      }
-    },
-    "extension": {
-      "retrieveExtensionList": {
-        "error": {
-          "title": "Échec de la récupération de la liste des extensions"
-        }
-      },
-      "addExtension": {
-        "success": "Extension ajoutée avec succès",
-        "error": {
-          "title": "Échec de l'ajout de l'extension",
-          "description": {
-            "INVALID_PACKAGE_FORMAT": "Le format du contenu du paquet d'extension est invalide",
-            "INVALID_IDENTIFIER": "L'identifiant de l'extension est invalide",
-            "IDENTIFIER_MISMATCH": "L'identifiant de l'extension ne correspond pas à celui attendu",
-            "INVALID_NAME": "Le nom de l'extension est invalide",
-            "LAUNCHER_VERSION_TOO_LOW": "La version du lanceur est trop ancienne",
-            "EXTENSION_NOT_FOUND": "Fichier du paquet cible introuvable"
-          }
-        }
-      },
-      "deleteExtension": {
-        "success": "Extension supprimée avec succès",
-        "error": {
-          "title": "Échec de la suppression de l'extension",
-          "description": {
-            "INVALID_IDENTIFIER": "L'identifiant de l'extension est invalide",
-            "EXTENSION_NOT_FOUND": "Extension introuvable"
-          }
         }
       }
     },
@@ -2951,9 +2569,9 @@
       "appearance": "Apparence",
       "download": "Téléchargement",
       "intelligence": "IA",
-      "extension": "Extensions",
       "help": "Aide & Doc",
-      "about": "À propos"
+      "about": "À propos",
+      "dev-test": "Développement - Page de test"
     }
   },
   "SkinPreview": {
@@ -3003,7 +2621,7 @@
     "header": {
       "title": "Étoilez-nous sur GitHub !"
     },
-    "body": "Si vous aimez SJMCL et souhaitez nous soutenir, pouvez-vous nous donner une étoile sur GitHub ? Ce petit geste compte beaucoup pour nous et nous motive à continuer à améliorer l'expérience.",
+    "body": "Si vous aimez USTBL et souhaitez nous soutenir, pouvez-vous nous donner une étoile sur GitHub ? Ce petit geste compte beaucoup pour nous et nous motive à continuer à améliorer l'expérience.",
     "button": {
       "later": "Plus tard",
       "starUs": "Étoiler"
@@ -3037,7 +2655,7 @@
   "UnavailableExePathAlertDialog": {
     "dialog": {
       "title": "Chemin d'exécution non sûr",
-      "content": "SJMCL est actuellement exécuté depuis un répertoire temporaire ou invalide. Vos paramètres et données de jeu peuvent être perdus. Veuillez déplacer SJMCL vers un autre emplacement et le relancer.",
+      "content": "USTBL est actuellement exécuté depuis un répertoire temporaire ou invalide. Vos paramètres et données de jeu peuvent être perdus. Veuillez déplacer USTBL vers un autre emplacement et le relancer.",
       "btnContinue": "Continuer quand même"
     }
   },
@@ -3074,11 +2692,11 @@
       "title": "Bienvenue !"
     },
     "body": {
-      "text": "Bienvenue sur SJMCL ! Avant de commencer, veuillez lire et accepter notre <terms>Accord d'utilisateur</terms>."
+      "text": "Bienvenue sur USTBL ! Avant de commencer, veuillez lire et accepter notre <terms>Accord d'utilisateur</terms>."
     },
     "warning": {
-      "unstableVersion": "Vous utilisez actuellement SJMCL (version {{versionLabel}}). Certaines fonctionnalités peuvent être instables ou encore en développement. Nous vous invitons à signaler tout problème d'utilisation ou à soumettre vos suggestions d'amélioration.",
-      "winArm64Notice": "SJMCL prend désormais en charge la plateforme Windows on Arm. Si vous utilisez un appareil basé sur une plateforme <b>Qualcomm</b>, vous devrez peut-être installer le <glpack>Pack de compatibilité OpenGL</glpack> pour pouvoir jouer."
+      "unstableVersion": "Vous utilisez actuellement USTBL (version {{versionLabel}}). Certaines fonctionnalités peuvent être instables ou encore en développement. Nous vous invitons à signaler tout problème d'utilisation ou à soumettre vos suggestions d'amélioration.",
+      "winArm64Notice": "USTBL prend désormais en charge la plateforme Windows on Arm. Si vous utilisez un appareil basé sur une plateforme <b>Qualcomm</b>, vous devrez peut-être installer le <glpack>Pack de compatibilité OpenGL</glpack> pour pouvoir jouer."
     },
     "button": {
       "agree": "Accepter"

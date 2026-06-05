@@ -3,16 +3,13 @@ import {
   AlertIcon,
   HStack,
   Input,
-  Link,
   NumberInput,
   NumberInputField,
   Switch,
-  Text,
   VStack,
 } from "@chakra-ui/react";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { useState } from "react";
-import { Trans, useTranslation } from "react-i18next";
+import { useTranslation } from "react-i18next";
 import { MenuSelector } from "@/components/common/menu-selector";
 import {
   OptionItemGroup,
@@ -50,15 +47,6 @@ const GameAdvancedSettingsGroups: React.FC<GameSettingsGroupsProps> = ({
     gameConfig.advanced.jvm.environmentVariable
   );
 
-  const garbageCollectors = [
-    "auto",
-    "g1gc",
-    "zgc",
-    "shenandoah",
-    "parallel",
-    "serial",
-  ];
-
   const gameFileValidatePolicies = ["disable", "normal", "full"];
   const updateGameAdvancedConfig = (key: string, value: any) => {
     updateGameConfig(`advanced.${key}`, value);
@@ -75,7 +63,7 @@ const GameAdvancedSettingsGroups: React.FC<GameSettingsGroupsProps> = ({
           children: (
             <Input
               size="xs"
-              maxW={370}
+              maxW={380}
               value={minecraftArgument}
               onChange={(event) => setMinecraftArgument(event.target.value)}
               onBlur={() => {
@@ -98,7 +86,7 @@ const GameAdvancedSettingsGroups: React.FC<GameSettingsGroupsProps> = ({
           children: (
             <Input
               size="xs"
-              maxW={370}
+              maxW={380}
               value={precallCommand}
               onChange={(event) => setPrecallCommand(event.target.value)}
               onBlur={() => {
@@ -121,7 +109,7 @@ const GameAdvancedSettingsGroups: React.FC<GameSettingsGroupsProps> = ({
           children: (
             <Input
               size="xs"
-              maxW={370}
+              maxW={380}
               value={wrapperLauncher}
               onChange={(event) => setWrapperLauncher(event.target.value)}
               onBlur={() => {
@@ -144,7 +132,7 @@ const GameAdvancedSettingsGroups: React.FC<GameSettingsGroupsProps> = ({
           children: (
             <Input
               size="xs"
-              maxW={370}
+              maxW={380}
               value={postExitCommand}
               onChange={(event) => setPostExitCommand(event.target.value)}
               onBlur={() => {
@@ -166,24 +154,17 @@ const GameAdvancedSettingsGroups: React.FC<GameSettingsGroupsProps> = ({
       title: t("GameAdvancedSettingsPage.jvm.title"),
       items: [
         {
-          title: t(
-            "GameAdvancedSettingsPage.jvm.settings.garbageCollector.title"
-          ),
-          description: t(
-            "GameAdvancedSettingsPage.jvm.settings.garbageCollector.desc"
-          ),
+          title: t("GameAdvancedSettingsPage.jvm.settings.args.title"),
           children: (
-            <MenuSelector
-              options={garbageCollectors.map((value) => ({
-                value,
-                label: t(
-                  `GameAdvancedSettingsPage.jvm.settings.garbageCollector.options.${value}`
-                ),
-              }))}
-              value={gameConfig.advanced.jvm.garbageCollector}
-              onSelect={(val) => {
-                updateGameAdvancedConfig("jvm.garbageCollector", val);
+            <Input
+              size="xs"
+              maxW={380}
+              value={args}
+              onChange={(event) => setArgs(event.target.value)}
+              onBlur={() => {
+                updateGameAdvancedConfig("jvm.args", args);
               }}
+              focusBorderColor={`${primaryColor}.500`}
             />
           ),
         },
@@ -194,7 +175,7 @@ const GameAdvancedSettingsGroups: React.FC<GameSettingsGroupsProps> = ({
           children: (
             <NumberInput
               size="xs"
-              w={370}
+              w={380}
               value={javaPermanentGenerationSpace}
               onChange={(value) => {
                 if (!/^\d*$/.test(value)) return;
@@ -219,7 +200,7 @@ const GameAdvancedSettingsGroups: React.FC<GameSettingsGroupsProps> = ({
           children: (
             <Input
               size="xs"
-              maxW={370}
+              maxW={380}
               value={environmentVariable}
               onChange={(event) => setEnvironmentVariable(event.target.value)}
               onBlur={() => {
@@ -227,21 +208,6 @@ const GameAdvancedSettingsGroups: React.FC<GameSettingsGroupsProps> = ({
                   "jvm.environmentVariable",
                   environmentVariable
                 );
-              }}
-              focusBorderColor={`${primaryColor}.500`}
-            />
-          ),
-        },
-        {
-          title: t("GameAdvancedSettingsPage.jvm.settings.args.title"),
-          children: (
-            <Input
-              size="xs"
-              maxW={370}
-              value={args}
-              onChange={(event) => setArgs(event.target.value)}
-              onBlur={() => {
-                updateGameAdvancedConfig("jvm.args", args);
               }}
               focusBorderColor={`${primaryColor}.500`}
             />
@@ -319,42 +285,6 @@ const GameAdvancedSettingsGroups: React.FC<GameSettingsGroupsProps> = ({
               onChange={(event) => {
                 updateGameAdvancedConfig(
                   "workaround.dontPatchNatives",
-                  event.target.checked
-                );
-              }}
-            />
-          ),
-        },
-        {
-          title: t(
-            "GameAdvancedSettingsPage.workaround.settings.useLwjglUnsafeAgent.title"
-          ),
-          description: (
-            <Text fontSize="xs" className="secondary-text">
-              <Trans
-                i18nKey="GameAdvancedSettingsPage.workaround.settings.useLwjglUnsafeAgent.description"
-                components={{
-                  hmcl: (
-                    <Link
-                      color={`${primaryColor}.500`}
-                      onClick={() => {
-                        openUrl(
-                          "https://github.com/HMCL-dev/lwjgl-unsafe-agent"
-                        );
-                      }}
-                    />
-                  ),
-                }}
-              />
-            </Text>
-          ),
-          children: (
-            <Switch
-              colorScheme={primaryColor}
-              isChecked={gameConfig.advanced.workaround.useLwjglUnsafeAgent}
-              onChange={(event) => {
-                updateGameAdvancedConfig(
-                  "workaround.useLwjglUnsafeAgent",
                   event.target.checked
                 );
               }}

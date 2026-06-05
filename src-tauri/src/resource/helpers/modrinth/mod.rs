@@ -1,7 +1,6 @@
 pub mod misc;
 
 use crate::error::SJMCLResult;
-use crate::instance::models::misc::ModLoaderType;
 use crate::resource::helpers::misc::apply_other_resource_enhancements;
 use crate::resource::helpers::mod_db::handle_search_query;
 use crate::resource::models::{
@@ -12,11 +11,12 @@ use crate::resource::models::{
 use crate::tasks::download::DownloadParam;
 use hex;
 use misc::{
-  ModrinthProject, ModrinthSearchRes, ModrinthVersionPack, get_modrinth_api, make_modrinth_request,
-  map_modrinth_file_to_version_pack,
+  get_modrinth_api, make_modrinth_request, map_modrinth_file_to_version_pack, ModrinthProject,
+  ModrinthSearchRes, ModrinthVersionPack,
 };
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_http::reqwest;
@@ -97,19 +97,19 @@ pub async fn fetch_resource_version_packs_modrinth(
       format!("[\"{}\"]", mod_loader.to_lowercase()),
     );
   }
-  if let Some(first_version) = game_versions.first()
-    && first_version != ALL_FILTER
-  {
-    let versions_json = format!(
-      "[{}]",
-      game_versions
-        .iter()
-        .map(|v| format!("\"{}\"", v))
-        .collect::<Vec<_>>()
-        .join(",")
-    );
+  if let Some(first_version) = game_versions.first() {
+    if first_version != ALL_FILTER {
+      let versions_json = format!(
+        "[{}]",
+        game_versions
+          .iter()
+          .map(|v| format!("\"{}\"", v))
+          .collect::<Vec<_>>()
+          .join(",")
+      );
 
-    params.insert("game_versions".to_string(), versions_json);
+      params.insert("game_versions".to_string(), versions_json);
+    }
   }
 
   let client = app.state::<reqwest::Client>();
@@ -128,9 +128,7 @@ pub async fn fetch_remote_resource_by_local_modrinth(
   app: &AppHandle,
   file_path: &str,
 ) -> SJMCLResult<OtherResourceFileInfo> {
-  let file_content = tokio::fs::read(file_path)
-    .await
-    .map_err(|_| ResourceError::ParseError)?;
+  let file_content = fs::read(file_path).map_err(|_| ResourceError::ParseError)?;
 
   let mut hasher = Sha1::new();
   hasher.update(&file_content);
@@ -187,25 +185,16 @@ pub async fn fetch_remote_resource_by_id_modrinth(
   Ok(resource_info)
 }
 
-// used for auto install Fabric API and QFAPI mod
-pub async fn fetch_latest_mod_download_param_modrinth(
+pub async fn get_latest_fabric_api_mod_download(
   app: &AppHandle,
-  mod_id: &str,
-  mod_loader: ModLoaderType,
   game_version: &str,
   mods_dir: PathBuf,
 ) -> SJMCLResult<Option<DownloadParam>> {
-  log::info!(
-    "fetch_latest_mod_download_param_modrinth called: mod_id={}, mod_loader={}, game_version={}, mods_dir={}",
-    mod_id,
-    mod_loader,
-    game_version,
-    mods_dir.display()
-  );
+  const FABRIC_API_MOD_ID: &str = "P7dR8mSH"; // Fabric API Mod Id in Modrinth
 
   let query = OtherResourceVersionPackQuery {
-    resource_id: mod_id.to_string(),
-    mod_loader: mod_loader.to_string(),
+    resource_id: FABRIC_API_MOD_ID.to_string(),
+    mod_loader: "Fabric".to_string(),
     game_versions: vec![game_version.to_string()],
   };
 

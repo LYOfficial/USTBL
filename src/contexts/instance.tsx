@@ -25,16 +25,6 @@ import { WorldInfo } from "@/models/instance/world";
 import { InstanceService } from "@/services/instance";
 import { updateByKeyPath } from "@/utils/partial";
 
-type ImportResourcesOptions = {
-  filterName: string;
-  filterExt: string[];
-  tgtDirType: InstanceSubdirType;
-  paths?: string[];
-  multiple?: boolean;
-  decompress?: boolean;
-  onSuccessCallback: () => void;
-};
-
 export interface InstanceContextType {
   instanceId: string | undefined;
   summary: InstanceSummary | undefined;
@@ -75,7 +65,7 @@ export interface InstanceContextType {
   handleRetrieveInstanceSubdirPath: (
     dirType: InstanceSubdirType
   ) => Promise<string | null>;
-  handleImportResources: (options: ImportResourcesOptions) => void;
+  handleImportResource: (option: any) => void;
   handleUpdateInstanceConfig: (path: string, value: any) => void;
   handleRestoreInstanceGameConfig: () => void;
 }
@@ -133,16 +123,17 @@ export const InstanceContextProvider: React.FC<{
   const updateSummaryInContext = useCallback(
     (path: string, value: any) => {
       // for frontend-only state update to sync with backend if needed.
+      if (path === "id") return; // forbid update id here
+
       setInstanceSummary((prevSummary) => {
         if (!prevSummary) return prevSummary;
 
-        const prevSummaryId = prevSummary.id;
         const newSummary = { ...prevSummary };
         updateByKeyPath(newSummary, path, value);
 
         const instanceList = getInstanceList() || [];
         const updatedList = instanceList.map((instance) =>
-          instance.id === prevSummaryId ? newSummary : instance
+          instance.id === newSummary.id ? newSummary : instance
         );
         setInstanceList(updatedList as InstanceSummary[]);
 
@@ -210,46 +201,44 @@ export const InstanceContextProvider: React.FC<{
   );
 
   const openInstanceSubdir = useCallback(
-    async (dirType: InstanceSubdirType) => {
-      const path = await handleRetrieveInstanceSubdirPath(dirType);
-      if (path) await openPath(path);
+    (dirType: InstanceSubdirType) => {
+      handleRetrieveInstanceSubdirPath(dirType).then((path) => {
+        if (path) openPath(path);
+      });
     },
     [handleRetrieveInstanceSubdirPath]
   );
 
-  const handleImportResources = useCallback(
-    (options: ImportResourcesOptions) => {
+  type ImportResourceOptions = {
+    filterName: string;
+    filterExt: string[];
+    tgtDirType: InstanceSubdirType;
+    decompress?: boolean;
+    onSuccessCallback: () => void;
+  };
+
+  const handleImportResource = useCallback(
+    (options: ImportResourceOptions) => {
       const {
         filterName,
         filterExt,
         tgtDirType,
-        paths,
-        multiple = false,
         decompress = false,
         onSuccessCallback,
       } = options;
       if (instanceId !== undefined) {
-        const selectedPathPromise = paths
-          ? Promise.resolve(paths)
-          : open({
-              multiple,
-              filters: [
-                {
-                  name: filterName,
-                  extensions: filterExt,
-                },
-              ],
-            });
-
-        selectedPathPromise.then((selectedPath) => {
-          const selectedPaths = Array.isArray(selectedPath)
-            ? selectedPath
-            : selectedPath
-              ? [selectedPath]
-              : [];
-          if (selectedPaths.length === 0) return;
-          InstanceService.copyResourcesToInstances(
-            selectedPaths,
+        open({
+          multiple: false,
+          filters: [
+            {
+              name: filterName,
+              extensions: filterExt,
+            },
+          ],
+        }).then((selectedPath) => {
+          if (!selectedPath) return;
+          InstanceService.copyResourceToInstances(
+            selectedPath,
             [instanceId],
             tgtDirType,
             decompress
@@ -626,7 +615,7 @@ export const InstanceContextProvider: React.FC<{
         isScreenshotListLoading,
         // getInstanceGameConfig,
         handleRetrieveInstanceSubdirPath,
-        handleImportResources,
+        handleImportResource,
         handleUpdateInstanceConfig,
         handleRestoreInstanceGameConfig,
       }}

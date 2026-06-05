@@ -83,12 +83,8 @@ const GlobalGameSettingsPage = () => {
       config.localGameDirectories.filter((dir) => dir.dir !== selectedDir.dir)
     );
     getInstanceList(true); // refresh frontend state of instance list
-    removeHistory(
-      `/instances/details/${encodeURIComponent(`${selectedDir.name}:`)}`
-    );
-    removeHistory(
-      `/instances/list?dir=${encodeURIComponent(selectedDir.name)}`
-    );
+    removeHistory(`/instances/details/${selectedDir.name}:`);
+    removeHistory(`/instances/list/${selectedDir.name}`);
     closeSharedModal("generic-confirm");
   };
 
@@ -96,8 +92,8 @@ const GlobalGameSettingsPage = () => {
     {
       icon: "openFolder",
       danger: false,
-      onClick: async () => {
-        await openPath(directory.dir);
+      onClick: () => {
+        openPath(directory.dir);
       },
       disabled: !directoryExistence[directory.dir],
     },

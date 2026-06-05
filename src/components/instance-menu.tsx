@@ -39,18 +39,15 @@ export const InstanceMenu: React.FC<InstanceMenuProps> = ({
     {
       icon: LuFolderOpen,
       label: t("General.openFolder"),
-      onClick: async () => {
-        await openPath(instance.versionPath);
+      onClick: () => {
+        openPath(instance.versionPath);
       },
     },
     {
       icon: LuLayoutList,
       label: t("InstanceMenu.label.details"),
       onClick: () => {
-        router.push({
-          pathname: "/instances/details/[id]",
-          query: { id: instance.id },
-        });
+        router.push(`/instances/details/${encodeURIComponent(instance.id)}`);
       },
     },
     {

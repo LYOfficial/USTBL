@@ -10,43 +10,6 @@ const HelpSettingsPage = () => {
   const { t } = useTranslation();
   const helpSettingGroups: OptionItemGroupProps[] = [
     {
-      items: [
-        {
-          title: t("HelpSettingsPage.top.settings.LauncherDocs.title"),
-          children: (
-            <CommonIconButton
-              label={t("HelpSettingsPage.top.settings.LauncherDocs.url")}
-              icon="external"
-              withTooltip
-              tooltipPlacement="bottom-end"
-              size="xs"
-              h={18}
-              onClick={() =>
-                openUrl(t("HelpSettingsPage.top.settings.LauncherDocs.url"))
-              }
-            />
-          ),
-        },
-        {
-          title: t("HelpSettingsPage.top.settings.UserGroup.title"),
-          description: t("HelpSettingsPage.top.settings.UserGroup.description"),
-          children: (
-            <CommonIconButton
-              label={t("HelpSettingsPage.top.settings.UserGroup.url")}
-              icon="external"
-              withTooltip
-              tooltipPlacement="bottom-end"
-              size="xs"
-              h={18}
-              onClick={() =>
-                openUrl(t("HelpSettingsPage.top.settings.UserGroup.url"))
-              }
-            />
-          ),
-        },
-      ],
-    },
-    {
       title: t("HelpSettingsPage.minecraft.title"),
       items: [
         {
@@ -83,22 +46,6 @@ const HelpSettingsPage = () => {
             />
           ),
         },
-        {
-          title: t("HelpSettingsPage.minecraft.settings.curseforge.title"),
-          description: t(
-            "HelpSettingsPage.minecraft.settings.curseforge.description"
-          ),
-          children: (
-            <CommonIconButton
-              label="https://www.curseforge.com/minecraft"
-              icon="external"
-              withTooltip
-              tooltipPlacement="bottom-end"
-              size="xs"
-              onClick={() => openUrl("https://www.curseforge.com/minecraft")}
-            />
-          ),
-        },
       ],
     },
     {
@@ -124,15 +71,13 @@ const HelpSettingsPage = () => {
           title: t("HelpSettingsPage.community.settings.SJMC.title"),
           children: (
             <CommonIconButton
-              label={t("HelpSettingsPage.community.settings.SJMC.url")}
+              label="https://docs.ustb.world"
               icon="external"
               withTooltip
               tooltipPlacement="bottom-end"
               size="xs"
               h={18}
-              onClick={() =>
-                openUrl(t("HelpSettingsPage.community.settings.SJMC.url"))
-              }
+              onClick={() => openUrl("https://docs.ustb.world")}
             />
           ),
         },

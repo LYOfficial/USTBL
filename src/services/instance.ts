@@ -2,11 +2,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { InstanceSubdirType } from "@/enums/instance";
 import { GameConfig, GameDirectory } from "@/models/config";
 import {
-  ExportModpackOptions,
   GameServerInfo,
   InstanceSummary,
   LocalModInfo,
-  ModpackFileList,
   ModpackMetaInfo,
   ResourcePackInfo,
   SchematicInfo,
@@ -48,7 +46,6 @@ export class InstanceService {
    * @param {OptiFineResourceInfo} [optifine] - Optional OptiFine installation.
    * @param {string} [modpackPath] - Optional path to the modpack archive file.
    * @param {boolean} [isInstallFabricApi] - Optional flag to indicate whether to install Fabric API (only valid when modLoader is Fabric).
-   * @param {boolean} [isInstallQfApi] - Optional flag to indicate whether to install QFAPI / QSL (only valid when modLoader is Quilt).
    * @returns {Promise<InvokeResponse<null>>}
    */
   @responseHandler("instance")
@@ -61,8 +58,7 @@ export class InstanceService {
     modLoader: ModLoaderResourceInfo,
     optifine?: OptiFineResourceInfo,
     modpackPath?: string,
-    isInstallFabricApi?: boolean,
-    isInstallQfApi?: boolean
+    isInstallFabricApi?: boolean
   ): Promise<InvokeResponse<null>> {
     return await invoke("create_instance", {
       directory,
@@ -74,7 +70,6 @@ export class InstanceService {
       optifine,
       modpackPath,
       isInstallFabricApi,
-      isInstallQfApi,
     });
   }
 
@@ -145,31 +140,6 @@ export class InstanceService {
   }
 
   /**
-   * READ a file under the specified instance directory type.
-   * @param {string} instanceId - The instance ID.
-   * @param {InstanceSubdirType} dirType - The directory type.
-   * @param {string} path - Relative path under the instance directory.
-   * @param {"string" | "base64"} [mode="string"] - Read mode, default=`string`; `string` reads UTF-8 text, while `base64` returns binary bytes encoded as base64.
-   * @returns {Promise<InvokeResponse<string>>}
-   *
-   * This command is mainly designed for extensions, CLI and external agents.
-   */
-  @responseHandler("instance")
-  static async readInstanceFile(
-    instanceId: string,
-    dirType: InstanceSubdirType,
-    path: string,
-    mode?: "string" | "base64"
-  ): Promise<InvokeResponse<string>> {
-    return await invoke("read_instance_file", {
-      instanceId,
-      dirType,
-      path,
-      mode,
-    });
-  }
-
-  /**
    * DELETE the specified instance's version folder from disk.
    * @param {string} instanceId - The instance ID to delete.
    * @returns {Promise<InvokeResponse<void>>}
@@ -201,22 +171,22 @@ export class InstanceService {
   }
 
   /**
-   * COPY the specified resource(s) to the target instance(s).
-   * @param {string | string[]} srcFilePaths - The path(s) of the file(s) or directory(s) to copy.
+   * COPY the specified resource to the target instance(s).
+   * @param {string} srcFilePath - The path of the file (or the directory) to copy.
    * @param {string[]} tgtInstIds - ID of the target instance(s).
    * @param {InstanceSubdirType} tgtDirType - The instance subdir type to operate.
    * @param {boolean} [decompress=false] - Whether to decompress as a zip file
    * @returns {Promise<InvokeResponse<void>>}
    */
   @responseHandler("instance")
-  static async copyResourcesToInstances(
-    srcFilePaths: string | string[],
+  static async copyResourceToInstances(
+    srcFilePath: string,
     tgtInstIds: string[],
     tgtDirType: InstanceSubdirType,
     decompress: boolean = false
   ): Promise<InvokeResponse<void>> {
-    return await invoke("copy_resources_to_instances", {
-      srcFilePaths: Array.isArray(srcFilePaths) ? srcFilePaths : [srcFilePaths],
+    return await invoke("copy_resource_to_instances", {
+      srcFilePath,
       tgtInstIds,
       tgtDirType,
       decompress,
@@ -448,7 +418,7 @@ export class InstanceService {
   }
 
   /**
-   * FINISH the mod loader installation.
+   * Finish the mod loader installation.
    * @param {string} instanceId - The ID of the instance to mark the mod loader as installed.
    * @returns {Promise<InvokeResponse<void>>}
    */
@@ -457,20 +427,6 @@ export class InstanceService {
     instanceId: string
   ): Promise<InvokeResponse<void>> {
     return await invoke("finish_mod_loader_install", {
-      instanceId,
-    });
-  }
-
-  /**
-   * FINISH the OptiFine loader installation.
-   * @param {string} instanceId - The ID of the instance to mark OptiFine as installed.
-   * @returns {Promise<InvokeResponse<void>>}
-   */
-  @responseHandler("instance")
-  static async finishOptiFineLoaderInstall(
-    instanceId: string
-  ): Promise<InvokeResponse<void>> {
-    return await invoke("finish_optifine_loader_install", {
       instanceId,
     });
   }
@@ -494,23 +450,18 @@ export class InstanceService {
    * @param {string} instanceId - The ID of the instance to update.
    * @param {ModLoaderResourceInfo} newModLoader - The new mod loader information.
    * @param {boolean} [isInstallFabricApi] - Optional flag to indicate whether to install Fabric API (only valid when modLoader is Fabric).
-   * @param {boolean} [isInstallQfApi] - Optional flag to indicate whether to install QFAPI / QSL (only valid when modLoader is Quilt).
    * @returns {Promise<InvokeResponse<void>>}
    */
   @responseHandler("instance")
   static async changeModLoader(
     instanceId: string,
-    newModLoader?: ModLoaderResourceInfo | null,
-    newOptifine?: OptiFineResourceInfo | null,
-    isInstallFabricApi?: boolean,
-    isInstallQfApi?: boolean
+    newModLoader: ModLoaderResourceInfo,
+    isInstallFabricApi?: boolean
   ): Promise<InvokeResponse<void>> {
     return await invoke("change_mod_loader", {
       instanceId,
-      newModLoader: newModLoader ?? null,
-      newOptifine: newOptifine ?? null,
+      newModLoader,
       isInstallFabricApi,
-      isInstallQfApi,
     });
   }
 
@@ -543,43 +494,6 @@ export class InstanceService {
     return await invoke("add_custom_instance_icon", {
       instanceId,
       sourceSrc,
-    });
-  }
-
-  /**
-   * Retrieve exportable file list for modpack export.
-   * @param {string} instanceId - The ID of the instance.
-   * @returns {Promise<InvokeResponse<ModpackFileList>>}
-   */
-  @responseHandler("instance")
-  static async retrieveExportableFileList(
-    instanceId: string
-  ): Promise<InvokeResponse<ModpackFileList>> {
-    return await invoke("retrieve_exportable_file_list", {
-      instanceId,
-    });
-  }
-
-  /**
-   * Export the instance as a modpack.
-   * @param {string} instanceId - The ID of the instance to export.
-   * @param {string} savePath - The destination path for the exported modpack.
-   * @param {ExportModpackOptions} options - Export configuration options.
-   * @param {string[]} files - The selected files to include in the export.
-   * @returns {Promise<InvokeResponse<void>>}
-   */
-  @responseHandler("instance")
-  static async exportModpack(
-    instanceId: string,
-    savePath: string,
-    options: ExportModpackOptions,
-    files: string[]
-  ): Promise<InvokeResponse<void>> {
-    return await invoke("export_modpack", {
-      instanceId,
-      savePath,
-      options,
-      files,
     });
   }
 }

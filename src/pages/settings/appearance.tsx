@@ -1,10 +1,15 @@
 import {
+  Badge,
   Card,
   Center,
   HStack,
   Icon,
   IconButton,
   Image,
+  Popover,
+  PopoverBody,
+  PopoverContent,
+  PopoverTrigger,
   Slider,
   SliderFilledTrack,
   SliderThumb,
@@ -21,8 +26,8 @@ import { appDataDir } from "@tauri-apps/api/path";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { LuPlus, LuTrash } from "react-icons/lu";
-import { ChakraColorSelectPopover } from "@/components/chakra-color-selector";
+import { LuChevronDown, LuPlus, LuTrash } from "react-icons/lu";
+import ChakraColorSelector from "@/components/chakra-color-selector";
 import { MenuSelector } from "@/components/common/menu-selector";
 import {
   OptionItemGroup,
@@ -41,9 +46,8 @@ const AppearanceSettingsPage = () => {
   const toast = useToast();
   const appearanceConfigs = config.appearance;
   const primaryColor = appearanceConfigs.theme.primaryColor;
-  const builtInBgPrefix = "%built-in:";
   const selectedBgKey = appearanceConfigs.background.choice.replace(
-    builtInBgPrefix,
+    "%built-in:",
     ""
   );
 
@@ -132,7 +136,7 @@ const AppearanceSettingsPage = () => {
 
           let newSelectedBgKey;
           if (customBgList.length === 1) {
-            newSelectedBgKey = `${builtInBgPrefix}Florwyn`;
+            newSelectedBgKey = "%built-in:tyg1200";
             if (appearanceConfigs.background.randomCustom)
               update("appearance.background.randomCustom", false);
           } else {
@@ -156,8 +160,34 @@ const AppearanceSettingsPage = () => {
     });
   };
 
+  const ColorSelectPopover = () => {
+    return (
+      <Popover>
+        <PopoverTrigger>
+          <IconButton
+            size="xs"
+            colorScheme={primaryColor}
+            aria-label="color"
+            icon={<LuChevronDown />}
+          />
+        </PopoverTrigger>
+        <PopoverContent>
+          <PopoverBody>
+            <ChakraColorSelector
+              current={primaryColor}
+              onColorSelect={(color) => {
+                update("appearance.theme.primaryColor", color);
+              }}
+              size="xs"
+            />
+          </PopoverBody>
+        </PopoverContent>
+      </Popover>
+    );
+  };
+
   const HeadNavStyleMenu = () => {
-    const headNavStyleTypes = ["standard", "simplified", "adaptive"];
+    const headNavStyleTypes = ["standard", "simplified"];
 
     return (
       <MenuSelector
@@ -314,7 +344,7 @@ const AppearanceSettingsPage = () => {
   };
 
   const PresetBackgroundList = () => {
-    const presetBgList = ["Florwyn", "SJTU-eastgate"];
+    const presetBgList = ["tyg1200"];
 
     return (
       <Wrap spacing={3.5} justify="right">
@@ -322,13 +352,10 @@ const AppearanceSettingsPage = () => {
           <WrapItem key={bg}>
             <BackgroundCard
               bgAlt={bg}
-              bgSrc={`/images/backgrounds/${bg}-thumbnail.jpg`}
+              bgSrc={`/images/backgrounds/${bg}.png`}
               selected={selectedBgKey === bg}
               onSelect={() =>
-                update(
-                  "appearance.background.choice",
-                  `${builtInBgPrefix}${bg}`
-                )
+                update("appearance.background.choice", `%built-in:${bg}`)
               }
               label={t(
                 `AppearanceSettingsPage.background.presetBgList.${bg}.name`
@@ -403,14 +430,7 @@ const AppearanceSettingsPage = () => {
       items: [
         {
           title: t("AppearanceSettingsPage.theme.settings.primaryColor.title"),
-          children: (
-            <ChakraColorSelectPopover
-              current={primaryColor}
-              onColorSelect={(color) => {
-                update("appearance.theme.primaryColor", color);
-              }}
-            />
-          ),
+          children: <ColorSelectPopover />,
         },
         {
           title: t("AppearanceSettingsPage.theme.settings.colorMode.title"),
@@ -434,6 +454,7 @@ const AppearanceSettingsPage = () => {
           title: t(
             "AppearanceSettingsPage.theme.settings.useLiquidGlassDesign.title"
           ),
+          titleExtra: <Badge colorScheme="purple">Beta</Badge>,
           description: t(
             "AppearanceSettingsPage.theme.settings.useLiquidGlassDesign.description"
           ),
@@ -499,9 +520,7 @@ const AppearanceSettingsPage = () => {
                 update("appearance.background.randomCustom", e.target.checked);
                 if (
                   e.target.checked &&
-                  appearanceConfigs.background.choice.startsWith(
-                    builtInBgPrefix
-                  )
+                  appearanceConfigs.background.choice.startsWith("%built-in:")
                 ) {
                   update(
                     "appearance.background.choice",

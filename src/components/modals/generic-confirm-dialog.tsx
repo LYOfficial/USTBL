@@ -6,7 +6,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogOverlay,
-  AlertDialogProps,
   Button,
   Checkbox,
   HStack,
@@ -16,20 +15,17 @@ import { t } from "i18next";
 import { useRef, useState } from "react";
 import { useLauncherConfig } from "@/contexts/config";
 
-interface GenericConfirmDialogProps extends Omit<
-  AlertDialogProps,
-  "children" | "leastDestructiveRef"
-> {
+interface GenericConfirmDialogProps {
+  isOpen: boolean;
+  onClose: () => void;
   title: string;
   body: string | React.ReactElement;
-  footerLeft?: React.ReactElement;
   btnOK?: string;
   btnCancel?: string;
   onOKCallback?: () => void;
   onCancelCallback?: () => void;
   isAlert?: boolean;
   isLoading?: boolean;
-  showCloseBtn?: boolean;
   showSuppressBtn?: boolean;
   suppressKey?: string;
 }
@@ -39,17 +35,14 @@ const GenericConfirmDialog: React.FC<GenericConfirmDialogProps> = ({
   onClose,
   title,
   body,
-  footerLeft,
   btnOK = t("General.confirm"),
   btnCancel = t("General.cancel"),
   onOKCallback,
   onCancelCallback,
   isAlert = false,
   isLoading = false,
-  showCloseBtn = true,
   showSuppressBtn = false,
   suppressKey,
-  ...props
 }) => {
   const cancelRef = useRef<HTMLButtonElement>(null);
   const { config, update } = useLauncherConfig();
@@ -79,26 +72,22 @@ const GenericConfirmDialog: React.FC<GenericConfirmDialogProps> = ({
       onClose={handleCancel}
       autoFocus={false}
       isCentered
-      {...props}
     >
       <AlertDialogOverlay>
         <AlertDialogContent>
           <AlertDialogHeader>{title}</AlertDialogHeader>
-          {showCloseBtn && <AlertDialogCloseButton />}
+          <AlertDialogCloseButton />
           <AlertDialogBody>{body}</AlertDialogBody>
           <AlertDialogFooter>
-            <HStack spacing={3}>
-              {showSuppressBtn && suppressKey && (
-                <Checkbox
-                  colorScheme={primaryColor}
-                  isChecked={dontShowAgain}
-                  onChange={(e) => setDontShowAgain(e.target.checked)}
-                >
-                  <Text fontSize="sm">{t("General.dontShowAgain")}</Text>
-                </Checkbox>
-              )}
-              {footerLeft}
-            </HStack>
+            {showSuppressBtn && suppressKey && (
+              <Checkbox
+                colorScheme={primaryColor}
+                isChecked={dontShowAgain}
+                onChange={(e) => setDontShowAgain(e.target.checked)}
+              >
+                <Text fontSize="sm">{t("General.dontShowAgain")}</Text>
+              </Checkbox>
+            )}
 
             <HStack spacing={3} ml="auto">
               {btnCancel && (

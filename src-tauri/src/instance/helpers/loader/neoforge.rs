@@ -15,9 +15,9 @@ use crate::instance::models::misc::{Instance, InstanceError, InstanceSubdirType,
 use crate::launch::helpers::file_validator::convert_library_name_to_path;
 use crate::resource::helpers::misc::{convert_url_to_target_source, get_download_api};
 use crate::resource::models::{ResourceType, SourceType};
-use crate::tasks::PTaskParam;
 use crate::tasks::commands::schedule_progressive_task_group;
 use crate::tasks::download::DownloadParam;
+use crate::tasks::PTaskParam;
 
 pub async fn install_neoforge_loader(
   priority: &[SourceType],
@@ -27,52 +27,43 @@ pub async fn install_neoforge_loader(
 ) -> SJMCLResult<()> {
   let loader_ver = &loader.version;
 
-  let mut installer_url_opt: Option<Url> = None;
-  let mut installer_coord: String = String::new();
-
-  if loader_ver.starts_with("1.20.1-") {
-    installer_url_opt = Some(
+  let (installer_url, installer_coord) = if loader_ver.starts_with("1.20.1-") {
+    (
       get_download_api(SourceType::Official, ResourceType::NeoforgeInstall)?.join(&format!(
         "net/neoforged/forge/{v}/forge-{v}-installer.jar",
         v = loader_ver
       ))?,
-    );
-    installer_coord = format!("net.neoforged:forge:{}-installer", loader.version);
+      format!("net.neoforged:forge:{}-installer", loader.version),
+    )
   } else {
-    // fallback priority
-    for source_type in priority.iter() {
-      if let Ok(root) = get_download_api(*source_type, ResourceType::NeoforgeInstall) {
-        let url = match *source_type {
-          SourceType::Official => {
-            let path = format!(
-              "net/neoforged/neoforge/{v}/neoforge-{v}-installer.jar",
-              v = loader_ver
-            );
-            root.join(&path)?
-          }
-          SourceType::BMCLAPIMirror => {
-            let path = format!("{v}/download/installer", v = loader_ver);
-            root.join(&path)?
-          }
-        };
-        installer_url_opt = Some(url);
-        installer_coord = format!("net.neoforged:neoforge:{}-installer", loader.version);
-        break;
-      }
-    }
-  }
+    let root = get_download_api(priority[0], ResourceType::NeoforgeInstall)?;
+    (
+      match priority.first().unwrap_or(&SourceType::Official) {
+        SourceType::Official => {
+          let path = format!(
+            "net/neoforged/neoforge/{v}/neoforge-{v}-installer.jar",
+            v = loader_ver
+          );
+          root.join(&path)?
+        }
+        SourceType::BMCLAPIMirror => {
+          let path = format!("{v}/download/installer", v = loader_ver);
+          root.join(&path)?
+        }
+      },
+      format!("net.neoforged:neoforge:{}-installer", loader.version),
+    )
+  };
 
-  if let Some(installer_url) = installer_url_opt {
-    let installer_rel = convert_library_name_to_path(&installer_coord, None)?;
-    let installer_path = lib_dir.join(&installer_rel);
+  let installer_rel = convert_library_name_to_path(&installer_coord, None)?;
+  let installer_path = lib_dir.join(&installer_rel);
 
-    task_params.push(PTaskParam::Download(DownloadParam {
-      src: installer_url,
-      dest: installer_path,
-      filename: None,
-      sha1: None,
-    }));
-  }
+  task_params.push(PTaskParam::Download(DownloadParam {
+    src: installer_url,
+    dest: installer_path.clone(),
+    filename: None,
+    sha1: None,
+  }));
 
   Ok(())
 }
@@ -128,7 +119,7 @@ pub async fn download_neoforge_libraries(
         // Remove "maven/" prefix and join with lib_dir
         let relative_path = path.strip_prefix("maven/").unwrap();
         lib_dir.join(relative_path)
-      } else if path.as_os_str() == "data/client.lzma" {
+      } else if path == *"data/client.lzma" {
         bin_patch.clone()
       } else {
         continue;
@@ -139,10 +130,10 @@ pub async fn download_neoforge_libraries(
         fs::create_dir_all(&outpath)?;
       } else {
         // Create parent directories if they don't exist
-        if let Some(p) = outpath.parent()
-          && !p.exists()
-        {
-          fs::create_dir_all(p)?;
+        if let Some(p) = outpath.parent() {
+          if !p.exists() {
+            fs::create_dir_all(p)?;
+          }
         }
 
         // Extract file
@@ -204,15 +195,15 @@ pub async fn download_neoforge_libraries(
 
   for processor in profile.processors.iter_mut() {
     if processor.args.contains(&"DOWNLOAD_MOJMAPS".to_string()) {
-      if let Some(mojmaps) = args_map.get("{MOJMAPS}")
-        && let Some(client_mappings) = client_info.downloads.get("client_mappings")
-      {
-        task_params.push(PTaskParam::Download(DownloadParam {
-          src: client_mappings.url.parse()?,
-          dest: lib_dir.join(mojmaps),
-          filename: None,
-          sha1: Some(client_mappings.sha1.clone()),
-        }));
+      if let Some(mojmaps) = args_map.get("{MOJMAPS}") {
+        if let Some(client_mappings) = client_info.downloads.get("client_mappings") {
+          task_params.push(PTaskParam::Download(DownloadParam {
+            src: client_mappings.url.parse()?,
+            dest: lib_dir.join(mojmaps),
+            filename: None,
+            sha1: Some(client_mappings.sha1.clone()),
+          }));
+        }
       }
       processor.args.clear();
       continue;
