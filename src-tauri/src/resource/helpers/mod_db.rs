@@ -134,10 +134,12 @@ pub struct MCModRecord {
   pub modrinth_slug: Option<String>,
   pub name: String,
   pub subname: Option<String>,
+  #[allow(dead_code)]
   pub abbr: Option<String>,
 }
 
 impl MCModRecord {
+  #[allow(dead_code)]
   pub fn get_display_name(&self) -> String {
     let mut builder = String::new();
 
@@ -371,9 +373,7 @@ pub async fn handle_search_query(app: &AppHandle, query: &str) -> SJMCLResult<St
   // Short-circuit: if exists a very confident match, search by its name directly
   let mut best_match: Option<(&MCModRecord, f64, bool)> = None;
   for mod_record in &search_results {
-    if mod_record.subname.is_none()
-      && mod_record.modrinth_slug.is_none()
-    {
+    if mod_record.subname.is_none() && mod_record.modrinth_slug.is_none() {
       continue;
     }
 

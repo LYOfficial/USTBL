@@ -1,7 +1,21 @@
 use crate::error::{SJMCLError, SJMCLResult};
 use crate::instance::models::misc::{Instance, ModLoaderType};
+#[cfg(not(any(
+  all(
+    any(target_arch = "x86", target_arch = "x86_64"),
+    any(target_os = "linux", target_os = "macos")
+  ),
+  target_os = "windows"
+)))]
 use crate::launcher_config::models::LauncherConfig;
 use crate::resource::models::OptiFineResourceInfo;
+#[cfg(not(any(
+  all(
+    any(target_arch = "x86", target_arch = "x86_64"),
+    any(target_os = "linux", target_os = "macos")
+  ),
+  target_os = "windows"
+)))]
 use crate::utils::fs::get_app_resource_filepath;
 use regex::RegexBuilder;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -9,12 +23,35 @@ use serde_json::Value;
 use serde_with::formats::PreferMany;
 use serde_with::{serde_as, OneOrMany};
 use serialize_skip_none_derive::serialize_skip_none;
+#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
 use std::cmp::Ordering;
 use std::collections::HashMap;
+#[cfg(not(any(
+  all(
+    any(target_arch = "x86", target_arch = "x86_64"),
+    any(target_os = "linux", target_os = "macos")
+  ),
+  target_os = "windows"
+)))]
 use std::fs;
 use std::str::FromStr;
+#[cfg(not(any(
+  all(
+    any(target_arch = "x86", target_arch = "x86_64"),
+    any(target_os = "linux", target_os = "macos")
+  ),
+  target_os = "windows"
+)))]
 use std::sync::Mutex;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
+#[cfg(not(any(
+  all(
+    any(target_arch = "x86", target_arch = "x86_64"),
+    any(target_os = "linux", target_os = "macos")
+  ),
+  target_os = "windows"
+)))]
+use tauri::Manager;
 
 #[serialize_skip_none]
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
@@ -462,6 +499,13 @@ impl LaunchArgumentTemplate {
 // The following two functions are adapted from HMCL.
 // They replace libraries such as LWJGL in version JSONs for older Minecraft versions and specific platforms, using replacement resources contributed by the HMCL community.
 // ref: https://github.com/HMCL-dev/HMCL/blob/main/HMCL/src/main/resources/assets/natives.json
+#[cfg(not(any(
+  all(
+    any(target_arch = "x86", target_arch = "x86_64"),
+    any(target_os = "linux", target_os = "macos")
+  ),
+  target_os = "windows"
+)))]
 pub fn load_native_libraries_replace_map(
   app: &AppHandle,
 ) -> SJMCLResult<HashMap<String, HashMap<String, Option<LibrariesValue>>>> {
@@ -473,6 +517,7 @@ pub fn load_native_libraries_replace_map(
   Ok(map)
 }
 
+#[allow(unused_variables)]
 pub async fn replace_native_libraries(
   app: &AppHandle,
   client_info: &mut McClientInfo,
@@ -489,63 +534,72 @@ pub async fn replace_native_libraries(
     return Ok(());
   }
 
-  #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+  #[cfg(not(any(
+    all(
+      any(target_arch = "x86", target_arch = "x86_64"),
+      any(target_os = "linux", target_os = "macos")
+    ),
+    target_os = "windows"
+  )))]
   {
-    use crate::instance::helpers::game_version::compare_game_versions;
-    if compare_game_versions(app, instance.version.as_str(), "1.20.1", true).await
-      == Ordering::Greater
+    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
     {
-      return Ok(());
+      use crate::instance::helpers::game_version::compare_game_versions;
+      if compare_game_versions(app, instance.version.as_str(), "1.20.1", true).await
+        == Ordering::Greater
+      {
+        return Ok(());
+      }
     }
+
+    let all_replace_map = load_native_libraries_replace_map(app)?;
+
+    let (os, arch) = {
+      let launcher_config_state = app.state::<Mutex<LauncherConfig>>();
+      let cfg = launcher_config_state.lock().unwrap();
+      (cfg.basic_info.os_type.clone(), cfg.basic_info.arch.clone())
+    };
+    let platform_key = format!("{}-{}", os.to_lowercase(), arch.to_lowercase());
+    let platform_map = match all_replace_map.get(platform_key.as_str()) {
+      Some(m) if !m.is_empty() => m,
+      _ => {
+        return Ok(());
+      }
+    };
+
+    for lib in &mut client_info.libraries {
+      let key = lib.name.clone();
+
+      if lib.natives.is_some() {
+        let natives_key = format!("{key}:natives");
+        if let Some(Some(new_lib)) = platform_map.get(&natives_key) {
+          lib.name = new_lib.name.clone();
+          if new_lib.downloads.is_some() {
+            lib.downloads = new_lib.downloads.clone();
+          }
+          if new_lib.natives.is_some() {
+            lib.natives = new_lib.natives.clone();
+          }
+          if new_lib.extract.is_some() {
+            lib.extract = new_lib.extract.clone();
+          }
+          continue;
+        }
+      }
+
+      if let Some(Some(new_lib_opt)) = platform_map.get(&key) {
+        lib.name = new_lib_opt.name.clone();
+        if new_lib_opt.downloads.is_some() {
+          lib.downloads = new_lib_opt.downloads.clone();
+        }
+        if new_lib_opt.natives.is_some() {
+          lib.natives = new_lib_opt.natives.clone();
+        }
+        if new_lib_opt.extract.is_some() {
+          lib.extract = new_lib_opt.extract.clone();
+        }
+      }
+    }
+    Ok(())
   }
-
-  let all_replace_map = load_native_libraries_replace_map(app)?;
-
-  let (os, arch) = {
-    let launcher_config_state = app.state::<Mutex<LauncherConfig>>();
-    let cfg = launcher_config_state.lock().unwrap();
-    (cfg.basic_info.os_type.clone(), cfg.basic_info.arch.clone())
-  };
-  let platform_key = format!("{}-{}", os.to_lowercase(), arch.to_lowercase());
-  let platform_map = match all_replace_map.get(platform_key.as_str()) {
-    Some(m) if !m.is_empty() => m,
-    _ => {
-      return Ok(());
-    }
-  };
-
-  for lib in &mut client_info.libraries {
-    let key = lib.name.clone();
-
-    if lib.natives.is_some() {
-      let natives_key = format!("{key}:natives");
-      if let Some(Some(new_lib)) = platform_map.get(&natives_key) {
-        lib.name = new_lib.name.clone();
-        if new_lib.downloads.is_some() {
-          lib.downloads = new_lib.downloads.clone();
-        }
-        if new_lib.natives.is_some() {
-          lib.natives = new_lib.natives.clone();
-        }
-        if new_lib.extract.is_some() {
-          lib.extract = new_lib.extract.clone();
-        }
-        continue;
-      }
-    }
-
-    if let Some(Some(new_lib_opt)) = platform_map.get(&key) {
-      lib.name = new_lib_opt.name.clone();
-      if new_lib_opt.downloads.is_some() {
-        lib.downloads = new_lib_opt.downloads.clone();
-      }
-      if new_lib_opt.natives.is_some() {
-        lib.natives = new_lib_opt.natives.clone();
-      }
-      if new_lib_opt.extract.is_some() {
-        lib.extract = new_lib_opt.extract.clone();
-      }
-    }
-  }
-  Ok(())
 }

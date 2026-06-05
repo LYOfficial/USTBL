@@ -29,10 +29,13 @@ pub struct HmclOfflineAccount {
 pub struct HmclMicrosoftAccount {
   pub uuid: String,
   pub display_name: String,
+  #[allow(dead_code)]
   pub token_type: String,
   pub access_token: String,
   pub refresh_token: String,
+  #[allow(dead_code)]
   pub not_after: i64,
+  #[allow(dead_code)]
   pub userid: String,
 }
 
@@ -45,6 +48,7 @@ pub struct HmclProfileProperties {
 pub struct HmclThirdPartyAccount {
   #[serde(rename = "serverBaseURL")]
   pub server_base_url: String,
+  #[allow(dead_code)]
   pub client_token: String,
   pub display_name: String,
   pub access_token: String,

@@ -18,6 +18,7 @@ struct NeoforgeMetaItem {
 
 #[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct NeoforgeVersions {
   pub is_snapshot: bool,
   pub versions: Vec<String>,

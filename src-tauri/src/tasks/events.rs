@@ -211,7 +211,7 @@ impl Sink for TauriEventSink {
     task_id: u32,
     task_group: Option<&str>,
     current: i64,
-    total: i64,
+    _total: i64,
     percentage: u32,
     estimated_time: Option<f64>,
     speed: f64,

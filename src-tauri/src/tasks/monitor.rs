@@ -351,6 +351,7 @@ impl TaskMonitor {
     }
   }
 
+  #[allow(dead_code)]
   pub async fn restart_progress(&self, id: u32) {
     let handle = self.phs.write().unwrap().remove(&id);
     if let Some(handle) = handle {

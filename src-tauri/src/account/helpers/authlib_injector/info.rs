@@ -43,7 +43,10 @@ fn apply_ustb_oauth_fallback(metadata: &mut Value) {
     metadata["meta"]["feature.non_email_login"] = json!(true);
   }
 
-  if metadata["meta"].get("feature.openid_configuration_url").is_none() {
+  if metadata["meta"]
+    .get("feature.openid_configuration_url")
+    .is_none()
+  {
     metadata["meta"]["feature.openid_configuration_url"] = json!(USTB_OPENID_CONFIGURATION_URL);
   }
 }

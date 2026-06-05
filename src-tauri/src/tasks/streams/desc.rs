@@ -37,6 +37,7 @@ impl PStatus {
     *self == PStatus::Stopped
   }
 
+  #[allow(dead_code)]
   pub fn is_completed(&self) -> bool {
     *self == PStatus::Completed
   }

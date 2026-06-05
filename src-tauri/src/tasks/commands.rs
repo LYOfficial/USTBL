@@ -110,6 +110,7 @@ pub fn resume_progressive_task(app: AppHandle, task_id: u32) -> SJMCLResult<()> 
 }
 
 #[tauri::command]
+#[allow(dead_code)]
 pub async fn restart_progressive_task(app: AppHandle, task_id: u32) -> SJMCLResult<()> {
   let monitor = app.state::<Pin<Box<TaskMonitor>>>();
   monitor.restart_progress(task_id).await;

@@ -14,6 +14,7 @@ pub enum LaunchError {
   SelectedJavaUnavailable,
   GameFilesIncomplete,
   SetProcessPriorityFailed,
+  #[allow(dead_code)]
   ChangeWindowTitleFailed,
   KillProcessFailed,
   LaunchingStateNotFound,

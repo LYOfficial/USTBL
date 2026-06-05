@@ -76,12 +76,14 @@ pub struct Version {
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
+#[allow(dead_code)]
 pub struct EnderItemsEntry {
   pub id: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 pub struct GameRules {
   #[serde(rename = "doMobLoot")]
   pub mob_loot: String,

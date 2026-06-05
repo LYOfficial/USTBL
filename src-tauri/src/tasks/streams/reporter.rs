@@ -45,6 +45,7 @@ where
     self.total = total;
   }
 
+  #[allow(dead_code)]
   pub fn from_desc_interval<T: Clone + Serialize + for<'de> Deserialize<'de>>(
     desc: &PDesc<T>,
     interval: &Duration,
@@ -115,8 +116,10 @@ where
   }
 }
 
+#[allow(dead_code)]
 pub struct EventPayload {}
 
+#[allow(dead_code)]
 pub struct EventReporter {
   app: AppHandle,
   task_id: u32,

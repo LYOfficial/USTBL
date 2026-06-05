@@ -35,6 +35,7 @@ pub struct DownloadTask {
   p_handle: PTaskHandle,
   param: DownloadParam,
   dest_path: PathBuf,
+  #[allow(dead_code)]
   report_interval: Duration,
 }
 

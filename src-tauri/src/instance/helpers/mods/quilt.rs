@@ -13,6 +13,7 @@ use zip::ZipArchive;
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 #[serde(default)]
+#[allow(dead_code)]
 pub struct QuiltModMetadata {
   pub schema_version: i32,
   pub quilt_loader: QuiltLoader,
