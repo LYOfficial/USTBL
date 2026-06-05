@@ -96,6 +96,8 @@ pub async fn fetch_oauth_code(
       &app,
       auth_server.features.openid_configuration_url,
       auth_server.client_id,
+      auth_server.redirect_uri,
+      auth_server.client_secret,
     )
     .await
   } else if server_type == PlayerType::Microsoft {
@@ -125,6 +127,8 @@ pub async fn add_player_oauth(
         auth_server.features.openid_configuration_url,
         auth_server.client_id,
         auth_info,
+        auth_server.redirect_uri,
+        auth_server.client_secret,
       )
       .await?
     }
@@ -194,6 +198,8 @@ pub async fn relogin_player_oauth(
         auth_server.features.openid_configuration_url,
         auth_server.client_id,
         auth_info,
+        auth_server.redirect_uri,
+        auth_server.client_secret,
       )
       .await?
     }

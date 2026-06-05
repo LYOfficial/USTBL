@@ -11,6 +11,20 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_http::reqwest::{self, RequestBuilder};
 
+/// RAII guard that resets `is_oauth_processing` to `false` when dropped,
+/// ensuring the flag is always cleared regardless of how the polling exits.
+struct OauthProcessingGuard<'a> {
+  account_binding: &'a Mutex<AccountInfo>,
+}
+
+impl<'a> Drop for OauthProcessingGuard<'a> {
+  fn drop(&mut self) {
+    if let Ok(mut state) = self.account_binding.lock() {
+      state.is_oauth_processing = false;
+    }
+  }
+}
+
 pub async fn fetch_image(app: &AppHandle, url: String) -> USTBLResult<ImageWrapper> {
   let client = app.state::<reqwest::Client>();
 
@@ -108,10 +122,15 @@ pub async fn oauth_polling(
   auth_info: DeviceAuthResponseInfo,
 ) -> USTBLResult<OAuthTokens> {
   let account_binding = app.state::<Mutex<AccountInfo>>();
+
+  // Set is_oauth_processing = true; the guard will reset it to false on drop
+  // (no matter how the function exits — success, error, or panic).
   {
     let mut account_state = account_binding.lock()?;
     account_state.is_oauth_processing = true;
   }
+  let _guard = OauthProcessingGuard { account_binding: &account_binding };
+
   let mut interval = auth_info.interval.unwrap_or(DEFAULT_POLLING_INTERVAL);
   let start_time = std::time::Instant::now();
   loop {
@@ -136,6 +155,11 @@ pub async fn oauth_polling(
           .await
           .map_err(|_| AccountError::ParseError)?,
       );
+    } else if response.status().is_server_error() {
+      // Some servers (e.g. USTB) return 5xx for unauthorized device codes
+      // instead of the proper 400 + authorization_pending.
+      // Treat server errors as retryable: increase interval and continue polling.
+      interval = (interval + 5).min(30);
     } else {
       if response.status().as_u16() != 400 {
         return Err(AccountError::NetworkError)?;

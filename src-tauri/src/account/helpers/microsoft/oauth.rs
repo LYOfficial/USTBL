@@ -229,7 +229,7 @@ async fn parse_profile(app: &AppHandle, tokens: &OAuthTokens) -> USTBLResult<Pla
       auth_account: Some(profile.name.clone()),
       access_token: Some(minecraft_token.clone()),
       access_token_expires: Some(minecraft_token_expires_in),
-      refresh_token: Some(tokens.refresh_token.clone()),
+      refresh_token: tokens.refresh_token.clone(),
       textures,
       auth_server_url: None,
     }

@@ -57,17 +57,27 @@ pub async fn device_authorization(
   app: &AppHandle,
   openid_configuration_url: String,
   client_id: Option<String>,
+  redirect_uri: Option<String>,
+  client_secret: Option<String>,
 ) -> USTBLResult<DeviceAuthResponseInfo> {
   let client = app.state::<reqwest::Client>();
 
   let openid_configuration = fetch_openid_configuration(app, openid_configuration_url).await?;
 
+  let mut form_params = vec![
+    ("client_id".to_string(), client_id.clone().unwrap_or_default()),
+    ("scope".to_string(), SCOPE.to_string()),
+  ];
+  if let Some(uri) = &redirect_uri {
+    form_params.push(("redirect_uri".to_string(), uri.clone()));
+  }
+  if let Some(secret) = &client_secret {
+    form_params.push(("client_secret".to_string(), secret.clone()));
+  }
+
   let response = client
     .post(openid_configuration.device_authorization_endpoint)
-    .form(&[
-      ("client_id", client_id.clone().unwrap_or_default()),
-      ("scope", SCOPE.to_string()),
-    ])
+    .form(&form_params)
     .send()
     .await
     .map_err(|_| AccountError::NetworkError)?
@@ -77,9 +87,15 @@ pub async fn device_authorization(
 
   let device_code = response.device_code;
   let user_code = response.user_code;
-  let verification_uri = response
-    .verification_uri_complete
-    .unwrap_or(response.verification_uri);
+  // if redirect_uri is provided, use it to override the verification URL
+  // (some servers return a non-functional verification_uri, e.g. USTB)
+  let verification_uri = if let Some(ref uri) = redirect_uri {
+    format!("{}?user_code={}", uri, user_code)
+  } else {
+    response
+      .verification_uri_complete
+      .unwrap_or(response.verification_uri)
+  };
   let interval = response.interval;
   let expires_in = response.expires_in;
 
@@ -136,7 +152,7 @@ async fn parse_token(
     app,
     &selected_profile,
     Some(tokens.access_token.clone()),
-    Some(tokens.refresh_token.clone()),
+    tokens.refresh_token.clone(),
     auth_server_url,
     Some(selected_profile.name.clone()),
   )
@@ -149,18 +165,31 @@ pub async fn login(
   openid_configuration_url: String,
   client_id: Option<String>,
   auth_info: DeviceAuthResponseInfo,
+  redirect_uri: Option<String>,
+  client_secret: Option<String>,
 ) -> USTBLResult<PlayerInfo> {
   let client = app.state::<reqwest::Client>();
   let openid_configuration = fetch_openid_configuration(app, openid_configuration_url).await?;
   let jwks = fetch_jwks(app, openid_configuration.jwks_uri).await?;
-  let sender = client.post(&openid_configuration.token_endpoint).form(&[
-    ("client_id", client_id.clone().unwrap_or_default()),
-    ("device_code", auth_info.device_code.clone()),
+
+  let mut form_params = vec![
+    ("client_id".to_string(), client_id.clone().unwrap_or_default()),
+    ("device_code".to_string(), auth_info.device_code.clone()),
     (
-      "grant_type",
+      "grant_type".to_string(),
       "urn:ietf:params:oauth:grant-type:device_code".to_string(),
     ),
-  ]);
+  ];
+  if let Some(uri) = &redirect_uri {
+    form_params.push(("redirect_uri".to_string(), uri.clone()));
+  }
+  if let Some(secret) = &client_secret {
+    form_params.push(("client_secret".to_string(), secret.clone()));
+  }
+
+  let sender = client
+    .post(&openid_configuration.token_endpoint)
+    .form(&form_params);
   let tokens = oauth_polling(app, sender, auth_info).await?;
   parse_token(app, jwks, &tokens, Some(auth_server_url), client_id).await
 }
@@ -170,21 +199,32 @@ pub async fn refresh(
   player: &PlayerInfo,
   client_id: Option<String>,
   openid_configuration_url: String,
+  redirect_uri: Option<String>,
+  client_secret: Option<String>,
 ) -> USTBLResult<PlayerInfo> {
   let openid_configuration = fetch_openid_configuration(app, openid_configuration_url).await?;
   let jwks = fetch_jwks(app, openid_configuration.jwks_uri).await?;
 
   let client = app.state::<reqwest::Client>();
+
+  let mut form_params = vec![
+    ("client_id".to_string(), client_id.clone().unwrap_or_default()),
+    (
+      "refresh_token".to_string(),
+      player.refresh_token.clone().unwrap_or_default(),
+    ),
+    ("grant_type".to_string(), "refresh_token".to_string()),
+  ];
+  if let Some(uri) = &redirect_uri {
+    form_params.push(("redirect_uri".to_string(), uri.clone()));
+  }
+  if let Some(secret) = &client_secret {
+    form_params.push(("client_secret".to_string(), secret.clone()));
+  }
+
   let token_response = client
     .post(&openid_configuration.token_endpoint)
-    .form(&[
-      ("client_id", client_id.clone().unwrap_or_default()),
-      (
-        "refresh_token",
-        player.refresh_token.clone().unwrap_or_default(),
-      ),
-      ("grant_type", "refresh_token".to_string()),
-    ])
+    .form(&form_params)
     .send()
     .await?;
 
@@ -197,12 +237,5 @@ pub async fn refresh(
     .await
     .map_err(|_| AccountError::ParseError)?;
 
-  parse_token(
-    app,
-    jwks,
-    &tokens,
-    player.auth_server_url.clone(),
-    client_id,
-  )
-  .await
+  parse_token(app, jwks, &tokens, player.auth_server_url.clone(), client_id).await
 }

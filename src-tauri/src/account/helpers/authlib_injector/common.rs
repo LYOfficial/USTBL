@@ -136,6 +136,8 @@ pub async fn refresh(
       player,
       auth_server.client_id.clone(),
       auth_server.features.openid_configuration_url.clone(),
+      auth_server.redirect_uri.clone(),
+      auth_server.client_secret.clone(),
     )
     .await
   }

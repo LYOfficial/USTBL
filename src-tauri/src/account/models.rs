@@ -1,6 +1,6 @@
 use crate::account::constants::ACCOUNTS_FILE_NAME;
 use crate::account::helpers::authlib_injector::constants::{
-  PRESET_AUTH_SERVERS, USTB_AUTH_SERVER_URL,
+  PRESET_AUTH_SERVERS, USTB_AUTH_SERVER_URL, USTB_CLIENT_SECRET, USTB_REDIRECT_URI,
 };
 use crate::account::helpers::skin::draw_avatar;
 use crate::storage::Storage;
@@ -222,7 +222,8 @@ pub struct DeviceAuthResponseInfo {
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
 pub struct OAuthTokens {
   pub access_token: String,
-  pub refresh_token: String,
+  #[serde(default)]
+  pub refresh_token: Option<String>,
   pub id_token: Option<String>,
 }
 
@@ -235,7 +236,7 @@ pub struct OAuthErrorResponse {
 
 structstruck::strike! {
   #[strikethrough[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize, Default)]]
-  #[strikethrough[serde(rename_all = "camelCase", deny_unknown_fields)]]
+  #[strikethrough[serde(rename_all = "camelCase")]]
   pub struct AuthServer {
     pub name: String,
     pub auth_url: String,
@@ -246,6 +247,8 @@ structstruck::strike! {
       pub openid_configuration_url: String,
     },
     pub client_id: Option<String>,
+    pub redirect_uri: Option<String>,
+    pub client_secret: Option<String>,
   }
 }
 
@@ -260,7 +263,8 @@ pub struct AuthServerInfo {
 
 impl From<AuthServerInfo> for AuthServer {
   fn from(info: AuthServerInfo) -> Self {
-    let name = if info.auth_url == USTB_AUTH_SERVER_URL {
+    let is_ustb = info.auth_url == USTB_AUTH_SERVER_URL;
+    let name = if is_ustb {
       "像素北科".to_string()
     } else {
       info.metadata["meta"]["serverName"]
@@ -290,6 +294,16 @@ impl From<AuthServerInfo> for AuthServer {
           .to_string(),
       },
       client_id: info.client_id,
+      redirect_uri: if is_ustb {
+        Some(USTB_REDIRECT_URI.to_string())
+      } else {
+        None
+      },
+      client_secret: if is_ustb {
+        Some(USTB_CLIENT_SECRET.to_string())
+      } else {
+        None
+      },
     }
   }
 }
