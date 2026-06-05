@@ -1,6 +1,7 @@
 use crate::account::models::SkinModel;
+use serde::Deserialize;
 
-#[derive(serde::Deserialize, Debug)]
+#[derive(Deserialize, Debug)]
 pub struct MinecraftProfile {
   pub id: String,
   pub name: String,
@@ -8,7 +9,7 @@ pub struct MinecraftProfile {
   pub capes: Option<Vec<TextureEntry>>,
 }
 
-#[derive(serde::Deserialize, Debug)]
+#[derive(Deserialize, Debug)]
 pub struct TextureEntry {
   pub state: String,
   pub url: String,
@@ -16,7 +17,7 @@ pub struct TextureEntry {
 }
 
 structstruck::strike! {
-#[strikethrough[derive(serde::Deserialize)]]
+#[strikethrough[derive(Deserialize)]]
   pub struct XstsResponse {
     #[serde(rename = "Token")]
     pub token: String,
@@ -27,4 +28,10 @@ structstruck::strike! {
       }>,
     },
   }
+}
+
+#[derive(Deserialize, Debug)]
+pub struct XstsErrorResponse {
+  #[serde(rename = "XErr")]
+  pub x_err: i64,
 }

@@ -87,6 +87,21 @@ pub async fn check_full_login_availability(app: &AppHandle) -> SJMCLResult<()> {
   Ok(())
 }
 
+pub fn update_player_by_id(app: &AppHandle, player_id: &str, info: PlayerInfo) -> SJMCLResult<()> {
+  let account_binding = app.state::<Mutex<AccountInfo>>();
+  let mut account_state = account_binding.lock()?;
+
+  if let Some(index) = account_state
+    .players
+    .iter()
+    .position(|player| player.id == player_id)
+  {
+    account_state.players[index] = info;
+    account_state.save()?;
+  }
+  Ok(())
+}
+
 pub async fn oauth_polling(
   app: &AppHandle,
   sender: RequestBuilder,

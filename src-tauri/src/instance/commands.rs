@@ -51,7 +51,7 @@ use crate::tasks::download::DownloadParam;
 use crate::tasks::PTaskParam;
 use crate::utils::fs::{
   copy_whole_dir, create_url_shortcut, generate_unique_filename, get_files_with_regex,
-  get_subdirectories,
+  get_subdirectories, RemoveDirGuard,
 };
 use crate::utils::image::ImageWrapper;
 use lazy_static::lazy_static;
@@ -963,6 +963,10 @@ pub async fn create_instance(
   if version_path.exists() {
     return Err(InstanceError::ConflictNameError.into());
   }
+
+  // Guard removes version_path on any early return (errors)
+  let dir_guard = RemoveDirGuard::new(version_path.clone());
+
   let optifine_info = optifine.as_ref().map(|info| OptiFine {
     filename: info.filename.clone(),
     version: format!("{}_{}", info.r#type, info.patch),
@@ -1133,6 +1137,7 @@ pub async fn create_instance(
     .await
     .map_err(|_| InstanceError::FileCreationFailed)?;
 
+  dir_guard.commit(); // disarm the cleanup guard on success
   Ok(())
 }
 

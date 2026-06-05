@@ -41,7 +41,7 @@ static IS_PORTABLE: LazyLock<bool> = LazyLock::new(|| is_portable().unwrap_or(fa
 
 static APP_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
-pub async fn run() {
+pub async fn run() -> i32 {
   tauri::Builder::default()
     .plugin(tauri_plugin_clipboard_manager::init())
     .plugin(tauri_plugin_deep_link::init())
@@ -207,7 +207,7 @@ pub async fn run() {
       let local_mod_translations = LocalModTranslationsCache::load().unwrap_or_default();
       app.manage(Mutex::new(local_mod_translations));
 
-      let client = build_sjmcl_client(app.handle(), true, false);
+      let client = build_sjmcl_client(app.handle(), true);
       app.manage(client);
 
       let launching_queue = Vec::<LaunchingState>::new();
@@ -286,7 +286,9 @@ pub async fn run() {
       #[cfg(any(target_os = "linux", target_os = "windows"))]
       {
         use tauri_plugin_deep_link::DeepLinkExt;
-        app.deep_link().register_all()?;
+        if let Err(e) = app.deep_link().register_all() {
+          log::warn!("Failed to register deep links: {e}");
+        }
       }
 
       // Start the launcher MCP server if enabled
@@ -296,6 +298,24 @@ pub async fn run() {
 
       Ok(())
     })
-    .run(tauri::generate_context!())
-    .expect("error while running tauri application");
+    .build(tauri::generate_context!())
+    // Catch and show a native error dialog when Tauri fails to initialize.
+    // A plain panic would be invisible to the user by default, and tauri-plugin-dialog isn't available since the app never started.
+    .unwrap_or_else(|e| {
+      log::error!("Failed to build Tauri application: {:?}", e);
+      eprintln!("Failed to build Tauri application: {:?}", e); // fallback when logging is not available
+      native_dialog::DialogBuilder::message()
+        .set_title("Initialization error")
+        .set_text(format!("Cannot initialize USTBL due to an error:\n{e}"))
+        .set_level(native_dialog::MessageLevel::Error)
+        .alert()
+        .show()
+        .ok();
+      std::process::exit(1);
+    })
+    .run_return(|_app_handle, event| {
+      if let tauri::RunEvent::Exit = event {
+        log::info!("Launcher exited normally.");
+      }
+    })
 }
