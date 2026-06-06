@@ -58,7 +58,14 @@ pub async fn run() -> i32 {
                                   // FIXME: this show() seems no use in macOS build mode (ref: https://github.com/tauri-apps/tauri/issues/13400#issuecomment-2866462355).
       let _ = main_window.set_focus();
     }))
-    .plugin(tauri_plugin_window_state::Builder::new().build())
+    .plugin(
+      tauri_plugin_window_state::Builder::new()
+        .with_state_flags(
+          tauri_plugin_window_state::StateFlags::all()
+            & !tauri_plugin_window_state::StateFlags::VISIBLE,
+        )
+        .build(),
+    )
     .invoke_handler(tauri::generate_handler![
       launcher_config::commands::retrieve_launcher_config,
       launcher_config::commands::update_launcher_config,

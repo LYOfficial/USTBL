@@ -19,6 +19,10 @@ import WindowTitleBar from "@/components/window-title-bar";
 import { useLauncherConfig } from "@/contexts/config";
 import { isDev } from "@/utils/env";
 
+// Whether we're running inside a Tauri webview
+const isTauriRuntime =
+  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
 interface MainLayoutProps {
   children: React.ReactNode;
 }
@@ -32,6 +36,42 @@ const MainLayout = ({ children }: MainLayoutProps) => {
 
   const [bgImgSrc, setBgImgSrc] = useState<string>("");
   const isCheckedRunCount = useRef(false);
+  const hasShownWindow = useRef(false);
+
+  // ─── Show the main window once the frontend has finished loading ──────────
+  // The window starts hidden (visible:false in tauri.conf.json) to avoid
+  // showing a transparent/empty frame while the JS bundle loads. We call
+  // getCurrentWindow().show() after the config is loaded and the layout has
+  // rendered, so the user sees content immediately instead of a blank box.
+  const showMainWindow = useRef(async () => {
+    if (!isTauriRuntime || hasShownWindow.current) return;
+    hasShownWindow.current = true;
+    try {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      setTimeout(() => getCurrentWindow().show(), 50);
+    } catch {
+      // Ignore if not in Tauri runtime
+    }
+  });
+
+  useEffect(() => {
+    if (isStandAlone || hasShownWindow.current) return;
+    // Config loaded — show the window after a short delay to ensure paint
+    if (!config.mocked) {
+      showMainWindow.current();
+    }
+  }, [config.mocked, isStandAlone]);
+
+  // Fallback: if config fails to load within 5s, show window anyway
+  useEffect(() => {
+    if (isStandAlone) return;
+    const timer = setTimeout(() => {
+      if (!hasShownWindow.current) {
+        showMainWindow.current();
+      }
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [isStandAlone]);
 
   const {
     isOpen: isWelcomeAndTermsModalOpen,
