@@ -29,6 +29,8 @@ pub struct DownloadParam {
   pub dest: PathBuf,
   pub filename: Option<String>,
   pub sha1: Option<String>,
+  #[serde(default)]
+  pub custom_headers: Option<std::collections::HashMap<String, String>>,
 }
 
 pub struct DownloadTask {
@@ -127,13 +129,25 @@ impl DownloadTask {
   ) -> USTBLResult<reqwest::Response> {
     let state = app_handle.state::<reqwest::Client>();
     let client = with_retry(state.inner().clone());
-    let request = if current == 0 {
+    let mut request = if current == 0 {
       client.get(param.src.clone())
     } else {
       client
         .get(param.src.clone())
         .header(RANGE, format!("bytes={current}-"))
     };
+
+    // Apply custom headers if provided (e.g., for Anyshare downloads that need
+    // specific cookies and authrequest headers that the shared client doesn't carry)
+    if let Some(ref headers) = param.custom_headers {
+      for (key, value) in headers {
+        if let Ok(header_name) = key.parse::<reqwest::header::HeaderName>() {
+          if let Ok(header_value) = value.parse::<reqwest::header::HeaderValue>() {
+            request = request.header(header_name, header_value);
+          }
+        }
+      }
+    }
 
     let response = request
       .send()

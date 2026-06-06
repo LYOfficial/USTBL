@@ -145,6 +145,8 @@ pub async fn run() -> i32 {
       resource::commands::fetch_remote_resource_by_id,
       discover::commands::fetch_news_sources_info,
       discover::commands::fetch_news_post_summaries,
+      discover::commands::fetch_anyshare_folder_list,
+      discover::commands::fetch_anyshare_download_url,
       tasks::commands::schedule_progressive_task_group,
       tasks::commands::cancel_progressive_task,
       tasks::commands::resume_progressive_task,

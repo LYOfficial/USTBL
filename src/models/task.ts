@@ -10,6 +10,7 @@ export interface DownloadTaskParam {
   dest: string; // destination path
   filename?: string; // destination filename
   sha1?: string;
+  customHeaders?: Record<string, string>; // custom headers for the download request
 }
 
 export type TaskParam = DownloadTaskParam;
@@ -20,6 +21,7 @@ export interface DownloadTaskPayload {
   dest: string; // destination path
   filename: string; // destination filename
   sha1: string;
+  customHeaders?: Record<string, string>; // custom headers for the download request
 }
 
 export type TaskPayload = DownloadTaskPayload;

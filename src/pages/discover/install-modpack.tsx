@@ -7,6 +7,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
+import { invoke } from "@tauri-apps/api/core";
 import { downloadDir } from "@tauri-apps/api/path";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -17,11 +18,14 @@ import { CommonIconButton } from "@/components/common/common-icon-button";
 import Empty from "@/components/common/empty";
 import { OptionItemGroup } from "@/components/common/option-item";
 import { Section } from "@/components/common/section";
+import SegmentedControl from "@/components/common/segmented";
 import { useLauncherConfig } from "@/contexts/config";
 import { useTaskContext } from "@/contexts/task";
 import { useToast } from "@/contexts/toast";
 import { TaskTypeEnums } from "@/models/task";
 import { sanitizeFileName } from "@/utils/string";
+
+// ─── XPlus (Original Modpack) ──────────────────────────────────────────────
 
 type XPlusVersion = {
   id: string;
@@ -58,7 +62,7 @@ const fallbackVersions: XPlusVersion[] = [
 ];
 
 const toXPlusVersionList = (rawList: any[]): XPlusVersion[] => {
-  return rawList
+  const all = rawList
     .map((item) => {
       const primaryFile =
         (item.files || []).find((f: any) => f.primary) ||
@@ -80,20 +84,121 @@ const toXPlusVersionList = (rawList: any[]): XPlusVersion[] => {
         fileName: decodedFileName,
       } as XPlusVersion;
     })
-    .filter((item): item is XPlusVersion => Boolean(item))
-    .sort((a, b) => {
-      const aRecommended = a.gameVersions.includes(RECOMMENDED_VERSION);
-      const bRecommended = b.gameVersions.includes(RECOMMENDED_VERSION);
-      if (aRecommended !== bRecommended) {
-        return aRecommended ? -1 : 1;
-      }
+    .filter((item): item is XPlusVersion => Boolean(item));
 
-      if (!a.published || !b.published) return 0;
-      return new Date(b.published).getTime() - new Date(a.published).getTime();
-    });
+  // Deduplicate: keep only the latest published version per game version
+  const latestByGameVersion = new Map<string, XPlusVersion>();
+  for (const ver of all) {
+    const primaryGameVer = ver.gameVersions[0] || ver.versionNumber;
+    const existing = latestByGameVersion.get(primaryGameVer);
+    if (
+      !existing ||
+      (ver.published &&
+        existing.published &&
+        ver.published > existing.published)
+    ) {
+      latestByGameVersion.set(primaryGameVer, ver);
+    }
+  }
+
+  const deduped = Array.from(latestByGameVersion.values());
+
+  // Sort: recommended version first, then by published date descending
+  deduped.sort((a, b) => {
+    const aRecommended = a.gameVersions.includes(RECOMMENDED_VERSION);
+    const bRecommended = b.gameVersions.includes(RECOMMENDED_VERSION);
+    if (aRecommended !== bRecommended) {
+      return aRecommended ? -1 : 1;
+    }
+    if (!a.published || !b.published) return 0;
+    return new Date(b.published).getTime() - new Date(a.published).getTime();
+  });
+
+  return deduped;
 };
 
+// ─── Campus Modpack (Anyshare) ──────────────────────────────────────────────
+
+type AnyshareFileItem = {
+  docid: string;
+  name: string;
+  size: number | null;
+  isDir: boolean;
+};
+
+const ANYSHARE_URL =
+  "https://yunpan.ustb.edu.cn/link/AA96B8A02265AB4439ACB0027CA5A19225";
+
+const formatFileSize = (bytes: number | null): string => {
+  if (bytes === null || bytes === undefined) return "-";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  for (const unit of units) {
+    if (value < 1024 || unit === "TB") {
+      return unit === "B"
+        ? `${Math.round(value)} ${unit}`
+        : `${value.toFixed(2)} ${unit}`;
+    }
+    value /= 1024;
+  }
+  return `${value.toFixed(2)} TB`;
+};
+
+// ─── Main Page ──────────────────────────────────────────────────────────────
+
 const InstallModpackPage = () => {
+  const { t } = useTranslation();
+  const { config } = useLauncherConfig();
+  const primaryColor = config.appearance.theme.primaryColor;
+
+  const [activeTab, setActiveTab] = useState<string>("xplus");
+
+  const tabItems = useMemo(
+    () => [
+      {
+        label: t("DiscoverLayout.discoverDomainList.original-modpack"),
+        value: "xplus",
+      },
+      {
+        label: t("DiscoverLayout.discoverDomainList.campus-modpack"),
+        value: "campus",
+      },
+    ],
+    [t]
+  );
+
+  return (
+    <Section
+      title={t("DiscoverLayout.discoverDomainList.install-modpack")}
+      w="100%"
+      h="100%"
+      display="flex"
+      flexDir="column"
+    >
+      <VStack align="stretch" spacing={3}>
+        <Box px={1}>
+          <SegmentedControl
+            size="sm"
+            items={tabItems}
+            selected={activeTab}
+            onSelectItem={setActiveTab}
+            colorScheme={primaryColor}
+          />
+        </Box>
+
+        {activeTab === "xplus" ? (
+          <XPlusModpackSection />
+        ) : (
+          <CampusModpackSection />
+        )}
+      </VStack>
+    </Section>
+  );
+};
+
+// ─── XPlus Section ──────────────────────────────────────────────────────────
+
+const XPlusModpackSection = () => {
   const { t } = useTranslation();
   const toast = useToast();
   const { config } = useLauncherConfig();
@@ -116,7 +221,7 @@ const InstallModpackPage = () => {
       setVersions(fallbackVersions);
       toast({
         title: t("General.networkError"),
-        description: "Modrinth 版本列表加载失败，已使用推荐版本。",
+        description: t("InstallModpackPage.xplus.loadFailed"),
         status: "warning",
       });
     } finally {
@@ -153,8 +258,10 @@ const InstallModpackPage = () => {
       ]);
 
       toast({
-        title: `已开始下载 ${version.versionNumber || version.name}`,
-        description: "下载完成后会自动进入整合包安装流程。",
+        title: t("InstallModpackPage.xplus.downloadStarted", {
+          version: version.versionNumber || version.name,
+        }),
+        description: t("InstallModpackPage.xplus.downloadDescription"),
         status: "success",
       });
     } finally {
@@ -163,25 +270,10 @@ const InstallModpackPage = () => {
   };
 
   return (
-    <Section
-      title={t("DiscoverLayout.discoverDomainList.install-modpack")}
-      w="100%"
-      h="100%"
-      display="flex"
-      flexDir="column"
-      headExtra={
-        <CommonIconButton
-          icon="refresh"
-          onClick={fetchVersions}
-          isDisabled={loading}
-          size="xs"
-          h={21}
-        />
-      }
-    >
-      <VStack align="stretch" spacing={3}>
-        <Box px={1}>
-          <HStack spacing={2} mb={1}>
+    <VStack align="stretch" spacing={3}>
+      <Box px={1}>
+        <HStack spacing={2} mb={1} justify="space-between" w="100%">
+          <HStack spacing={2}>
             <Text fontSize="sm" fontWeight="bold">
               XPlus 2.0 Modpack (Global)
             </Text>
@@ -196,60 +288,218 @@ const InstallModpackPage = () => {
               </HStack>
             </Link>
           </HStack>
-          <Text fontSize="xs" className="secondary-text">
-            仅保留 XPlus 各版本安装。默认推荐下载 Minecraft {RECOMMENDED_VERSION} 版本。
-          </Text>
-        </Box>
-
-        {loading ? (
-          <VStack my={8}>
-            <BeatLoader size={14} color="gray" />
-          </VStack>
-        ) : versions.length === 0 ? (
-          <Empty withIcon={false} size="sm" />
-        ) : (
-          <OptionItemGroup
-            items={versions.map((version) => {
-              const isRecommended = version.id === recommendedVersionId;
-              return {
-                title: (
-                  <HStack spacing={2}>
-                    <Text>{version.versionNumber || version.name}</Text>
-                    {isRecommended && (
-                      <Badge colorScheme={primaryColor}>推荐</Badge>
-                    )}
-                  </HStack>
-                ),
-                description: (
-                  <Text fontSize="xs" className="secondary-text">
-                    {version.name}
-                  </Text>
-                ),
-                prefixElement: (
-                  <Avatar
-                    src={MODPACK_ICON_URL}
-                    name="XPlus"
-                    boxSize={8}
-                    borderRadius="md"
-                  />
-                ),
-                children: (
-                  <CommonIconButton
-                    icon="download"
-                    label={t("General.download")}
-                    withTooltip
-                    size="xs"
-                    h={18}
-                    isLoading={downloadingId === version.id}
-                    onClick={() => handleInstall(version)}
-                  />
-                ),
-              };
-            })}
+          <CommonIconButton
+            icon="refresh"
+            onClick={fetchVersions}
+            isDisabled={loading}
+            size="xs"
+            h={21}
           />
-        )}
-      </VStack>
-    </Section>
+        </HStack>
+        <Text fontSize="xs" className="secondary-text">
+          {t("InstallModpackPage.xplus.description", {
+            version: RECOMMENDED_VERSION,
+          })}
+        </Text>
+      </Box>
+
+      {loading ? (
+        <VStack my={8}>
+          <BeatLoader size={14} color="gray" />
+        </VStack>
+      ) : versions.length === 0 ? (
+        <Empty withIcon={false} size="sm" />
+      ) : (
+        <OptionItemGroup
+          items={versions.map((version) => {
+            const isRecommended = version.id === recommendedVersionId;
+            return {
+              title: (
+                <HStack spacing={2}>
+                  <Text>{version.versionNumber || version.name}</Text>
+                  {isRecommended && (
+                    <Badge colorScheme={primaryColor}>推荐</Badge>
+                  )}
+                </HStack>
+              ),
+              description: (
+                <Text fontSize="xs" className="secondary-text">
+                  {version.name}
+                </Text>
+              ),
+              prefixElement: (
+                <Avatar
+                  src={MODPACK_ICON_URL}
+                  name="XPlus"
+                  boxSize={8}
+                  borderRadius="md"
+                />
+              ),
+              children: (
+                <CommonIconButton
+                  icon="download"
+                  label={t("General.download")}
+                  withTooltip
+                  size="xs"
+                  h={18}
+                  isLoading={downloadingId === version.id}
+                  onClick={() => handleInstall(version)}
+                />
+              ),
+            };
+          })}
+        />
+      )}
+    </VStack>
+  );
+};
+
+// ─── Campus Modpack Section ─────────────────────────────────────────────────
+
+type AnyshareDownloadInfo = {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  fileName: string;
+};
+
+const CampusModpackSection = () => {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const { handleScheduleProgressiveTaskGroup } = useTaskContext();
+  const { config } = useLauncherConfig();
+  const primaryColor = config.appearance.theme.primaryColor;
+
+  const [files, setFiles] = useState<AnyshareFileItem[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [downloadingId, setDownloadingId] = useState<string>("");
+
+  const fetchFiles = useCallback(async () => {
+    setLoading(true);
+    try {
+      const result = await invoke<AnyshareFileItem[]>(
+        "fetch_anyshare_folder_list",
+        { shareUrl: ANYSHARE_URL }
+      );
+      // Filter to show only files (not directories)
+      setFiles(result.filter((f) => !f.isDir));
+    } catch (error) {
+      setFiles([]);
+      toast({
+        title: t("General.networkError"),
+        description: t("InstallModpackPage.campus.loadFailed", {
+          error: String(error),
+        }),
+        status: "warning",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [t, toast]);
+
+  useEffect(() => {
+    fetchFiles();
+  }, [fetchFiles]);
+
+  const handleInstall = async (file: AnyshareFileItem) => {
+    setDownloadingId(file.docid);
+    try {
+      // Step 1: Get the download URL and required headers from Anyshare
+      const downloadInfo = await invoke<AnyshareDownloadInfo>(
+        "fetch_anyshare_download_url",
+        {
+          shareUrl: ANYSHARE_URL,
+          docid: file.docid,
+          fileName: file.name,
+        }
+      );
+
+      // Step 2: Schedule a progressive download task (same system as XPlus)
+      // The task will appear in the download arrow UI and trigger auto-install
+      // when completed (since the group name is "modpack").
+      // Use an absolute dest path so the file is saved to the Downloads folder
+      // (same as XPlus) and the auto-install modal can find it.
+      const baseDir = await downloadDir();
+      const fileName = sanitizeFileName(file.name);
+      const savePath = `${baseDir}/${fileName}`;
+
+      handleScheduleProgressiveTaskGroup("modpack", [
+        {
+          src: downloadInfo.url,
+          dest: savePath,
+          customHeaders: downloadInfo.headers,
+          taskType: TaskTypeEnums.Download,
+        },
+      ]);
+
+      toast({
+        title: t("InstallModpackPage.campus.downloadStarted", {
+          name: file.name,
+        }),
+        description: t("InstallModpackPage.campus.downloadDescription"),
+        status: "success",
+      });
+    } catch (error) {
+      toast({
+        title: t("InstallModpackPage.campus.downloadFailed"),
+        description: String(error),
+        status: "error",
+      });
+    } finally {
+      setDownloadingId("");
+    }
+  };
+
+  return (
+    <VStack align="stretch" spacing={3}>
+      <Box px={1}>
+        <HStack spacing={2} mb={1} justify="space-between" w="100%">
+          <Text fontSize="sm" fontWeight="bold">
+            {t("InstallModpackPage.campus.title")}
+          </Text>
+          <CommonIconButton
+            icon="refresh"
+            onClick={fetchFiles}
+            isDisabled={loading}
+            size="xs"
+            h={21}
+          />
+        </HStack>
+        <Text fontSize="xs" className="secondary-text">
+          {t("InstallModpackPage.campus.description")}
+        </Text>
+      </Box>
+
+      {loading ? (
+        <VStack my={8}>
+          <BeatLoader size={14} color="gray" />
+        </VStack>
+      ) : files.length === 0 ? (
+        <Empty withIcon={false} size="sm" />
+      ) : (
+        <OptionItemGroup
+          items={files.map((file) => ({
+            title: <Text fontSize="xs-sm">{file.name}</Text>,
+            description: (
+              <Text fontSize="xs" className="secondary-text">
+                {formatFileSize(file.size)}
+              </Text>
+            ),
+            children: (
+              <CommonIconButton
+                icon="download"
+                label={t("General.download")}
+                withTooltip
+                size="xs"
+                h={18}
+                isLoading={downloadingId === file.docid}
+                onClick={() => handleInstall(file)}
+              />
+            ),
+          }))}
+        />
+      )}
+    </VStack>
   );
 };
 

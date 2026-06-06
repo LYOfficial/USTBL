@@ -480,12 +480,30 @@
       "community-news": "Community",
       "minecraft-news": "Minecraft News",
       "install-modpack": "Install Modpack",
+      "original-modpack": "Original Modpack",
+      "campus-modpack": "Campus Modpack",
       "modpack": "Modpacks",
       "mod": "Mods",
       "world": "Worlds",
       "resourcepack": "Resource Packs",
       "shader": "Shader Packs",
       "datapack": "Data Packs"
+    }
+  },
+  "InstallModpackPage": {
+    "xplus": {
+      "description": "Only the latest published version for each game version is kept. Minecraft {{version}} is recommended by default.",
+      "loadFailed": "Modrinth version list failed to load, using recommended version.",
+      "downloadStarted": "Started downloading {{version}}",
+      "downloadDescription": "Modpack installation will start automatically after download."
+    },
+    "campus": {
+      "title": "Campus Modpack",
+      "description": "Campus modpack resources from USTB Anyshare cloud drive.",
+      "loadFailed": "Campus modpack list failed to load: {{error}}",
+      "downloadStarted": "Started downloading {{name}}",
+      "downloadDescription": "Modpack installation will start automatically after download.",
+      "downloadFailed": "Download failed"
     }
   },
   "DiscoverSourcesPage": {

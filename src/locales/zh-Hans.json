@@ -480,12 +480,30 @@
       "community-news": "社团新闻",
       "minecraft-news": "Minecraft 新闻",
       "install-modpack": "安装整合包",
+      "original-modpack": "原版整合包",
+      "campus-modpack": "校内整合包",
       "modpack": "整合包",
       "mod": "模组",
       "world": "世界",
       "resourcepack": "资源包",
       "shader": "光影",
       "datapack": "数据包"
+    }
+  },
+  "InstallModpackPage": {
+    "xplus": {
+      "description": "各游戏版本仅保留最新发布版本。默认推荐下载 Minecraft {{version}} 版本。",
+      "loadFailed": "Modrinth 版本列表加载失败，已使用推荐版本。",
+      "downloadStarted": "已开始下载 {{version}}",
+      "downloadDescription": "下载完成后会自动进入整合包安装流程。"
+    },
+    "campus": {
+      "title": "校内整合包",
+      "description": "来自北科大 Anyshare 云盘的校内整合包资源。",
+      "loadFailed": "校内整合包列表加载失败：{{error}}",
+      "downloadStarted": "已开始下载 {{name}}",
+      "downloadDescription": "下载完成后会自动进入整合包安装流程。",
+      "downloadFailed": "下载失败"
     }
   },
   "DiscoverSourcesPage": {

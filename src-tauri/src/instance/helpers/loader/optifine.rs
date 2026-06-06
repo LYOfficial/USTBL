@@ -47,6 +47,7 @@ pub async fn download_optifine_installer(
     dest: installer_path.clone(),
     filename: None,
     sha1: None,
+    custom_headers: None,
   }));
 
   Ok(())
@@ -161,6 +162,7 @@ async fn download_optifine_libraries(
       dest: lw_dest,
       filename: None,
       sha1: None,
+      custom_headers: None,
     }));
   }
 

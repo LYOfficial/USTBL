@@ -153,6 +153,7 @@ pub async fn download_target_version(
             dest: download_cache_dir.join(&fname),
             filename: Some(fname),
             sha1: None,
+            custom_headers: None,
           })],
           true,
         )

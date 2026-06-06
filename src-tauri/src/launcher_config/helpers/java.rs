@@ -537,6 +537,7 @@ pub async fn build_mojang_java_download_params(
         dest: runtime_dir.join(path),
         filename: None,
         sha1: Some(sha1.into()),
+        custom_headers: None,
       }))
     })
     .collect();

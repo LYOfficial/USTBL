@@ -123,6 +123,7 @@ impl ModpackManifest for ModrinthManifest {
           sha1: Some(file.hashes.sha1.clone()),
           dest: instance_path.join(&file.path),
           filename: None,
+          custom_headers: None,
         }))
       })
       .collect::<USTBLResult<Vec<_>>>()
