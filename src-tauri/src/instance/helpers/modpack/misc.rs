@@ -1,4 +1,5 @@
 use crate::error::USTBLResult;
+use crate::instance::helpers::modpack::curseforge::CurseForgeManifest;
 use crate::instance::helpers::modpack::modrinth::ModrinthManifest;
 use crate::instance::helpers::modpack::multimc::MultiMcManifest;
 use crate::instance::models::misc::{InstanceError, ModLoader, ModLoaderType};
@@ -34,6 +35,12 @@ type Parser = Box<dyn Fn(&File) -> USTBLResult<ManifestBox> + Send + Sync>;
 
 fn get_parsers() -> Vec<Parser> {
   vec![
+    Box::new(|f| {
+      CurseForgeManifest::from_archive(f).map(|m| {
+        let b: ManifestBox = Box::new(m);
+        b
+      })
+    }),
     Box::new(|f| {
       ModrinthManifest::from_archive(f).map(|m| {
         let b: ManifestBox = Box::new(m);

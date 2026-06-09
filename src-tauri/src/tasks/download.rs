@@ -33,6 +33,19 @@ pub struct DownloadParam {
   pub custom_headers: Option<std::collections::HashMap<String, String>>,
 }
 
+/// Format a download error with its full source chain so the frontend can
+/// surface a useful failure reason. Avoids formatting `Option::None` as the
+/// literal string "None" when the error has no `source()`.
+fn format_download_error<E: std::error::Error>(e: &E) -> String {
+  // Prefer the error's own Display, which often includes status/url.
+  let primary = e.to_string();
+  if let Some(src) = e.source() {
+    format!("{}: {}", primary, src)
+  } else {
+    primary
+  }
+}
+
 pub struct DownloadTask {
   p_handle: PTaskHandle,
   param: DownloadParam,
@@ -152,11 +165,11 @@ impl DownloadTask {
     let response = request
       .send()
       .await
-      .map_err(|e| USTBLError(format!("{:?}", e.source())))?;
+      .map_err(|e| USTBLError(format_download_error(&e)))?;
 
     let response = response
       .error_for_status()
-      .map_err(|e| USTBLError(format!("{:?}", e.source())))?;
+      .map_err(|e| USTBLError(format_download_error(&e)))?;
 
     Ok(response)
   }
@@ -170,8 +183,10 @@ impl DownloadTask {
     i64,
   )> {
     let resp = Self::send_request(app_handle, current, param).await?;
+    // Content-Length may be absent for chunked transfer encoding or redirects;
+    // fall back to -1 so the download still proceeds without total progress info.
     let total_progress = if current == 0 {
-      resp.content_length().unwrap() as i64
+      resp.content_length().map_or(-1, |length| length as i64)
     } else {
       -1
     };
@@ -200,7 +215,9 @@ impl DownloadTask {
       async move {
         let (resp, total_progress) = Self::create_resp_stream(&app_handle, current, &param).await?;
         let stream = ProgressStream::new(resp, task_handle.clone());
-        tokio::fs::create_dir_all(&self.dest_path.parent().unwrap()).await?;
+        if let Some(parent) = self.dest_path.parent() {
+          tokio::fs::create_dir_all(parent).await?;
+        }
         let mut file = if current == 0 {
           tokio::fs::File::create(&self.dest_path).await?
         } else {
