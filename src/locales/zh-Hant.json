@@ -1444,6 +1444,10 @@
     }
   },
   "LaunchProcessModal": {
+    "error": {
+      "authServerRejectedOAuthToken": "登入資訊已成功重新整理並儲存，但驗證伺服器尚未將 OAuth 權杖接入 Yggdrasil 工作階段驗證",
+      "tokenInvalidAfterRefresh": "帳戶工作階段重新整理後仍然無效，請重新登入帳戶"
+    },
     "header": {
       "title": "啟動遊戲 - {{name}}"
     },

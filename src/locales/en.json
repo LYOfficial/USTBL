@@ -1463,6 +1463,10 @@
     }
   },
   "LaunchProcessModal": {
+    "error": {
+      "authServerRejectedOAuthToken": "The login was refreshed and saved, but the authentication server does not accept OAuth tokens for Yggdrasil sessions.",
+      "tokenInvalidAfterRefresh": "The account session is still invalid after refreshing. Please sign in again."
+    },
     "header": {
       "title": "Launch Game - {{name}}"
     },

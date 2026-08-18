@@ -31,6 +31,7 @@ import { useLauncherConfig } from "@/contexts/config";
 import { useGlobalData } from "@/contexts/global-data";
 import { useSharedModals } from "@/contexts/shared-modal";
 import { useToast } from "@/contexts/toast";
+import { PlayerType } from "@/enums/account";
 import { LaunchServiceError } from "@/enums/service-error";
 import { InstanceSummary } from "@/models/instance/misc";
 import { ResponseError } from "@/models/response";
@@ -122,18 +123,45 @@ const LaunchProcessModal: React.FC<LaunchProcessModal> = ({
       },
       {
         label: "validateSelectedPlayer",
-        function: () => LaunchService.validateSelectedPlayer(),
+        function: async () => {
+          if (
+            selectedPlayer?.playerType === PlayerType.ThirdParty &&
+            selectedPlayer.refreshToken
+          ) {
+            const refreshResponse = await AccountService.refreshPlayer(
+              selectedPlayer.id
+            );
+            if (refreshResponse.status !== "success") {
+              return refreshResponse;
+            }
+          }
+          return LaunchService.validateSelectedPlayer();
+        },
         isOK: (data: boolean) => data,
         onResCallback: (data: boolean) => {
           const reValidate = () =>
             LaunchService.validateSelectedPlayer().then((response) => {
-              if (response.status === "success") {
+              if (response.status === "success" && response.data) {
                 setActiveStep(activeStep + 1);
               } else {
                 setErrorPaused(true);
-                setErrorDesc(response.details);
+                setErrorDesc(
+                  response.status === "success"
+                    ? t("LaunchProcessModal.error.tokenInvalidAfterRefresh")
+                    : response.details
+                );
               }
             });
+          if (
+            selectedPlayer?.playerType === PlayerType.ThirdParty &&
+            selectedPlayer.refreshToken
+          ) {
+            setErrorPaused(true);
+            setErrorDesc(
+              t("LaunchProcessModal.error.authServerRejectedOAuthToken")
+            );
+            return;
+          }
           AccountService.refreshPlayer(selectedPlayer?.id || "").then(
             (response) => {
               if (response.status !== "success") {
@@ -154,7 +182,31 @@ const LaunchProcessModal: React.FC<LaunchProcessModal> = ({
             }
           );
         },
-        onErrCallback: (error: ResponseError) => {},
+        onErrCallback: (error: ResponseError) => {
+          if (
+            selectedPlayer?.playerType === PlayerType.ThirdParty &&
+            selectedPlayer.refreshToken
+          ) {
+            openSharedModal("relogin", {
+              player: selectedPlayer,
+              onSuccess: () => {
+                LaunchService.validateSelectedPlayer().then((response) => {
+                  if (response.status === "success" && response.data) {
+                    setErrorPaused(false);
+                    setActiveStep(activeStep + 1);
+                  } else {
+                    setErrorPaused(true);
+                    setErrorDesc(
+                      response.status === "success"
+                        ? t("LaunchProcessModal.error.tokenInvalidAfterRefresh")
+                        : response.details
+                    );
+                  }
+                });
+              },
+            });
+          }
+        },
       },
       {
         label: "launchGame",

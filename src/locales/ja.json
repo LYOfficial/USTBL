@@ -1444,6 +1444,10 @@
     }
   },
   "LaunchProcessModal": {
+    "error": {
+      "authServerRejectedOAuthToken": "ログイン情報は更新・保存されましたが、認証サーバーが OAuth トークンを Yggdrasil セッションとして受け付けていません。",
+      "tokenInvalidAfterRefresh": "更新後もアカウントセッションが無効です。再度ログインしてください。"
+    },
     "header": {
       "title": "ゲーム起動 - {{name}}"
     },

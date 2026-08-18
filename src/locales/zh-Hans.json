@@ -1463,6 +1463,10 @@
     }
   },
   "LaunchProcessModal": {
+    "error": {
+      "authServerRejectedOAuthToken": "登录信息已成功刷新并保存，但认证服务器未将 OAuth 令牌接入 Yggdrasil 会话验证，暂时无法进入多人服务器",
+      "tokenInvalidAfterRefresh": "账户会话刷新后仍然无效，请重新登录账户"
+    },
     "header": {
       "title": "启动游戏 - {{name}}"
     },

@@ -1441,6 +1441,10 @@
     }
   },
   "LaunchProcessModal": {
+    "error": {
+      "authServerRejectedOAuthToken": "La connexion a été actualisée et enregistrée, mais le serveur d’authentification n’accepte pas les jetons OAuth pour les sessions Yggdrasil.",
+      "tokenInvalidAfterRefresh": "La session du compte reste invalide après l’actualisation. Veuillez vous reconnecter."
+    },
     "header": {
       "title": "Lancer le jeu - {{name}}"
     },

@@ -208,12 +208,16 @@ pub async fn refresh(
   let client = app.state::<reqwest::Client>();
 
   let mut form_params = vec![
-    ("client_id".to_string(), client_id.clone().unwrap_or_default()),
+    (
+      "client_id".to_string(),
+      client_id.clone().unwrap_or_default(),
+    ),
     (
       "refresh_token".to_string(),
       player.refresh_token.clone().unwrap_or_default(),
     ),
     ("grant_type".to_string(), "refresh_token".to_string()),
+    ("scope".to_string(), SCOPE.to_string()),
   ];
   if let Some(uri) = &redirect_uri {
     form_params.push(("redirect_uri".to_string(), uri.clone()));
@@ -232,10 +236,26 @@ pub async fn refresh(
     return Err(AccountError::Expired)?;
   }
 
-  let tokens: OAuthTokens = token_response
+  let mut tokens: OAuthTokens = token_response
     .json()
     .await
     .map_err(|_| AccountError::ParseError)?;
 
-  parse_token(app, jwks, &tokens, player.auth_server_url.clone(), client_id).await
+  if tokens
+    .refresh_token
+    .as_deref()
+    .unwrap_or_default()
+    .is_empty()
+  {
+    tokens.refresh_token = player.refresh_token.clone();
+  }
+
+  parse_token(
+    app,
+    jwks,
+    &tokens,
+    player.auth_server_url.clone(),
+    client_id,
+  )
+  .await
 }

@@ -192,7 +192,7 @@ pub async fn generate_launch_command(
     auth_access_token: selected_player.access_token.unwrap_or_default(),
     auth_player_name: selected_player.name,
     user_type: "msa".to_string(), // TODO
-    auth_uuid: selected_player.uuid.to_string(),
+    auth_uuid: selected_player.uuid.as_simple().to_string(),
     auth_xuid: "".to_string(), // TODO
     demo: false,
     user_properties: "{}".to_string(),
