@@ -10,6 +10,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { downloadDir } from "@tauri-apps/api/path";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { useRouter } from "next/router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LuExternalLink } from "react-icons/lu";
@@ -148,10 +149,17 @@ const formatFileSize = (bytes: number | null): string => {
 
 const InstallModpackPage = () => {
   const { t } = useTranslation();
+  const router = useRouter();
   const { config } = useLauncherConfig();
   const primaryColor = config.appearance.theme.primaryColor;
 
-  const [activeTab, setActiveTab] = useState<string>("xplus");
+  const [activeTab, setActiveTab] = useState<string>(
+    router.query.tab === "campus" ? "campus" : "xplus"
+  );
+
+  useEffect(() => {
+    if (router.query.tab === "campus") setActiveTab("campus");
+  }, [router.query.tab]);
 
   const tabItems = useMemo(
     () => [

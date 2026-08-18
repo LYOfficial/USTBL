@@ -9,8 +9,8 @@ use crate::utils::web::with_retry;
 use async_speed_limit::Limiter;
 use futures::stream::TryStreamExt;
 use futures::StreamExt;
+use log::warn;
 use serde::{Deserialize, Serialize};
-use std::error::Error;
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
@@ -55,6 +55,8 @@ pub struct DownloadTask {
 }
 
 impl DownloadTask {
+  const NEOFORGE_RETRY_LIMIT: usize = 10;
+
   pub fn new(
     app_handle: AppHandle,
     task_id: u32,
@@ -135,37 +137,107 @@ impl DownloadTask {
     }
   }
 
+  fn is_neoforge_download(param: &DownloadParam) -> bool {
+    param.src.host_str() == Some("maven.neoforged.net")
+      || (param.src.host_str() == Some("bmclapi2.bangbang93.com")
+        && (param.src.path().starts_with("/neoforge/")
+          || param.dest.to_string_lossy().contains("net/neoforged")))
+      || param.dest.to_string_lossy().contains("net/neoforged")
+  }
+
+  fn neoforge_sources(source: &Url) -> Vec<Url> {
+    let mut sources = vec![source.clone()];
+    let fallback = match (source.host_str(), source.path()) {
+      (Some("maven.neoforged.net"), path) if path.starts_with("/releases/") => {
+        Url::parse(&format!(
+          "https://bmclapi2.bangbang93.com/maven/{}",
+          path.trim_start_matches("/releases/")
+        ))
+        .ok()
+      }
+      (Some("bmclapi2.bangbang93.com"), path) if path.starts_with("/maven/") => {
+        Url::parse(&format!(
+          "https://maven.neoforged.net/releases/{}",
+          path.trim_start_matches("/maven/")
+        ))
+        .ok()
+      }
+      (Some("bmclapi2.bangbang93.com"), path)
+        if path.starts_with("/neoforge/version/") && path.ends_with("/download/installer") =>
+      {
+        let version = path
+          .trim_start_matches("/neoforge/version/")
+          .trim_end_matches("/download/installer");
+        let artifact = if version.starts_with("1.20.1-") {
+          format!("net/neoforged/forge/{version}/forge-{version}-installer.jar")
+        } else {
+          format!("net/neoforged/neoforge/{version}/neoforge-{version}-installer.jar")
+        };
+        Url::parse(&format!("https://maven.neoforged.net/releases/{artifact}")).ok()
+      }
+      _ => None,
+    };
+
+    if let Some(fallback) = fallback {
+      if fallback != *source {
+        sources.push(fallback);
+      }
+    }
+    sources
+  }
+
   async fn send_request(
     app_handle: &AppHandle,
     current: i64,
     param: &DownloadParam,
+    source: &Url,
+    use_request_retry: bool,
   ) -> USTBLResult<reqwest::Response> {
     let state = app_handle.state::<reqwest::Client>();
-    let client = with_retry(state.inner().clone());
-    let mut request = if current == 0 {
-      client.get(param.src.clone())
-    } else {
-      client
-        .get(param.src.clone())
-        .header(RANGE, format!("bytes={current}-"))
-    };
-
-    // Apply custom headers if provided (e.g., for Anyshare downloads that need
-    // specific cookies and authrequest headers that the shared client doesn't carry)
-    if let Some(ref headers) = param.custom_headers {
-      for (key, value) in headers {
-        if let Ok(header_name) = key.parse::<reqwest::header::HeaderName>() {
-          if let Ok(header_value) = value.parse::<reqwest::header::HeaderValue>() {
-            request = request.header(header_name, header_value);
+    let response = if use_request_retry {
+      let client = with_retry(state.inner().clone());
+      let mut request = if current == 0 {
+        client.get(source.clone())
+      } else {
+        client
+          .get(source.clone())
+          .header(RANGE, format!("bytes={current}-"))
+      };
+      if let Some(ref headers) = param.custom_headers {
+        for (key, value) in headers {
+          if let Ok(header_name) = key.parse::<reqwest::header::HeaderName>() {
+            if let Ok(header_value) = value.parse::<reqwest::header::HeaderValue>() {
+              request = request.header(header_name, header_value);
+            }
           }
         }
       }
-    }
-
-    let response = request
-      .send()
-      .await
-      .map_err(|e| USTBLError(format_download_error(&e)))?;
+      request
+        .send()
+        .await
+        .map_err(|error| USTBLError(format_download_error(&error)))?
+    } else {
+      let mut request = if current == 0 {
+        state.get(source.clone())
+      } else {
+        state
+          .get(source.clone())
+          .header(RANGE, format!("bytes={current}-"))
+      };
+      if let Some(ref headers) = param.custom_headers {
+        for (key, value) in headers {
+          if let Ok(header_name) = key.parse::<reqwest::header::HeaderName>() {
+            if let Ok(header_value) = value.parse::<reqwest::header::HeaderValue>() {
+              request = request.header(header_name, header_value);
+            }
+          }
+        }
+      }
+      request
+        .send()
+        .await
+        .map_err(|error| USTBLError(format_download_error(&error)))?
+    };
 
     let response = response
       .error_for_status()
@@ -178,11 +250,13 @@ impl DownloadTask {
     app_handle: &AppHandle,
     current: i64,
     param: &DownloadParam,
+    source: &Url,
+    use_request_retry: bool,
   ) -> USTBLResult<(
     impl Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send,
     i64,
   )> {
-    let resp = Self::send_request(app_handle, current, param).await?;
+    let resp = Self::send_request(app_handle, current, param, source, use_request_retry).await?;
     // Content-Length may be absent for chunked transfer encoding or redirects;
     // fall back to -1 so the download still proceeds without total progress info.
     let total_progress = if current == 0 {
@@ -193,10 +267,62 @@ impl DownloadTask {
     Ok((
       resp.bytes_stream().map(|res| match res {
         Ok(bytes) => Ok(bytes),
-        Err(_) => Ok(bytes::Bytes::new()),
+        Err(error) => Err(std::io::Error::other(error)),
       }),
       total_progress,
     ))
+  }
+
+  async fn download_once(
+    app_handle: &AppHandle,
+    limiter: Option<Limiter>,
+    task_handle: Arc<RwLock<PTaskHandle>>,
+    param: &DownloadParam,
+    dest_path: &PathBuf,
+    source: &Url,
+    use_request_retry: bool,
+  ) -> USTBLResult<()> {
+    let current = task_handle.read().unwrap().desc.current;
+    let (resp, total_progress) =
+      Self::create_resp_stream(app_handle, current, param, source, use_request_retry).await?;
+    let stream = ProgressStream::new(resp, task_handle.clone());
+    if let Some(parent) = dest_path.parent() {
+      tokio::fs::create_dir_all(parent).await?;
+    }
+    let mut file = if current == 0 {
+      tokio::fs::File::create(dest_path).await?
+    } else {
+      let mut file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .open(dest_path)
+        .await?;
+      file.seek(std::io::SeekFrom::Start(current as u64)).await?;
+      file
+    };
+    {
+      let mut task_handle = task_handle.write().unwrap();
+      task_handle.set_total(total_progress);
+      task_handle.mark_started();
+    }
+    if let Some(limiter) = limiter {
+      tokio::io::copy(
+        &mut limiter.limit(stream.into_async_read()).compat(),
+        &mut file,
+      )
+      .await?;
+    } else {
+      tokio::io::copy(&mut stream.into_async_read().compat(), &mut file).await?;
+    }
+    drop(file);
+    if task_handle.read().unwrap().status().is_cancelled() {
+      tokio::fs::remove_file(dest_path).await?;
+      Ok(())
+    } else {
+      match &param.sha1 {
+        Some(sha1) => validate_sha1(param.dest.clone(), sha1.clone()),
+        None => Ok(()),
+      }
+    }
   }
 
   async fn future_impl(
@@ -207,44 +333,55 @@ impl DownloadTask {
     impl Future<Output = USTBLResult<()>> + Send,
     Arc<RwLock<PTaskHandle>>,
   )> {
-    let current = self.p_handle.desc.current;
     let handle = Arc::new(RwLock::new(self.p_handle));
     let task_handle = handle.clone();
     let param = self.param.clone();
+    let dest_path = self.dest_path.clone();
     Ok((
       async move {
-        let (resp, total_progress) = Self::create_resp_stream(&app_handle, current, &param).await?;
-        let stream = ProgressStream::new(resp, task_handle.clone());
-        if let Some(parent) = self.dest_path.parent() {
-          tokio::fs::create_dir_all(parent).await?;
-        }
-        let mut file = if current == 0 {
-          tokio::fs::File::create(&self.dest_path).await?
+        let is_neoforge = Self::is_neoforge_download(&param);
+        let sources = if is_neoforge {
+          Self::neoforge_sources(&param.src)
         } else {
-          let mut f = tokio::fs::OpenOptions::new().open(&self.dest_path).await?;
-          f.seek(std::io::SeekFrom::Start(current as u64)).await?;
-          f
+          vec![param.src.clone()]
         };
-        {
-          let mut task_handle = task_handle.write().unwrap();
-          task_handle.set_total(total_progress);
-          task_handle.mark_started();
-        }
-        if let Some(lim) = limiter {
-          tokio::io::copy(&mut lim.limit(stream.into_async_read()).compat(), &mut file).await?;
+        let attempts = if is_neoforge {
+          Self::NEOFORGE_RETRY_LIMIT
         } else {
-          tokio::io::copy(&mut stream.into_async_read().compat(), &mut file).await?;
-        }
-        drop(file);
-        if task_handle.read().unwrap().status().is_cancelled() {
-          tokio::fs::remove_file(&self.dest_path).await?;
-          Ok(())
-        } else {
-          match param.sha1 {
-            Some(truth) => validate_sha1(param.dest, truth),
-            None => Ok(()),
+          1
+        };
+        let mut last_error = None;
+
+        for attempt in 0..attempts {
+          let source = &sources[attempt % sources.len()];
+          match Self::download_once(
+            &app_handle,
+            limiter.clone(),
+            task_handle.clone(),
+            &param,
+            &dest_path,
+            source,
+            !is_neoforge,
+          )
+          .await
+          {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+              last_error = Some(error);
+              if attempt + 1 < attempts {
+                warn!(
+                  "NeoForge download failed (attempt {}/{} from {}); retrying with cached progress",
+                  attempt + 1,
+                  attempts,
+                  source
+                );
+                tokio::time::sleep(Duration::from_secs((attempt + 1).min(5) as u64)).await;
+              }
+            }
           }
         }
+
+        Err(last_error.expect("a download attempt always produces an error"))
       },
       handle,
     ))

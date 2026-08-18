@@ -244,6 +244,7 @@
   "AllInstancesPage": {
     "button": {
       "addAndImport": "添加与导入",
+      "installCampusModpack": "安装北科整合包",
       "globalSettings": "全局游戏设置",
       "launch": "启动游戏",
       "sortAndFilter": "排序与筛选"
@@ -1238,6 +1239,9 @@
   "ImportModpackModal": {
     "header": {
       "title": "导入整合包"
+    },
+    "error": {
+      "invalidModpack": "不是整合包文件"
     },
     "label": {
       "instanceSettings": "实例设置",

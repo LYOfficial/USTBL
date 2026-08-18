@@ -2,7 +2,7 @@ import { useRouter } from "next/router";
 import { useCallback, useMemo } from "react";
 import { useSharedModals } from "@/contexts/shared-modal";
 import useDeepLink from "@/hooks/deep-link";
-import { useDragAndDrop } from "@/hooks/drag-and-drop";
+import { useDragAndDrop, useTauriFileDrop } from "@/hooks/drag-and-drop";
 import useKeyboardShortcut from "@/hooks/keyboard-shortcut";
 
 // Handle global keyboard shortcuts, DnD events, etc.
@@ -48,11 +48,17 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
     onDrop: addAuthServerByDnD,
   });
 
-  // KNOWN ISSUE: https://github.com/tauri-apps/tauri/issues/14055
-  // useTauriFileDrop({
-  //   pattern: "\\.zip$",
-  //   onMatch: (path) => openSharedModal("import-modpack", { path }),
-  // });
+  const importModpackByDnD = useCallback(
+    (path: string) => {
+      if (!isStandAlone) openSharedModal("import-modpack", { path });
+    },
+    [isStandAlone, openSharedModal]
+  );
+
+  useTauriFileDrop({
+    pattern: "\\.(zip|mrpack)$",
+    onMatch: importModpackByDnD,
+  });
 
   // ---------------------- Deeplinks ---------------------
 

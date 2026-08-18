@@ -175,7 +175,7 @@ const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
           );
         } else {
           toast({
-            title: response.message,
+            title: t("ImportModpackModal.error.invalidModpack"),
             description: response.details,
             status: "error",
           });

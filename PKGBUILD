@@ -4,8 +4,8 @@
 
 pkgname=ustbl-bin
 pkgdesc='🌟 A Minecraft launcher for USTB Servers'
-pkgver=0.2.0
-_github_pkgver=0.2.0
+pkgver=0.3.0
+_github_pkgver=0.3.0
 pkgrel=1
 arch=('x86_64' 'aarch64')
 license=(GPL-3.0,custom:LICENSE.EXTRA)

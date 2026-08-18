@@ -24,6 +24,7 @@ import {
   LuListFilter,
   LuPlay,
   LuPlus,
+  LuSchool,
 } from "react-icons/lu";
 import { CommonIconButton } from "@/components/common/common-icon-button";
 import { Section } from "@/components/common/section";
@@ -164,6 +165,17 @@ const InstanceListPage = () => {
             }}
           >
             {t("AllInstancesPage.button.addAndImport")}
+          </Button>
+          <Button
+            leftIcon={<LuSchool />}
+            size="xs"
+            colorScheme={primaryColor}
+            variant={primaryColor === "gray" ? "subtle" : "outline"}
+            onClick={() => {
+              router.push("/discover/install-modpack?tab=campus");
+            }}
+          >
+            {t("AllInstancesPage.button.installCampusModpack")}
           </Button>
           <Button
             leftIcon={<LuPlay />}

@@ -244,6 +244,7 @@
   "AllInstancesPage": {
     "button": {
       "addAndImport": "追加/インポート",
+      "installCampusModpack": "USTB整合パックをインストール",
       "globalSettings": "グローバルゲーム設定",
       "launch": "選択中のゲームを起動",
       "sortAndFilter": "並べ替えとフィルター"
@@ -1219,6 +1220,9 @@
   "ImportModpackModal": {
     "header": {
       "title": "モッドパックをインポート"
+    },
+    "error": {
+      "invalidModpack": "モッドパックファイルではありません"
     },
     "label": {
       "instanceSettings": "インスタンス設定",

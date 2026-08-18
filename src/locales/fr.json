@@ -244,6 +244,7 @@
   "AllInstancesPage": {
     "button": {
       "addAndImport": "Ajouter et importer",
+      "installCampusModpack": "Installer le modpack USTB",
       "globalSettings": "Paramètres globaux du jeu",
       "launch": "Lancer le jeu",
       "sortAndFilter": "Trier et Filtrer"
@@ -1216,6 +1217,9 @@
   "ImportModpackModal": {
     "header": {
       "title": "Importer un pack de mods"
+    },
+    "error": {
+      "invalidModpack": "Ce fichier n’est pas un modpack"
     },
     "label": {
       "instanceSettings": "Paramètres de l'instance",
