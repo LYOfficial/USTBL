@@ -35,6 +35,7 @@ import SelectableButton from "@/components/common/selectable-button";
 import AddPlayerModal from "@/components/modals/add-player-modal";
 import ImportAccountInfoModal from "@/components/modals/import-account-info-modal";
 import PlayersView from "@/components/players-view";
+import VustbAccountPanel from "@/components/vustb-account-panel";
 import { useLauncherConfig } from "@/contexts/config";
 import { useGlobalData } from "@/contexts/global-data";
 import { useSharedModals } from "@/contexts/shared-modal";
@@ -192,158 +193,170 @@ const AccountsPage = () => {
 
   return (
     <>
-      <Grid templateColumns="1fr 3fr" gap={4} h="100%">
-        <GridItem className="content-full-y">
-          <VStack align="stretch" h="100%">
-            <Box flex="1" overflowY="auto">
-              <NavMenu
-                selectedKeys={[selectedPlayerType]}
-                onClick={(value) => {
-                  setSelectedPlayerType(value);
-                }}
-                items={playerTypeList.map((item) => ({
-                  label: (
+      <Grid templateRows="auto minmax(0, 1fr)" h="100%">
+        <GridItem
+          pb={4}
+          borderBottomWidth="1px"
+          borderColor="blackAlpha.200"
+          _dark={{ borderColor: "whiteAlpha.300" }}
+        >
+          <VustbAccountPanel />
+        </GridItem>
+        <GridItem minH={0} pt={4}>
+          <Grid templateColumns="1fr 3fr" gap={4} h="100%">
+            <GridItem className="content-full-y">
+              <VStack align="stretch" h="100%">
+                <Box flex="1" overflowY="auto">
+                  <NavMenu
+                    selectedKeys={[selectedPlayerType]}
+                    onClick={(value) => {
+                      setSelectedPlayerType(value);
+                    }}
+                    items={playerTypeList.map((item) => ({
+                      label: (
+                        <HStack spacing={2} overflow="hidden">
+                          <Icon as={item.icon} />
+                          <Text fontSize="sm" className="ellipsis-text">
+                            {item.label}
+                          </Text>
+                        </HStack>
+                      ),
+                      value: item.key,
+                    }))}
+                  />
+                </Box>
+                <VStack mt="auto" align="stretch" spacing={0.5}>
+                  <SelectableButton
+                    size="sm"
+                    onClick={onImportAccountInfoModalOpen}
+                  >
                     <HStack spacing={2} overflow="hidden">
-                      <Icon as={item.icon} />
+                      <Icon as={LuImport} />
                       <Text fontSize="sm" className="ellipsis-text">
-                        {item.label}
+                        {t("AccountsPage.button.importFromOtherLaunchers")}
                       </Text>
                     </HStack>
-                  ),
-                  value: item.key,
-                }))}
-              />
-            </Box>
-            <VStack mt="auto" align="stretch" spacing={0.5}>
-              <SelectableButton
-                size="sm"
-                onClick={onImportAccountInfoModalOpen}
-              >
-                <HStack spacing={2} overflow="hidden">
-                  <Icon as={LuImport} />
-                  <Text fontSize="sm" className="ellipsis-text">
-                    {t("AccountsPage.button.importFromOtherLaunchers")}
-                  </Text>
-                </HStack>
-              </SelectableButton>
-              <SelectableButton
-                size="sm"
-                onClick={() => {
-                  openSharedModal("add-auth-server", {});
-                }}
-              >
-                <HStack spacing={2} overflow="hidden">
-                  <Icon as={LuCirclePlus} />
-                  <Text fontSize="sm" className="ellipsis-text">
-                    {t("AccountsPage.button.add3rdPartyServer")}
-                  </Text>
-                </HStack>
-              </SelectableButton>
-            </VStack>
-          </VStack>
-        </GridItem>
-        <GridItem className="content-full-y">
-          <Section
-            display="flex"
-            flexDirection="column"
-            height="100%"
-            title={
-              playerTypeList.find((item) => item.key === selectedPlayerType)
-                ?.label
-            }
-            description={
-              !FIXED_PLAYER_TYPES.includes(selectedPlayerType)
-                ? selectedPlayerType
-                : undefined
-            }
-            headExtra={
-              <HStack spacing={2} alignItems="flex-start">
-                {!FIXED_PLAYER_TYPES.includes(
-                  selectedPlayerType
-                ) && (
-                  <Tooltip label={t("AccountsPage.button.sourceHomepage")}>
-                    <IconButton
-                      aria-label="home"
-                      size="xs"
-                      fontSize="sm"
-                      variant="ghost"
-                      icon={<LuHouse />}
-                      onClick={() => {
-                        const homepageUrl = authServerList.find(
-                          (server) => server.authUrl === selectedPlayerType
-                        )?.homepageUrl;
-                        if (homepageUrl) {
-                          openUrl(homepageUrl);
-                        }
-                      }}
-                    />
-                  </Tooltip>
-                )}
-                {!FIXED_PLAYER_TYPES.includes(selectedPlayerType) &&
-                  !isPresetAuthServer(selectedPlayerType) && (
-                  <Tooltip label={t("AccountsPage.button.deleteServer")}>
-                    <IconButton
-                      aria-label="home"
-                      size="xs"
-                      fontSize="sm"
-                      colorScheme="red"
-                      variant="ghost"
-                      icon={<LuServerOff />}
-                      onClick={() => {
-                        openGenericConfirmDialog({
-                          title: t("DeleteAuthServerAlertDialog.dialog.title"),
-                          body: t(
-                            "DeleteAuthServerAlertDialog.dialog.content",
-                            {
-                              name: authServerList.find(
-                                (server) =>
-                                  server.authUrl === selectedPlayerType
-                              )?.name,
+                  </SelectableButton>
+                  <SelectableButton
+                    size="sm"
+                    onClick={() => {
+                      openSharedModal("add-auth-server", {});
+                    }}
+                  >
+                    <HStack spacing={2} overflow="hidden">
+                      <Icon as={LuCirclePlus} />
+                      <Text fontSize="sm" className="ellipsis-text">
+                        {t("AccountsPage.button.add3rdPartyServer")}
+                      </Text>
+                    </HStack>
+                  </SelectableButton>
+                </VStack>
+              </VStack>
+            </GridItem>
+            <GridItem className="content-full-y">
+              <Section
+                display="flex"
+                flexDirection="column"
+                height="100%"
+                title={
+                  playerTypeList.find((item) => item.key === selectedPlayerType)
+                    ?.label
+                }
+                description={
+                  !FIXED_PLAYER_TYPES.includes(selectedPlayerType)
+                    ? selectedPlayerType
+                    : undefined
+                }
+                headExtra={
+                  <HStack spacing={2} alignItems="flex-start">
+                    {!FIXED_PLAYER_TYPES.includes(selectedPlayerType) && (
+                      <Tooltip label={t("AccountsPage.button.sourceHomepage")}>
+                        <IconButton
+                          aria-label="home"
+                          size="xs"
+                          fontSize="sm"
+                          variant="ghost"
+                          icon={<LuHouse />}
+                          onClick={() => {
+                            const homepageUrl = authServerList.find(
+                              (server) => server.authUrl === selectedPlayerType
+                            )?.homepageUrl;
+                            if (homepageUrl) {
+                              openUrl(homepageUrl);
                             }
-                          ),
-                          btnOK: t("General.delete"),
-                          isAlert: true,
-                          onOKCallback: handleDeleteAuthServer,
-                          showSuppressBtn: true,
-                          suppressKey: "deleteAuthServerAlert",
-                        });
+                          }}
+                        />
+                      </Tooltip>
+                    )}
+                    {!FIXED_PLAYER_TYPES.includes(selectedPlayerType) &&
+                      !isPresetAuthServer(selectedPlayerType) && (
+                        <Tooltip label={t("AccountsPage.button.deleteServer")}>
+                          <IconButton
+                            aria-label="home"
+                            size="xs"
+                            fontSize="sm"
+                            colorScheme="red"
+                            variant="ghost"
+                            icon={<LuServerOff />}
+                            onClick={() => {
+                              openGenericConfirmDialog({
+                                title: t(
+                                  "DeleteAuthServerAlertDialog.dialog.title"
+                                ),
+                                body: t(
+                                  "DeleteAuthServerAlertDialog.dialog.content",
+                                  {
+                                    name: authServerList.find(
+                                      (server) =>
+                                        server.authUrl === selectedPlayerType
+                                    )?.name,
+                                  }
+                                ),
+                                btnOK: t("General.delete"),
+                                isAlert: true,
+                                onOKCallback: handleDeleteAuthServer,
+                                showSuppressBtn: true,
+                                suppressKey: "deleteAuthServerAlert",
+                              });
+                            }}
+                          />
+                        </Tooltip>
+                      )}
+                    <SegmentedControl
+                      selected={selectedViewType}
+                      onSelectItem={(s) => {
+                        update("states.accountsPage.viewType", s as string);
                       }}
+                      size="2xs"
+                      ml={1}
+                      items={viewTypeList.map((item) => ({
+                        ...item,
+                        value: item.key,
+                        label: <Icon as={item.icon} />,
+                      }))}
+                      withTooltip
                     />
-                  </Tooltip>
-                )}
-                <SegmentedControl
-                  selected={selectedViewType}
-                  onSelectItem={(s) => {
-                    update("states.accountsPage.viewType", s as string);
-                  }}
-                  size="2xs"
-                  ml={1}
-                  items={viewTypeList.map((item) => ({
-                    ...item,
-                    value: item.key,
-                    label: <Icon as={item.icon} />,
-                  }))}
-                  withTooltip
-                />
-                <Button
-                  leftIcon={<LuPlus />}
-                  size="xs"
-                  colorScheme={primaryColor}
-                  onClick={onAddPlayerModalOpen}
-                >
-                  {t("AccountsPage.button.addPlayer")}
-                </Button>
-              </HStack>
-            }
-          >
-            <Box overflow="auto" flexGrow={1} rounded="md">
-              <PlayersView
-                selectedPlayer={selectedPlayer}
-                players={filterPlayersByType(selectedPlayerType)}
-                viewType={selectedViewType}
-              />
-            </Box>
-          </Section>
+                    <Button
+                      leftIcon={<LuPlus />}
+                      size="xs"
+                      colorScheme={primaryColor}
+                      onClick={onAddPlayerModalOpen}
+                    >
+                      {t("AccountsPage.button.addPlayer")}
+                    </Button>
+                  </HStack>
+                }
+              >
+                <Box overflow="auto" flexGrow={1} rounded="md">
+                  <PlayersView
+                    selectedPlayer={selectedPlayer}
+                    players={filterPlayersByType(selectedPlayerType)}
+                    viewType={selectedViewType}
+                  />
+                </Box>
+              </Section>
+            </GridItem>
+          </Grid>
         </GridItem>
       </Grid>
       <AddPlayerModal

@@ -18,6 +18,7 @@ import {
   LuCirclePlus,
   LuFolder,
   LuSettings,
+  LuShare2,
 } from "react-icons/lu";
 import NavMenu from "@/components/common/nav-menu";
 import SelectableButton from "@/components/common/selectable-button";
@@ -103,6 +104,20 @@ const InstancesLayout: React.FC<InstancesLayoutProps> = ({ children }) => {
               />
             </Box>
             <VStack mt="auto" align="stretch" spacing={0.5}>
+              <SelectableButton
+                size="sm"
+                onClick={() => {
+                  router.push("/instances/shared");
+                }}
+                isSelected={router.asPath === "/instances/shared"}
+              >
+                <HStack spacing={2} overflow="hidden">
+                  <Icon as={LuShare2} />
+                  <Text fontSize="sm" className="ellipsis-text">
+                    共享实例
+                  </Text>
+                </HStack>
+              </SelectableButton>
               <SelectableButton
                 size="sm"
                 onClick={() => {

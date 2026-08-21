@@ -227,6 +227,28 @@ pub struct OAuthTokens {
   pub id_token: Option<String>,
 }
 
+/// 像素北科网站账户与 Minecraft 启动角色是两层独立概念：前者用于启动器
+/// 功能授权，后者仍是 authlib-injector 使用的游戏角色。
+#[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VustbProfile {
+  pub id: String,
+  pub name: String,
+  pub selected: bool,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VustbAccount {
+  pub subject: String,
+  pub username: String,
+  pub avatar_url: String,
+  pub user_group: String,
+  pub profiles: Vec<VustbProfile>,
+  /// 对应持久化的第三方 Minecraft 角色；OAuth 令牌仅保留在该角色记录内。
+  pub player_id: String,
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
 pub struct OAuthErrorResponse {
   pub error: String,
@@ -313,6 +335,8 @@ impl From<AuthServerInfo> for AuthServer {
 pub struct AccountInfo {
   pub players: Vec<PlayerInfo>,
   pub auth_servers: Vec<AuthServerInfo>,
+  #[serde(default)]
+  pub vustb_account: Option<VustbAccount>,
   pub is_oauth_processing: bool,
 }
 
@@ -329,6 +353,7 @@ impl Default for AccountInfo {
           timestamp: 0,
         })
         .collect(),
+      vustb_account: None,
       is_oauth_processing: false,
     }
   }

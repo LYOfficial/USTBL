@@ -2,12 +2,49 @@ import { invoke } from "@tauri-apps/api/core";
 import { ImportLauncherType, SkinModel, TextureType } from "@/enums/account";
 import { AuthServer, DeviceAuthResponseInfo, Player } from "@/models/account";
 import { InvokeResponse } from "@/models/response";
+import { VustbAccount } from "@/models/vustb";
 import { responseHandler } from "@/utils/response";
 
 /**
  * Service class for managing accounts, players, and authentication servers.
  */
 export class AccountService {
+  /** Begin the built-in 像素北科 Device Flow. */
+  @responseHandler("account")
+  static async fetchVustbOAuthCode(): Promise<
+    InvokeResponse<DeviceAuthResponseInfo>
+  > {
+    return await invoke("fetch_oauth_code", {
+      serverType: "3rdparty",
+      authServerUrl: "https://www.ustb.world/skinapi/",
+    });
+  }
+
+  /** Finish the Device Flow and persist the 像素北科 website account. */
+  @responseHandler("account")
+  static async loginVustbAccount(
+    authInfo: DeviceAuthResponseInfo
+  ): Promise<InvokeResponse<VustbAccount>> {
+    return await invoke("login_vustb_account", { authInfo });
+  }
+
+  @responseHandler("account")
+  static async retrieveVustbAccount(): Promise<
+    InvokeResponse<VustbAccount | null>
+  > {
+    return await invoke("retrieve_vustb_account");
+  }
+
+  @responseHandler("account")
+  static async syncVustbAccount(): Promise<InvokeResponse<VustbAccount>> {
+    return await invoke("sync_vustb_account");
+  }
+
+  @responseHandler("account")
+  static async logoutVustbAccount(): Promise<InvokeResponse<void>> {
+    return await invoke("logout_vustb_account");
+  }
+
   /**
    * RETRIEVE the list of players.
    * @returns {Promise<InvokeResponse<Player[]>>}

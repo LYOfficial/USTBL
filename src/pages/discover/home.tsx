@@ -10,7 +10,6 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useRouter } from "next/router";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { LuGlobe } from "react-icons/lu";
 import { BeatLoader } from "react-spinners";
 import { CommonIconButton } from "@/components/common/common-icon-button";
 import Empty from "@/components/common/empty";

@@ -142,13 +142,16 @@ const CheckModUpdateModal: React.FC<CheckModUpdateModalProps> = ({
 
       const updatePromises = currentLocalMods.map(async (mod) => {
         try {
-          const mrRemoteModRes = await ResourceService.fetchRemoteResourceByLocal(
-            OtherResourceSource.Modrinth,
-            mod.filePath
-          );
+          const mrRemoteModRes =
+            await ResourceService.fetchRemoteResourceByLocal(
+              OtherResourceSource.Modrinth,
+              mod.filePath
+            );
 
           const mrRemoteMod =
-            mrRemoteModRes.status === "success" ? mrRemoteModRes.data : undefined;
+            mrRemoteModRes.status === "success"
+              ? mrRemoteModRes.data
+              : undefined;
 
           const latestFile = mrRemoteMod?.resourceId
             ? await handleFetchLatestMod(

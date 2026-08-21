@@ -198,11 +198,7 @@ const WindowTitleBar = () => {
       onMouseDown={onDragMouseDown}
       onDoubleClick={onDragDoubleClick}
     >
-      <HStack
-        px={2}
-        h="100%"
-        flexShrink={0}
-      >
+      <HStack px={2} h="100%" flexShrink={0}>
         <TitleShort transform="scale(0.85)" transformOrigin="left center" />
       </HStack>
 
@@ -267,7 +263,9 @@ const WindowTitleBar = () => {
           aria-label="maximize"
           size="sm"
           variant="ghost"
-          icon={<Icon as={isMaximized ? LuCopy : LuSquare} pointerEvents="none" />}
+          icon={
+            <Icon as={isMaximized ? LuCopy : LuSquare} pointerEvents="none" />
+          }
           onClick={onToggleMaximize}
         />
         <IconButton

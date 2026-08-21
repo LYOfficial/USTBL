@@ -1,6 +1,6 @@
 [package]
 name = "USTBL"
-version = "0.3.0"
+version = "0.4.0"
 description = "A Minecraft launcher for USTB Servers"
 authors = ["USTBL Team"]
 license = "GNU General Public License v3.0 (with additional terms)"

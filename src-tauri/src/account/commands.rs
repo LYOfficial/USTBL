@@ -1,4 +1,6 @@
-use crate::account::helpers::authlib_injector::constants::PRESET_AUTH_SERVERS;
+use crate::account::helpers::authlib_injector::constants::{
+  PRESET_AUTH_SERVERS, USTB_AUTH_SERVER_URL,
+};
 use crate::account::helpers::authlib_injector::info::{
   fetch_auth_server_info, fetch_auth_url, get_auth_server_info_by_url,
 };
@@ -6,10 +8,10 @@ use crate::account::helpers::authlib_injector::jar::check_authlib_jar;
 use crate::account::helpers::authlib_injector::{self};
 use crate::account::helpers::import::hmcl::retrieve_hmcl_account_info;
 use crate::account::helpers::import::ImportLauncherType;
-use crate::account::helpers::{microsoft, misc, offline};
+use crate::account::helpers::{microsoft, misc, offline, vustb};
 use crate::account::models::{
   AccountError, AccountInfo, AuthServer, DeviceAuthResponseInfo, Player, PlayerInfo, PlayerType,
-  PresetRole, SkinModel, TextureType,
+  PresetRole, SkinModel, TextureType, VustbAccount,
 };
 use crate::error::USTBLResult;
 use crate::launcher_config::models::LauncherConfig;
@@ -166,6 +168,143 @@ pub async fn add_player_oauth(
     account_state.save()?;
   }
 
+  misc::check_full_login_availability(&app).await
+}
+
+/// 完成像素北科设备流登录，同时保存其网站账户资料和可用于启动游戏的角色。
+#[tauri::command]
+pub async fn login_vustb_account(
+  app: AppHandle,
+  auth_info: DeviceAuthResponseInfo,
+) -> USTBLResult<VustbAccount> {
+  let _ = check_authlib_jar(&app).await;
+  let auth_server = AuthServer::from(get_auth_server_info_by_url(
+    &app,
+    USTB_AUTH_SERVER_URL.to_string(),
+  )?);
+  let player = authlib_injector::oauth::login(
+    &app,
+    USTB_AUTH_SERVER_URL.to_string(),
+    auth_server.features.openid_configuration_url,
+    auth_server.client_id,
+    auth_info,
+    auth_server.redirect_uri,
+    auth_server.client_secret,
+  )
+  .await?;
+
+  let account = vustb::fetch_account(
+    &app,
+    player
+      .access_token
+      .as_deref()
+      .ok_or(AccountError::Expired)?,
+    player.id.clone(),
+  )
+  .await?;
+
+  {
+    let account_binding = app.state::<Mutex<AccountInfo>>();
+    let mut account_state = account_binding.lock()?;
+    if let Some(index) = account_state
+      .players
+      .iter()
+      .position(|item| item.id == player.id)
+    {
+      account_state.players[index] = player.clone();
+    } else {
+      account_state.players.push(player.clone());
+    }
+    account_state.vustb_account = Some(account.clone());
+    account_state.save()?;
+
+    let config_binding = app.state::<Mutex<LauncherConfig>>();
+    let mut config_state = config_binding.lock()?;
+    config_state.partial_update(
+      &app,
+      "states.shared.selected_player_id",
+      &serde_json::to_string(&player.id).unwrap_or_default(),
+    )?;
+    config_state.save()?;
+  }
+
+  misc::check_full_login_availability(&app).await?;
+  Ok(account)
+}
+
+#[tauri::command]
+pub fn retrieve_vustb_account(app: AppHandle) -> USTBLResult<Option<VustbAccount>> {
+  let binding = app.state::<Mutex<AccountInfo>>();
+  let account = binding.lock()?.vustb_account.clone();
+  Ok(account)
+}
+
+#[tauri::command]
+pub async fn sync_vustb_account(app: AppHandle) -> USTBLResult<VustbAccount> {
+  let (player_id, access_token) = {
+    let binding = app.state::<Mutex<AccountInfo>>();
+    let account_state = binding.lock()?;
+    let vustb_account = account_state
+      .vustb_account
+      .as_ref()
+      .ok_or(AccountError::NotFound)?;
+    let player = account_state
+      .players
+      .iter()
+      .find(|item| item.id == vustb_account.player_id)
+      .ok_or(AccountError::NotFound)?;
+    (
+      vustb_account.player_id.clone(),
+      player.access_token.clone().ok_or(AccountError::Expired)?,
+    )
+  };
+  let refreshed = vustb::fetch_account(&app, &access_token, player_id).await?;
+  let binding = app.state::<Mutex<AccountInfo>>();
+  let mut account_state = binding.lock()?;
+  account_state.vustb_account = Some(refreshed.clone());
+  account_state.save()?;
+  Ok(refreshed)
+}
+
+#[tauri::command]
+pub async fn logout_vustb_account(app: AppHandle) -> USTBLResult<()> {
+  {
+    let binding = app.state::<Mutex<AccountInfo>>();
+    let mut account_state = binding.lock()?;
+    let removed_player_ids: Vec<String> = account_state
+      .players
+      .iter()
+      .filter(|player| {
+        player
+          .auth_server_url
+          .as_deref()
+          .is_some_and(|url| normalize_url(url) == normalize_url(USTB_AUTH_SERVER_URL))
+      })
+      .map(|player| player.id.clone())
+      .collect();
+    account_state
+      .players
+      .retain(|player| !removed_player_ids.contains(&player.id));
+    account_state.vustb_account = None;
+    account_state.save()?;
+
+    let config_binding = app.state::<Mutex<LauncherConfig>>();
+    let mut config_state = config_binding.lock()?;
+    if removed_player_ids.contains(&config_state.states.shared.selected_player_id) {
+      config_state.partial_update(
+        &app,
+        "states.shared.selected_player_id",
+        &serde_json::to_string(
+          &account_state
+            .players
+            .first()
+            .map_or("".to_string(), |player| player.id.clone()),
+        )
+        .unwrap_or_default(),
+      )?;
+      config_state.save()?;
+    }
+  }
   misc::check_full_login_availability(&app).await
 }
 
@@ -470,6 +609,14 @@ pub async fn delete_player(app: AppHandle, player_id: String) -> USTBLResult<()>
       return Err(AccountError::NotFound.into());
     }
 
+    if account_state
+      .vustb_account
+      .as_ref()
+      .is_some_and(|account| account.player_id == player_id)
+    {
+      account_state.vustb_account = None;
+    }
+
     if config_state.states.shared.selected_player_id == player_id {
       config_state.partial_update(
         &app,
@@ -583,7 +730,10 @@ pub async fn add_auth_server(app: AppHandle, auth_url: String) -> USTBLResult<()
 #[tauri::command]
 pub fn delete_auth_server(app: AppHandle, url: String) -> USTBLResult<()> {
   // prevent deletion of preset auth servers
-  if PRESET_AUTH_SERVERS.iter().any(|s| normalize_url(s) == normalize_url(&url)) {
+  if PRESET_AUTH_SERVERS
+    .iter()
+    .any(|s| normalize_url(s) == normalize_url(&url))
+  {
     return Err(AccountError::Invalid.into());
   }
 
