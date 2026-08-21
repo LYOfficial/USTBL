@@ -7,6 +7,7 @@ export interface SharedInstance {
 
 export interface SharedMod {
   id: number;
+  folderId: number | null;
   fileName: string;
   fileSize: number;
   status: "used" | "deleted";
@@ -16,7 +17,16 @@ export interface SharedMod {
   deletedAt?: string;
 }
 
+export interface SharedFolder {
+  id: number;
+  parentId: number | null;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface SharedInstanceDetail extends SharedInstance {
+  folders: SharedFolder[];
   mods: SharedMod[];
 }
 

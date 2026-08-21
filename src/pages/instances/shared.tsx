@@ -24,6 +24,7 @@ import {
   LuArrowLeft,
   LuCloudDownload,
   LuFilePlus2,
+  LuFolder,
   LuPencil,
   LuRefreshCw,
   LuRotateCw,
@@ -38,6 +39,7 @@ import { useToast } from "@/contexts/toast";
 import { useTauriFileDrop } from "@/hooks/drag-and-drop";
 import { InstanceSummary } from "@/models/instance/misc";
 import {
+  SharedFolder,
   SharedInstance,
   SharedInstanceDetail,
   SharedMod,
@@ -56,6 +58,38 @@ const managerGroups = new Set([
 ]);
 
 type BindingDialogMode = "select" | "confirm" | null;
+
+const folderPath = (
+  folders: SharedFolder[],
+  folderId: number | null
+): string | null => {
+  if (folderId === null) return "";
+
+  const foldersById = new Map(folders.map((folder) => [folder.id, folder]));
+  const names: string[] = [];
+  const visited = new Set<number>();
+  let currentFolderId: number | null = folderId;
+
+  while (currentFolderId !== null) {
+    if (visited.has(currentFolderId)) return null;
+    visited.add(currentFolderId);
+    const folder = foldersById.get(currentFolderId);
+    if (!folder) return null;
+    names.push(folder.name);
+    currentFolderId = folder.parentId;
+  }
+
+  return names.reverse().join("/");
+};
+
+const sharedFilePath = (detail: SharedInstanceDetail, file: SharedMod) => {
+  const parentPath = folderPath(detail.folders, file.folderId);
+  return parentPath === null
+    ? `未知目录/${file.fileName}`
+    : parentPath
+      ? `${parentPath}/${file.fileName}`
+      : file.fileName;
+};
 
 const SharedInstancesPage = () => {
   const toast = useToast();
@@ -76,6 +110,7 @@ const SharedInstancesPage = () => {
     useState<BindingDialogMode>(null);
   const [boundInstanceId, setBoundInstanceId] = useState("");
   const [chosenInstanceId, setChosenInstanceId] = useState("");
+  const [currentFolderId, setCurrentFolderId] = useState<number | null>(null);
 
   const localInstances = useMemo(
     () => getInstanceList() || [],
@@ -129,6 +164,7 @@ const SharedInstancesPage = () => {
     if (response.status === "success") {
       setSelected(response.data);
       setIsEditing(false);
+      setCurrentFolderId(null);
     } else {
       showError(response);
     }
@@ -141,12 +177,18 @@ const SharedInstancesPage = () => {
     const response = await SharedInstanceService.retrieveDetail(selected.id);
     if (response.status === "success") {
       setSelected(response.data);
-      toast({ title: "共享实例模组列表已同步", status: "success" });
+      if (
+        currentFolderId !== null &&
+        !response.data.folders.some((folder) => folder.id === currentFolderId)
+      ) {
+        setCurrentFolderId(null);
+      }
+      toast({ title: "共享实例文件列表已同步", status: "success" });
     } else {
       showError(response);
     }
     setIsSyncing(false);
-  }, [selected, showError, toast]);
+  }, [currentFolderId, selected, showError, toast]);
 
   const runUpdate = useCallback(
     async (localInstanceId: string) => {
@@ -156,7 +198,9 @@ const SharedInstancesPage = () => {
       setUpdateProgress({
         sharedInstanceId: selected.id,
         current: 0,
-        total: selected.mods.length,
+        total: selected.mods.filter((item) =>
+          ["used", "deleted"].includes(item.status)
+        ).length,
       });
       setIsUpdating(true);
       const response = await SharedInstanceService.update(
@@ -203,12 +247,13 @@ const SharedInstancesPage = () => {
     runUpdate(chosenInstanceId);
   };
 
-  const uploadMod = useCallback(
+  const uploadFile = useCallback(
     async (filePath: string) => {
       if (!selected || !isEditing || !canManage) return;
       const response = await SharedInstanceService.uploadMod(
         selected.id,
-        filePath
+        filePath,
+        currentFolderId
       );
       if (response.status === "success") {
         toast({ title: `已添加 ${response.data.fileName}`, status: "success" });
@@ -217,29 +262,41 @@ const SharedInstancesPage = () => {
         showError(response);
       }
     },
-    [canManage, isEditing, selected, showError, syncSelected, toast]
+    [
+      canManage,
+      isEditing,
+      selected,
+      showError,
+      syncSelected,
+      toast,
+      currentFolderId,
+    ]
   );
 
-  useTauriFileDrop({ pattern: "\\.jar$", onMatch: uploadMod });
+  useTauriFileDrop({ pattern: ".+", onMatch: uploadFile });
 
-  const chooseMod = async () => {
+  const chooseFile = async () => {
     const selectedPath = await open({
-      title: "选择要添加到共享实例的模组",
+      title: "选择要添加到共享实例的文件",
       multiple: false,
-      filters: [{ name: "Minecraft 模组", extensions: ["jar"] }],
     });
-    if (typeof selectedPath === "string") uploadMod(selectedPath);
+    if (typeof selectedPath === "string") uploadFile(selectedPath);
   };
 
   const deleteMod = async (mod: SharedMod) => {
     if (!selected) return;
     if (
-      !window.confirm(`删除 ${mod.fileName} 的共享档案不可恢复，确定继续吗？`)
+      !window.confirm(
+        `删除 ${sharedFilePath(selected, mod)} 的共享档案不可恢复，确定继续吗？`
+      )
     )
       return;
     const response = await SharedInstanceService.deleteMod(selected.id, mod.id);
     if (response.status === "success") {
-      toast({ title: `已删除 ${mod.fileName}`, status: "success" });
+      toast({
+        title: `已删除 ${sharedFilePath(selected, mod)}`,
+        status: "success",
+      });
       syncSelected();
     } else {
       showError(response);
@@ -251,6 +308,39 @@ const SharedInstancesPage = () => {
     [boundInstanceId, localInstances]
   );
 
+  const currentFolder = useMemo(
+    () =>
+      selected?.folders.find((folder) => folder.id === currentFolderId) || null,
+    [currentFolderId, selected]
+  );
+  const currentFolderPath = useMemo(
+    () =>
+      selected && currentFolder
+        ? folderPath(selected.folders, currentFolder.id) || currentFolder.name
+        : "",
+    [currentFolder, selected]
+  );
+  const currentFolders = useMemo(
+    () =>
+      selected?.folders.filter(
+        (folder) => folder.parentId === currentFolderId
+      ) || [],
+    [currentFolderId, selected]
+  );
+  const currentFiles = useMemo(
+    () =>
+      selected?.mods.filter((file) => file.folderId === currentFolderId) || [],
+    [currentFolderId, selected]
+  );
+
+  const goBack = () => {
+    if (currentFolder) {
+      setCurrentFolderId(currentFolder.parentId);
+    } else {
+      setSelected(null);
+    }
+  };
+
   if (!selected) {
     return (
       <Section
@@ -258,7 +348,7 @@ const SharedInstancesPage = () => {
         flexDirection="column"
         height="100%"
         title="共享实例"
-        description="浏览并同步像素北科维护的模组实例"
+        description="浏览并同步像素北科维护的实例文件"
         headExtra={
           <Button
             size="xs"
@@ -300,15 +390,17 @@ const SharedInstancesPage = () => {
         flexDirection="column"
         height="100%"
         title={selected.name}
-        description={`共享实例 · ${selected.mods.filter((item) => item.status === "used").length} 个使用中模组`}
+        description={
+          currentFolderPath
+            ? `共享实例 · ${currentFolderPath}`
+            : `共享实例 · ${selected.mods.filter((item) => item.status === "used").length} 个使用中文件`
+        }
         headExtra={
           <HStack spacing={2}>
-            <Tooltip label="返回共享实例列表">
-              <Button
-                size="xs"
-                variant="ghost"
-                onClick={() => setSelected(null)}
-              >
+            <Tooltip
+              label={currentFolder ? "返回上一级目录" : "返回共享实例列表"}
+            >
+              <Button size="xs" variant="ghost" onClick={goBack}>
                 <Icon as={LuArrowLeft} />
               </Button>
             </Tooltip>
@@ -354,46 +446,57 @@ const SharedInstancesPage = () => {
             mb={3}
           >
             <HStack justify="space-between">
-              <Text fontSize="sm">
-                拖入 .jar 文件，或选择文件添加到共享实例。
-              </Text>
-              <Button size="xs" leftIcon={<LuFilePlus2 />} onClick={chooseMod}>
-                添加模组
+              <Text fontSize="sm">拖入文件，或选择文件添加到当前目录。</Text>
+              <Button size="xs" leftIcon={<LuFilePlus2 />} onClick={chooseFile}>
+                添加文件
               </Button>
             </HStack>
           </Box>
         )}
         <Box overflow="auto" flexGrow={1} rounded="md">
-          {selected.mods.length ? (
+          {currentFolders.length || currentFiles.length ? (
             <OptionItemGroup
-              items={selected.mods.map((mod) => (
-                <OptionItem
-                  key={mod.id}
-                  title={mod.fileName}
-                  description={`${Math.max(0, mod.fileSize / 1024 / 1024).toFixed(2)} MiB · ${mod.createdByUsername || "未知上传者"}`}
-                  titleExtra={
-                    <Badge
-                      colorScheme={mod.status === "used" ? "green" : "red"}
-                    >
-                      {mod.status === "used" ? "使用中" : "已删除"}
-                    </Badge>
-                  }
-                >
-                  {isEditing && canManage && mod.status === "used" && (
-                    <Tooltip label="删除共享模组">
-                      <Button
-                        size="xs"
-                        variant="ghost"
-                        colorScheme="red"
-                        aria-label={`删除 ${mod.fileName}`}
-                        onClick={() => deleteMod(mod)}
+              items={[
+                ...currentFolders.map((folder) => (
+                  <OptionItem
+                    key={`folder-${folder.id}`}
+                    prefixElement={<Icon as={LuFolder} color="blue.500" />}
+                    title={folder.name}
+                    description="共享文件夹"
+                    titleExtra={<Badge colorScheme="blue">文件夹</Badge>}
+                    isFullClickZone
+                    onClick={() => setCurrentFolderId(folder.id)}
+                  />
+                )),
+                ...currentFiles.map((mod) => (
+                  <OptionItem
+                    key={`file-${mod.id}`}
+                    title={mod.fileName}
+                    description={`${Math.max(0, mod.fileSize / 1024 / 1024).toFixed(2)} MiB · ${mod.createdByUsername || "未知上传者"}`}
+                    titleExtra={
+                      <Badge
+                        colorScheme={mod.status === "used" ? "green" : "red"}
                       >
-                        <Icon as={LuX} />
-                      </Button>
-                    </Tooltip>
-                  )}
-                </OptionItem>
-              ))}
+                        {mod.status === "used" ? "使用中" : "已删除"}
+                      </Badge>
+                    }
+                  >
+                    {isEditing && canManage && mod.status === "used" && (
+                      <Tooltip label="删除共享文件">
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          colorScheme="red"
+                          aria-label={`删除 ${sharedFilePath(selected, mod)}`}
+                          onClick={() => deleteMod(mod)}
+                        >
+                          <Icon as={LuX} />
+                        </Button>
+                      </Tooltip>
+                    )}
+                  </OptionItem>
+                )),
+              ]}
             />
           ) : (
             <Empty withIcon={false} size="sm" />
@@ -410,12 +513,12 @@ const SharedInstancesPage = () => {
       >
         <ModalOverlay />
         <ModalContent>
-          <ModalHeader>正在同步共享实例</ModalHeader>
+          <ModalHeader>正在同步共享实例文件</ModalHeader>
           <ModalBody pb={6}>
             <VStack spacing={4} align="stretch">
               <Text textAlign="center">
                 已处理 {updateProgress?.current || 0} /{" "}
-                {updateProgress?.total || 0} 个模组
+                {updateProgress?.total || 0} 个文件
               </Text>
               <Progress
                 value={
@@ -439,7 +542,7 @@ const SharedInstancesPage = () => {
               >
                 {updateProgress?.fileName
                   ? `正在处理：${updateProgress.fileName}`
-                  : "正在准备模组列表…"}
+                  : "正在准备文件列表…"}
               </Text>
             </VStack>
           </ModalBody>
@@ -456,10 +559,10 @@ const SharedInstancesPage = () => {
           <ModalHeader>共享实例同步成功</ModalHeader>
           <ModalBody>
             <VStack align="stretch" spacing={2}>
-              <Text>已筛选 {updateResult?.skipped.length || 0} 个模组</Text>
-              <Text>已移除 {updateResult?.deleted.length || 0} 个旧模组</Text>
+              <Text>已保留 {updateResult?.skipped.length || 0} 个现有文件</Text>
+              <Text>已移除 {updateResult?.deleted.length || 0} 个旧文件</Text>
               <Text>
-                已新增 {updateResult?.downloaded.length || 0} 个新模组
+                已新增 {updateResult?.downloaded.length || 0} 个新文件
               </Text>
             </VStack>
           </ModalBody>
@@ -518,7 +621,7 @@ const SharedInstancesPage = () => {
             ) : (
               <Text>
                 将使用本地实例“{selectedLocalInstance?.name || boundInstanceId}
-                ”更新。共享实例中标记删除的模组会移除，使用中的同名模组会保留，其余模组不会受到影响。
+                ”更新。共享实例中标记删除的文件会移除，使用中的文件仅在本地缺失时下载；未列入共享实例的本地文件不会受到影响。
               </Text>
             )}
           </ModalBody>

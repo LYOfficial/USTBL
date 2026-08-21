@@ -71,11 +71,13 @@ export class SharedInstanceService {
   @responseHandler("instance")
   static async uploadMod(
     sharedInstanceId: number,
-    filePath: string
+    filePath: string,
+    folderId: number | null
   ): Promise<InvokeResponse<SharedMod>> {
     return await invoke("upload_shared_instance_mod", {
       sharedInstanceId,
       filePath,
+      folderId,
     });
   }
 
