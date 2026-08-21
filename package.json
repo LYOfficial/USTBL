@@ -11,7 +11,8 @@
     "lint-staged": "lint-staged",
     "prepare": "husky",
     "version": "node scripts/version/index.js",
-    "locale": "node scripts/locale/index.js"
+    "locale": "node scripts/locale/index.js",
+    "assets:installer": "node scripts/generate-installer-assets.js"
   },
   "lint-staged": {
     "src/**/*.{js,jsx,ts,tsx}": [

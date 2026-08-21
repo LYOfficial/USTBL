@@ -140,7 +140,13 @@ const VustbAccountPanel = () => {
   }
 
   return (
-    <HStack minH="80px" px={2} spacing={3} justify="space-between">
+    <HStack
+      minH="80px"
+      pr={2}
+      pl={{ base: 6, md: 8 }}
+      spacing={3}
+      justify="space-between"
+    >
       <HStack minW={0} spacing={3}>
         <Avatar
           src={account.avatarUrl}

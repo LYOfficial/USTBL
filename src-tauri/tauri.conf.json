@@ -76,6 +76,8 @@
     "windows": {
       "nsis": {
         "installerIcon": "assets/icons/icon.ico",
+        "headerImage": "assets/installer/nsis-header.bmp",
+        "sidebarImage": "assets/installer/nsis-sidebar.bmp",
         "languages": [
           "English",
           "SimpChinese",
