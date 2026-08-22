@@ -3,11 +3,13 @@ use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::misc::get_instance_version_path_by_id;
 use crate::storage::Storage;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_http::reqwest;
+use tokio::io::AsyncReadExt;
 
 const VUSTB_API: &str = "https://www.ustb.world/api/mc-instances";
 const SHARED_INSTANCE_BINDINGS_FILE: &str = "ustbl.shared-instance-bindings.json";
@@ -29,6 +31,7 @@ pub struct SharedMod {
   pub folder_id: Option<u64>,
   pub file_name: String,
   pub file_size: u64,
+  pub sha256: Option<String>,
   pub status: String,
   pub created_by_username: Option<String>,
   pub created_at: String,
@@ -85,6 +88,7 @@ impl Storage for SharedInstanceBindings {
 pub struct SharedUpdateResult {
   pub deleted: Vec<String>,
   pub downloaded: Vec<String>,
+  pub updated: Vec<String>,
   pub skipped: Vec<String>,
 }
 
@@ -222,6 +226,54 @@ fn display_shared_file_path(relative_path: &Path) -> String {
   relative_path.to_string_lossy().replace('\\', "/")
 }
 
+fn validate_sha256(sha256: &str) -> USTBLResult<()> {
+  let is_lowercase_hex = sha256
+    .bytes()
+    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+  if sha256.len() != 64 || !is_lowercase_hex {
+    return Err(USTBLError("共享实例返回了无效的 SHA-256 摘要".to_string()));
+  }
+  Ok(())
+}
+
+fn sha256_of_bytes(bytes: &[u8]) -> String {
+  let mut hasher = Sha256::new();
+  hasher.update(bytes);
+  format!("{:x}", hasher.finalize())
+}
+
+async fn sha256_of_file(file_path: &Path) -> USTBLResult<String> {
+  let mut file = tokio::fs::File::open(file_path)
+    .await
+    .map_err(|err| USTBLError(format!("读取本地共享文件失败：{err}")))?;
+  let mut hasher = Sha256::new();
+  let mut buffer = [0; 64 * 1024];
+
+  loop {
+    let count = file
+      .read(&mut buffer)
+      .await
+      .map_err(|err| USTBLError(format!("读取本地共享文件失败：{err}")))?;
+    if count == 0 {
+      break;
+    }
+    hasher.update(&buffer[..count]);
+  }
+
+  Ok(format!("{:x}", hasher.finalize()))
+}
+
+async fn local_file_matches_shared_checksum(
+  file_path: &Path,
+  shared_file: &SharedMod,
+) -> USTBLResult<bool> {
+  let Some(expected_sha256) = shared_file.sha256.as_deref() else {
+    return Ok(true);
+  };
+  validate_sha256(expected_sha256)?;
+  Ok(sha256_of_file(file_path).await? == expected_sha256)
+}
+
 async fn get_download_request(
   app: &AppHandle,
   instance_id: u64,
@@ -261,11 +313,20 @@ async fn download_shared_file(
     .bytes()
     .await
     .map_err(|err| USTBLError(format!("读取共享文件失败：{err}")))?;
-  if mod_info.file_size > 0 && bytes.len() as u64 != mod_info.file_size {
+  if bytes.len() as u64 != mod_info.file_size {
     return Err(USTBLError(format!(
       "共享文件 {} 的大小校验失败",
       mod_info.file_name
     )));
+  }
+  if let Some(expected_sha256) = mod_info.sha256.as_deref() {
+    validate_sha256(expected_sha256)?;
+    if sha256_of_bytes(&bytes) != expected_sha256 {
+      return Err(USTBLError(format!(
+        "共享文件 {} 的 SHA-256 校验失败",
+        mod_info.file_name
+      )));
+    }
   }
 
   tokio::fs::create_dir_all(destination.parent().unwrap_or(destination))
@@ -322,6 +383,7 @@ pub async fn update_shared_instance(
   let mut result = SharedUpdateResult {
     deleted: vec![],
     downloaded: vec![],
+    updated: vec![],
     skipped: vec![],
   };
   let total = shared
@@ -356,16 +418,25 @@ pub async fn update_shared_instance(
     let relative_path = shared_file_relative_path(&shared.folders, mod_info)?;
     let display_path = display_shared_file_path(&relative_path);
     let target = instance_root.join(relative_path);
-    if target.is_file() {
+    if target.is_file() && local_file_matches_shared_checksum(&target, mod_info).await? {
       result.skipped.push(display_path.clone());
     } else {
       if target.exists() {
-        return Err(USTBLError(format!(
-          "无法下载共享文件 {display_path}：本地同名路径不是文件"
-        )));
+        if target.is_file() {
+          tokio::fs::remove_file(&target)
+            .await
+            .map_err(|err| USTBLError(format!("删除待更新共享文件失败：{err}")))?;
+          download_shared_file(&app, shared_instance_id, mod_info, &target).await?;
+          result.updated.push(display_path.clone());
+        } else {
+          return Err(USTBLError(format!(
+            "无法下载共享文件 {display_path}：本地同名路径不是文件"
+          )));
+        }
+      } else {
+        download_shared_file(&app, shared_instance_id, mod_info, &target).await?;
+        result.downloaded.push(display_path.clone());
       }
-      download_shared_file(&app, shared_instance_id, mod_info, &target).await?;
-      result.downloaded.push(display_path.clone());
     }
     current += 1;
     emit_update_progress(
@@ -383,14 +454,18 @@ pub async fn update_shared_instance(
   Ok(result)
 }
 
-#[tauri::command]
-pub async fn upload_shared_instance_mod(
+async fn send_shared_file_upload(
   app: AppHandle,
-  shared_instance_id: u64,
+  method: reqwest::Method,
+  endpoint: String,
   file_path: PathBuf,
   folder_id: Option<u64>,
 ) -> USTBLResult<SharedMod> {
-  ensure_minecraft_manager(&app)?;
+  let operation = if method == reqwest::Method::POST {
+    "上传"
+  } else {
+    "更新"
+  };
   let filename = file_path
     .file_name()
     .and_then(|name| name.to_str())
@@ -399,7 +474,7 @@ pub async fn upload_shared_instance_mod(
   assert_file_name(&filename)?;
   let bytes = tokio::fs::read(&file_path)
     .await
-    .map_err(|err| USTBLError(format!("读取待上传共享文件失败：{err}")))?;
+    .map_err(|err| USTBLError(format!("读取待{operation}共享文件失败：{err}")))?;
   const MAX_FILE_SIZE: usize = 100 * 1024 * 1024;
   if bytes.len() > MAX_FILE_SIZE {
     return Err(USTBLError("共享文件不能超过 100 MiB".to_string()));
@@ -427,7 +502,7 @@ pub async fn upload_shared_instance_mod(
   form.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
   let client = app.state::<reqwest::Client>();
   let response = client
-    .post(format!("{VUSTB_API}/{shared_instance_id}/mods"))
+    .request(method, endpoint)
     .header(
       "Content-Type",
       format!("multipart/form-data; boundary={boundary}"),
@@ -435,7 +510,7 @@ pub async fn upload_shared_instance_mod(
     .body(form)
     .send()
     .await
-    .map_err(|err| USTBLError(format!("上传共享文件失败：{err}")))?;
+    .map_err(|err| USTBLError(format!("{operation}共享文件失败：{err}")))?;
   if !response.status().is_success() {
     return Err(invalid_response(response));
   }
@@ -443,6 +518,42 @@ pub async fn upload_shared_instance_mod(
     .json::<SharedMod>()
     .await
     .map_err(|err| USTBLError(format!("共享实例 API 返回格式错误：{err}")))
+}
+
+#[tauri::command]
+pub async fn upload_shared_instance_mod(
+  app: AppHandle,
+  shared_instance_id: u64,
+  file_path: PathBuf,
+  folder_id: Option<u64>,
+) -> USTBLResult<SharedMod> {
+  ensure_minecraft_manager(&app)?;
+  send_shared_file_upload(
+    app,
+    reqwest::Method::POST,
+    format!("{VUSTB_API}/{shared_instance_id}/mods"),
+    file_path,
+    folder_id,
+  )
+  .await
+}
+
+#[tauri::command]
+pub async fn update_shared_instance_mod(
+  app: AppHandle,
+  shared_instance_id: u64,
+  shared_mod_id: u64,
+  file_path: PathBuf,
+) -> USTBLResult<SharedMod> {
+  ensure_minecraft_manager(&app)?;
+  send_shared_file_upload(
+    app,
+    reqwest::Method::PUT,
+    format!("{VUSTB_API}/{shared_instance_id}/mods/{shared_mod_id}"),
+    file_path,
+    None,
+  )
+  .await
 }
 
 #[tauri::command]
@@ -471,8 +582,26 @@ pub async fn delete_shared_instance_mod(
 
 #[cfg(test)]
 mod tests {
-  use super::{shared_file_relative_path, SharedInstance, SharedInstanceDetail};
+  use super::{
+    local_file_matches_shared_checksum, sha256_of_bytes, shared_file_relative_path,
+    validate_sha256, SharedInstance, SharedInstanceDetail, SharedMod,
+  };
   use std::path::PathBuf;
+
+  fn shared_mod_with_checksum(sha256: Option<&str>) -> SharedMod {
+    SharedMod {
+      id: 1,
+      folder_id: None,
+      file_name: "example.txt".to_string(),
+      file_size: 0,
+      sha256: sha256.map(str::to_string),
+      status: "used".to_string(),
+      created_by_username: None,
+      created_at: "2026-08-22T00:00:00Z".to_string(),
+      deleted_by_username: None,
+      deleted_at: None,
+    }
+  }
 
   #[test]
   fn parses_snake_case_instance_list_and_serializes_camel_case() {
@@ -517,7 +646,8 @@ mod tests {
         "id": 31,
         "folder_id": 8,
         "file_name": "create-0.5.1.jar",
-          "file_size": 15203423,
+        "file_size": 15203423,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
           "status": "used",
           "created_by_username": "alice",
           "created_at": "2026-08-20T08:05:00Z",
@@ -530,6 +660,10 @@ mod tests {
 
     assert_eq!(detail.mods[0].file_name, "create-0.5.1.jar");
     assert_eq!(detail.mods[0].file_size, 15_203_423);
+    assert_eq!(
+      detail.mods[0].sha256.as_deref(),
+      Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+    );
     assert_eq!(detail.mods[0].created_by_username.as_deref(), Some("alice"));
     assert_eq!(detail.folders.len(), 2);
     assert_eq!(
@@ -566,6 +700,7 @@ mod tests {
           "folder_id": 7,
           "file_name": "settings.toml",
           "file_size": 1,
+          "sha256": null,
           "status": "used",
           "created_at": "2026-08-20T08:05:00Z"
         }]
@@ -574,5 +709,50 @@ mod tests {
     .unwrap();
 
     assert!(shared_file_relative_path(&detail.folders, &detail.mods[0]).is_err());
+  }
+
+  #[test]
+  fn validates_lowercase_sha256_values() {
+    let valid_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    assert!(validate_sha256(valid_sha256).is_ok());
+    assert!(
+      validate_sha256("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b85").is_err()
+    );
+    assert!(
+      validate_sha256("E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855").is_err()
+    );
+    assert_eq!(
+      sha256_of_bytes(b"abc"),
+      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    );
+  }
+
+  #[tokio::test]
+  async fn compares_local_file_checksum_and_preserves_legacy_records() {
+    let file_path =
+      std::env::temp_dir().join(format!("ustbl-shared-test-{}.txt", uuid::Uuid::new_v4()));
+    tokio::fs::write(&file_path, b"abc").await.unwrap();
+
+    let matching = shared_mod_with_checksum(Some(
+      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+    ));
+    let mismatching = shared_mod_with_checksum(Some(
+      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ));
+    let legacy = shared_mod_with_checksum(None);
+
+    assert!(local_file_matches_shared_checksum(&file_path, &matching)
+      .await
+      .unwrap());
+    assert!(
+      !local_file_matches_shared_checksum(&file_path, &mismatching)
+        .await
+        .unwrap()
+    );
+    assert!(local_file_matches_shared_checksum(&file_path, &legacy)
+      .await
+      .unwrap());
+
+    tokio::fs::remove_file(&file_path).await.unwrap();
   }
 }

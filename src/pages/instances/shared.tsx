@@ -250,13 +250,27 @@ const SharedInstancesPage = () => {
   const uploadFile = useCallback(
     async (filePath: string) => {
       if (!selected || !isEditing || !canManage) return;
-      const response = await SharedInstanceService.uploadMod(
-        selected.id,
-        filePath,
-        currentFolderId
+      const fileName = filePath.split(/[\\/]/).pop();
+      if (!fileName) return;
+      const existingFile = selected.mods.find(
+        (file) => file.fileName === fileName
       );
+      const response = existingFile
+        ? await SharedInstanceService.updateMod(
+            selected.id,
+            existingFile.id,
+            filePath
+          )
+        : await SharedInstanceService.uploadMod(
+            selected.id,
+            filePath,
+            currentFolderId
+          );
       if (response.status === "success") {
-        toast({ title: `已添加 ${response.data.fileName}`, status: "success" });
+        toast({
+          title: `${existingFile ? "已更新" : "已添加"} ${response.data.fileName}`,
+          status: "success",
+        });
         syncSelected();
       } else {
         showError(response);
@@ -564,6 +578,9 @@ const SharedInstancesPage = () => {
               <Text>
                 已新增 {updateResult?.downloaded.length || 0} 个新文件
               </Text>
+              <Text>
+                已更新 {updateResult?.updated.length || 0} 个不一致文件
+              </Text>
             </VStack>
           </ModalBody>
           <ModalFooter>
@@ -621,7 +638,9 @@ const SharedInstancesPage = () => {
             ) : (
               <Text>
                 将使用本地实例“{selectedLocalInstance?.name || boundInstanceId}
-                ”更新。共享实例中标记删除的文件会移除，使用中的文件仅在本地缺失时下载；未列入共享实例的本地文件不会受到影响。
+                ”更新。共享实例中标记删除的文件会移除；使用中的文件在本地缺失或
+                SHA-256
+                不一致时会重新下载。未列入共享实例的本地文件不会受到影响。
               </Text>
             )}
           </ModalBody>

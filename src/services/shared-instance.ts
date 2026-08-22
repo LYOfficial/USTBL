@@ -82,6 +82,19 @@ export class SharedInstanceService {
   }
 
   @responseHandler("instance")
+  static async updateMod(
+    sharedInstanceId: number,
+    sharedModId: number,
+    filePath: string
+  ): Promise<InvokeResponse<SharedMod>> {
+    return await invoke("update_shared_instance_mod", {
+      sharedInstanceId,
+      sharedModId,
+      filePath,
+    });
+  }
+
+  @responseHandler("instance")
   static async deleteMod(
     sharedInstanceId: number,
     sharedModId: number

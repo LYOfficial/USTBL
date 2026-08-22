@@ -141,6 +141,7 @@ pub async fn run() -> i32 {
       instance::shared::set_shared_instance_binding,
       instance::shared::update_shared_instance,
       instance::shared::upload_shared_instance_mod,
+      instance::shared::update_shared_instance_mod,
       instance::shared::delete_shared_instance_mod,
       launch::commands::select_suitable_jre,
       launch::commands::validate_game_files,

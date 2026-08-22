@@ -10,6 +10,7 @@ export interface SharedMod {
   folderId: number | null;
   fileName: string;
   fileSize: number;
+  sha256: string | null;
   status: "used" | "deleted";
   createdByUsername?: string;
   createdAt: string;
@@ -33,6 +34,7 @@ export interface SharedInstanceDetail extends SharedInstance {
 export interface SharedUpdateResult {
   deleted: string[];
   downloaded: string[];
+  updated: string[];
   skipped: string[];
 }
 
