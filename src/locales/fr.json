@@ -261,6 +261,17 @@
     "sortBy": "Trier par",
     "title": "Toutes les instances"
   },
+  "SharedInstanceStartupNotifier": {
+    "update": {
+      "title": "L'instance partagée {{name}} contient des mises à jour",
+      "description": "Cliquez pour synchroniser."
+    },
+    "bind": {
+      "title": "L'instance partagée {{name}} n'a pas été synchronisée",
+      "description": "Cliquez pour lier et synchroniser l'instance.",
+      "ignore": "Ignorer"
+    }
+  },
   "AppearanceSettingsPage": {
     "theme": {
       "title": "Thème",

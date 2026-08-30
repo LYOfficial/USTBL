@@ -4,6 +4,7 @@ import { InvokeResponse } from "@/models/response";
 import {
   SharedInstance,
   SharedInstanceDetail,
+  SharedInstanceStartupNotification,
   SharedMod,
   SharedUpdateProgress,
   SharedUpdateResult,
@@ -26,6 +27,13 @@ export class SharedInstanceService {
   }
 
   @responseHandler("instance")
+  static async retrieveStartupNotifications(): Promise<
+    InvokeResponse<SharedInstanceStartupNotification[]>
+  > {
+    return await invoke("retrieve_shared_instance_startup_notifications");
+  }
+
+  @responseHandler("instance")
   static async retrieveBinding(
     sharedInstanceId: number
   ): Promise<InvokeResponse<string | null>> {
@@ -42,6 +50,15 @@ export class SharedInstanceService {
     return await invoke("set_shared_instance_binding", {
       sharedInstanceId,
       localInstanceId,
+    });
+  }
+
+  @responseHandler("instance")
+  static async ignoreBindingPrompt(
+    sharedInstanceId: number
+  ): Promise<InvokeResponse<void>> {
+    return await invoke("ignore_shared_instance_binding_prompt", {
+      sharedInstanceId,
     });
   }
 

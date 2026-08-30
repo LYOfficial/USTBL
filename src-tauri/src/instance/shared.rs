@@ -2,6 +2,7 @@ use crate::account::models::AccountInfo;
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::misc::get_instance_version_path_by_id;
 use crate::storage::Storage;
+use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -13,6 +14,7 @@ use tokio::io::AsyncReadExt;
 
 const VUSTB_API: &str = "https://www.ustb.world/api/mc-instances";
 const SHARED_INSTANCE_BINDINGS_FILE: &str = "ustbl.shared-instance-bindings.json";
+const SHARED_INSTANCE_SYNC_STATES_FILE: &str = "ustbl.shared-instance-sync-states.json";
 const SHARED_INSTANCE_UPDATE_PROGRESS_EVENT: &str = "shared-instance:update-progress";
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -70,6 +72,11 @@ struct SharedDownloadRequest {
   name: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct SharedInstanceLastUpdated {
+  last_updated_at: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(transparent)]
 pub struct SharedInstanceBindings(pub HashMap<u64, String>);
@@ -81,6 +88,41 @@ impl Storage for SharedInstanceBindings {
       .expect("APP_DATA_DIR initialization failed")
       .join(SHARED_INSTANCE_BINDINGS_FILE)
   }
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SharedInstanceSyncState {
+  pub last_updated_at: Option<String>,
+  pub binding_prompt_ignored: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(transparent)]
+pub struct SharedInstanceSyncStates(pub HashMap<u64, SharedInstanceSyncState>);
+
+impl Storage for SharedInstanceSyncStates {
+  fn file_path() -> PathBuf {
+    crate::APP_DATA_DIR
+      .get()
+      .expect("APP_DATA_DIR initialization failed")
+      .join(SHARED_INSTANCE_SYNC_STATES_FILE)
+  }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SharedInstanceStartupNotification {
+  pub shared_instance_id: u64,
+  pub name: String,
+  pub kind: SharedInstanceStartupNotificationKind,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SharedInstanceStartupNotificationKind {
+  Update,
+  Bind,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -165,6 +207,43 @@ async fn get_json<T: for<'de> Deserialize<'de>>(app: &AppHandle, path: &str) -> 
     .json::<T>()
     .await
     .map_err(|err| USTBLError(format!("共享实例 API 返回格式错误：{err}")))
+}
+
+async fn get_shared_instance_last_updated(
+  app: &AppHandle,
+  shared_instance_id: u64,
+) -> USTBLResult<Option<String>> {
+  let result: SharedInstanceLastUpdated =
+    get_json(app, &format!("/{shared_instance_id}/last-updated")).await?;
+  Ok(result.last_updated_at)
+}
+
+fn remote_update_is_newer(
+  remote_last_updated_at: Option<&str>,
+  local_last_updated_at: Option<&str>,
+) -> USTBLResult<bool> {
+  let Some(remote_last_updated_at) = remote_last_updated_at else {
+    return Ok(false);
+  };
+  let Some(local_last_updated_at) = local_last_updated_at else {
+    return Ok(true);
+  };
+  let remote = DateTime::<FixedOffset>::parse_from_rfc3339(remote_last_updated_at)
+    .map_err(|err| USTBLError(format!("共享实例 API 返回了无效的更新时间：{err}")))?;
+  let local = DateTime::<FixedOffset>::parse_from_rfc3339(local_last_updated_at)
+    .map_err(|err| USTBLError(format!("本地共享实例更新时间记录无效：{err}")))?;
+  Ok(remote > local)
+}
+
+fn clear_shared_instance_binding_prompt_ignored(shared_instance_id: u64) -> USTBLResult<()> {
+  let mut states = SharedInstanceSyncStates::load().unwrap_or_default();
+  states
+    .0
+    .entry(shared_instance_id)
+    .or_default()
+    .binding_prompt_ignored = false;
+  states.save()?;
+  Ok(())
 }
 
 fn assert_file_name(file_name: &str) -> USTBLResult<()> {
@@ -355,6 +434,68 @@ pub async fn retrieve_shared_instance_detail(
 }
 
 #[tauri::command]
+pub async fn retrieve_shared_instance_startup_notifications(
+  app: AppHandle,
+) -> USTBLResult<Vec<SharedInstanceStartupNotification>> {
+  let instances: Vec<SharedInstance> = get_json(&app, "").await?;
+  let bindings = SharedInstanceBindings::load().unwrap_or_default();
+  let states = SharedInstanceSyncStates::load().unwrap_or_default();
+  let mut notifications = vec![];
+
+  for instance in instances {
+    let has_usable_binding = bindings
+      .0
+      .get(&instance.id)
+      .is_some_and(|local_instance_id| {
+        get_instance_version_path_by_id(&app, local_instance_id).is_some()
+      });
+    if !has_usable_binding {
+      if !states
+        .0
+        .get(&instance.id)
+        .is_some_and(|state| state.binding_prompt_ignored)
+      {
+        notifications.push(SharedInstanceStartupNotification {
+          shared_instance_id: instance.id,
+          name: instance.name,
+          kind: SharedInstanceStartupNotificationKind::Bind,
+        });
+      }
+      continue;
+    }
+
+    let remote_last_updated_at = match get_shared_instance_last_updated(&app, instance.id).await {
+      Ok(last_updated_at) => last_updated_at,
+      Err(err) => {
+        log::warn!(
+          "Failed to retrieve latest update time for shared instance {}: {err:?}",
+          instance.id
+        );
+        continue;
+      }
+    };
+    let local_last_updated_at = states
+      .0
+      .get(&instance.id)
+      .and_then(|state| state.last_updated_at.as_deref());
+    match remote_update_is_newer(remote_last_updated_at.as_deref(), local_last_updated_at) {
+      Ok(true) => notifications.push(SharedInstanceStartupNotification {
+        shared_instance_id: instance.id,
+        name: instance.name,
+        kind: SharedInstanceStartupNotificationKind::Update,
+      }),
+      Ok(false) => {}
+      Err(err) => log::warn!(
+        "Unable to compare update times for shared instance {}: {err:?}",
+        instance.id
+      ),
+    }
+  }
+
+  Ok(notifications)
+}
+
+#[tauri::command]
 pub fn retrieve_shared_instance_binding(shared_instance_id: u64) -> USTBLResult<Option<String>> {
   let bindings = SharedInstanceBindings::load().unwrap_or_default();
   Ok(bindings.0.get(&shared_instance_id).cloned())
@@ -368,6 +509,19 @@ pub fn set_shared_instance_binding(
   let mut bindings = SharedInstanceBindings::load().unwrap_or_default();
   bindings.0.insert(shared_instance_id, local_instance_id);
   bindings.save()?;
+  clear_shared_instance_binding_prompt_ignored(shared_instance_id)?;
+  Ok(())
+}
+
+#[tauri::command]
+pub fn ignore_shared_instance_binding_prompt(shared_instance_id: u64) -> USTBLResult<()> {
+  let mut states = SharedInstanceSyncStates::load().unwrap_or_default();
+  states
+    .0
+    .entry(shared_instance_id)
+    .or_default()
+    .binding_prompt_ignored = true;
+  states.save()?;
   Ok(())
 }
 
@@ -379,6 +533,10 @@ pub async fn update_shared_instance(
 ) -> USTBLResult<SharedUpdateResult> {
   let instance_root = get_instance_version_path_by_id(&app, &local_instance_id)
     .ok_or_else(|| USTBLError("未找到已绑定的本地实例".to_string()))?;
+  // Save the update time observed before reading the file list. If an
+  // administrator changes the shared instance while this sync is running,
+  // the next launcher startup will still notice the newer timestamp.
+  let sync_last_updated_at = get_shared_instance_last_updated(&app, shared_instance_id).await;
   let shared: SharedInstanceDetail = get_json(&app, &format!("/{shared_instance_id}")).await?;
   let mut result = SharedUpdateResult {
     deleted: vec![],
@@ -451,6 +609,17 @@ pub async fn update_shared_instance(
   let mut bindings = SharedInstanceBindings::load().unwrap_or_default();
   bindings.0.insert(shared_instance_id, local_instance_id);
   bindings.save()?;
+
+  let mut states = SharedInstanceSyncStates::load().unwrap_or_default();
+  let state = states.0.entry(shared_instance_id).or_default();
+  state.binding_prompt_ignored = false;
+  match sync_last_updated_at {
+    Ok(last_updated_at) => state.last_updated_at = last_updated_at,
+    Err(err) => log::warn!(
+      "Shared instance {shared_instance_id} synced, but its update time could not be recorded: {err:?}"
+    ),
+  }
+  states.save()?;
   Ok(result)
 }
 
@@ -583,8 +752,8 @@ pub async fn delete_shared_instance_mod(
 #[cfg(test)]
 mod tests {
   use super::{
-    local_file_matches_shared_checksum, sha256_of_bytes, shared_file_relative_path,
-    validate_sha256, SharedInstance, SharedInstanceDetail, SharedMod,
+    local_file_matches_shared_checksum, remote_update_is_newer, sha256_of_bytes,
+    shared_file_relative_path, validate_sha256, SharedInstance, SharedInstanceDetail, SharedMod,
   };
   use std::path::PathBuf;
 
@@ -672,6 +841,20 @@ mod tests {
         .join("client")
         .join("create-0.5.1.jar")
     );
+  }
+
+  #[test]
+  fn compares_last_updated_timestamps_by_time_not_text_order() {
+    assert!(
+      remote_update_is_newer(Some("2026-08-30T10:34:55.1Z"), Some("2026-08-30T10:34:55Z"),)
+        .unwrap()
+    );
+    assert!(
+      !remote_update_is_newer(Some("2026-08-30T10:34:55Z"), Some("2026-08-30T10:34:55.1Z"),)
+        .unwrap()
+    );
+    assert!(remote_update_is_newer(Some("2026-08-30T10:34:55Z"), None).unwrap());
+    assert!(!remote_update_is_newer(None, None).unwrap());
   }
 
   #[test]

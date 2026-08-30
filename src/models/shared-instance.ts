@@ -44,3 +44,9 @@ export interface SharedUpdateProgress {
   total: number;
   fileName?: string;
 }
+
+export interface SharedInstanceStartupNotification {
+  sharedInstanceId: number;
+  name: string;
+  kind: "update" | "bind";
+}

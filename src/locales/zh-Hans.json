@@ -261,6 +261,17 @@
     "sortBy": "排序方式",
     "title": "全部实例"
   },
+  "SharedInstanceStartupNotifier": {
+    "update": {
+      "title": "共享实例 {{name}} 已有更新内容",
+      "description": "点击前往同步。"
+    },
+    "bind": {
+      "title": "有未同步的共享实例 {{name}}",
+      "description": "点击前往绑定并同步。",
+      "ignore": "忽略"
+    }
+  },
   "AppearanceSettingsPage": {
     "theme": {
       "title": "主题",

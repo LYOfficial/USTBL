@@ -19,7 +19,8 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   LuArrowLeft,
   LuCloudDownload,
@@ -92,6 +93,7 @@ const sharedFilePath = (detail: SharedInstanceDetail, file: SharedMod) => {
 };
 
 const SharedInstancesPage = () => {
+  const router = useRouter();
   const toast = useToast();
   const { getInstanceList } = useGlobalData();
   const [instances, setInstances] = useState<SharedInstance[]>([]);
@@ -111,6 +113,7 @@ const SharedInstancesPage = () => {
   const [boundInstanceId, setBoundInstanceId] = useState("");
   const [chosenInstanceId, setChosenInstanceId] = useState("");
   const [currentFolderId, setCurrentFolderId] = useState<number | null>(null);
+  const openedSharedInstanceId = useRef<number | null>(null);
 
   const localInstances = useMemo(
     () => getInstanceList() || [],
@@ -158,18 +161,48 @@ const SharedInstancesPage = () => {
     });
   }, [selected?.id]);
 
-  const openInstance = async (instance: SharedInstance) => {
-    setIsLoading(true);
-    const response = await SharedInstanceService.retrieveDetail(instance.id);
-    if (response.status === "success") {
-      setSelected(response.data);
-      setIsEditing(false);
-      setCurrentFolderId(null);
-    } else {
-      showError(response);
-    }
-    setIsLoading(false);
-  };
+  const openInstance = useCallback(
+    async (instance: SharedInstance) => {
+      setIsLoading(true);
+      const response = await SharedInstanceService.retrieveDetail(instance.id);
+      if (response.status === "success") {
+        setSelected(response.data);
+        setIsEditing(false);
+        setCurrentFolderId(null);
+      } else {
+        showError(response);
+      }
+      setIsLoading(false);
+    },
+    [showError]
+  );
+
+  const requestedSharedInstanceId = useMemo(() => {
+    const value = router.query.sharedInstanceId;
+    if (typeof value !== "string") return null;
+    const sharedInstanceId = Number(value);
+    return Number.isSafeInteger(sharedInstanceId) && sharedInstanceId > 0
+      ? sharedInstanceId
+      : null;
+  }, [router.query.sharedInstanceId]);
+
+  useEffect(() => {
+    if (
+      !router.isReady ||
+      isLoading ||
+      requestedSharedInstanceId === null ||
+      openedSharedInstanceId.current === requestedSharedInstanceId
+    )
+      return;
+    const sharedInstance = instances.find(
+      (instance) => instance.id === requestedSharedInstanceId
+    );
+    if (!sharedInstance) return;
+
+    openedSharedInstanceId.current = requestedSharedInstanceId;
+    void openInstance(sharedInstance);
+    void router.replace("/instances/shared", undefined, { shallow: true });
+  }, [instances, isLoading, openInstance, requestedSharedInstanceId, router]);
 
   const syncSelected = useCallback(async () => {
     if (!selected) return;
@@ -234,16 +267,8 @@ const SharedInstancesPage = () => {
     setBindingDialogMode(usableBinding ? "confirm" : "select");
   }, [localInstances, selected, showError]);
 
-  const bindAndUpdate = async () => {
+  const bindAndUpdate = () => {
     if (!selected || !chosenInstanceId) return;
-    const response = await SharedInstanceService.setBinding(
-      selected.id,
-      chosenInstanceId
-    );
-    if (response.status !== "success") {
-      showError(response);
-      return;
-    }
     runUpdate(chosenInstanceId);
   };
 

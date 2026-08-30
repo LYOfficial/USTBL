@@ -261,6 +261,17 @@
     "sortBy": "Sort by",
     "title": "All Instances"
   },
+  "SharedInstanceStartupNotifier": {
+    "update": {
+      "title": "Shared instance {{name}} has updates",
+      "description": "Click to go to sync."
+    },
+    "bind": {
+      "title": "Shared instance {{name}} has not been synced",
+      "description": "Click to bind and sync it.",
+      "ignore": "Ignore"
+    }
+  },
   "AppearanceSettingsPage": {
     "theme": {
       "title": "Theme",

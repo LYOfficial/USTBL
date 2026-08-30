@@ -261,6 +261,17 @@
     "sortBy": "並べ替え方法",
     "title": "すべてのインスタンス"
   },
+  "SharedInstanceStartupNotifier": {
+    "update": {
+      "title": "共有インスタンス {{name}} に更新があります",
+      "description": "クリックして同期します。"
+    },
+    "bind": {
+      "title": "未同期の共有インスタンス {{name}} があります",
+      "description": "クリックして紐付けて同期します。",
+      "ignore": "無視"
+    }
+  },
   "AppearanceSettingsPage": {
     "theme": {
       "title": "テーマ",
