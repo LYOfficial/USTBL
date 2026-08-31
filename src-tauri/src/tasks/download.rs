@@ -399,3 +399,52 @@ impl DownloadTask {
     Self::future_impl(self, app_handle, limiter).await
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::{DownloadParam, DownloadRetryPolicy, DownloadTask, DownloadTransferOptions};
+  use serde_json::json;
+  use std::path::PathBuf;
+  use tauri::Url;
+
+  #[test]
+  fn old_download_params_use_standard_transfer_defaults() {
+    let param: DownloadParam = serde_json::from_value(json!({
+      "src": "https://example.com/file.jar",
+      "dest": "file.jar",
+      "filename": null,
+      "sha1": null
+    }))
+    .unwrap();
+
+    assert_eq!(param.transfer_options, DownloadTransferOptions::default());
+  }
+
+  #[test]
+  fn explicit_transfer_options_control_sources_and_attempts() {
+    let primary = Url::parse("https://mirror.example.com/file.jar").unwrap();
+    let fallback = Url::parse("https://official.example.com/file.jar").unwrap();
+    let param = DownloadParam {
+      src: primary.clone(),
+      dest: PathBuf::from("file.jar"),
+      filename: None,
+      sha1: None,
+      custom_headers: None,
+      transfer_options: DownloadTransferOptions::resumable(
+        vec![primary.clone(), fallback.clone()],
+        10,
+      ),
+    };
+
+    assert_eq!(DownloadTask::sources(&param), vec![primary, fallback]);
+    assert_eq!(param.transfer_options.retry_policy.max_attempts(), 10);
+    assert_eq!(
+      param.transfer_options.retry_policy,
+      DownloadRetryPolicy::Resumable { max_attempts: 10 }
+    );
+    assert_eq!(
+      serde_json::to_value(&param.transfer_options.retry_policy).unwrap(),
+      json!({ "strategy": "resumable", "maxAttempts": 10 })
+    );
+  }
+}

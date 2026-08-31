@@ -405,3 +405,100 @@ pub async fn download_neoforge_libraries(
 
   Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+  use super::{installer_sources, ordered_library_sources};
+  use crate::resource::models::{ResourceType, SourceType};
+  use url::Url;
+
+  #[test]
+  fn library_sources_follow_mirror_first_priority() {
+    let original =
+      Url::parse("https://maven.neoforged.net/releases/com/mojang/logging/1.2.7/logging-1.2.7.jar")
+        .unwrap();
+    let (primary, fallbacks) = ordered_library_sources(
+      &original,
+      &[ResourceType::NeoforgeMaven, ResourceType::Libraries],
+      &[SourceType::BMCLAPIMirror, SourceType::Official],
+    )
+    .unwrap();
+
+    assert_eq!(
+      primary.as_str(),
+      "https://bmclapi2.bangbang93.com/maven/com/mojang/logging/1.2.7/logging-1.2.7.jar"
+    );
+    assert_eq!(fallbacks, vec![original]);
+  }
+
+  #[test]
+  fn library_sources_follow_official_first_priority() {
+    let original = Url::parse(
+      "https://maven.neoforged.net/releases/org/openjdk/nashorn/nashorn-core/15.4/nashorn-core-15.4.jar",
+    )
+    .unwrap();
+    let (primary, fallbacks) = ordered_library_sources(
+      &original,
+      &[ResourceType::NeoforgeMaven, ResourceType::Libraries],
+      &[SourceType::Official, SourceType::BMCLAPIMirror],
+    )
+    .unwrap();
+
+    assert_eq!(primary, original);
+    assert_eq!(
+      fallbacks[0].as_str(),
+      "https://bmclapi2.bangbang93.com/maven/org/openjdk/nashorn/nashorn-core/15.4/nashorn-core-15.4.jar"
+    );
+  }
+
+  #[test]
+  fn modern_installer_uses_explicit_api_fallback() {
+    let (primary, fallbacks) = installer_sources(
+      &[SourceType::BMCLAPIMirror, SourceType::Official],
+      "21.1.249",
+    )
+    .unwrap();
+
+    assert_eq!(
+      primary.as_str(),
+      "https://bmclapi2.bangbang93.com/neoforge/version/21.1.249/download/installer"
+    );
+    assert_eq!(
+      fallbacks[0].as_str(),
+      "https://maven.neoforged.net/releases/net/neoforged/neoforge/21.1.249/neoforge-21.1.249-installer.jar"
+    );
+  }
+
+  #[test]
+  fn legacy_installer_preserves_official_first_behavior() {
+    let version = "1.20.1-47.1.106";
+    let (primary, fallbacks) =
+      installer_sources(&[SourceType::BMCLAPIMirror, SourceType::Official], version).unwrap();
+
+    assert_eq!(
+      primary.as_str(),
+      "https://maven.neoforged.net/releases/net/neoforged/forge/1.20.1-47.1.106/forge-1.20.1-47.1.106-installer.jar"
+    );
+    assert_eq!(
+      fallbacks[0].as_str(),
+      "https://bmclapi2.bangbang93.com/maven/net/neoforged/forge/1.20.1-47.1.106/forge-1.20.1-47.1.106-installer.jar"
+    );
+  }
+
+  #[test]
+  fn unsupported_library_source_is_not_duplicated() {
+    let original = Url::parse(
+      "https://repo.spongepowered.org/maven/org/example/component/1.0/component-1.0.jar",
+    )
+    .unwrap();
+    let (primary, fallbacks) = ordered_library_sources(
+      &original,
+      &[ResourceType::NeoforgeMaven, ResourceType::Libraries],
+      &[SourceType::BMCLAPIMirror, SourceType::Official],
+    )
+    .unwrap();
+
+    assert_eq!(primary, original);
+    assert!(fallbacks.is_empty());
+  }
+}
