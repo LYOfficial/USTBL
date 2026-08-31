@@ -228,5 +228,6 @@ pub async fn get_latest_fabric_api_mod_download(
     filename: Some(filename),
     sha1: Some(latest_file.sha1.clone()),
     custom_headers: None,
+    transfer_options: Default::default(),
   }))
 }

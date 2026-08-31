@@ -91,6 +91,7 @@ pub async fn install_fabric_loader(
       filename: None,
       sha1: None,
       custom_headers: None,
+      transfer_options: Default::default(),
     }));
     Ok(())
   };
