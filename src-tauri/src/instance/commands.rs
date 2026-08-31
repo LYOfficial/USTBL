@@ -1037,6 +1037,7 @@ pub async fn create_instance(
     filename: None,
     sha1: Some(client_download_info.sha1.clone()),
     custom_headers: None,
+    transfer_options: Default::default(),
   }));
   let subdirs = get_instance_subdir_paths(
     &app,

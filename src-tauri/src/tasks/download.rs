@@ -31,6 +31,42 @@ pub struct DownloadParam {
   pub sha1: Option<String>,
   #[serde(default)]
   pub custom_headers: Option<std::collections::HashMap<String, String>>,
+  #[serde(default)]
+  pub transfer_options: DownloadTransferOptions,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct DownloadTransferOptions {
+  pub fallback_sources: Vec<Url>,
+  pub retry_policy: DownloadRetryPolicy,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(
+  tag = "strategy",
+  rename_all = "camelCase",
+  rename_all_fields = "camelCase"
+)]
+pub enum DownloadRetryPolicy {
+  #[default]
+  Standard,
+  Resumable {
+    max_attempts: usize,
+  },
+}
+
+impl DownloadRetryPolicy {
+  fn max_attempts(&self) -> usize {
+    match self {
+      Self::Standard => 1,
+      Self::Resumable { max_attempts } => (*max_attempts).max(1),
+    }
+  }
+
+  fn uses_request_middleware(&self) -> bool {
+    matches!(self, Self::Standard)
+  }
 }
 
 /// Format a download error with its full source chain so the frontend can
@@ -55,8 +91,6 @@ pub struct DownloadTask {
 }
 
 impl DownloadTask {
-  const NEOFORGE_RETRY_LIMIT: usize = 10;
-
   pub fn new(
     app_handle: AppHandle,
     task_id: u32,
@@ -137,50 +171,11 @@ impl DownloadTask {
     }
   }
 
-  fn is_neoforge_download(param: &DownloadParam) -> bool {
-    param.src.host_str() == Some("maven.neoforged.net")
-      || (param.src.host_str() == Some("bmclapi2.bangbang93.com")
-        && (param.src.path().starts_with("/neoforge/")
-          || param.dest.to_string_lossy().contains("net/neoforged")))
-      || param.dest.to_string_lossy().contains("net/neoforged")
-  }
-
-  fn neoforge_sources(source: &Url) -> Vec<Url> {
-    let mut sources = vec![source.clone()];
-    let fallback = match (source.host_str(), source.path()) {
-      (Some("maven.neoforged.net"), path) if path.starts_with("/releases/") => {
-        Url::parse(&format!(
-          "https://bmclapi2.bangbang93.com/maven/{}",
-          path.trim_start_matches("/releases/")
-        ))
-        .ok()
-      }
-      (Some("bmclapi2.bangbang93.com"), path) if path.starts_with("/maven/") => {
-        Url::parse(&format!(
-          "https://maven.neoforged.net/releases/{}",
-          path.trim_start_matches("/maven/")
-        ))
-        .ok()
-      }
-      (Some("bmclapi2.bangbang93.com"), path)
-        if path.starts_with("/neoforge/version/") && path.ends_with("/download/installer") =>
-      {
-        let version = path
-          .trim_start_matches("/neoforge/version/")
-          .trim_end_matches("/download/installer");
-        let artifact = if version.starts_with("1.20.1-") {
-          format!("net/neoforged/forge/{version}/forge-{version}-installer.jar")
-        } else {
-          format!("net/neoforged/neoforge/{version}/neoforge-{version}-installer.jar")
-        };
-        Url::parse(&format!("https://maven.neoforged.net/releases/{artifact}")).ok()
-      }
-      _ => None,
-    };
-
-    if let Some(fallback) = fallback {
-      if fallback != *source {
-        sources.push(fallback);
+  fn sources(param: &DownloadParam) -> Vec<Url> {
+    let mut sources = Vec::with_capacity(1 + param.transfer_options.fallback_sources.len());
+    for source in std::iter::once(&param.src).chain(&param.transfer_options.fallback_sources) {
+      if !sources.contains(source) {
+        sources.push(source.clone());
       }
     }
     sources
@@ -339,17 +334,12 @@ impl DownloadTask {
     let dest_path = self.dest_path.clone();
     Ok((
       async move {
-        let is_neoforge = Self::is_neoforge_download(&param);
-        let sources = if is_neoforge {
-          Self::neoforge_sources(&param.src)
-        } else {
-          vec![param.src.clone()]
-        };
-        let attempts = if is_neoforge {
-          Self::NEOFORGE_RETRY_LIMIT
-        } else {
-          1
-        };
+        let sources = Self::sources(&param);
+        let attempts = param.transfer_options.retry_policy.max_attempts();
+        let use_request_retry = param
+          .transfer_options
+          .retry_policy
+          .uses_request_middleware();
         let mut last_error = None;
 
         for attempt in 0..attempts {
@@ -361,7 +351,7 @@ impl DownloadTask {
             &param,
             &dest_path,
             source,
-            !is_neoforge,
+            use_request_retry,
           )
           .await
           {
@@ -370,7 +360,7 @@ impl DownloadTask {
               last_error = Some(error);
               if attempt + 1 < attempts {
                 warn!(
-                  "NeoForge download failed (attempt {}/{} from {}); retrying with cached progress",
+                  "Resumable download failed (attempt {}/{} from {}); retrying with cached progress",
                   attempt + 1,
                   attempts,
                   source

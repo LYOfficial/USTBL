@@ -124,6 +124,7 @@ impl ModpackManifest for ModrinthManifest {
           dest: instance_path.join(&file.path),
           filename: None,
           custom_headers: None,
+          transfer_options: Default::default(),
         }))
       })
       .collect::<USTBLResult<Vec<_>>>()
