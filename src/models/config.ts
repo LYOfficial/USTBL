@@ -340,10 +340,14 @@ export interface VersionMetaInfo {
   fileName: string;
   releaseNotes?: string;
   publishedAt?: string;
+  downloadUrl: string;
+  fallbackDownloadUrl: string;
 }
 
 // empty release meta info indicating up-to-date or error.
 export const defaultVersionMetaInfo: VersionMetaInfo = {
   version: "",
   fileName: "",
+  downloadUrl: "",
+  fallbackDownloadUrl: "",
 };

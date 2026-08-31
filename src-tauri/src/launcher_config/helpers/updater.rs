@@ -1,9 +1,11 @@
-use crate::error::{USTBLError, USTBLResult};
-use crate::launcher_config::models::{LauncherConfig, LauncherConfigError};
+#[cfg(target_os = "macos")]
+use crate::error::USTBLError;
+use crate::error::USTBLResult;
+use crate::launcher_config::models::{LauncherConfig, LauncherConfigError, VersionMetaInfo};
 use crate::tasks::commands::schedule_progressive_task_group;
-use crate::tasks::download::DownloadParam;
+use crate::tasks::download::{DownloadParam, DownloadTransferOptions};
 use crate::tasks::PTaskParam;
-use serde_json::Value;
+use serde::Deserialize;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -12,160 +14,193 @@ use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_http::reqwest;
 
-type SourceTuple = (&'static str, &'static str, fn(&str, &str) -> String);
-const SOURCES: [SourceTuple; 2] = [
-  (
-    "https://api.github.com/repos/USTB-SkyCode/USTBL/releases/latest",
-    "tag_name",
-    |ver, fname| {
-      format!(
-        "https://github.com/USTB-SkyCode/USTBL/releases/download/v{}/{}",
-        ver, fname
-      )
-    },
-  ),
-  (
-    "https://api.github.com/repos/USTB-SkyCode/USTBL/releases/latest",
-    "tag_name",
-    |ver, fname| {
-      format!(
-        "https://github.com/USTB-SkyCode/USTBL/releases/download/v{}/{}",
-        ver, fname
-      )
-    },
-  ),
-];
+const LATEST_RELEASE_URL: &str = "https://www.ustb.world/api/launcher/latest";
 
-// Generate the new version filename on remote origin according to the current os, arch and is_portable
-fn build_resource_filename(ver: &str, os: &str, arch: &str, is_portable: bool) -> String {
-  let arch = if arch == "x86" { "i686" } else { arch };
-  let suffix = match os {
-    "windows" => {
-      if is_portable {
-        "_portable.exe"
-      } else {
-        "_setup.exe"
-      }
-    }
-    "linux" => ".AppImage",
-    "macos" => ".app.tar.gz",
-    _ => "",
-  };
-  format!("USTBL_{}_{}_{}{}", ver, os, arch, suffix)
+#[derive(Deserialize)]
+struct LauncherLatestRelease {
+  tag: String,
+  #[serde(default)]
+  body: String,
+  #[serde(default)]
+  published_at: String,
+  #[serde(default)]
+  assets: Vec<LauncherReleaseAsset>,
 }
 
-// Generate the new filename on the local disk.
-// If old_name contains old_version, replace the first occurrence with new_version.
-// Otherwise, keep the old_name unchanged.
+#[derive(Deserialize)]
+struct LauncherReleaseAsset {
+  name: String,
+  kind: String,
+  downloads: LauncherAssetDownloads,
+}
+
+#[derive(Default, Deserialize)]
+struct LauncherAssetDownloads {
+  #[serde(default)]
+  github: String,
+  #[serde(default)]
+  mirror: String,
+}
+
+fn release_version(tag: &str) -> Option<String> {
+  let version = tag.trim().trim_start_matches('v');
+  semver::Version::parse(version).ok()?;
+  Some(version.to_string())
+}
+
+fn is_safe_filename(filename: &str) -> bool {
+  !filename.is_empty()
+    && !filename.contains(['/', '\\'])
+    && !filename.contains('\0')
+    && std::path::Path::new(filename)
+      .file_name()
+      .is_some_and(|name| name == filename)
+}
+
+fn matches_architecture(filename: &str, arch: &str) -> bool {
+  let filename = filename.to_ascii_lowercase();
+  let markers = match arch {
+    "x86_64" => &["x86_64", "x64", "amd64"][..],
+    "aarch64" => &["aarch64", "arm64"][..],
+    "x86" => &["i686", "x86"][..],
+    other => &[other][..],
+  };
+  markers.iter().any(|marker| filename.contains(marker))
+}
+
+fn matches_platform(filename: &str, os: &str) -> bool {
+  let filename = filename.to_ascii_lowercase();
+  match os {
+    "windows" => filename.ends_with(".exe"),
+    "macos" => filename.contains("macos") || filename.contains("darwin"),
+    "linux" => filename.contains("linux"),
+    other => filename.contains(other),
+  }
+}
+
+fn select_release_asset<'a>(
+  assets: &'a [LauncherReleaseAsset],
+  os: &str,
+  arch: &str,
+  is_portable: bool,
+) -> Option<&'a LauncherReleaseAsset> {
+  let expected_kind = if is_portable { "portable" } else { "setup" };
+  assets.iter().find(|asset| {
+    asset.kind.eq_ignore_ascii_case(expected_kind)
+      && is_safe_filename(&asset.name)
+      && matches_platform(&asset.name, os)
+      && matches_architecture(&asset.name, arch)
+  })
+}
+
+fn parse_https_url(url: &str) -> Option<url::Url> {
+  let parsed = url::Url::parse(url).ok()?;
+  (parsed.scheme() == "https").then_some(parsed)
+}
+
+#[cfg(target_os = "macos")]
 fn build_local_new_filename(old_name: &str, old_version: &str, new_version: &str) -> String {
   if let Some(idx) = old_name.find(old_version) {
-    let mut s = String::with_capacity(old_name.len() - old_version.len() + new_version.len());
-    s.push_str(&old_name[..idx]);
-    s.push_str(new_version);
-    s.push_str(&old_name[idx + old_version.len()..]);
-    s
+    let mut filename =
+      String::with_capacity(old_name.len() - old_version.len() + new_version.len());
+    filename.push_str(&old_name[..idx]);
+    filename.push_str(new_version);
+    filename.push_str(&old_name[idx + old_version.len()..]);
+    filename
   } else {
     old_name.to_string()
   }
 }
 
-pub async fn fetch_latest_version(
-  app: &AppHandle,
-) -> USTBLResult<Option<(String, String, String, String)>> {
+pub async fn fetch_latest_version(app: &AppHandle) -> USTBLResult<Option<VersionMetaInfo>> {
   let config_binding = app.state::<Mutex<LauncherConfig>>();
-  let (os, arch, is_portable, is_china_mainland_ip) = {
+  let (os, arch, is_portable) = {
     let config_state = config_binding.lock()?;
     (
       config_state.basic_info.os_type.clone(),
       config_state.basic_info.arch.clone(),
       config_state.basic_info.is_portable,
-      config_state.basic_info.is_china_mainland_ip,
     )
   };
   let client = app.state::<reqwest::Client>();
 
-  let mut sources = SOURCES;
-  // If not in China (mainland), firstly try GitHub.
-  if !is_china_mainland_ip {
-    sources.reverse();
-  }
+  let release = client
+    .get(LATEST_RELEASE_URL)
+    .header(reqwest::header::ACCEPT, "application/json")
+    .send()
+    .await
+    .map_err(|_| LauncherConfigError::FetchError)?
+    .error_for_status()
+    .map_err(|_| LauncherConfigError::FetchError)?
+    .json::<LauncherLatestRelease>()
+    .await
+    .map_err(|_| LauncherConfigError::FetchError)?;
 
-  for (endpoint, field, _) in sources {
-    if let Ok(resp) = client.get(endpoint).send().await {
-      if let Ok(j) = resp.json::<Value>().await {
-        if let Some(mut ver) = j.get(field).and_then(|v| v.as_str()).map(|s| s.to_string()) {
-          if ver.starts_with('v') {
-            ver.remove(0);
-          }
-          let fname = build_resource_filename(&ver, os.as_str(), arch.as_str(), is_portable);
+  let Some(version) = release_version(&release.tag) else {
+    return Ok(None);
+  };
+  let Some(asset) = select_release_asset(&release.assets, &os, &arch, is_portable) else {
+    log::warn!(
+      "No compatible launcher update asset for os={}, arch={}, portable={}",
+      os,
+      arch,
+      is_portable
+    );
+    return Ok(None);
+  };
 
-          let release_notes = j
-            .get("body")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string();
-          let published_at = j
-            .get("published_at")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string();
+  let Some(download_url) =
+    parse_https_url(&asset.downloads.mirror).or_else(|| parse_https_url(&asset.downloads.github))
+  else {
+    return Ok(None);
+  };
+  let fallback_download_url = parse_https_url(&asset.downloads.github)
+    .filter(|github_url| github_url != &download_url)
+    .map(|url| url.to_string())
+    .unwrap_or_default();
 
-          return Ok(Some((ver, fname, release_notes, published_at)));
-        }
-      }
-    }
-  }
-
-  Err(LauncherConfigError::FetchError.into())
+  Ok(Some(VersionMetaInfo {
+    version,
+    file_name: asset.name.clone(),
+    release_notes: release.body,
+    published_at: release.published_at,
+    download_url: download_url.to_string(),
+    fallback_download_url,
+  }))
 }
 
-pub async fn download_target_version(
-  app: &AppHandle,
-  version: String,
-  fname: String,
-) -> USTBLResult<()> {
+pub async fn download_target_version(app: &AppHandle, version: VersionMetaInfo) -> USTBLResult<()> {
   let config_binding = app.state::<Mutex<LauncherConfig>>();
-  let (download_cache_dir, is_china_mainland_ip) = {
+  let download_cache_dir = {
     let config_state = config_binding.lock()?;
-    (
-      config_state.download.cache.directory.clone(),
-      config_state.basic_info.is_china_mainland_ip,
-    )
+    config_state.download.cache.directory.clone()
   };
-
-  let client = app.state::<reqwest::Client>();
-
-  let mut sources = SOURCES;
-  if !is_china_mainland_ip {
-    sources.reverse();
+  if !is_safe_filename(&version.file_name) {
+    return Err(LauncherConfigError::FetchError.into());
   }
+  let download_url =
+    parse_https_url(&version.download_url).ok_or(LauncherConfigError::FetchError)?;
+  let fallback_sources = parse_https_url(&version.fallback_download_url)
+    .filter(|fallback_url| fallback_url != &download_url)
+    .into_iter()
+    .collect();
 
-  for (endpoint, _, mk_url) in sources {
-    if let Ok(resp) = client.get(endpoint).send().await {
-      if resp.status().is_success() {
-        let url = mk_url(&version, &fname);
+  schedule_progressive_task_group(
+    app.clone(),
+    format!("launcher-update?{}", version.version),
+    vec![PTaskParam::Download(DownloadParam {
+      src: download_url,
+      dest: download_cache_dir.join(&version.file_name),
+      filename: Some(version.file_name),
+      sha1: None,
+      custom_headers: None,
+      transfer_options: DownloadTransferOptions::resumable(fallback_sources, 2),
+    })],
+    true,
+  )
+  .await?;
 
-        schedule_progressive_task_group(
-          app.clone(),
-          format!("launcher-update?{}", fname),
-          vec![PTaskParam::Download(DownloadParam {
-            src: url::Url::parse(&url).map_err(|_| LauncherConfigError::FetchError)?,
-            dest: download_cache_dir.join(&fname),
-            filename: Some(fname),
-            sha1: None,
-            custom_headers: None,
-            transfer_options: Default::default(),
-          })],
-          true,
-        )
-        .await?;
-
-        return Ok(());
-      }
-    }
-  }
-
-  Err(LauncherConfigError::FetchError.into())
+  Ok(())
 }
 
 #[cfg(target_os = "windows")]
@@ -177,38 +212,24 @@ pub async fn install_update_windows(
   use std::os::windows::process::CommandExt;
 
   let config_binding = app.state::<Mutex<LauncherConfig>>();
-  let (old_version, downloaded_path, new_version, is_portable) = {
+  let (downloaded_path, is_portable) = {
     let config_state = config_binding.lock()?;
     (
-      config_state.basic_info.launcher_version.clone(),
       config_state
         .download
         .cache
         .directory
         .join(&downloaded_filename),
-      downloaded_filename
-        .split('_')
-        .nth(1)
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| config_state.basic_info.launcher_version.clone()),
       config_state.basic_info.is_portable,
     )
   };
+  if !downloaded_path.is_file() {
+    return Err(LauncherConfigError::FetchError.into());
+  }
   let cur_exe = std::env::current_exe()?;
 
   if is_portable {
-    // Portable: replace current exe with the newly downloaded one via a temp cmd script.
-    let cur_dir = cur_exe
-      .parent()
-      .ok_or_else(|| USTBLError("No parent dir for exe".to_string()))?;
-    let old_name = cur_exe
-      .file_name()
-      .and_then(|s| s.to_str())
-      .ok_or_else(|| USTBLError("Invalid exe name".to_string()))?
-      .to_string();
-
-    let target_name = build_local_new_filename(&old_name, &old_version, &new_version);
-    let target = cur_dir.join(target_name);
+    // Portable: replace the currently running executable after it exits.
     let pid = std::process::id().to_string();
     let restart_flag = if restart { "1" } else { "0" };
 
@@ -220,24 +241,28 @@ pub async fn install_update_windows(
   [string]$ProcessId,
   [string]$Downloaded,
   [string]$Target,
-  [string]$OldExe,
   [string]$Restart
 )
+
+$Backup = "$Target.ustbl-update-backup"
 
 try {
   while (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
     Start-Sleep -Milliseconds 200
   }
 
-  if (Test-Path -LiteralPath $Target) { Remove-Item -LiteralPath $Target -Force -ErrorAction SilentlyContinue }
-  if (Test-Path -LiteralPath $OldExe) { Remove-Item -LiteralPath $OldExe -Force -ErrorAction SilentlyContinue }
-
+  if (Test-Path -LiteralPath $Backup) { Remove-Item -LiteralPath $Backup -Force }
+  if (Test-Path -LiteralPath $Target) { Move-Item -LiteralPath $Target -Destination $Backup -Force }
   Move-Item -LiteralPath $Downloaded -Destination $Target -Force
+  if (Test-Path -LiteralPath $Backup) { Remove-Item -LiteralPath $Backup -Force }
 
   if ($Restart -eq '1') {
     Start-Process -FilePath $Target
   }
 } catch {
+  if (-not (Test-Path -LiteralPath $Target) -and (Test-Path -LiteralPath $Backup)) {
+    Move-Item -LiteralPath $Backup -Destination $Target -Force -ErrorAction SilentlyContinue
+  }
   Write-Error $_.Exception.Message
   exit 1
 }
@@ -252,8 +277,7 @@ try {
       .arg(&script_path)
       .arg(&pid)
       .arg(&downloaded_path)
-      .arg(&target)
-      .arg(&cur_exe.clone())
+      .arg(&cur_exe)
       .arg(restart_flag)
       .creation_flags(0x08000000)
       .spawn()?;
@@ -263,15 +287,53 @@ try {
     }
     Ok(())
   } else {
-    // MSI: run installer in passive mode.
+    // The setup package is an executable installer (NSIS), not an MSI package.
     if restart {
-      let _ = Command::new("msiexec.exe")
-        .args(["/i", &downloaded_path.to_string_lossy(), "/passive"])
-        .creation_flags(0x08000000)
-        .spawn()?;
+      Command::new(&downloaded_path).spawn()?;
       app.exit(0);
     }
     Ok(())
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{select_release_asset, LauncherAssetDownloads, LauncherReleaseAsset};
+
+  fn asset(name: &str, kind: &str) -> LauncherReleaseAsset {
+    LauncherReleaseAsset {
+      name: name.to_string(),
+      kind: kind.to_string(),
+      downloads: LauncherAssetDownloads::default(),
+    }
+  }
+
+  #[test]
+  fn selects_the_matching_windows_package_kind_and_architecture() {
+    let assets = vec![
+      asset("USTBL_0.5.0_x64-setup.exe", "setup"),
+      asset("USTBL-0.5.0_windows_x86_64_portable.exe", "portable"),
+      asset("USTBL_0.5.0_arm64-setup.exe", "setup"),
+    ];
+
+    assert_eq!(
+      select_release_asset(&assets, "windows", "x86_64", false)
+        .unwrap()
+        .name,
+      "USTBL_0.5.0_x64-setup.exe"
+    );
+    assert_eq!(
+      select_release_asset(&assets, "windows", "x86_64", true)
+        .unwrap()
+        .name,
+      "USTBL-0.5.0_windows_x86_64_portable.exe"
+    );
+    assert_eq!(
+      select_release_asset(&assets, "windows", "aarch64", false)
+        .unwrap()
+        .name,
+      "USTBL_0.5.0_arm64-setup.exe"
+    );
   }
 }
 

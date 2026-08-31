@@ -54,8 +54,8 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
   const toast = useToast();
   const { close: closeToast } = useChakraToast();
   const { getInstanceList } = useGlobalData();
-  const { config, getJavaInfos } = useLauncherConfig();
-  const { openSharedModal, openGenericConfirmDialog } = useSharedModals();
+  const { getJavaInfos } = useLauncherConfig();
+  const { openSharedModal } = useSharedModals();
   const [tasks, setTasks] = useState<TaskGroupDesc[]>([]);
   const [generalPercent, setGeneralPercent] = useState<number>();
   const { t } = useTranslation();
@@ -522,46 +522,17 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
                   (t) => t.taskGroup === payload.taskGroup
                 );
                 if (group && group.taskDescs.length > 0) {
-                  const isMSI =
-                    config.basicInfo.osType === "windows" &&
-                    !config.basicInfo.isPortable;
-                  openGenericConfirmDialog({
-                    title: t("RestartForUpdateConfirmDialog.title"),
-                    body: t(
-                      `RestartForUpdateConfirmDialog.${isMSI ? "bodyMSI" : "body"}`
-                    ),
-                    btnOK: t(
-                      `RestartForUpdateConfirmDialog.button.${isMSI ? "install" : "restart"}`
-                    ),
-                    btnCancel: t("RestartForUpdateConfirmDialog.button.later"),
-                    onOKCallback: () => {
-                      ConfigService.installLauncherUpdate(
-                        group.taskDescs[0].payload.filename || "",
-                        true
-                      ).then((response) => {
-                        if (response.status !== "success") {
-                          toast({
-                            title: response.message,
-                            description: response.details,
-                            status: "error",
-                          });
-                        }
+                  ConfigService.installLauncherUpdate(
+                    group.taskDescs[0].payload.filename || "",
+                    true
+                  ).then((response) => {
+                    if (response.status !== "success") {
+                      toast({
+                        title: response.message,
+                        description: response.details,
+                        status: "error",
                       });
-                    },
-                    onCancelCallback: () => {
-                      ConfigService.installLauncherUpdate(
-                        group.taskDescs[0].payload.filename || "",
-                        false
-                      ).then((response) => {
-                        if (response.status !== "success") {
-                          toast({
-                            title: response.message,
-                            description: response.details,
-                            status: "error",
-                          });
-                        }
-                      });
-                    },
+                    }
                   });
                 }
                 break;
@@ -589,9 +560,6 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
     updateGroupInfo,
     getJavaInfos,
     openSharedModal,
-    openGenericConfirmDialog,
-    config.basicInfo.osType,
-    config.basicInfo.isPortable,
   ]);
 
   useEffect(() => {

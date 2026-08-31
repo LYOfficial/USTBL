@@ -37,7 +37,7 @@ const NotifyNewVersionModal: React.FC<NotifyNewVersionModalProps> = ({
 
   const handleDownloadUpdate = () => {
     if (isLinux) {
-      openUrl("https://github.com/USTB-SkyCode/USTBL/releases");
+      openUrl("https://github.com/LYOfficial/USTBL/releases");
     } else {
       ConfigService.downloadLauncherUpdate(newVersion).then((response) => {
         if (response.status !== "success") {

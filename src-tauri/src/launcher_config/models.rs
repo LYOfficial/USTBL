@@ -43,6 +43,10 @@ pub struct VersionMetaInfo {
   pub file_name: String,
   pub release_notes: String,
   pub published_at: String,
+  #[serde(default)]
+  pub download_url: String,
+  #[serde(default)]
+  pub fallback_download_url: String,
 }
 
 // https://github.com/HMCL-dev/HMCL/blob/d9e3816b8edf9e7275e4349d4fc67a5ef2e3c6cf/HMCLCore/src/main/java/org/jackhuang/hmcl/game/ProcessPriority.java#L20
