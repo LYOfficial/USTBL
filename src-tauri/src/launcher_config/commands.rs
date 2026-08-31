@@ -343,20 +343,13 @@ pub async fn check_launcher_update(app: AppHandle) -> USTBLResult<VersionMetaInf
     return Ok(VersionMetaInfo::default());
   }
 
-  if let Ok(Some((new_version, fname, release_notes, published_at))) =
-    fetch_latest_version(&app).await
-  {
+  if let Ok(Some(new_version)) = fetch_latest_version(&app).await {
     if let (Ok(current), Ok(latest)) = (
       semver::Version::parse(&current_version),
-      semver::Version::parse(&new_version),
+      semver::Version::parse(&new_version.version),
     ) {
       return Ok(match latest.cmp(&current) {
-        std::cmp::Ordering::Greater => VersionMetaInfo {
-          version: new_version,
-          file_name: fname,
-          release_notes,
-          published_at,
-        },
+        std::cmp::Ordering::Greater => new_version,
         std::cmp::Ordering::Equal => VersionMetaInfo {
           version: "up2date".to_string(),
           ..Default::default()
@@ -375,7 +368,7 @@ pub async fn download_launcher_update(app: AppHandle, version: VersionMetaInfo) 
     Ok(())
   } else {
     // TODO: handle already downloaded case
-    return download_target_version(&app, version.version, version.file_name).await;
+    return download_target_version(&app, version).await;
   }
 }
 

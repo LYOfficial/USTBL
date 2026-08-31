@@ -1,5 +1,6 @@
 import { useRouter } from "next/router";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useLauncherConfig } from "@/contexts/config";
 import { useSharedModals } from "@/contexts/shared-modal";
 import useDeepLink from "@/hooks/deep-link";
 import { useDragAndDrop, useTauriFileDrop } from "@/hooks/drag-and-drop";
@@ -10,8 +11,21 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
   const { openSharedModal } = useSharedModals();
+  const { newerVersion } = useLauncherConfig();
   const router = useRouter();
   const isStandAlone = router.pathname.startsWith("/standalone");
+  const hasNotifiedNewVersion = useRef(false);
+
+  useEffect(() => {
+    if (
+      !isStandAlone &&
+      newerVersion.version &&
+      !hasNotifiedNewVersion.current
+    ) {
+      hasNotifiedNewVersion.current = true;
+      openSharedModal("notify-new-version", { newVersion: newerVersion });
+    }
+  }, [isStandAlone, newerVersion, openSharedModal]);
 
   // ----------------- Keyboard Shortcuts -----------------
   const spotlightShortcuts = useMemo(
