@@ -16,8 +16,71 @@ use crate::launch::helpers::file_validator::convert_library_name_to_path;
 use crate::resource::helpers::misc::{convert_url_to_target_source, get_download_api};
 use crate::resource::models::{ResourceType, SourceType};
 use crate::tasks::commands::schedule_progressive_task_group;
-use crate::tasks::download::DownloadParam;
+use crate::tasks::download::{DownloadParam, DownloadTransferOptions};
 use crate::tasks::PTaskParam;
+
+const NEOFORGE_DOWNLOAD_ATTEMPTS: usize = 10;
+
+fn split_sources(mut sources: Vec<Url>) -> (Url, Vec<Url>) {
+  let primary = sources.remove(0);
+  (primary, sources)
+}
+
+fn ordered_library_sources(
+  original: &Url,
+  resource_types: &[ResourceType],
+  priority: &[SourceType],
+) -> USTBLResult<(Url, Vec<Url>)> {
+  let mut sources = Vec::with_capacity(priority.len() + 1);
+  for source in priority {
+    let candidate = convert_url_to_target_source(original, resource_types, source)?;
+    if !sources.contains(&candidate) {
+      sources.push(candidate);
+    }
+  }
+  if !sources.contains(original) {
+    sources.push(original.clone());
+  }
+  Ok(split_sources(sources))
+}
+
+fn installer_sources(priority: &[SourceType], version: &str) -> USTBLResult<(Url, Vec<Url>)> {
+  let artifact = if version.starts_with("1.20.1-") {
+    format!("net/neoforged/forge/{version}/forge-{version}-installer.jar")
+  } else {
+    format!("net/neoforged/neoforge/{version}/neoforge-{version}-installer.jar")
+  };
+  let official =
+    get_download_api(SourceType::Official, ResourceType::NeoforgeInstall)?.join(&artifact)?;
+  let mirror = if version.starts_with("1.20.1-") {
+    get_download_api(SourceType::BMCLAPIMirror, ResourceType::NeoforgeMaven)?.join(&artifact)?
+  } else {
+    get_download_api(SourceType::BMCLAPIMirror, ResourceType::NeoforgeInstall)?
+      .join(&format!("{version}/download/installer"))?
+  };
+
+  let mut sources = Vec::with_capacity(2);
+  if version.starts_with("1.20.1-") {
+    sources.extend([official.clone(), mirror.clone()]);
+  } else {
+    for source in priority {
+      let candidate = match source {
+        SourceType::Official => &official,
+        SourceType::BMCLAPIMirror => &mirror,
+      };
+      if !sources.contains(candidate) {
+        sources.push(candidate.clone());
+      }
+    }
+    for candidate in [official, mirror] {
+      if !sources.contains(&candidate) {
+        sources.push(candidate);
+      }
+    }
+  }
+
+  Ok(split_sources(sources))
+}
 
 pub async fn install_neoforge_loader(
   priority: &[SourceType],
@@ -27,33 +90,12 @@ pub async fn install_neoforge_loader(
 ) -> USTBLResult<()> {
   let loader_ver = &loader.version;
 
-  let (installer_url, installer_coord) = if loader_ver.starts_with("1.20.1-") {
-    (
-      get_download_api(SourceType::Official, ResourceType::NeoforgeInstall)?.join(&format!(
-        "net/neoforged/forge/{v}/forge-{v}-installer.jar",
-        v = loader_ver
-      ))?,
-      format!("net.neoforged:forge:{}-installer", loader.version),
-    )
+  let installer_coord = if loader_ver.starts_with("1.20.1-") {
+    format!("net.neoforged:forge:{}-installer", loader.version)
   } else {
-    let root = get_download_api(priority[0], ResourceType::NeoforgeInstall)?;
-    (
-      match priority.first().unwrap_or(&SourceType::Official) {
-        SourceType::Official => {
-          let path = format!(
-            "net/neoforged/neoforge/{v}/neoforge-{v}-installer.jar",
-            v = loader_ver
-          );
-          root.join(&path)?
-        }
-        SourceType::BMCLAPIMirror => {
-          let path = format!("{v}/download/installer", v = loader_ver);
-          root.join(&path)?
-        }
-      },
-      format!("net.neoforged:neoforge:{}-installer", loader.version),
-    )
+    format!("net.neoforged:neoforge:{}-installer", loader.version)
   };
+  let (installer_url, fallback_sources) = installer_sources(priority, loader_ver)?;
 
   let installer_rel = convert_library_name_to_path(&installer_coord, None)?;
   let installer_path = lib_dir.join(&installer_rel);
@@ -64,6 +106,10 @@ pub async fn install_neoforge_loader(
     filename: None,
     sha1: None,
     custom_headers: None,
+    transfer_options: DownloadTransferOptions::resumable(
+      fallback_sources,
+      NEOFORGE_DOWNLOAD_ATTEMPTS,
+    ),
   }));
 
   Ok(())
@@ -198,12 +244,19 @@ pub async fn download_neoforge_libraries(
     if processor.args.contains(&"DOWNLOAD_MOJMAPS".to_string()) {
       if let Some(mojmaps) = args_map.get("{MOJMAPS}") {
         if let Some(client_mappings) = client_info.downloads.get("client_mappings") {
+          let original = Url::parse(&client_mappings.url)?;
+          let (src, fallback_sources) =
+            ordered_library_sources(&original, &[ResourceType::Libraries], priority)?;
           task_params.push(PTaskParam::Download(DownloadParam {
-            src: client_mappings.url.parse()?,
+            src,
             dest: lib_dir.join(mojmaps),
             filename: None,
             sha1: Some(client_mappings.sha1.clone()),
             custom_headers: None,
+            transfer_options: DownloadTransferOptions::resumable(
+              fallback_sources,
+              NEOFORGE_DOWNLOAD_ATTEMPTS,
+            ),
           }));
         }
       }
@@ -260,26 +313,29 @@ pub async fn download_neoforge_libraries(
     let name = &lib.name;
     add_library_entry(&mut client_info.libraries, name, Some(lib.clone()))?;
 
-    let url = lib
-      .downloads
-      .as_ref()
-      .and_then(|d| d.artifact.as_ref())
-      .map(|a| a.url.as_str())
-      .unwrap_or_default();
-    if url.is_empty() {
+    let Some(artifact) = lib.downloads.as_ref().and_then(|d| d.artifact.as_ref()) else {
+      continue;
+    };
+    if artifact.url.is_empty() {
       continue;
     }
 
+    let original = Url::parse(&artifact.url)?;
+    let (src, fallback_sources) = ordered_library_sources(
+      &original,
+      &[ResourceType::NeoforgeMaven, ResourceType::Libraries],
+      priority,
+    )?;
     task_params.push(PTaskParam::Download(DownloadParam {
-      src: convert_url_to_target_source(
-        &Url::parse(url)?,
-        &[ResourceType::NeoforgeMaven, ResourceType::Libraries],
-        &priority[0],
-      )?,
+      src,
       dest: lib_dir.join(&convert_library_name_to_path(name, None)?),
       filename: None,
-      sha1: None,
+      sha1: (!artifact.sha1.is_empty()).then(|| artifact.sha1.clone()),
       custom_headers: None,
+      transfer_options: DownloadTransferOptions::resumable(
+        fallback_sources,
+        NEOFORGE_DOWNLOAD_ATTEMPTS,
+      ),
     }));
   }
 
@@ -307,28 +363,30 @@ pub async fn download_neoforge_libraries(
 
   for lib in profile.libraries.iter() {
     let name = &lib.name;
-    let url = lib
-      .downloads
-      .as_ref()
-      .and_then(|d| d.artifact.as_ref())
-      .map(|a| a.url.as_str())
-      .unwrap_or("");
-
-    if url.is_empty() {
+    let Some(artifact) = lib.downloads.as_ref().and_then(|d| d.artifact.as_ref()) else {
+      continue;
+    };
+    if artifact.url.is_empty() {
       continue;
     }
 
     let rel = convert_library_name_to_path(&name.to_string(), None)?;
+    let original = Url::parse(&artifact.url)?;
+    let (src, fallback_sources) = ordered_library_sources(
+      &original,
+      &[ResourceType::NeoforgeMaven, ResourceType::Libraries],
+      priority,
+    )?;
     task_params.push(PTaskParam::Download(DownloadParam {
-      src: convert_url_to_target_source(
-        &Url::parse(url)?,
-        &[ResourceType::NeoforgeMaven, ResourceType::Libraries],
-        &priority[0],
-      )?,
+      src,
       dest: lib_dir.join(&rel),
       filename: None,
-      sha1: None,
+      sha1: (!artifact.sha1.is_empty()).then(|| artifact.sha1.clone()),
       custom_headers: None,
+      transfer_options: DownloadTransferOptions::resumable(
+        fallback_sources,
+        NEOFORGE_DOWNLOAD_ATTEMPTS,
+      ),
     }));
   }
 
@@ -346,4 +404,101 @@ pub async fn download_neoforge_libraries(
   .await?;
 
   Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{installer_sources, ordered_library_sources};
+  use crate::resource::models::{ResourceType, SourceType};
+  use url::Url;
+
+  #[test]
+  fn library_sources_follow_mirror_first_priority() {
+    let original =
+      Url::parse("https://maven.neoforged.net/releases/com/mojang/logging/1.2.7/logging-1.2.7.jar")
+        .unwrap();
+    let (primary, fallbacks) = ordered_library_sources(
+      &original,
+      &[ResourceType::NeoforgeMaven, ResourceType::Libraries],
+      &[SourceType::BMCLAPIMirror, SourceType::Official],
+    )
+    .unwrap();
+
+    assert_eq!(
+      primary.as_str(),
+      "https://bmclapi2.bangbang93.com/maven/com/mojang/logging/1.2.7/logging-1.2.7.jar"
+    );
+    assert_eq!(fallbacks, vec![original]);
+  }
+
+  #[test]
+  fn library_sources_follow_official_first_priority() {
+    let original = Url::parse(
+      "https://maven.neoforged.net/releases/org/openjdk/nashorn/nashorn-core/15.4/nashorn-core-15.4.jar",
+    )
+    .unwrap();
+    let (primary, fallbacks) = ordered_library_sources(
+      &original,
+      &[ResourceType::NeoforgeMaven, ResourceType::Libraries],
+      &[SourceType::Official, SourceType::BMCLAPIMirror],
+    )
+    .unwrap();
+
+    assert_eq!(primary, original);
+    assert_eq!(
+      fallbacks[0].as_str(),
+      "https://bmclapi2.bangbang93.com/maven/org/openjdk/nashorn/nashorn-core/15.4/nashorn-core-15.4.jar"
+    );
+  }
+
+  #[test]
+  fn modern_installer_uses_explicit_api_fallback() {
+    let (primary, fallbacks) = installer_sources(
+      &[SourceType::BMCLAPIMirror, SourceType::Official],
+      "21.1.249",
+    )
+    .unwrap();
+
+    assert_eq!(
+      primary.as_str(),
+      "https://bmclapi2.bangbang93.com/neoforge/version/21.1.249/download/installer"
+    );
+    assert_eq!(
+      fallbacks[0].as_str(),
+      "https://maven.neoforged.net/releases/net/neoforged/neoforge/21.1.249/neoforge-21.1.249-installer.jar"
+    );
+  }
+
+  #[test]
+  fn legacy_installer_preserves_official_first_behavior() {
+    let version = "1.20.1-47.1.106";
+    let (primary, fallbacks) =
+      installer_sources(&[SourceType::BMCLAPIMirror, SourceType::Official], version).unwrap();
+
+    assert_eq!(
+      primary.as_str(),
+      "https://maven.neoforged.net/releases/net/neoforged/forge/1.20.1-47.1.106/forge-1.20.1-47.1.106-installer.jar"
+    );
+    assert_eq!(
+      fallbacks[0].as_str(),
+      "https://bmclapi2.bangbang93.com/maven/net/neoforged/forge/1.20.1-47.1.106/forge-1.20.1-47.1.106-installer.jar"
+    );
+  }
+
+  #[test]
+  fn unsupported_library_source_is_not_duplicated() {
+    let original = Url::parse(
+      "https://repo.spongepowered.org/maven/org/example/component/1.0/component-1.0.jar",
+    )
+    .unwrap();
+    let (primary, fallbacks) = ordered_library_sources(
+      &original,
+      &[ResourceType::NeoforgeMaven, ResourceType::Libraries],
+      &[SourceType::BMCLAPIMirror, SourceType::Official],
+    )
+    .unwrap();
+
+    assert_eq!(primary, original);
+    assert!(fallbacks.is_empty());
+  }
 }

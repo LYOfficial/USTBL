@@ -228,6 +228,7 @@ impl ModpackManifest for CurseForgeManifest {
             .join(&file_manifest.data.file_name),
           filename: Some(file_manifest.data.file_name.clone()),
           custom_headers: None,
+          transfer_options: Default::default(),
         });
 
         Ok::<PTaskParam, USTBLError>(task_param)

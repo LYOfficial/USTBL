@@ -141,6 +141,7 @@ pub async fn download_game_server(
       filename: None,
       sha1: Some(download_info.sha1.clone()),
       custom_headers: None,
+      transfer_options: Default::default(),
     })],
     true,
   )
@@ -188,6 +189,7 @@ pub async fn update_mods(
       filename: None,
       sha1: Some(query.sha1.clone()),
       custom_headers: None,
+      transfer_options: Default::default(),
     };
     download_tasks.push(PTaskParam::Download(download_param));
   }
