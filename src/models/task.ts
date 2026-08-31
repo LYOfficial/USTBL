@@ -4,6 +4,15 @@ export enum TaskTypeEnums {
 
 export type TaskType = `${TaskTypeEnums}`;
 
+export type DownloadRetryPolicy =
+  | { strategy: "standard" }
+  | { strategy: "resumable"; maxAttempts: number };
+
+export interface DownloadTransferOptions {
+  fallbackSources?: string[];
+  retryPolicy?: DownloadRetryPolicy;
+}
+
 export interface DownloadTaskParam {
   taskType: TaskTypeEnums.Download;
   src: string;
@@ -11,6 +20,7 @@ export interface DownloadTaskParam {
   filename?: string; // destination filename
   sha1?: string;
   customHeaders?: Record<string, string>; // custom headers for the download request
+  transferOptions?: DownloadTransferOptions;
 }
 
 export type TaskParam = DownloadTaskParam;
@@ -22,6 +32,7 @@ export interface DownloadTaskPayload {
   filename: string; // destination filename
   sha1: string;
   customHeaders?: Record<string, string>; // custom headers for the download request
+  transferOptions?: DownloadTransferOptions;
 }
 
 export type TaskPayload = DownloadTaskPayload;

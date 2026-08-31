@@ -48,6 +48,7 @@ pub async fn download_optifine_installer(
     filename: None,
     sha1: None,
     custom_headers: None,
+    transfer_options: Default::default(),
   }));
 
   Ok(())
@@ -163,6 +164,7 @@ async fn download_optifine_libraries(
       filename: None,
       sha1: None,
       custom_headers: None,
+      transfer_options: Default::default(),
     }));
   }
 

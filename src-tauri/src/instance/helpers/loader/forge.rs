@@ -87,6 +87,7 @@ pub async fn install_forge_loader(
     filename: None,
     sha1: None,
     custom_headers: None,
+    transfer_options: Default::default(),
   }));
 
   Ok(())
@@ -224,6 +225,7 @@ pub async fn download_forge_libraries(
               filename: None,
               sha1: Some(client_mappings.sha1.clone()),
               custom_headers: None,
+              transfer_options: Default::default(),
             }));
           }
         }
@@ -304,6 +306,7 @@ pub async fn download_forge_libraries(
         filename: None,
         sha1: None,
         custom_headers: None,
+        transfer_options: Default::default(),
       }));
     }
 
@@ -361,6 +364,7 @@ pub async fn download_forge_libraries(
         filename: None,
         sha1: None,
         custom_headers: None,
+        transfer_options: Default::default(),
       }));
     }
   } else {
@@ -434,6 +438,7 @@ pub async fn download_forge_libraries(
         filename: None,
         sha1: None,
         custom_headers: None,
+        transfer_options: Default::default(),
       }));
     }
     client_info.patches.push(new_patch);

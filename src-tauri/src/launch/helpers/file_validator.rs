@@ -102,6 +102,7 @@ pub async fn get_invalid_library_files(
         filename: None,
         sha1: Some(artifact.sha1.clone()),
         custom_headers: None,
+        transfer_options: Default::default(),
       })))
     }
   });
@@ -369,6 +370,7 @@ pub async fn get_invalid_assets(
           filename: None,
           sha1: Some(item.hash.clone()),
           custom_headers: None,
+          transfer_options: Default::default(),
         })))
       }
     }

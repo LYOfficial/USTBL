@@ -154,6 +154,7 @@ pub async fn download_target_version(
             filename: Some(fname),
             sha1: None,
             custom_headers: None,
+            transfer_options: Default::default(),
           })],
           true,
         )
