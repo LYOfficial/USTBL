@@ -42,6 +42,17 @@ pub struct DownloadTransferOptions {
   pub retry_policy: DownloadRetryPolicy,
 }
 
+impl DownloadTransferOptions {
+  pub fn resumable(fallback_sources: Vec<Url>, max_attempts: usize) -> Self {
+    Self {
+      fallback_sources,
+      retry_policy: DownloadRetryPolicy::Resumable {
+        max_attempts: max_attempts.max(1),
+      },
+    }
+  }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(
   tag = "strategy",
