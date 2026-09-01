@@ -7,10 +7,10 @@ use crate::instance::helpers::client_json::{
 use crate::instance::models::misc::InstanceError;
 use crate::launch::helpers::misc::get_natives_string;
 use crate::launch::models::LaunchError;
-use crate::resource::helpers::misc::{convert_url_to_target_source, get_download_api};
+use crate::resource::helpers::misc::{download_source_candidates, get_download_api};
 use crate::resource::models::{ResourceType, SourceType};
 use crate::storage::load_json_async;
-use crate::tasks::download::DownloadParam;
+use crate::tasks::download::{DownloadParam, DownloadTransferOptions};
 use crate::tasks::PTaskParam;
 use crate::utils::fs::validate_sha1;
 use futures::future::join_all;
@@ -22,6 +22,29 @@ use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 use tokio::fs;
 use zip::ZipArchive;
+
+const VANILLA_DOWNLOAD_ATTEMPTS: usize = 10;
+
+fn vanilla_download_param(
+  mut sources: Vec<url::Url>,
+  dest: PathBuf,
+  sha1: String,
+) -> USTBLResult<DownloadParam> {
+  let src = sources
+    .first()
+    .cloned()
+    .ok_or_else(|| USTBLError("no vanilla download source available".to_string()))?;
+  sources.remove(0);
+
+  Ok(DownloadParam {
+    src,
+    dest,
+    filename: None,
+    sha1: Some(sha1),
+    custom_headers: None,
+    transfer_options: DownloadTransferOptions::resumable(sources, VANILLA_DOWNLOAD_ATTEMPTS),
+  })
+}
 
 pub fn get_nonnative_library_artifacts(client_info: &McClientInfo) -> Vec<DownloadsArtifact> {
   let mut artifacts = HashSet::new();
@@ -68,7 +91,7 @@ pub fn get_native_library_artifacts(client_info: &McClientInfo) -> Vec<Downloads
 }
 
 pub async fn get_invalid_library_files(
-  source: SourceType,
+  priority: &[SourceType],
   library_path: &Path,
   client_info: &McClientInfo,
   check_hash: bool,
@@ -85,7 +108,7 @@ pub async fn get_invalid_library_files(
     } else if artifact.url.is_empty() {
       Err(LaunchError::GameFilesIncomplete.into())
     } else {
-      let src = convert_url_to_target_source(
+      let sources = download_source_candidates(
         &url::Url::parse(&artifact.url)?,
         &[
           ResourceType::Libraries,
@@ -94,16 +117,13 @@ pub async fn get_invalid_library_files(
           ResourceType::ForgeMavenNew,
           ResourceType::NeoforgeMaven,
         ],
-        &source,
+        priority,
       )?;
-      Ok(Some(PTaskParam::Download(DownloadParam {
-        src,
-        dest: file_path,
-        filename: None,
-        sha1: Some(artifact.sha1.clone()),
-        custom_headers: None,
-        transfer_options: Default::default(),
-      })))
+      Ok(Some(PTaskParam::Download(vanilla_download_param(
+        sources,
+        file_path,
+        artifact.sha1.clone(),
+      )?)))
     }
   });
 
@@ -340,17 +360,25 @@ pub async fn extract_native_libraries(
 pub async fn get_invalid_assets(
   app: &AppHandle,
   client_info: &McClientInfo,
-  source: SourceType,
+  priority: &[SourceType],
   asset_path: &Path,
   check_hash: bool,
 ) -> USTBLResult<Vec<PTaskParam>> {
-  let assets_download_api = get_download_api(source, ResourceType::Assets)?;
+  let official_assets_download_api = get_download_api(SourceType::Official, ResourceType::Assets)?;
 
   let asset_index_path = asset_path.join(format!("indexes/{}.json", client_info.asset_index.id));
-  let asset_index = load_asset_index(app, &asset_index_path, &client_info.asset_index.url).await?;
+  let asset_index = load_asset_index(
+    app,
+    &asset_index_path,
+    &client_info.asset_index.id,
+    &client_info.asset_index.sha1,
+    &client_info.asset_index.url,
+    priority,
+  )
+  .await?;
 
   let futs = asset_index.objects.into_values().map(|item| {
-    let assets_download_api = assets_download_api.clone();
+    let official_assets_download_api = official_assets_download_api.clone();
     let base_path = asset_path.to_path_buf();
 
     async move {
@@ -361,17 +389,15 @@ pub async fn get_invalid_assets(
       if exists && (!check_hash || validate_sha1(dest.clone(), item.hash.clone()).is_ok()) {
         Ok::<Option<PTaskParam>, crate::error::USTBLError>(None)
       } else {
-        let src = assets_download_api
+        let official_src = official_assets_download_api
           .join(&path_in_repo)
           .map_err(crate::error::USTBLError::from)?;
-        Ok(Some(PTaskParam::Download(DownloadParam {
-          src,
+        let sources = download_source_candidates(&official_src, &[ResourceType::Assets], priority)?;
+        Ok(Some(PTaskParam::Download(vanilla_download_param(
+          sources,
           dest,
-          filename: None,
-          sha1: Some(item.hash.clone()),
-          custom_headers: None,
-          transfer_options: Default::default(),
-        })))
+          item.hash.clone(),
+        )?)))
       }
     }
   });
@@ -435,4 +461,34 @@ pub async fn prepare_legacy_assets(
     .await?;
 
   Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{vanilla_download_param, VANILLA_DOWNLOAD_ATTEMPTS};
+  use crate::tasks::download::DownloadRetryPolicy;
+  use std::path::PathBuf;
+  use url::Url;
+
+  #[test]
+  fn vanilla_downloads_retry_from_the_fallback_source_ten_times() {
+    let mirror = Url::parse("https://bmclapi2.bangbang93.com/assets/aa/file").unwrap();
+    let official = Url::parse("https://resources.download.minecraft.net/aa/file").unwrap();
+
+    let param = vanilla_download_param(
+      vec![mirror.clone(), official.clone()],
+      PathBuf::from("assets/objects/aa/file"),
+      "0123456789abcdef0123456789abcdef01234567".to_string(),
+    )
+    .unwrap();
+
+    assert_eq!(param.src, mirror);
+    assert_eq!(param.transfer_options.fallback_sources, vec![official]);
+    assert_eq!(
+      param.transfer_options.retry_policy,
+      DownloadRetryPolicy::Resumable {
+        max_attempts: VANILLA_DOWNLOAD_ATTEMPTS
+      }
+    );
+  }
 }

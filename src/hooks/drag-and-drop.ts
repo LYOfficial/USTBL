@@ -1,5 +1,6 @@
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useEffect } from "react";
+import { logger } from "@/utils/logging";
 
 interface DragDropOptions {
   mimeTypes?: string[];
@@ -59,30 +60,44 @@ export const useTauriFileDrop = ({
   onMatch,
 }: TauriFileDropOptions) => {
   useEffect(() => {
+    if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
+      return;
+    }
+
     let regex: RegExp;
     try {
       regex = new RegExp(pattern, "i");
-    } catch {
+    } catch (error) {
+      logger.error("Invalid file-drop pattern:", pattern, error);
       return;
     }
 
     let cleanup: (() => void) | undefined;
+    let disposed = false;
 
-    (async () => {
-      const unlisten = await getCurrentWebview().onDragDropEvent((event) => {
-        if (event.payload.type !== "drop") return;
-        for (const fullPath of event.payload.paths) {
-          const fileName = fullPath.split(/[\\/]/).pop() || fullPath;
-          if (regex.test(fileName)) {
-            onMatch(fullPath);
-            break;
+    const listenForFileDrop = async () => {
+      try {
+        const unlisten = await getCurrentWebview().onDragDropEvent((event) => {
+          if (event.payload.type !== "drop") return;
+          for (const fullPath of event.payload.paths) {
+            const fileName = fullPath.split(/[\\/]/).pop() || fullPath;
+            if (regex.test(fileName)) {
+              onMatch(fullPath);
+              break;
+            }
           }
-        }
-      });
-      cleanup = unlisten;
-    })();
+        });
+        if (disposed) unlisten();
+        else cleanup = unlisten;
+      } catch (error) {
+        logger.error("Failed to register native file-drop listener:", error);
+      }
+    };
+
+    void listenForFileDrop();
 
     return () => {
+      disposed = true;
       cleanup?.();
     };
   }, [pattern, onMatch]);
