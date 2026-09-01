@@ -1,3 +1,4 @@
+use crate::error::{USTBLError, USTBLResult};
 use crate::launcher_config::models::{LauncherConfig, ProxyType};
 use reqwest_middleware::{ClientBuilder as ClientWithMiddlewareBuilder, ClientWithMiddleware};
 use reqwest_retry::policies::ExponentialBackoff;
@@ -5,6 +6,7 @@ use reqwest_retry::RetryTransientMiddleware;
 use reqwest_retry::{
   default_on_request_failure, default_on_request_success, Retryable, RetryableStrategy,
 };
+use serde::de::DeserializeOwned;
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::http::StatusCode;
@@ -94,6 +96,59 @@ pub fn with_retry(client: Client) -> ClientWithMiddleware {
       USTBLRetryableStrategy {},
     ))
     .build()
+}
+
+/// Fetch JSON from ordered sources, moving to the next source after every
+/// failure. This is intentionally separate from request middleware: response
+/// body errors happen after a request is accepted and must also rotate the
+/// source.
+pub async fn fetch_json_with_fallbacks<T: DeserializeOwned>(
+  client: &Client,
+  sources: &[Url],
+  max_attempts: usize,
+) -> USTBLResult<T> {
+  if sources.is_empty() {
+    return Err(USTBLError("no download source available".to_string()));
+  }
+
+  let attempts = max_attempts.max(1);
+  let mut last_error = None;
+
+  for attempt in 0..attempts {
+    let source = &sources[attempt % sources.len()];
+    let result = async {
+      let response = client
+        .get(source.clone())
+        .send()
+        .await
+        .map_err(|error| USTBLError(error.to_string()))?
+        .error_for_status()
+        .map_err(|error| USTBLError(error.to_string()))?;
+      response
+        .json::<T>()
+        .await
+        .map_err(|error| USTBLError(error.to_string()))
+    }
+    .await;
+
+    match result {
+      Ok(value) => return Ok(value),
+      Err(error) => {
+        last_error = Some(error);
+        if attempt + 1 < attempts {
+          log::warn!(
+            "JSON request failed (attempt {}/{} from {}); retrying with another source",
+            attempt + 1,
+            attempts,
+            source
+          );
+          tokio::time::sleep(Duration::from_secs((attempt + 1).min(5) as u64)).await;
+        }
+      }
+    }
+  }
+
+  Err(last_error.expect("a JSON request attempt always produces an error"))
 }
 
 /// Check whether the current IP is located in mainland China.

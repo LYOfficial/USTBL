@@ -132,6 +132,30 @@ pub fn convert_url_to_target_source(
   Ok(url.clone())
 }
 
+/// Build the ordered set of equivalent download URLs for the configured
+/// sources. URLs that cannot be mapped to a mirror are kept as-is, so callers
+/// can still retry the original host instead of dropping the download.
+pub fn download_source_candidates(
+  url: &Url,
+  resource_types: &[ResourceType],
+  priority: &[SourceType],
+) -> USTBLResult<Vec<Url>> {
+  let mut sources = Vec::new();
+
+  for source in priority {
+    let candidate = convert_url_to_target_source(url, resource_types, source)?;
+    if !sources.contains(&candidate) {
+      sources.push(candidate);
+    }
+  }
+
+  if sources.is_empty() {
+    sources.push(url.clone());
+  }
+
+  Ok(sources)
+}
+
 pub fn version_pack_sort(a: &OtherResourceVersionPack, b: &OtherResourceVersionPack) -> Ordering {
   fn parse_version(version: &str) -> (Vec<u32>, String) {
     let mut version_numbers = Vec::new();
@@ -221,4 +245,47 @@ pub async fn apply_other_resource_enhancements(
   }
 
   Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::download_source_candidates;
+  use crate::resource::models::{ResourceType, SourceType};
+  use url::Url;
+
+  #[test]
+  fn download_source_candidates_follow_priority_and_keep_official_fallback() {
+    let official =
+      Url::parse("https://libraries.minecraft.net/com/example/test/1.0/test-1.0.jar").unwrap();
+
+    let sources = download_source_candidates(
+      &official,
+      &[ResourceType::Libraries],
+      &[SourceType::BMCLAPIMirror, SourceType::Official],
+    )
+    .unwrap();
+
+    assert_eq!(
+      sources,
+      vec![
+        Url::parse("https://bmclapi2.bangbang93.com/maven/com/example/test/1.0/test-1.0.jar")
+          .unwrap(),
+        official,
+      ]
+    );
+  }
+
+  #[test]
+  fn download_source_candidates_do_not_duplicate_unmappable_urls() {
+    let source = Url::parse("https://cdn.modrinth.com/data/example.jar").unwrap();
+
+    let candidates = download_source_candidates(
+      &source,
+      &[ResourceType::Libraries],
+      &[SourceType::BMCLAPIMirror, SourceType::Official],
+    )
+    .unwrap();
+
+    assert_eq!(candidates, vec![source]);
+  }
 }

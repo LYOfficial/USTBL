@@ -23,7 +23,7 @@
         "decorations": false,
         "transparent": true,
         "visible": false,
-        "dragDropEnabled": false
+        "dragDropEnabled": true
       },
       {
         "label": "game_error",

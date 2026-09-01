@@ -261,11 +261,23 @@ impl DownloadTask {
   ) -> USTBLResult<(
     impl Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send,
     i64,
+    i64,
   )> {
     let resp = Self::send_request(app_handle, current, param, source, use_request_retry).await?;
+    let restart_from_zero = current > 0 && resp.status() == reqwest::StatusCode::OK;
+    let download_start = if restart_from_zero { 0 } else { current };
+    if restart_from_zero {
+      // A fallback server may ignore Range. Restart instead of appending its
+      // full response to a partial file, which would make checksum retries
+      // fail forever.
+      warn!(
+        "Download source {} ignored Range at byte {}; restarting from zero",
+        source, current
+      );
+    }
     // Content-Length may be absent for chunked transfer encoding or redirects;
     // fall back to -1 so the download still proceeds without total progress info.
-    let total_progress = if current == 0 {
+    let total_progress = if download_start == 0 {
       resp.content_length().map_or(-1, |length| length as i64)
     } else {
       -1
@@ -276,6 +288,7 @@ impl DownloadTask {
         Err(error) => Err(std::io::Error::other(error)),
       }),
       total_progress,
+      download_start,
     ))
   }
 
@@ -289,20 +302,25 @@ impl DownloadTask {
     use_request_retry: bool,
   ) -> USTBLResult<()> {
     let current = task_handle.read().unwrap().desc.current;
-    let (resp, total_progress) =
+    let (resp, total_progress, download_start) =
       Self::create_resp_stream(app_handle, current, param, source, use_request_retry).await?;
+    if download_start != current {
+      task_handle.write().unwrap().desc.current = download_start;
+    }
     let stream = ProgressStream::new(resp, task_handle.clone());
     if let Some(parent) = dest_path.parent() {
       tokio::fs::create_dir_all(parent).await?;
     }
-    let mut file = if current == 0 {
+    let mut file = if download_start == 0 {
       tokio::fs::File::create(dest_path).await?
     } else {
       let mut file = tokio::fs::OpenOptions::new()
         .write(true)
         .open(dest_path)
         .await?;
-      file.seek(std::io::SeekFrom::Start(current as u64)).await?;
+      file
+        .seek(std::io::SeekFrom::Start(download_start as u64))
+        .await?;
       file
     };
     {
@@ -324,10 +342,22 @@ impl DownloadTask {
       tokio::fs::remove_file(dest_path).await?;
       Ok(())
     } else {
-      match &param.sha1 {
-        Some(sha1) => validate_sha1(param.dest.clone(), sha1.clone()),
+      let result = match &param.sha1 {
+        Some(sha1) => match validate_sha1(param.dest.clone(), sha1.clone()) {
+          Ok(()) => Ok(()),
+          Err(error) => {
+            // A completed but invalid response cannot be resumed. Reset the
+            // progress so the next source starts with a clean file.
+            task_handle.write().unwrap().desc.current = 0;
+            Err(error)
+          }
+        },
         None => Ok(()),
+      };
+      if result.is_ok() {
+        task_handle.write().unwrap().mark_completed();
       }
+      result
     }
   }
 

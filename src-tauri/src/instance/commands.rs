@@ -41,19 +41,20 @@ use crate::launch::helpers::file_validator::{get_invalid_assets, get_invalid_lib
 use crate::launcher_config::helpers::misc::get_global_game_config;
 use crate::launcher_config::models::{GameConfig, GameDirectory, LauncherConfig};
 use crate::partial::{PartialError, PartialUpdate};
-use crate::resource::helpers::misc::get_source_priority_list;
+use crate::resource::helpers::misc::{get_download_api, get_source_priority_list};
 use crate::resource::models::{
-  GameClientResourceInfo, ModLoaderResourceInfo, OptiFineResourceInfo,
+  GameClientResourceInfo, ModLoaderResourceInfo, OptiFineResourceInfo, ResourceType, SourceType,
 };
 use crate::storage::{load_json_async, save_json_async, Storage};
 use crate::tasks::commands::schedule_progressive_task_group;
-use crate::tasks::download::DownloadParam;
+use crate::tasks::download::{DownloadParam, DownloadTransferOptions};
 use crate::tasks::PTaskParam;
 use crate::utils::fs::{
   copy_whole_dir, create_url_shortcut, generate_unique_filename, get_files_with_regex,
   get_subdirectories, RemoveDirGuard,
 };
 use crate::utils::image::ImageWrapper;
+use crate::utils::web::fetch_json_with_fallbacks;
 use lazy_static::lazy_static;
 use regex::{Regex, RegexBuilder};
 use std::collections::HashMap;
@@ -1001,15 +1002,27 @@ pub async fn create_instance(
     spec_game_config: None,
   };
 
-  // Download version info
-  let mut version_info = client
-    .get(&game.url)
-    .send()
-    .await
-    .map_err(|_| InstanceError::NetworkError)?
-    .json::<McClientInfo>()
-    .await
-    .map_err(|_| InstanceError::ClientJsonParseError)?;
+  // Download version info, retrying through both official and mirror routes.
+  let official_version_url =
+    Url::parse(&game.url).map_err(|_| InstanceError::ClientJsonParseError)?;
+  let mut version_sources = Vec::new();
+  for source in &priority_list {
+    let candidate = match source {
+      SourceType::Official => official_version_url.clone(),
+      SourceType::BMCLAPIMirror => {
+        get_download_api(SourceType::BMCLAPIMirror, ResourceType::Launcher)?
+          .join(&format!("version/{}/json", game.id))?
+      }
+    };
+    if !version_sources.contains(&candidate) {
+      version_sources.push(candidate);
+    }
+  }
+  if version_sources.is_empty() {
+    version_sources.push(official_version_url);
+  }
+  let mut version_info: McClientInfo =
+    fetch_json_with_fallbacks(client.inner(), &version_sources, 10).await?;
 
   version_info.id = name.clone();
   version_info.jar = Some(name.clone());
@@ -1030,14 +1043,41 @@ pub async fn create_instance(
     .get("client")
     .ok_or(InstanceError::ClientJsonParseError)?;
 
+  let original_client_url = Url::parse(&client_download_info.url.clone())
+    .map_err(|_| InstanceError::ClientJsonParseError)?;
+  let official_client_url = Url::parse(&format!(
+    "https://piston-data.mojang.com/v1/objects/{}/client.jar",
+    client_download_info.sha1
+  ))
+  .map_err(|_| InstanceError::ClientJsonParseError)?;
+  let mut client_sources = Vec::new();
+  for source in &priority_list {
+    let candidate = match source {
+      SourceType::Official => official_client_url.clone(),
+      SourceType::BMCLAPIMirror => {
+        get_download_api(SourceType::BMCLAPIMirror, ResourceType::Launcher)?
+          .join(&format!("version/{}/client", game.id))?
+      }
+    };
+    if !client_sources.contains(&candidate) {
+      client_sources.push(candidate);
+    }
+  }
+  if client_sources.is_empty() {
+    client_sources.push(original_client_url.clone());
+  }
+  if !client_sources.contains(&original_client_url) {
+    client_sources.push(original_client_url);
+  }
+  let client_src = client_sources.remove(0);
+
   task_params.push(PTaskParam::Download(DownloadParam {
-    src: Url::parse(&client_download_info.url.clone())
-      .map_err(|_| InstanceError::ClientJsonParseError)?,
+    src: client_src,
     dest: instance.version_path.join(format!("{}.jar", name)),
     filename: None,
     sha1: Some(client_download_info.sha1.clone()),
     custom_headers: None,
-    transfer_options: Default::default(),
+    transfer_options: DownloadTransferOptions::resumable(client_sources, 10),
   }));
   let subdirs = get_instance_subdir_paths(
     &app,
@@ -1058,13 +1098,12 @@ pub async fn create_instance(
     .map_err(|_| InstanceError::ClientJsonParseError)?;
 
   // We only download libraries if they are invalid (not already downloaded)
-  task_params.extend(
-    get_invalid_library_files(priority_list[0], libraries_dir, &version_info, false).await?,
-  );
+  task_params
+    .extend(get_invalid_library_files(&priority_list, libraries_dir, &version_info, false).await?);
 
   // We only download assets if they are invalid (not already downloaded)
   task_params
-    .extend(get_invalid_assets(&app, &version_info, priority_list[0], assets_dir, false).await?);
+    .extend(get_invalid_assets(&app, &version_info, &priority_list, assets_dir, false).await?);
 
   // When installing a modpack, skip auto-installing Fabric API to avoid
   // duplicates — the modpack manifest already specifies the exact version needed.
