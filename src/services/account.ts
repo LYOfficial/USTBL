@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { ImportLauncherType, SkinModel, TextureType } from "@/enums/account";
 import { AuthServer, DeviceAuthResponseInfo, Player } from "@/models/account";
 import { InvokeResponse } from "@/models/response";
-import { VustbAccount } from "@/models/vustb";
+import { VustbAccount, VustbCheckinResult } from "@/models/vustb";
 import { responseHandler } from "@/utils/response";
 
 /**
@@ -38,6 +38,13 @@ export class AccountService {
   @responseHandler("account")
   static async syncVustbAccount(): Promise<InvokeResponse<VustbAccount>> {
     return await invoke("sync_vustb_account");
+  }
+
+  @responseHandler("account")
+  static async checkinVustbAccount(): Promise<
+    InvokeResponse<VustbCheckinResult>
+  > {
+    return await invoke("checkin_vustb_account");
   }
 
   @responseHandler("account")

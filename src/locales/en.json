@@ -97,6 +97,10 @@
         "title": "Import Modpack",
         "description": "Import a modpack (CurseForge, Modrinth or MultiMC formats) from local files or the internet"
       },
+      "campusModpack": {
+        "title": "Install USTB Modpack",
+        "description": "Open Discover to install the Pixel USTB campus modpack"
+      },
       "manageDirs": {
         "title": "Manage Game Directories",
         "description": "Manage local game storage directories to add installed instances"
@@ -483,7 +487,19 @@
   "DiscoverHomePage": {
     "minecraft-news": "Minecraft News",
     "community-news": "Community News",
-    "hotModpacks": "Hot Modpacks from {{source}}"
+    "hotModpacks": "Hot Modpacks from {{source}}",
+    "serverList": {
+      "title": "Pixel USTB Servers",
+      "description": "Live status of public Minecraft servers listed by Pixel USTB",
+      "retry": "Reload server list",
+      "version": "Version",
+      "hiddenAddress": "Server address is not public",
+      "copyAddress": "Copy server address",
+      "status": {
+        "online": "Online",
+        "offline": "Offline"
+      }
+    }
   },
   "DiscoverLayout": {
     "discoverDomainList": {

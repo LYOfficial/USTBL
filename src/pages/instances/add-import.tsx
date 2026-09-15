@@ -19,7 +19,6 @@ import {
   OptionItemGroupProps,
 } from "@/components/common/option-item";
 import { CreateInstanceModal } from "@/components/modals/create-instance-modal";
-import { DownloadGameServerModal } from "@/components/modals/download-game-server-modal";
 import DownloadModpackModal from "@/components/modals/download-modpack-modal";
 import { useSharedModals } from "@/contexts/shared-modal";
 
@@ -43,12 +42,6 @@ const AddAndImportInstancePage = () => {
     onOpen: onOpenDownloadModpackModal,
     onClose: onCloseDownloadModpackModal,
   } = useDisclosure();
-  const {
-    isOpen: isDownloadGameServerModalOpen,
-    onOpen: onOpenDownloadGameServerModal,
-    onClose: onCloseDownloadGameServerModal,
-  } = useDisclosure();
-
   const handleImportModpackFromDisk = async () => {
     let filePath = await open({
       multiple: false,
@@ -69,11 +62,8 @@ const AddAndImportInstancePage = () => {
   const addAndImportOptions: Record<string, () => void> = {
     new: onOpenCreateInstanceModal,
     modpack: onOpenModpackMenu,
+    campusModpack: () => router.push("/discover/install-modpack?tab=campus"),
     manageDirs: () => router.push("/settings/global-game"),
-  };
-
-  const moreOptions: Record<string, () => void> = {
-    server: onOpenDownloadGameServerModal,
   };
 
   const modpackOperations = [
@@ -133,18 +123,6 @@ const AddAndImportInstancePage = () => {
         onClick: addAndImportOptions[key],
       })),
     },
-    {
-      title: t("AddAndImportInstancePage.moreOptions.title"),
-      items: Object.keys(moreOptions).map((key) => ({
-        title: t(`AddAndImportInstancePage.moreOptions.${key}.title`),
-        description: t(
-          `AddAndImportInstancePage.moreOptions.${key}.description`
-        ),
-        children: <Icon as={LuArrowRight} boxSize={3.5} mr="5px" />,
-        isFullClickZone: true,
-        onClick: moreOptions[key],
-      })),
-    },
   ];
 
   return (
@@ -161,10 +139,6 @@ const AddAndImportInstancePage = () => {
       <DownloadModpackModal
         isOpen={isDownloadModpackModalOpen}
         onClose={onCloseDownloadModpackModal}
-      />
-      <DownloadGameServerModal
-        isOpen={isDownloadGameServerModalOpen}
-        onClose={onCloseDownloadGameServerModal}
       />
     </>
   );

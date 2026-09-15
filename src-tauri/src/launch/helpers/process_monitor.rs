@@ -1,6 +1,7 @@
 use crate::error::USTBLResult;
 use crate::instance::models::misc::Instance;
 use crate::launch::constants::*;
+use crate::launch::helpers::playtime_sync;
 use crate::launch::models::{LaunchError, LaunchingState};
 use crate::launcher_config::models::{LauncherVisiablity, ProcessPriority};
 use crate::utils::shell::execute_command_line;
@@ -19,6 +20,7 @@ use std::{fs, thread};
 use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio;
+use tokio::sync::Notify;
 
 const POLLING_OPERATION_INTERVAL_MS: u64 = 2000;
 
@@ -120,6 +122,57 @@ pub async fn monitor_process(
 
   let game_ready_flag = Arc::new(AtomicBool::new(false));
   let start_time: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None)); // used to calculate play time
+  let instance_name = {
+    let binding = app.state::<Mutex<HashMap<String, Instance>>>();
+    binding.lock().ok().and_then(|instances| {
+      instances
+        .get(&instance_id)
+        .map(|instance| instance.name.clone())
+    })
+  };
+  let playtime_stop = Arc::new(Notify::new());
+  let playtime_task = {
+    let app = app.clone();
+    let instance_id = instance_id.clone();
+    let start_time = start_time.clone();
+    let playtime_stop = playtime_stop.clone();
+    tokio::spawn(async move {
+      let mut reported_seconds = 0_u64;
+      loop {
+        let finishing = tokio::select! {
+          _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => false,
+          _ = playtime_stop.notified() => true,
+        };
+        let elapsed_seconds = start_time
+          .lock()
+          .ok()
+          .and_then(|start| *start)
+          .map(|start| start.elapsed().as_secs())
+          .unwrap_or(0);
+        let pending_seconds = elapsed_seconds.saturating_sub(reported_seconds);
+        let sync_seconds = if finishing {
+          pending_seconds
+        } else {
+          pending_seconds / 600 * 600
+        };
+        if sync_seconds > 0
+          && playtime_sync::queue_playtime_delta(
+            &app,
+            &instance_id,
+            instance_name.as_deref(),
+            sync_seconds,
+          )
+          .await
+          .is_ok()
+        {
+          reported_seconds = reported_seconds.saturating_add(sync_seconds);
+        }
+        if finishing {
+          break;
+        }
+      }
+    })
+  };
 
   let stdout = child.stdout.take().map(|out| {
     (OutputPipe {
@@ -201,6 +254,8 @@ pub async fn monitor_process(
     };
 
     stop_polling_flag.store(true, Ordering::SeqCst);
+    playtime_stop.notify_one();
+    let _ = playtime_task.await;
     drop(log_file);
     // handle launcher main window visiablity
     match launcher_visibility {

@@ -1,19 +1,18 @@
 import { useRouter } from "next/router";
 import { useEffect } from "react";
-import { useRoutingHistory } from "@/contexts/routing-history";
+import { useGlobalData } from "@/contexts/global-data";
 
 const InstancesPage = () => {
   const router = useRouter();
-  const { history } = useRoutingHistory();
+  const { getInstanceList } = useGlobalData();
+  const instanceList = getInstanceList();
 
   useEffect(() => {
-    let lastRecord =
-      [...history].reverse().find((route) => route.startsWith("/instances/")) ||
-      "/instances/list";
-    if (lastRecord.endsWith("settings/advanced"))
-      lastRecord = lastRecord.replace("settings/advanced", "settings");
-    router.replace(lastRecord);
-  }, [history, router]);
+    if (!instanceList) return;
+    router.replace(
+      instanceList.length === 0 ? "/instances/add-import" : "/instances/list"
+    );
+  }, [instanceList, router]);
 
   return null;
 };

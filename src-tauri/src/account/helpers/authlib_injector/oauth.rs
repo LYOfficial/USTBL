@@ -75,6 +75,7 @@ enum ProfileListResponse {
 pub struct OAuthProfileLogin {
   pub players: Vec<PlayerInfo>,
   pub selected_player_id: String,
+  pub tokens: OAuthTokens,
 }
 
 async fn fetch_profiles(
@@ -109,10 +110,14 @@ async fn fetch_profiles(
     ProfileListResponse::Data { data } => data,
     ProfileListResponse::Single(profile) => vec![profile],
   };
-  if profiles.is_empty() {
-    return Err(AccountError::NoMinecraftProfile.into());
-  }
   Ok(profiles)
+}
+
+fn preferred_profile(profiles: &[MinecraftProfile]) -> Option<&MinecraftProfile> {
+  profiles
+    .iter()
+    .find(|profile| profile.selected)
+    .or_else(|| profiles.first())
 }
 
 async fn fetch_selected_profile(
@@ -121,13 +126,9 @@ async fn fetch_selected_profile(
   access_token: &str,
 ) -> USTBLResult<MinecraftProfile> {
   let profiles = fetch_profiles(app, auth_server_url, access_token).await?;
-  Ok(
-    profiles
-      .iter()
-      .find(|profile| profile.selected)
-      .cloned()
-      .unwrap_or_else(|| profiles[0].clone()),
-  )
+  preferred_profile(&profiles)
+    .cloned()
+    .ok_or_else(|| AccountError::NoMinecraftProfile.into())
 }
 
 pub async fn device_authorization(
@@ -387,12 +388,7 @@ pub async fn load_all_profiles(
   tokens: OAuthTokens,
 ) -> USTBLResult<OAuthProfileLogin> {
   let profiles = fetch_profiles(app, &auth_server_url, &tokens.access_token).await?;
-  let selected_profile_id = profiles
-    .iter()
-    .find(|profile| profile.selected)
-    .unwrap_or(&profiles[0])
-    .id
-    .replace('-', "");
+  let selected_profile_id = preferred_profile(&profiles).map(|profile| profile.id.replace('-', ""));
   let mut players = Vec::with_capacity(profiles.len());
 
   for listed_profile in profiles {
@@ -410,36 +406,36 @@ pub async fn load_all_profiles(
     players.push(player);
   }
 
-  let selected_player_id = players
-    .iter()
-    .find(|player| {
-      player
-        .uuid
-        .simple()
-        .to_string()
-        .eq_ignore_ascii_case(&selected_profile_id)
+  let selected_player_id = selected_profile_id
+    .as_deref()
+    .and_then(|selected_profile_id| {
+      players.iter().find(|player| {
+        player
+          .uuid
+          .simple()
+          .to_string()
+          .eq_ignore_ascii_case(selected_profile_id)
+      })
     })
-    .ok_or(AccountError::UnknownProfile)?
-    .id
-    .clone();
+    .map(|player| player.id.clone())
+    .unwrap_or_default();
   log::info!("Imported all OAuth profiles; count={}", players.len());
   Ok(OAuthProfileLogin {
     players,
     selected_player_id,
+    tokens,
   })
 }
 
-pub async fn refresh(
+pub async fn refresh_tokens(
   app: &AppHandle,
-  player: &PlayerInfo,
+  refresh_token: String,
   client_id: Option<String>,
   openid_configuration_url: String,
   redirect_uri: Option<String>,
   client_secret: Option<String>,
-) -> USTBLResult<PlayerInfo> {
+) -> USTBLResult<OAuthTokens> {
   let openid_configuration = fetch_openid_configuration(app, openid_configuration_url).await?;
-  let jwks = fetch_jwks(app, openid_configuration.jwks_uri).await?;
-
   let client = app.state::<reqwest::Client>();
 
   let mut form_params = vec![
@@ -447,10 +443,7 @@ pub async fn refresh(
       "client_id".to_string(),
       client_id.clone().unwrap_or_default(),
     ),
-    (
-      "refresh_token".to_string(),
-      player.refresh_token.clone().unwrap_or_default(),
-    ),
+    ("refresh_token".to_string(), refresh_token.clone()),
     ("grant_type".to_string(), "refresh_token".to_string()),
     ("scope".to_string(), SCOPE.to_string()),
   ];
@@ -476,14 +469,43 @@ pub async fn refresh(
     .await
     .map_err(|_| AccountError::ParseError)?;
 
+  preserve_refresh_token(&mut tokens, refresh_token);
+
+  Ok(tokens)
+}
+
+fn preserve_refresh_token(tokens: &mut OAuthTokens, previous_refresh_token: String) {
   if tokens
     .refresh_token
     .as_deref()
     .unwrap_or_default()
     .is_empty()
   {
-    tokens.refresh_token = player.refresh_token.clone();
+    tokens.refresh_token = Some(previous_refresh_token);
   }
+}
+
+pub async fn refresh(
+  app: &AppHandle,
+  player: &PlayerInfo,
+  client_id: Option<String>,
+  openid_configuration_url: String,
+  redirect_uri: Option<String>,
+  client_secret: Option<String>,
+) -> USTBLResult<PlayerInfo> {
+  let jwks_uri = fetch_openid_configuration(app, openid_configuration_url.clone())
+    .await?
+    .jwks_uri;
+  let jwks = fetch_jwks(app, jwks_uri).await?;
+  let tokens = refresh_tokens(
+    app,
+    player.refresh_token.clone().unwrap_or_default(),
+    client_id.clone(),
+    openid_configuration_url,
+    redirect_uri,
+    client_secret,
+  )
+  .await?;
 
   let preferred_profile_id = player.uuid.simple().to_string();
   parse_token(
@@ -495,4 +517,53 @@ pub async fn refresh(
     Some(&preferred_profile_id),
   )
   .await
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{preferred_profile, preserve_refresh_token};
+  use crate::account::helpers::authlib_injector::models::MinecraftProfile;
+  use crate::account::models::OAuthTokens;
+
+  fn profile(id: &str, selected: bool) -> MinecraftProfile {
+    MinecraftProfile {
+      id: id.to_string(),
+      name: id.to_string(),
+      properties: None,
+      selected,
+    }
+  }
+
+  #[test]
+  fn empty_profile_list_is_valid_for_website_only_accounts() {
+    assert!(preferred_profile(&[]).is_none());
+  }
+
+  #[test]
+  fn explicitly_selected_profile_takes_precedence() {
+    let profiles = vec![profile("first", false), profile("selected", true)];
+    assert_eq!(preferred_profile(&profiles).unwrap().id, "selected");
+  }
+
+  #[test]
+  fn refresh_keeps_previous_refresh_token_when_server_omits_one() {
+    let mut tokens = OAuthTokens {
+      access_token: "access".to_string(),
+      refresh_token: None,
+      id_token: None,
+    };
+    preserve_refresh_token(&mut tokens, "previous".to_string());
+    assert_eq!(tokens.refresh_token.as_deref(), Some("previous"));
+  }
+
+  #[test]
+  fn refresh_keeps_rotated_refresh_token() {
+    let mut tokens = OAuthTokens {
+      access_token: "access".to_string(),
+      refresh_token: Some("rotated".to_string()),
+      id_token: None,
+    };
+    preserve_refresh_token(&mut tokens, "previous".to_string());
+    assert_eq!(tokens.refresh_token.as_deref(), Some("rotated"));
+  }
 }
