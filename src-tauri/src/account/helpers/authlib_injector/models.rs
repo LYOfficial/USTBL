@@ -6,11 +6,16 @@ pub struct MinecraftProfileProperty {
   pub value: String,
 }
 
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
 pub struct MinecraftProfile {
+  #[serde(alias = "uuid")]
   pub id: String,
+  #[serde(alias = "username")]
   pub name: String,
+  #[serde(default)]
   pub properties: Option<Vec<MinecraftProfileProperty>>,
+  #[serde(default)]
+  pub selected: bool,
 }
 
 structstruck::strike! {

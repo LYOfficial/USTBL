@@ -1,5 +1,7 @@
-use crate::account::helpers::authlib_injector::common::{parse_profile, retrieve_profile};
-use crate::account::helpers::authlib_injector::constants::SCOPE;
+use crate::account::helpers::authlib_injector::common::{
+  parse_profile_with_policy, retrieve_profile,
+};
+use crate::account::helpers::authlib_injector::constants::{SCOPE, USTB_AUTH_SERVER_URL};
 use crate::account::helpers::authlib_injector::models::MinecraftProfile;
 use crate::account::helpers::misc::oauth_polling;
 use crate::account::models::{
@@ -12,6 +14,7 @@ use serde_json::Value;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_http::reqwest;
+use url::Url;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct OpenIDConfig {
@@ -33,7 +36,10 @@ async fn fetch_openid_configuration(
     .map_err(|_| AccountError::NetworkError)?
     .json::<OpenIDConfig>()
     .await
-    .map_err(|_| AccountError::ParseError)?;
+    .map_err(|error| {
+      log::error!("OpenID configuration JSON parse failed: {error}");
+      AccountError::ParseError
+    })?;
 
   Ok(res)
 }
@@ -48,9 +54,80 @@ async fn fetch_jwks(app: &AppHandle, jwks_uri: String) -> USTBLResult<Value> {
     .map_err(|_| AccountError::NetworkError)?
     .json::<Value>()
     .await
-    .map_err(|_| AccountError::ParseError)?;
+    .map_err(|error| {
+      log::error!("JWKS JSON parse failed: {error}");
+      AccountError::ParseError
+    })?;
 
   Ok(res)
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ProfileListResponse {
+  Wrapped { profiles: Vec<MinecraftProfile> },
+  Data { data: Vec<MinecraftProfile> },
+  Single(MinecraftProfile),
+  List(Vec<MinecraftProfile>),
+}
+
+#[derive(Debug)]
+pub struct OAuthProfileLogin {
+  pub players: Vec<PlayerInfo>,
+  pub selected_player_id: String,
+}
+
+async fn fetch_profiles(
+  app: &AppHandle,
+  auth_server_url: &str,
+  access_token: &str,
+) -> USTBLResult<Vec<MinecraftProfile>> {
+  let mut endpoint = Url::parse(auth_server_url).map_err(|_| AccountError::ParseError)?;
+  endpoint.set_path("/oauth/profiles");
+  endpoint.set_query(None);
+
+  let client = app.state::<reqwest::Client>();
+  let response = client
+    .get(endpoint)
+    .bearer_auth(access_token)
+    .send()
+    .await
+    .map_err(|_| AccountError::NetworkError)?;
+  log::debug!("OAuth profiles response status={}", response.status());
+  if !response.status().is_success() {
+    return Err(AccountError::ParseError.into());
+  }
+
+  let profiles = match response
+    .json::<ProfileListResponse>()
+    .await
+    .map_err(|error| {
+      log::error!("OAuth profiles JSON parse failed: {error}");
+      AccountError::ParseError
+    })? {
+    ProfileListResponse::Wrapped { profiles } | ProfileListResponse::List(profiles) => profiles,
+    ProfileListResponse::Data { data } => data,
+    ProfileListResponse::Single(profile) => vec![profile],
+  };
+  if profiles.is_empty() {
+    return Err(AccountError::NoMinecraftProfile.into());
+  }
+  Ok(profiles)
+}
+
+async fn fetch_selected_profile(
+  app: &AppHandle,
+  auth_server_url: &str,
+  access_token: &str,
+) -> USTBLResult<MinecraftProfile> {
+  let profiles = fetch_profiles(app, auth_server_url, access_token).await?;
+  Ok(
+    profiles
+      .iter()
+      .find(|profile| profile.selected)
+      .cloned()
+      .unwrap_or_else(|| profiles[0].clone()),
+  )
 }
 
 pub async fn device_authorization(
@@ -65,7 +142,10 @@ pub async fn device_authorization(
   let openid_configuration = fetch_openid_configuration(app, openid_configuration_url).await?;
 
   let mut form_params = vec![
-    ("client_id".to_string(), client_id.clone().unwrap_or_default()),
+    (
+      "client_id".to_string(),
+      client_id.clone().unwrap_or_default(),
+    ),
     ("scope".to_string(), SCOPE.to_string()),
   ];
   if let Some(uri) = &redirect_uri {
@@ -116,47 +196,115 @@ async fn parse_token(
   tokens: &OAuthTokens,
   auth_server_url: Option<String>,
   client_id: Option<String>,
+  preferred_profile_id: Option<&str>,
 ) -> USTBLResult<PlayerInfo> {
-  let key = &jwks["keys"].as_array().ok_or(AccountError::ParseError)?[0];
+  let mut selected_profile = None;
+  if let Some(token) = tokens.id_token.as_deref() {
+    if let Some(keys) = jwks["keys"].as_array() {
+      if let Ok(header) = jsonwebtoken::decode_header(token) {
+        if let Some(key) = header
+          .kid
+          .as_deref()
+          .and_then(|kid| keys.iter().find(|key| key["kid"].as_str() == Some(kid)))
+          .or_else(|| keys.first())
+        {
+          let e = key["e"].as_str().unwrap_or_default();
+          let n = key["n"].as_str().unwrap_or_default();
+          if let Ok(decoding_key) = DecodingKey::from_rsa_components(n, e) {
+            let mut validation = Validation::new(Algorithm::RS256);
+            validation.set_audience(&[client_id.unwrap_or_default().to_string()]);
+            if let Ok(token_data) =
+              decode::<Value>(token, &decoding_key, &validation).or_else(|_| {
+                // Some OAuth deployments issue a valid token with an audience that is
+                // not identical to the shared client id advertised in metadata.
+                validation.validate_aud = false;
+                decode::<Value>(token, &decoding_key, &validation)
+              })
+            {
+              selected_profile = token_data
+                .claims
+                .get("selectedProfile")
+                .or_else(|| token_data.claims.get("selected_profile"))
+                .cloned()
+                .and_then(|value| serde_json::from_value::<MinecraftProfile>(value).ok());
+            }
+          }
+        }
+      }
+    }
+  }
 
-  let e = key["e"].as_str().unwrap_or_default();
-  let n = key["n"].as_str().unwrap_or_default();
+  if let Some(preferred_profile_id) = preferred_profile_id {
+    let preferred_profile_id = preferred_profile_id.replace('-', "");
+    let selected_matches = selected_profile.as_ref().is_some_and(|profile| {
+      profile
+        .id
+        .replace('-', "")
+        .eq_ignore_ascii_case(&preferred_profile_id)
+    });
+    if !selected_matches {
+      selected_profile = fetch_profiles(
+        app,
+        auth_server_url.as_deref().unwrap_or_default(),
+        tokens.access_token.as_str(),
+      )
+      .await?
+      .into_iter()
+      .find(|profile| {
+        profile
+          .id
+          .replace('-', "")
+          .eq_ignore_ascii_case(&preferred_profile_id)
+      });
+    }
+  }
 
-  let decoding_key =
-    DecodingKey::from_rsa_components(n, e).map_err(|_| AccountError::ParseError)?;
-
-  let mut validation = Validation::new(Algorithm::RS256);
-  validation.set_audience(&[client_id.unwrap_or_default().to_string()]);
-
-  let token_data = decode::<Value>(
-    tokens.id_token.clone().unwrap_or_default().as_str(),
-    &decoding_key,
-    &validation,
-  )
-  .map_err(|_| AccountError::ParseError)?;
-
-  let mut selected_profile =
-    serde_json::from_value::<MinecraftProfile>(token_data.claims["selectedProfile"].clone())
-      .map_err(|_| AccountError::ParseError)?;
+  if selected_profile.is_none() {
+    selected_profile = Some(
+      fetch_selected_profile(
+        app,
+        auth_server_url.as_deref().unwrap_or_default(),
+        tokens.access_token.as_str(),
+      )
+      .await?,
+    );
+  }
+  let mut selected_profile = selected_profile.ok_or(AccountError::ParseError)?;
+  log::debug!(
+    "OAuth selected profile received; id_len={}, name_len={}",
+    selected_profile.id.len(),
+    selected_profile.name.len()
+  );
 
   if selected_profile.properties.is_none() {
-    selected_profile = retrieve_profile(
+    if let Ok(profile) = retrieve_profile(
       app,
       auth_server_url.clone().unwrap_or_default(),
       selected_profile.id.clone(),
     )
-    .await?;
+    .await
+    {
+      selected_profile = profile;
+    }
   }
 
-  parse_profile(
+  let require_platform_skin = auth_server_url
+    .as_deref()
+    .is_some_and(|url| url.trim_end_matches('/') == USTB_AUTH_SERVER_URL.trim_end_matches('/'));
+  let result = parse_profile_with_policy(
     app,
     &selected_profile,
     Some(tokens.access_token.clone()),
     tokens.refresh_token.clone(),
     auth_server_url,
     Some(selected_profile.name.clone()),
+    require_platform_skin,
   )
-  .await
+  .await;
+  if let Err(error) = &result {
+    log::error!("OAuth profile parsing failed: {error:?}");
+  }
+  result
 }
 
 pub async fn login(
@@ -173,7 +321,10 @@ pub async fn login(
   let jwks = fetch_jwks(app, openid_configuration.jwks_uri).await?;
 
   let mut form_params = vec![
-    ("client_id".to_string(), client_id.clone().unwrap_or_default()),
+    (
+      "client_id".to_string(),
+      client_id.clone().unwrap_or_default(),
+    ),
     ("device_code".to_string(), auth_info.device_code.clone()),
     (
       "grant_type".to_string(),
@@ -191,7 +342,91 @@ pub async fn login(
     .post(&openid_configuration.token_endpoint)
     .form(&form_params);
   let tokens = oauth_polling(app, sender, auth_info).await?;
-  parse_token(app, jwks, &tokens, Some(auth_server_url), client_id).await
+  parse_token(app, jwks, &tokens, Some(auth_server_url), client_id, None).await
+}
+
+pub async fn login_all(
+  app: &AppHandle,
+  auth_server_url: String,
+  openid_configuration_url: String,
+  client_id: Option<String>,
+  auth_info: DeviceAuthResponseInfo,
+  redirect_uri: Option<String>,
+  client_secret: Option<String>,
+) -> USTBLResult<OAuthProfileLogin> {
+  let client = app.state::<reqwest::Client>();
+  let openid_configuration = fetch_openid_configuration(app, openid_configuration_url).await?;
+  let mut form_params = vec![
+    (
+      "client_id".to_string(),
+      client_id.clone().unwrap_or_default(),
+    ),
+    ("device_code".to_string(), auth_info.device_code.clone()),
+    (
+      "grant_type".to_string(),
+      "urn:ietf:params:oauth:grant-type:device_code".to_string(),
+    ),
+  ];
+  if let Some(uri) = &redirect_uri {
+    form_params.push(("redirect_uri".to_string(), uri.clone()));
+  }
+  if let Some(secret) = &client_secret {
+    form_params.push(("client_secret".to_string(), secret.clone()));
+  }
+
+  let sender = client
+    .post(&openid_configuration.token_endpoint)
+    .form(&form_params);
+  let tokens = oauth_polling(app, sender, auth_info).await?;
+  load_all_profiles(app, auth_server_url, tokens).await
+}
+
+pub async fn load_all_profiles(
+  app: &AppHandle,
+  auth_server_url: String,
+  tokens: OAuthTokens,
+) -> USTBLResult<OAuthProfileLogin> {
+  let profiles = fetch_profiles(app, &auth_server_url, &tokens.access_token).await?;
+  let selected_profile_id = profiles
+    .iter()
+    .find(|profile| profile.selected)
+    .unwrap_or(&profiles[0])
+    .id
+    .replace('-', "");
+  let mut players = Vec::with_capacity(profiles.len());
+
+  for listed_profile in profiles {
+    let full_profile = retrieve_profile(app, auth_server_url.clone(), listed_profile.id).await?;
+    let player = parse_profile_with_policy(
+      app,
+      &full_profile,
+      Some(tokens.access_token.clone()),
+      tokens.refresh_token.clone(),
+      Some(auth_server_url.clone()),
+      Some(full_profile.name.clone()),
+      true,
+    )
+    .await?;
+    players.push(player);
+  }
+
+  let selected_player_id = players
+    .iter()
+    .find(|player| {
+      player
+        .uuid
+        .simple()
+        .to_string()
+        .eq_ignore_ascii_case(&selected_profile_id)
+    })
+    .ok_or(AccountError::UnknownProfile)?
+    .id
+    .clone();
+  log::info!("Imported all OAuth profiles; count={}", players.len());
+  Ok(OAuthProfileLogin {
+    players,
+    selected_player_id,
+  })
 }
 
 pub async fn refresh(
@@ -250,12 +485,14 @@ pub async fn refresh(
     tokens.refresh_token = player.refresh_token.clone();
   }
 
+  let preferred_profile_id = player.uuid.simple().to_string();
   parse_token(
     app,
     jwks,
     &tokens,
     player.auth_server_url.clone(),
     client_id,
+    Some(&preferred_profile_id),
   )
   .await
 }

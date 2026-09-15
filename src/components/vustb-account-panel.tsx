@@ -90,6 +90,7 @@ const VustbAccountPanel = () => {
     const response = await AccountService.syncVustbAccount();
     if (response.status === "success") {
       setAccount(response.data);
+      getPlayerList(true);
       toast({ title: "像素北科账户资料已同步", status: "success" });
     } else {
       toast({

@@ -13,7 +13,32 @@ use std::str::FromStr;
 use strum::IntoEnumIterator;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_http::reqwest;
+use url::Url;
 use uuid::Uuid;
+
+fn normalize_texture_url(auth_server_url: Option<&str>, texture_url: &str) -> String {
+  let Some(auth_server_url) = auth_server_url else {
+    return texture_url.to_string();
+  };
+  let (Ok(auth_server), Ok(mut texture)) = (Url::parse(auth_server_url), Url::parse(texture_url))
+  else {
+    return texture_url.to_string();
+  };
+
+  if auth_server.host_str() == Some("www.ustb.world")
+    && texture.host_str() == Some("www.ustb.world")
+    && texture.path().starts_with("/skinapi/static/textures/")
+  {
+    texture.set_path(
+      &texture
+        .path()
+        .replacen("/skinapi/static/textures/", "/static/textures/", 1),
+    );
+    log::warn!("Corrected legacy vUSTB texture URL path");
+  }
+
+  texture.to_string()
+}
 
 pub async fn retrieve_profile(
   app: &AppHandle,
@@ -21,19 +46,23 @@ pub async fn retrieve_profile(
   id: String,
 ) -> USTBLResult<MinecraftProfile> {
   let client = app.state::<reqwest::Client>();
-  Ok(
-    client
-      .get(format!(
-        "{}/sessionserver/session/minecraft/profile/{}",
-        auth_server_url, id
-      ))
-      .send()
-      .await
-      .map_err(|_| AccountError::NetworkError)?
-      .json::<MinecraftProfile>()
-      .await
-      .map_err(|_| AccountError::ParseError)?,
-  )
+  let endpoint = format!(
+    "{}/sessionserver/session/minecraft/profile/{}",
+    auth_server_url.trim_end_matches('/'),
+    id
+  );
+  let response = client
+    .get(endpoint)
+    .send()
+    .await
+    .map_err(|_| AccountError::NetworkError)?;
+  if !response.status().is_success() {
+    return Err(AccountError::NetworkError.into());
+  }
+  response
+    .json::<MinecraftProfile>()
+    .await
+    .map_err(|_| AccountError::ParseError.into())
 }
 
 pub async fn parse_profile(
@@ -44,7 +73,43 @@ pub async fn parse_profile(
   auth_server_url: Option<String>,
   auth_account: Option<String>,
 ) -> USTBLResult<PlayerInfo> {
-  let uuid = Uuid::parse_str(&profile.id).map_err(|_| AccountError::ParseError)?;
+  parse_profile_with_policy(
+    app,
+    profile,
+    access_token,
+    refresh_token,
+    auth_server_url,
+    auth_account,
+    false,
+  )
+  .await
+}
+
+pub async fn parse_profile_with_policy(
+  app: &AppHandle,
+  profile: &MinecraftProfile,
+  access_token: Option<String>,
+  refresh_token: Option<String>,
+  auth_server_url: Option<String>,
+  auth_account: Option<String>,
+  require_platform_skin: bool,
+) -> USTBLResult<PlayerInfo> {
+  let uuid = if let Ok(uuid) = Uuid::parse_str(&profile.id) {
+    uuid
+  } else if profile.id.trim().len() == 32 {
+    let compact = profile.id.trim();
+    let formatted = format!(
+      "{}-{}-{}-{}-{}",
+      &compact[0..8],
+      &compact[8..12],
+      &compact[12..16],
+      &compact[16..20],
+      &compact[20..32]
+    );
+    Uuid::parse_str(&formatted).map_err(|_| AccountError::ParseError)?
+  } else {
+    return Err(AccountError::ParseError.into());
+  };
   let name = profile.name.clone();
   let mut textures: Vec<Texture> = vec![];
 
@@ -53,36 +118,70 @@ pub async fn parse_profile(
     .as_ref()
     .and_then(|props| props.iter().find(|property| property.name == "textures"))
   {
-    let texture_info = general_purpose::STANDARD
-      .decode(texture_info_base64.value.clone())
-      .map_err(|_| AccountError::ParseError)?
-      .into_iter()
-      .map(|b| b as char)
-      .collect::<String>();
+    let decoded = general_purpose::STANDARD
+      .decode(&texture_info_base64.value)
+      .or_else(|_| general_purpose::STANDARD_NO_PAD.decode(&texture_info_base64.value))
+      .or_else(|_| general_purpose::URL_SAFE.decode(&texture_info_base64.value))
+      .or_else(|_| general_purpose::URL_SAFE_NO_PAD.decode(&texture_info_base64.value));
 
-    if !texture_info.is_empty() {
-      let texture_info_value: TextureInfo =
-        serde_json::from_str(&texture_info).map_err(|_| AccountError::ParseError)?;
-
-      for texture_type in TextureType::iter() {
-        if let Some(skin) = texture_info_value.textures.get(&texture_type.to_string()) {
-          textures.push(Texture {
-            image: fetch_image(app, skin.url.clone()).await?,
-            texture_type,
-            model: skin
-              .metadata
-              .as_ref()
-              .and_then(|metadata| metadata.get("model").cloned())
-              .map(|model_str| SkinModel::from_str(&model_str).unwrap_or(SkinModel::Default))
-              .unwrap_or_default(),
-            preset: None,
-          });
+    match decoded
+      .ok()
+      .and_then(|bytes| String::from_utf8(bytes).ok())
+      .and_then(|json| serde_json::from_str::<TextureInfo>(&json).ok())
+    {
+      Some(texture_info) => {
+        for texture_type in TextureType::iter() {
+          if let Some(skin) = texture_info.textures.get(&texture_type.to_string()) {
+            let texture_url = normalize_texture_url(auth_server_url.as_deref(), &skin.url);
+            match fetch_image(app, texture_url).await {
+              Ok(image) => textures.push(Texture {
+                image,
+                texture_type,
+                model: skin
+                  .metadata
+                  .as_ref()
+                  .and_then(|metadata| metadata.get("model").cloned())
+                  .map(|model_str| SkinModel::from_str(&model_str).unwrap_or(SkinModel::Default))
+                  .unwrap_or_default(),
+                preset: None,
+              }),
+              Err(error) if require_platform_skin && texture_type == TextureType::Skin => {
+                log::error!(
+                  "Required OAuth profile skin download failed; profile_id={}, error={error:?}",
+                  profile.id
+                );
+                return Err(AccountError::TextureError.into());
+              }
+              Err(error) => log::warn!(
+                "Failed to load OAuth profile texture; type={texture_type}, error={error:?}"
+              ),
+            }
+          }
         }
       }
+      None if require_platform_skin => {
+        log::error!(
+          "Required OAuth profile texture property is invalid; profile_id={}",
+          profile.id
+        );
+        return Err(AccountError::TextureError.into());
+      }
+      None => log::warn!("OAuth profile texture property is invalid; using preset skin"),
     }
   }
 
-  if textures.is_empty() {
+  let has_skin = textures
+    .iter()
+    .any(|texture| texture.texture_type == TextureType::Skin);
+  if require_platform_skin && !has_skin {
+    log::error!(
+      "OAuth profile has no platform skin; profile_id={}",
+      profile.id
+    );
+    return Err(AccountError::TextureError.into());
+  }
+
+  if !has_skin {
     // this player didn't have a texture, use preset Steve skin instead
     textures = load_preset_skin(app, PresetRole::Steve)?;
   }

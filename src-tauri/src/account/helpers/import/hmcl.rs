@@ -173,6 +173,7 @@ async fn thirdparty_to_player(
       name: "textures".to_string(),
       value: acc.profile_properties.textures.clone().unwrap_or_default(),
     }]),
+    selected: false,
   };
   let p = parse_profile(
     app,
