@@ -97,6 +97,10 @@
         "title": "匯入模組包",
         "description": "從本機檔案或網際網路匯入模組包（CurseForge, Modrinth 或 MultiMC 格式）"
       },
+      "campusModpack": {
+        "title": "安裝北科模組包",
+        "description": "前往探索頁安裝像素北科校內模組包"
+      },
       "manageDirs": {
         "title": "管理遊戲目錄",
         "description": "管理本機遊戲儲存目錄，以新增已安裝實例"
@@ -483,7 +487,19 @@
   "DiscoverHomePage": {
     "minecraft-news": "Minecraft 新聞",
     "community-news": "社群新聞",
-    "hotModpacks": "來自 {{source}} 的熱門整合包"
+    "hotModpacks": "來自 {{source}} 的熱門整合包",
+    "serverList": {
+      "title": "像素北科伺服器",
+      "description": "查看像素北科平台公開的 Minecraft 伺服器即時狀態",
+      "retry": "重新載入伺服器列表",
+      "version": "版本",
+      "hiddenAddress": "該伺服器位址未公開",
+      "copyAddress": "複製伺服器位址",
+      "status": {
+        "online": "線上",
+        "offline": "離線"
+      }
+    }
   },
   "DiscoverLayout": {
     "discoverDomainList": {
@@ -491,12 +507,31 @@
       "home": "首頁",
       "community-news": "社群",
       "minecraft-news": "Minecraft 新聞",
+      "install-modpack": "安裝整合包",
+      "original-modpack": "原版整合包",
+      "campus-modpack": "校內整合包",
       "modpack": "整合包",
       "mod": "模組",
       "world": "世界",
       "resourcepack": "資源包",
       "shader": "光影包",
       "datapack": "資料包"
+    }
+  },
+  "InstallModpackPage": {
+    "xplus": {
+      "description": "各遊戲版本僅保留最新發布版本。預設推薦下載 Minecraft {{version}} 版本。",
+      "loadFailed": "Modrinth 版本清單載入失敗，已使用推薦版本。",
+      "downloadStarted": "已開始下載 {{version}}",
+      "downloadDescription": "下載完成後會自動進入整合包安裝流程。"
+    },
+    "campus": {
+      "title": "校內整合包",
+      "description": "來自北京科技大學 Anyshare 雲端硬碟的校內整合包資源。",
+      "loadFailed": "校內整合包清單載入失敗：{{error}}",
+      "downloadStarted": "已開始下載 {{name}}",
+      "downloadDescription": "下載完成後會自動進入整合包安裝流程。",
+      "downloadFailed": "下載失敗"
     }
   },
   "DiscoverSourcesPage": {

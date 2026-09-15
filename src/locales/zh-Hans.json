@@ -97,6 +97,10 @@
         "title": "导入整合包",
         "description": "从本地文件或互联网导入整合包（CurseForge, Modrinth 或 MultiMC 格式）"
       },
+      "campusModpack": {
+        "title": "安装北科整合包",
+        "description": "前往发现页安装像素北科校内整合包"
+      },
       "manageDirs": {
         "title": "管理游戏目录",
         "description": "管理本地游戏存储目录，以添加已安装实例"
@@ -483,7 +487,19 @@
   "DiscoverHomePage": {
     "minecraft-news": "Minecraft 新闻",
     "community-news": "社团新闻",
-    "hotModpacks": "{{source}} 的热门整合包"
+    "hotModpacks": "{{source}} 的热门整合包",
+    "serverList": {
+      "title": "像素北科服务器",
+      "description": "查看像素北科平台公开的 Minecraft 服务器实时状态",
+      "retry": "重新加载服务器列表",
+      "version": "版本",
+      "hiddenAddress": "该服务器地址未公开",
+      "copyAddress": "复制服务器地址",
+      "status": {
+        "online": "在线",
+        "offline": "离线"
+      }
+    }
   },
   "DiscoverLayout": {
     "discoverDomainList": {

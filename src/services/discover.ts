@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { McServerStatus } from "@/models/mc-server";
 import {
   NewsPostRequest,
   NewsPostSummary,
@@ -11,6 +12,13 @@ import { responseHandler } from "@/utils/response";
  * Discover class for managing article posts.
  */
 export class DiscoverService {
+  @responseHandler("resource")
+  static async fetchVustbServerStatuses(): Promise<
+    InvokeResponse<McServerStatus[]>
+  > {
+    return await invoke("fetch_vustb_server_statuses");
+  }
+
   /**
    * FETCH the list of news sources' info.
    * @returns {Promise<InvokeResponse<NewsSourceInfo[]>>}

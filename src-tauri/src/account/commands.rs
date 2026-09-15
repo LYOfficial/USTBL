@@ -10,8 +10,8 @@ use crate::account::helpers::import::hmcl::retrieve_hmcl_account_info;
 use crate::account::helpers::import::ImportLauncherType;
 use crate::account::helpers::{microsoft, misc, offline, vustb};
 use crate::account::models::{
-  AccountError, AccountInfo, AuthServer, DeviceAuthResponseInfo, OAuthTokens, Player, PlayerInfo,
-  PlayerType, PresetRole, SkinModel, TextureType, VustbAccount,
+  AccountError, AccountInfo, AuthServer, DeviceAuthResponseInfo, Player, PlayerInfo, PlayerType,
+  PresetRole, SkinModel, TextureType, VustbAccount, VustbCheckinResult, VustbSession,
 };
 use crate::error::USTBLResult;
 use crate::launcher_config::models::LauncherConfig;
@@ -193,18 +193,9 @@ pub async fn login_vustb_account(
   )
   .await?;
 
-  let selected_player = login
-    .players
-    .iter()
-    .find(|player| player.id == login.selected_player_id)
-    .ok_or(AccountError::UnknownProfile)?;
-
   let account = vustb::fetch_account(
     &app,
-    selected_player
-      .access_token
-      .as_deref()
-      .ok_or(AccountError::Expired)?,
+    &login.tokens.access_token,
     login.selected_player_id.clone(),
   )
   .await?;
@@ -220,19 +211,29 @@ pub async fn login_vustb_account(
     });
     account_state.players.extend(login.players);
     account_state.vustb_account = Some(account.clone());
+    account_state.vustb_session = Some(VustbSession {
+      access_token: login.tokens.access_token,
+      refresh_token: login.tokens.refresh_token,
+    });
     account_state.save()?;
 
-    let config_binding = app.state::<Mutex<LauncherConfig>>();
-    let mut config_state = config_binding.lock()?;
-    config_state.partial_update(
-      &app,
-      "states.shared.selected_player_id",
-      &serde_json::to_string(&login.selected_player_id).unwrap_or_default(),
-    )?;
-    config_state.save()?;
+    if !login.selected_player_id.is_empty() {
+      let config_binding = app.state::<Mutex<LauncherConfig>>();
+      let mut config_state = config_binding.lock()?;
+      config_state.partial_update(
+        &app,
+        "states.shared.selected_player_id",
+        &serde_json::to_string(&login.selected_player_id).unwrap_or_default(),
+      )?;
+      config_state.save()?;
+    }
   }
 
   misc::check_full_login_availability(&app).await?;
+  let sync_app = app.clone();
+  tauri::async_runtime::spawn(async move {
+    let _ = crate::launch::helpers::playtime_sync::flush_playtime_queue(&sync_app).await;
+  });
   Ok(account)
 }
 
@@ -245,35 +246,25 @@ pub fn retrieve_vustb_account(app: AppHandle) -> USTBLResult<Option<VustbAccount
 
 #[tauri::command]
 pub async fn sync_vustb_account(app: AppHandle) -> USTBLResult<VustbAccount> {
-  let (access_token, refresh_token) = {
+  let player_id = {
     let binding = app.state::<Mutex<AccountInfo>>();
     let account_state = binding.lock()?;
     let vustb_account = account_state
       .vustb_account
       .as_ref()
       .ok_or(AccountError::NotFound)?;
-    let player = account_state
-      .players
-      .iter()
-      .find(|item| item.id == vustb_account.player_id)
-      .ok_or(AccountError::NotFound)?;
-    (
-      player.access_token.clone().ok_or(AccountError::Expired)?,
-      player.refresh_token.clone(),
-    )
+    vustb_account.player_id.clone()
   };
-  let login = authlib_injector::oauth::load_all_profiles(
+  let login = vustb::load_all_profiles(&app).await?;
+  let refreshed = vustb::fetch_current_account(
     &app,
-    USTB_AUTH_SERVER_URL.to_string(),
-    OAuthTokens {
-      access_token: access_token.clone(),
-      refresh_token,
-      id_token: None,
+    if login.selected_player_id.is_empty() {
+      player_id
+    } else {
+      login.selected_player_id.clone()
     },
   )
   .await?;
-  let refreshed =
-    vustb::fetch_account(&app, &access_token, login.selected_player_id.clone()).await?;
   let binding = app.state::<Mutex<AccountInfo>>();
   let mut account_state = binding.lock()?;
   account_state.players.retain(|player| {
@@ -286,15 +277,41 @@ pub async fn sync_vustb_account(app: AppHandle) -> USTBLResult<VustbAccount> {
   account_state.vustb_account = Some(refreshed.clone());
   account_state.save()?;
 
-  let config_binding = app.state::<Mutex<LauncherConfig>>();
-  let mut config_state = config_binding.lock()?;
-  config_state.partial_update(
-    &app,
-    "states.shared.selected_player_id",
-    &serde_json::to_string(&login.selected_player_id).unwrap_or_default(),
-  )?;
-  config_state.save()?;
+  if !login.selected_player_id.is_empty() {
+    let config_binding = app.state::<Mutex<LauncherConfig>>();
+    let mut config_state = config_binding.lock()?;
+    config_state.partial_update(
+      &app,
+      "states.shared.selected_player_id",
+      &serde_json::to_string(&login.selected_player_id).unwrap_or_default(),
+    )?;
+    config_state.save()?;
+  }
+  let sync_app = app.clone();
+  tauri::async_runtime::spawn(async move {
+    let _ = crate::launch::helpers::playtime_sync::flush_playtime_queue(&sync_app).await;
+  });
   Ok(refreshed)
+}
+
+#[tauri::command]
+pub async fn checkin_vustb_account(app: AppHandle) -> USTBLResult<VustbCheckinResult> {
+  let player_id = {
+    let binding = app.state::<Mutex<AccountInfo>>();
+    let state = binding.lock()?;
+    state
+      .vustb_account
+      .as_ref()
+      .ok_or(AccountError::NotFound)?
+      .player_id
+      .clone()
+  };
+  let result = vustb::checkin(&app, player_id).await?;
+  let binding = app.state::<Mutex<AccountInfo>>();
+  let mut state = binding.lock()?;
+  state.vustb_account = Some(result.account.clone());
+  state.save()?;
+  Ok(result)
 }
 
 #[tauri::command]
@@ -317,6 +334,7 @@ pub async fn logout_vustb_account(app: AppHandle) -> USTBLResult<()> {
       .players
       .retain(|player| !removed_player_ids.contains(&player.id));
     account_state.vustb_account = None;
+    account_state.vustb_session = None;
     account_state.save()?;
 
     let config_binding = app.state::<Mutex<LauncherConfig>>();
@@ -640,12 +658,29 @@ pub async fn delete_player(app: AppHandle, player_id: String) -> USTBLResult<()>
       return Err(AccountError::NotFound.into());
     }
 
-    if account_state
+    let deleted_linked_vustb_player = account_state
       .vustb_account
       .as_ref()
-      .is_some_and(|account| account.player_id == player_id)
-    {
-      account_state.vustb_account = None;
+      .is_some_and(|account| account.player_id == player_id);
+    if deleted_linked_vustb_player {
+      if account_state.vustb_session.is_some() {
+        let replacement_player_id = account_state
+          .players
+          .iter()
+          .find(|player| {
+            player
+              .auth_server_url
+              .as_deref()
+              .is_some_and(|url| normalize_url(url) == normalize_url(USTB_AUTH_SERVER_URL))
+          })
+          .map(|player| player.id.clone())
+          .unwrap_or_default();
+        if let Some(account) = account_state.vustb_account.as_mut() {
+          account.player_id = replacement_player_id;
+        }
+      } else {
+        account_state.vustb_account = None;
+      }
     }
 
     if config_state.states.shared.selected_player_id == player_id {

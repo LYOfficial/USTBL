@@ -91,6 +91,7 @@ pub async fn run() -> i32 {
       account::commands::login_vustb_account,
       account::commands::retrieve_vustb_account,
       account::commands::sync_vustb_account,
+      account::commands::checkin_vustb_account,
       account::commands::logout_vustb_account,
       account::commands::relogin_player_oauth,
       account::commands::cancel_oauth,
@@ -166,6 +167,7 @@ pub async fn run() -> i32 {
       resource::commands::fetch_remote_resource_by_id,
       discover::commands::fetch_news_sources_info,
       discover::commands::fetch_news_post_summaries,
+      discover::commands::fetch_vustb_server_statuses,
       discover::commands::fetch_anyshare_folder_list,
       discover::commands::fetch_anyshare_download_url,
       tasks::commands::schedule_progressive_task_group,
@@ -280,6 +282,11 @@ pub async fn run() -> i32 {
       let app_handle = app.handle().clone();
       tauri::async_runtime::spawn(async move {
         tasks::background::monitor_background_process(app_handle).await;
+      });
+
+      let app_handle = app.handle().clone();
+      tauri::async_runtime::spawn(async move {
+        launch::helpers::playtime_sync::monitor_playtime_sync(app_handle).await;
       });
 
       // Send statistics

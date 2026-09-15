@@ -97,6 +97,10 @@
         "title": "Importer un modpack",
         "description": "Importer un modpack depuis un fichier local ou Internet (formats CurseForge, Modrinth ou HMCL)"
       },
+      "campusModpack": {
+        "title": "Installer le modpack USTB",
+        "description": "Ouvrir Découvrir pour installer le modpack du campus Pixel USTB"
+      },
       "manageDirs": {
         "title": "Gérer les répertoires du jeu",
         "description": "Gérer les répertoires de stockage locaux pour ajouter des instances déjà installées"
@@ -329,6 +333,9 @@
         }
       },
       "presetBgList": {
+        "tyg1200": {
+          "name": "Gymnase de l’USTB"
+        },
         "Jokull": {
           "name": "La ville de neige"
         },
@@ -480,7 +487,19 @@
   "DiscoverHomePage": {
     "minecraft-news": "Actualités Minecraft",
     "community-news": "Actualités de la communauté",
-    "hotModpacks": "Modpacks populaires de {{source}}"
+    "hotModpacks": "Modpacks populaires de {{source}}",
+    "serverList": {
+      "title": "Serveurs Pixel USTB",
+      "description": "État en direct des serveurs Minecraft publics de Pixel USTB",
+      "retry": "Recharger la liste des serveurs",
+      "version": "Version",
+      "hiddenAddress": "L’adresse du serveur n’est pas publique",
+      "copyAddress": "Copier l’adresse du serveur",
+      "status": {
+        "online": "En ligne",
+        "offline": "Hors ligne"
+      }
+    }
   },
   "DiscoverLayout": {
     "discoverDomainList": {
@@ -488,12 +507,31 @@
       "home": "Accueil",
       "community-news": "Communauté",
       "minecraft-news": "Actualités Minecraft",
+      "install-modpack": "Installer un modpack",
+      "original-modpack": "Modpack original",
+      "campus-modpack": "Modpack du campus",
       "modpack": "Modpacks",
       "mod": "Mods",
       "world": "Mondes",
       "resourcepack": "Packs de ressources",
       "shader": "Packs de shaders",
       "datapack": "Packs de données"
+    }
+  },
+  "InstallModpackPage": {
+    "xplus": {
+      "description": "Seule la dernière version publiée pour chaque version du jeu est conservée. Minecraft {{version}} est recommandé par défaut.",
+      "loadFailed": "Impossible de charger les versions Modrinth, utilisation de la version recommandée.",
+      "downloadStarted": "Téléchargement de {{version}} démarré",
+      "downloadDescription": "L’installation du modpack démarrera automatiquement après le téléchargement."
+    },
+    "campus": {
+      "title": "Modpack du campus",
+      "description": "Ressources de modpacks du campus hébergées sur le cloud Anyshare de l’USTB.",
+      "loadFailed": "Impossible de charger la liste des modpacks du campus : {{error}}",
+      "downloadStarted": "Téléchargement de {{name}} démarré",
+      "downloadDescription": "L’installation du modpack démarrera automatiquement après le téléchargement.",
+      "downloadFailed": "Échec du téléchargement"
     }
   },
   "DiscoverSourcesPage": {

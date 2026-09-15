@@ -1,167 +1,175 @@
-﻿import {
+import {
   Avatar,
+  Badge,
+  Box,
   Card,
   HStack,
   SimpleGrid,
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { openUrl } from "@tauri-apps/plugin-opener";
-import { useRouter } from "next/router";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BeatLoader } from "react-spinners";
 import { CommonIconButton } from "@/components/common/common-icon-button";
 import Empty from "@/components/common/empty";
-import { OptionItem } from "@/components/common/option-item";
 import { Section } from "@/components/common/section";
-import { useLauncherConfig } from "@/contexts/config";
-import { NewsPostSummary } from "@/models/news-post";
-import { MC_NEWS_SOURCE_URL } from "@/pages/discover/minecraft-news";
+import { useToast } from "@/contexts/toast";
+import { McServerStatus } from "@/models/mc-server";
 import { DiscoverService } from "@/services/discover";
-import { formatRelativeTime } from "@/utils/datetime";
+import { copyText } from "@/utils/copy";
 
-type NewsPanelProps = {
-  title: string;
-  posts: NewsPostSummary[];
-  loading: boolean;
-  onRefresh: () => void;
-  onMore: () => void;
-  accentColor: string;
-};
+const serverMotd = (server: McServerStatus) =>
+  server.motdSegments
+    .map((segment) => segment.text)
+    .join("")
+    .trim();
 
-const MAX_NEWS_POST_NUM = 6;
-
-const NewsPanel: React.FC<NewsPanelProps> = ({
-  title,
-  posts,
-  loading,
-  onRefresh,
-  onMore,
-  accentColor,
-}) => {
-  const { t } = useTranslation();
-
-  return (
-    <Section
-      title={title}
-      headExtra={
-        <HStack>
-          <CommonIconButton
-            icon="refresh"
-            onClick={onRefresh}
-            isDisabled={loading}
-            size="xs"
-            h={21}
-          />
-          <CommonIconButton icon="more" onClick={onMore} size="xs" h={21} />
-        </HStack>
-      }
-    >
-      {loading ? (
-        <VStack py={6}>
-          <BeatLoader size={14} color="gray" />
-        </VStack>
-      ) : posts.length === 0 ? (
-        <Empty withIcon={false} size="sm" />
-      ) : (
-        <SimpleGrid columns={{ base: 1, lg: 2, xl: 3 }} gap={3}>
-          {posts.map((post) => (
-            <Card key={post.link}>
-              <OptionItem
-                title={post.title}
-                titleLineWrap={false}
-                description={
-                  <Text fontSize="xs" className="secondary-text" noOfLines={3}>
-                    {post.abstract}
-                  </Text>
-                }
-                prefixElement={
-                  <Avatar
-                    name={post.source.name}
-                    src={post.source.iconSrc}
-                    boxSize={8}
-                  />
-                }
-                isFullClickZone
-                onClick={() => openUrl(post.link)}
-              >
-                <Text fontSize="xs" className="secondary-text">
-                  {formatRelativeTime(post.createAt, t)}
-                </Text>
-              </OptionItem>
-            </Card>
-          ))}
-        </SimpleGrid>
-      )}
-    </Section>
-  );
-};
+const serverVersion = (server: McServerStatus) =>
+  server.versionHint || server.version || "-";
 
 export const DiscoverHomePage = () => {
   const { t } = useTranslation();
-  const { config } = useLauncherConfig();
-  const router = useRouter();
-  const primaryColor = config.appearance.theme.primaryColor;
-  const accentColor = `var(--chakra-colors-${primaryColor}-400)`;
+  const toast = useToast();
+  const [servers, setServers] = useState<McServerStatus[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  const [communityPosts, setCommunityPosts] = useState<NewsPostSummary[]>([]);
-  const [mcPosts, setMcPosts] = useState<NewsPostSummary[]>([]);
-  const [isLoadingCommunity, setIsLoadingCommunity] = useState<boolean>(false);
-  const [isLoadingMC, setIsLoadingMC] = useState<boolean>(false);
-
-  const fetchCommunityNews = useCallback(async () => {
-    setIsLoadingCommunity(true);
+  const fetchServers = useCallback(async () => {
+    setIsLoading(true);
+    setError("");
     try {
-      const source = [
-        { url: "https://www.ustb.world/api/articles/rss", cursor: null },
-      ];
-      const response = await DiscoverService.fetchNewsPostSummaries(source);
+      const response = await DiscoverService.fetchVustbServerStatuses();
       if (response.status === "success") {
-        setCommunityPosts(response.data.posts.slice(0, MAX_NEWS_POST_NUM));
+        setServers(response.data);
+      } else {
+        setError(response.details || response.message);
       }
     } finally {
-      setIsLoadingCommunity(false);
-    }
-  }, []);
-
-  const fetchMinecraftNews = useCallback(async () => {
-    setIsLoadingMC(true);
-    try {
-      const source = [{ url: MC_NEWS_SOURCE_URL, cursor: null }];
-      const response = await DiscoverService.fetchNewsPostSummaries(source);
-      if (response.status === "success") {
-        setMcPosts(response.data.posts.slice(0, MAX_NEWS_POST_NUM));
-      }
-    } finally {
-      setIsLoadingMC(false);
+      setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchCommunityNews();
-    fetchMinecraftNews();
-  }, [fetchCommunityNews, fetchMinecraftNews]);
+    fetchServers();
+  }, [fetchServers]);
 
   return (
     <Section px={{ base: 4, lg: 6 }}>
-      <VStack align="stretch" spacing={6} pb={4}>
-        <NewsPanel
-          title={t("DiscoverHomePage.minecraft-news")}
-          posts={mcPosts}
-          loading={isLoadingMC}
-          onRefresh={fetchMinecraftNews}
-          onMore={() => router.push("/discover/minecraft-news")}
-          accentColor={accentColor}
-        />
-        <NewsPanel
-          title={t("DiscoverHomePage.community-news")}
-          posts={communityPosts}
-          loading={isLoadingCommunity}
-          onRefresh={fetchCommunityNews}
-          onMore={() => router.push("/discover/community-news")}
-          accentColor={accentColor}
-        />
+      <VStack align="stretch" spacing={4} pb={4}>
+        <HStack justify="space-between">
+          <Box>
+            <Text fontSize="lg" fontWeight="semibold">
+              {t("DiscoverHomePage.serverList.title")}
+            </Text>
+            <Text fontSize="sm" className="secondary-text">
+              {t("DiscoverHomePage.serverList.description")}
+            </Text>
+          </Box>
+          <CommonIconButton
+            icon="refresh"
+            onClick={fetchServers}
+            isDisabled={isLoading}
+          />
+        </HStack>
+
+        {isLoading && servers.length === 0 ? (
+          <VStack py={10}>
+            <BeatLoader size={14} color="gray" />
+          </VStack>
+        ) : error && servers.length === 0 ? (
+          <VStack py={10} spacing={3}>
+            <Text color="red.400" fontSize="sm">
+              {error}
+            </Text>
+            <CommonIconButton
+              icon="refresh"
+              label={t("DiscoverHomePage.serverList.retry")}
+              onClick={fetchServers}
+            />
+          </VStack>
+        ) : servers.length === 0 ? (
+          <Empty withIcon={false} size="sm" />
+        ) : (
+          <SimpleGrid columns={{ base: 1, xl: 2 }} gap={4}>
+            {servers.map((server) => {
+              const online = server.serverStatus === "online";
+              const address =
+                server.exposeIp && server.address ? server.address : null;
+              const motd = serverMotd(server);
+
+              return (
+                <Card key={server.id} p={4}>
+                  <VStack align="stretch" spacing={3}>
+                    <HStack align="start" justify="space-between">
+                      <HStack minW={0} align="start">
+                        <Avatar
+                          name={server.name}
+                          src={server.icon || server.iconUrl || undefined}
+                          boxSize="48px"
+                          borderRadius="sm"
+                        />
+                        <Box minW={0}>
+                          <HStack spacing={2} flexWrap="wrap">
+                            <Text fontWeight="semibold">{server.name}</Text>
+                            <Badge colorScheme={online ? "green" : "red"}>
+                              {t(
+                                `DiscoverHomePage.serverList.status.${
+                                  online ? "online" : "offline"
+                                }`
+                              )}
+                            </Badge>
+                          </HStack>
+                          <Text
+                            fontSize="sm"
+                            className="secondary-text"
+                            noOfLines={2}
+                          >
+                            {server.description || server.theme || "-"}
+                          </Text>
+                        </Box>
+                      </HStack>
+                      <Text fontSize="sm" whiteSpace="nowrap">
+                        {server.playersOnline ?? 0} / {server.playersMax ?? 0}
+                      </Text>
+                    </HStack>
+
+                    {motd && (
+                      <Text fontSize="sm" whiteSpace="pre-line" noOfLines={2}>
+                        {motd}
+                      </Text>
+                    )}
+
+                    <HStack justify="space-between" align="end" spacing={3}>
+                      <Box minW={0}>
+                        <Text fontSize="xs" className="secondary-text">
+                          {t("DiscoverHomePage.serverList.version")}:{" "}
+                          {serverVersion(server)}
+                        </Text>
+                        <Text
+                          fontSize="sm"
+                          fontFamily="mono"
+                          className="ellipsis-text"
+                        >
+                          {address ||
+                            t("DiscoverHomePage.serverList.hiddenAddress")}
+                        </Text>
+                      </Box>
+                      {address && (
+                        <CommonIconButton
+                          icon="copy"
+                          label={t("DiscoverHomePage.serverList.copyAddress")}
+                          onClick={() => copyText(address, { toast })}
+                          flexShrink={0}
+                        />
+                      )}
+                    </HStack>
+                  </VStack>
+                </Card>
+              );
+            })}
+          </SimpleGrid>
+        )}
       </VStack>
     </Section>
   );

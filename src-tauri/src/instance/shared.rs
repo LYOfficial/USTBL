@@ -1,3 +1,4 @@
+use crate::account::helpers::vustb;
 use crate::account::models::AccountInfo;
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::misc::get_instance_version_path_by_id;
@@ -171,8 +172,7 @@ fn emit_update_progress(
   }
 }
 
-/// 管理接口本身由平台按启动器入口约定公开；这里仍在 Rust 命令层重复检查，
-/// 防止普通账户通过前端以外的调用路径触发上传或删除。
+/// 前端隐藏入口之外仍校验角色，并由平台使用 Bearer 令牌再次鉴权。
 fn ensure_minecraft_manager(app: &AppHandle) -> USTBLResult<()> {
   let binding = app.state::<Mutex<AccountInfo>>();
   let account_state = binding.lock()?;
@@ -669,17 +669,16 @@ async fn send_shared_file_upload(
   );
   form.extend_from_slice(&bytes);
   form.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
-  let client = app.state::<reqwest::Client>();
-  let response = client
-    .request(method, endpoint)
-    .header(
-      "Content-Type",
-      format!("multipart/form-data; boundary={boundary}"),
-    )
-    .body(form)
-    .send()
-    .await
-    .map_err(|err| USTBLError(format!("{operation}共享文件失败：{err}")))?;
+  let content_type = format!("multipart/form-data; boundary={boundary}");
+  let response = vustb::send_authenticated(&app, |client, access_token| {
+    client
+      .request(method.clone(), endpoint.clone())
+      .bearer_auth(access_token)
+      .header("Content-Type", content_type.clone())
+      .body(form.clone())
+  })
+  .await
+  .map_err(|err| USTBLError(format!("{operation}共享文件失败：{}", err.0)))?;
   if !response.status().is_success() {
     return Err(invalid_response(response));
   }
@@ -732,14 +731,12 @@ pub async fn delete_shared_instance_mod(
   shared_mod_id: u64,
 ) -> USTBLResult<SharedMod> {
   ensure_minecraft_manager(&app)?;
-  let client = app.state::<reqwest::Client>();
-  let response = client
-    .delete(format!(
-      "{VUSTB_API}/{shared_instance_id}/mods/{shared_mod_id}"
-    ))
-    .send()
-    .await
-    .map_err(|err| USTBLError(format!("删除共享模组失败：{err}")))?;
+  let endpoint = format!("{VUSTB_API}/{shared_instance_id}/mods/{shared_mod_id}");
+  let response = vustb::send_authenticated(&app, |client, access_token| {
+    client.delete(&endpoint).bearer_auth(access_token)
+  })
+  .await
+  .map_err(|err| USTBLError(format!("删除共享模组失败：{}", err.0)))?;
   if !response.status().is_success() {
     return Err(invalid_response(response));
   }

@@ -243,6 +243,31 @@ pub struct VustbProfile {
   pub selected: bool,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct VustbProgression {
+  pub experience: u32,
+  pub level: u8,
+  #[serde(alias = "max_level")]
+  pub max_level: u8,
+  #[serde(alias = "max_experience")]
+  pub max_experience: u32,
+  #[serde(alias = "level_start_experience")]
+  pub level_start_experience: u32,
+  #[serde(alias = "next_level_experience")]
+  pub next_level_experience: u32,
+  #[serde(alias = "experience_into_level")]
+  pub experience_into_level: u32,
+  #[serde(alias = "experience_for_next_level")]
+  pub experience_for_next_level: u32,
+  #[serde(alias = "is_max_level")]
+  pub is_max_level: bool,
+  #[serde(alias = "checkin_days")]
+  pub checkin_days: u32,
+  #[serde(alias = "play_time_seconds")]
+  pub play_time_seconds: u64,
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VustbAccount {
@@ -251,8 +276,30 @@ pub struct VustbAccount {
   pub avatar_url: String,
   pub user_group: String,
   pub profiles: Vec<VustbProfile>,
-  /// 对应持久化的第三方 Minecraft 角色；OAuth 令牌仅保留在该角色记录内。
+  #[serde(default)]
+  pub progression: VustbProgression,
+  #[serde(default)]
+  pub last_checkin: Option<String>,
+  /// 兼容旧版存储中承载网站会话令牌的 Minecraft 角色。
+  #[serde(default)]
   pub player_id: String,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VustbSession {
+  #[serde(alias = "access_token")]
+  pub access_token: String,
+  #[serde(alias = "refresh_token")]
+  pub refresh_token: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VustbCheckinResult {
+  pub message: String,
+  pub experience_gained: u32,
+  pub account: VustbAccount,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
@@ -343,6 +390,8 @@ pub struct AccountInfo {
   pub auth_servers: Vec<AuthServerInfo>,
   #[serde(default)]
   pub vustb_account: Option<VustbAccount>,
+  #[serde(default)]
+  pub vustb_session: Option<VustbSession>,
   pub is_oauth_processing: bool,
 }
 
@@ -360,6 +409,7 @@ impl Default for AccountInfo {
         })
         .collect(),
       vustb_account: None,
+      vustb_session: None,
       is_oauth_processing: false,
     }
   }
@@ -374,6 +424,61 @@ impl AccountInfo {
 impl Storage for AccountInfo {
   fn file_path() -> PathBuf {
     APP_DATA_DIR.get().unwrap().join(ACCOUNTS_FILE_NAME)
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{AccountInfo, VustbProgression, VustbSession};
+
+  #[test]
+  fn legacy_account_storage_without_vustb_session_still_loads() {
+    let state: AccountInfo = serde_json::from_str(
+      r#"{
+        "players": [],
+        "authServers": [],
+        "vustbAccount": null,
+        "isOauthProcessing": false
+      }"#,
+    )
+    .unwrap();
+
+    assert!(state.vustb_session.is_none());
+  }
+
+  #[test]
+  fn vustb_session_accepts_legacy_snake_case_and_saves_camel_case() {
+    let session: VustbSession =
+      serde_json::from_str(r#"{"access_token":"access","refresh_token":"refresh"}"#).unwrap();
+    let value = serde_json::to_value(session).unwrap();
+
+    assert_eq!(value["accessToken"], "access");
+    assert_eq!(value["refreshToken"], "refresh");
+  }
+
+  #[test]
+  fn progression_accepts_launcher_api_snake_case_and_saves_camel_case() {
+    let progression: VustbProgression = serde_json::from_str(
+      r#"{
+        "experience": 3,
+        "level": 0,
+        "max_level": 40,
+        "max_experience": 2920,
+        "level_start_experience": 0,
+        "next_level_experience": 7,
+        "experience_into_level": 3,
+        "experience_for_next_level": 7,
+        "is_max_level": false,
+        "checkin_days": 1,
+        "play_time_seconds": 600
+      }"#,
+    )
+    .unwrap();
+    let value = serde_json::to_value(progression).unwrap();
+
+    assert_eq!(value["nextLevelExperience"], 7);
+    assert_eq!(value["checkinDays"], 1);
+    assert_eq!(value["playTimeSeconds"], 600);
   }
 }
 
