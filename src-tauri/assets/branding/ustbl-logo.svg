@@ -1,0 +1,163 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">USTBL</title>
+  <desc id="desc">由六枚蓝色六边形和中央立体几何核心组成的 USTBL 标志</desc>
+  <defs>
+    <radialGradient id="upper-face" cx="72%" cy="18%" r="105%">
+      <stop offset="0" stop-color="#65b9f2"/>
+      <stop offset=".52" stop-color="#48a7eb"/>
+      <stop offset="1" stop-color="#2689d7"/>
+    </radialGradient>
+    <linearGradient id="upper-rim-light" x1="0" y1="1" x2="1" y2="0">
+      <stop stop-color="#55afea"/>
+      <stop offset=".55" stop-color="#7bc8f8"/>
+      <stop offset="1" stop-color="#4aa9eb"/>
+    </linearGradient>
+    <linearGradient id="upper-rim-dark" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#218bd8"/>
+      <stop offset="1" stop-color="#126fbd"/>
+    </linearGradient>
+    <linearGradient id="upper-side-dark" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#1375c4" stop-opacity=".92"/>
+      <stop offset="1" stop-color="#2d96dc" stop-opacity=".08"/>
+    </linearGradient>
+    <linearGradient id="upper-bottom-shadow" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#1577c3" stop-opacity="0"/>
+      <stop offset="1" stop-color="#126fba" stop-opacity=".7"/>
+    </linearGradient>
+    <radialGradient id="lower-face" cx="55%" cy="24%" r="92%">
+      <stop stop-color="#245394"/>
+      <stop offset=".5" stop-color="#164482"/>
+      <stop offset="1" stop-color="#0c3270"/>
+    </radialGradient>
+    <linearGradient id="core-face" x1=".5" y1="0" x2=".5" y2="1">
+      <stop stop-color="#49a9e6"/>
+      <stop offset=".32" stop-color="#3697d7"/>
+      <stop offset=".68" stop-color="#2378bd"/>
+      <stop offset="1" stop-color="#123e78"/>
+    </linearGradient>
+    <radialGradient id="core-glow" cx="50%" cy="20%" r="90%">
+      <stop stop-color="#68baf0" stop-opacity=".26"/>
+      <stop offset=".58" stop-color="#2f91d5" stop-opacity=".05"/>
+      <stop offset="1" stop-color="#0b346d" stop-opacity=".4"/>
+    </radialGradient>
+    <linearGradient id="gold-top" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#fffdf0"/>
+      <stop offset=".55" stop-color="#fff4c9"/>
+      <stop offset="1" stop-color="#ead69b"/>
+    </linearGradient>
+    <linearGradient id="gold-center-top" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#f5e8b5"/>
+      <stop offset=".55" stop-color="#eddda9"/>
+      <stop offset="1" stop-color="#d7c489"/>
+    </linearGradient>
+    <linearGradient id="gold-left" x1="0" y1="0" x2="1" y2=".25">
+      <stop stop-color="#f2e5b4"/>
+      <stop offset="1" stop-color="#d8c78e"/>
+    </linearGradient>
+    <linearGradient id="gold-right" x1="0" y1="0" x2="1" y2=".25">
+      <stop stop-color="#dfcf98"/>
+      <stop offset="1" stop-color="#baa96f"/>
+    </linearGradient>
+    <linearGradient id="bronze-left" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#d8c896"/>
+      <stop offset="1" stop-color="#bca875"/>
+    </linearGradient>
+    <linearGradient id="bronze-right" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#cdbb86"/>
+      <stop offset="1" stop-color="#aa9562"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 上方三枚六边形采用规整的内收斜面，形成柔和立体边缘。 -->
+  <g id="upper-tiles">
+    <g id="upper-left">
+      <path fill="url(#upper-face)" d="M293 197 369 239V436L307 481H229L149 436V276Z"/>
+      <path fill="url(#upper-side-dark)" d="m149 276 13 7v144l71 39-4 15-80-45Z"/>
+      <path fill="url(#upper-bottom-shadow)" d="m162 410 71 39h70l53-39v18l-53 39h-70l-71-39Z"/>
+      <path fill="url(#upper-rim-light)" d="m149 276 144-79 76 42-10 6-66-37-134 74Z"/>
+    </g>
+    <g id="upper-center">
+      <path fill="url(#upper-face)" d="m512 78 131 70v161l-131 71-131-71V148Z"/>
+      <path fill="url(#upper-side-dark)" d="m381 148 17 9v140l114 63v20l-131-71Z"/>
+      <path fill="url(#upper-bottom-shadow)" d="m398 283 114 63 114-63v18l-114 65-114-65Z"/>
+      <path fill="url(#upper-rim-light)" d="m381 148 131-70 16 8-131 71Z"/>
+    </g>
+    <g id="upper-right">
+      <path fill="url(#upper-face)" d="m731 197 144 79v160l-80 45h-78l-62-45V239Z"/>
+      <path fill="url(#upper-side-dark)" d="m655 239 13 7v181l53 39-4 15-62-45Z"/>
+      <path fill="url(#upper-bottom-shadow)" d="m668 410 53 39h70l71-39v18l-71 39h-70l-53-39Z"/>
+      <path fill="url(#upper-rim-light)" d="m655 239 76-42 144 79-10 6-134-74-66 37Z"/>
+    </g>
+  </g>
+
+  <g id="lower-tiles" fill="url(#lower-face)">
+    <path d="m229 488h59v47l81 45v166l-75 41-145-81V528Z"/>
+    <path d="m795 488h-59v47l-81 45v166l75 41 145-81V528Z"/>
+    <path d="m382 685 42 23 88-52 88 52 42-23v151l-129 77-131-77Z"/>
+  </g>
+
+  <g id="core-frame">
+    <path fill="url(#core-face)" d="m431 349 81 46 81-46 34 21v75l67 40v45l-67 40v85l-45 27-70-40-70 40-45-27v-85l-67-40v-45l67-40v-75Z"/>
+    <path fill="url(#core-glow)" d="m431 349 81 46 81-46 34 21v75l67 40v45l-67 40v85l-45 27-70-40-70 40-45-27v-85l-67-40v-45l67-40v-75Z"/>
+  </g>
+
+  <!-- 中央米黄色构件由独立顶面和侧面拼合，保持可编辑的等距立体结构。 -->
+  <g id="geometric-core">
+    <g id="bronze-insets">
+      <path fill="url(#bronze-left)" d="m419 498 16-10 18 10-18 10Z"/>
+      <path fill="url(#bronze-right)" d="m571 498 18-10 16 10-16 10Z"/>
+      <path fill="url(#bronze-right)" d="m483 488 17 10v31l12 8v18l-29-17Z"/>
+      <path fill="url(#bronze-left)" d="m541 488-17 10v31l-12 8v18l29-17Z"/>
+      <path fill="url(#bronze-left)" d="m512 528 30 18-30 18-30-18Z"/>
+      <path fill="url(#bronze-left)" d="m469 582 34 20-34 20Z"/>
+      <path fill="url(#bronze-right)" d="m555 582-34 20 34 20Z"/>
+    </g>
+
+    <g id="rear-towers">
+      <path fill="url(#gold-left)" d="m435 416 45 26v78l-45-26Z"/>
+      <path fill="url(#gold-right)" d="m480 442 32-19v78l-32 19Z"/>
+      <path fill="url(#gold-left)" d="m512 423 32 19v78l-32-19Z"/>
+      <path fill="url(#gold-right)" d="m544 442 45-26v78l-45 26Z"/>
+    </g>
+
+    <g id="side-arms">
+      <path fill="url(#gold-top)" d="m388 500 47-27 45 26-47 27Z"/>
+      <path fill="url(#gold-left)" d="m388 500 45 26v44l-45-26Z"/>
+      <path fill="url(#gold-right)" d="m433 526 47-27v44l-47 27Z"/>
+      <path fill="url(#gold-top)" d="m544 499 45-26 47 27-45 26Z"/>
+      <path fill="url(#gold-left)" d="m544 499 47 27v44l-47-27Z"/>
+      <path fill="url(#gold-right)" d="m591 526 45-26v44l-45 26Z"/>
+    </g>
+
+    <g id="lower-columns">
+      <path fill="url(#gold-left)" d="m435 473 32 18v101l45 26-43 25-34-20Z"/>
+      <path fill="url(#gold-right)" d="m467 491 45-26v153l-43 25V592l-2-1Z"/>
+      <path fill="url(#gold-left)" d="m512 465 45 26v100l-2 1v51l-43-25Z"/>
+      <path fill="url(#gold-right)" d="m557 491 32-18v150l-34 20-43-25 45-26Z"/>
+    </g>
+
+    <g id="front-bridge">
+      <path fill="url(#gold-center-top)" d="m467 540 45-26 45 26-45 26Z"/>
+      <path fill="url(#gold-left)" d="m467 540 45 26v52l-45-26Z"/>
+      <path fill="url(#gold-right)" d="m512 566 45-26v52l-45 26Z"/>
+      <path fill="url(#bronze-left)" d="m495 546 17-10 17 10-17 10Z"/>
+    </g>
+
+    <g id="top-weave">
+      <path fill="url(#gold-top)" d="m435 416 32-19 45 26-32 19Z"/>
+      <path fill="url(#gold-top)" d="m512 423 45-26 32 19-45 26Z"/>
+      <path fill="#dfcf99" d="m480 442 32-19 32 19-32 19Z"/>
+      <path fill="url(#gold-top)" d="m435 469 45-27 32 19-45 27Z"/>
+      <path fill="url(#gold-top)" d="m512 461 32-19 45 27-32 19Z"/>
+    </g>
+    <g id="cutout-details">
+      <path fill="url(#bronze-right)" d="m483 488 17 10v31l12 8v18l-29-17Z"/>
+      <path fill="url(#bronze-left)" d="m541 488-17 10v31l-12 8v18l29-17Z"/>
+      <path fill="url(#bronze-left)" d="m419 498 16-10 18 10-18 10Z"/>
+      <path fill="url(#bronze-right)" d="m571 498 18-10 16 10-16 10Z"/>
+      <path fill="url(#bronze-left)" d="m469 582 34 20-34 20Z"/>
+      <path fill="url(#bronze-right)" d="m555 582-34 20 34 20Z"/>
+      <path fill="url(#bronze-left)" d="m495 546 17-10 17 10-17 10Z"/>
+    </g>
+  </g>
+</svg>

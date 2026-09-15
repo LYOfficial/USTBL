@@ -129,7 +129,9 @@ pub async fn oauth_polling(
     let mut account_state = account_binding.lock()?;
     account_state.is_oauth_processing = true;
   }
-  let _guard = OauthProcessingGuard { account_binding: &account_binding };
+  let _guard = OauthProcessingGuard {
+    account_binding: &account_binding,
+  };
 
   let mut interval = auth_info.interval.unwrap_or(DEFAULT_POLLING_INTERVAL);
   let start_time = std::time::Instant::now();
@@ -149,12 +151,26 @@ pub async fn oauth_polling(
       .map_err(|_| AccountError::NetworkError)?;
 
     if response.status().is_success() {
-      return Ok(
-        response
-          .json()
-          .await
-          .map_err(|_| AccountError::ParseError)?,
-      );
+      let body = response
+        .text()
+        .await
+        .map_err(|_| AccountError::ParseError)?;
+      let value: serde_json::Value = serde_json::from_str(&body).map_err(|error| {
+        log::error!(
+          "OAuth token response JSON parse failed: {error}; body_len={}",
+          body.len()
+        );
+        AccountError::ParseError
+      })?;
+      let keys = value
+        .as_object()
+        .map(|object| object.keys().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+      log::debug!("OAuth token response parsed; keys={keys:?}");
+      return serde_json::from_value(value).map_err(|error| {
+        log::error!("OAuth token response fields parse failed: {error}");
+        AccountError::ParseError.into()
+      });
     } else if response.status().is_server_error() {
       // Some servers (e.g. USTB) return 5xx for unauthorized device codes
       // instead of the proper 400 + authorization_pending.

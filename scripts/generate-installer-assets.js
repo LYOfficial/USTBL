@@ -4,20 +4,30 @@ const { execFileSync } = require("child_process");
 const sharp = require("sharp");
 
 const rootDir = path.resolve(__dirname, "..");
-const iconPath = path.join(
+const brandingDir = path.join(rootDir, "src-tauri", "assets", "branding");
+const transparentLogoPath = path.join(brandingDir, "ustbl-logo.png");
+const roundedLogoPath = path.join(brandingDir, "ustbl-logo-rounded.png");
+const iconOutputDir = path.join(rootDir, "src-tauri", "assets", "icons");
+const installerOutputDir = path.join(
+  rootDir,
+  "src-tauri",
+  "assets",
+  "installer"
+);
+const publicLogoPath = path.join(
   rootDir,
   "public",
   "images",
   "icons",
   "Logo_128x128.png"
 );
-const outputDir = path.join(rootDir, "src-tauri", "assets", "installer");
 
 const colors = {
-  navy: "#071b41",
-  cobalt: "#104caa",
-  azure: "#31a9e8",
-  cyan: "#79ddff",
+  midnight: "#06172f",
+  navy: "#092b55",
+  blue: "#176cb0",
+  sky: "#55b3e9",
+  cream: "#f2e5b4",
 };
 
 function headerBackground() {
@@ -25,21 +35,22 @@ function headerBackground() {
     <svg width="150" height="57" viewBox="0 0 150 57" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stop-color="${colors.navy}" />
-          <stop offset="0.58" stop-color="${colors.cobalt}" />
-          <stop offset="1" stop-color="${colors.azure}" />
+          <stop offset="0" stop-color="${colors.midnight}" />
+          <stop offset="0.62" stop-color="${colors.navy}" />
+          <stop offset="1" stop-color="${colors.blue}" />
         </linearGradient>
-        <linearGradient id="beam" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stop-color="#ffffff" stop-opacity="0.23" />
-          <stop offset="1" stop-color="#ffffff" stop-opacity="0" />
-        </linearGradient>
+        <radialGradient id="glow" cx="12%" cy="50%" r="75%">
+          <stop offset="0" stop-color="${colors.sky}" stop-opacity="0.24" />
+          <stop offset="1" stop-color="${colors.sky}" stop-opacity="0" />
+        </radialGradient>
       </defs>
       <rect width="150" height="57" fill="url(#background)" />
-      <path d="M86 0H150V57H104Z" fill="url(#beam)" />
-      <path d="M112 0L150 25V0ZM92 57L150 21V57Z" fill="#ffffff" fill-opacity="0.06" />
-      <path d="M0 56.5H150" stroke="#ffffff" stroke-opacity="0.32" />
-      <text x="56" y="27" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="700" letter-spacing="1.4">USTBL</text>
-      <text x="57" y="42" fill="#d7f4ff" font-family="Segoe UI, Arial, sans-serif" font-size="5.2" letter-spacing="0.35">MINECRAFT SERVER LAUNCHER</text>
+      <rect width="150" height="57" fill="url(#glow)" />
+      <path d="M103 -8C118 7 130 22 154 25" fill="none" stroke="#ffffff" stroke-opacity="0.08" />
+      <path d="M96 64C115 43 130 38 156 35" fill="none" stroke="#ffffff" stroke-opacity="0.06" />
+      <rect y="55" width="150" height="2" fill="${colors.cream}" fill-opacity="0.9" />
+      <text x="57" y="27" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="17" font-weight="700" letter-spacing="1.5">USTBL</text>
+      <text x="58" y="42" fill="#d7edfb" font-family="Segoe UI, Arial, sans-serif" font-size="6.2" letter-spacing="0.65">MINECRAFT LAUNCHER</text>
     </svg>`);
 }
 
@@ -48,38 +59,28 @@ function sidebarBackground() {
     <svg width="164" height="314" viewBox="0 0 164 314" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <linearGradient id="background" x1="0" y1="0" x2="0.9" y2="1">
-          <stop offset="0" stop-color="${colors.navy}" />
-          <stop offset="0.55" stop-color="#0d3982" />
-          <stop offset="1" stop-color="${colors.cobalt}" />
+          <stop offset="0" stop-color="${colors.midnight}" />
+          <stop offset="0.58" stop-color="${colors.navy}" />
+          <stop offset="1" stop-color="#0d4f87" />
         </linearGradient>
-        <radialGradient id="glow" cx="50%" cy="45%" r="55%">
-          <stop offset="0" stop-color="${colors.cyan}" stop-opacity="0.42" />
-          <stop offset="1" stop-color="${colors.cyan}" stop-opacity="0" />
+        <radialGradient id="logoGlow" cx="50%" cy="32%" r="45%">
+          <stop offset="0" stop-color="${colors.sky}" stop-opacity="0.3" />
+          <stop offset="1" stop-color="${colors.sky}" stop-opacity="0" />
         </radialGradient>
-        <linearGradient id="top" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stop-color="#7de6ff" stop-opacity="0.62" />
-          <stop offset="1" stop-color="#2a8bd6" stop-opacity="0.25" />
+        <linearGradient id="sweep" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#ffffff" stop-opacity="0.08" />
+          <stop offset="1" stop-color="#ffffff" stop-opacity="0" />
         </linearGradient>
       </defs>
       <rect width="164" height="314" fill="url(#background)" />
-      <rect width="164" height="314" fill="url(#glow)" />
-      <g fill="none" stroke="#a6efff" stroke-opacity="0.10" stroke-width="0.65">
-        <path d="M-26 204L82 142L190 204M-26 236L82 174L190 236M-26 268L82 206L190 268M-26 300L82 238L190 300" />
-        <path d="M-2 126V314M25 110V314M52 94V314M79 79V314M106 94V314M133 110V314M160 126V314" />
-      </g>
-      <g opacity="0.43">
-        <path d="M113 34l32-18 31 18-31 18z" fill="url(#top)" />
-        <path d="M113 34v35l32 18V52z" fill="#0d4ca7" />
-        <path d="M145 52v35l31-18V34z" fill="#0b3272" />
-        <path d="M-17 235l39-22 38 22-38 22z" fill="url(#top)" />
-        <path d="M-17 235v41l39 22v-41z" fill="#0c479f" />
-        <path d="M22 257v41l38-22v-41z" fill="#0a2f6c" />
-      </g>
-      <path d="M0 0H164V1H0z" fill="#ffffff" fill-opacity="0.24" />
-      <text x="18" y="54" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="26" font-weight="700" letter-spacing="1.4">USTBL</text>
-      <text x="20" y="72" fill="#d7f4ff" font-family="Segoe UI, Arial, sans-serif" font-size="7.2" letter-spacing="0.6">MINECRAFT SERVER LAUNCHER</text>
-      <path d="M20 87H144" stroke="#b5efff" stroke-opacity="0.55" />
-      <text x="82" y="284" text-anchor="middle" fill="#d7f4ff" fill-opacity="0.88" font-family="Segoe UI, Arial, sans-serif" font-size="8.1" letter-spacing="0.9">BUILD · PLAY · CONNECT</text>
+      <rect width="164" height="314" fill="url(#logoGlow)" />
+      <path d="M-20 225C35 190 84 210 184 146V314H-20Z" fill="url(#sweep)" />
+      <circle cx="82" cy="101" r="63" fill="none" stroke="#ffffff" stroke-opacity="0.07" />
+      <circle cx="82" cy="101" r="54" fill="none" stroke="#ffffff" stroke-opacity="0.05" />
+      <path d="M35 210H129" stroke="${colors.cream}" stroke-width="1.5" stroke-opacity="0.9" />
+      <text x="82" y="244" text-anchor="middle" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif" font-size="25" font-weight="700" letter-spacing="2.4">USTBL</text>
+      <text x="82" y="263" text-anchor="middle" fill="#d7edfb" font-family="Segoe UI, Arial, sans-serif" font-size="7.2" letter-spacing="0.85">MINECRAFT LAUNCHER</text>
+      <text x="82" y="291" text-anchor="middle" fill="${colors.cream}" fill-opacity="0.9" font-family="Segoe UI, Arial, sans-serif" font-size="6.4" letter-spacing="0.8">USTB · BUILD · PLAY</text>
     </svg>`);
 }
 
@@ -94,7 +95,7 @@ function convertPngToBitmap(sourcePath, destinationPath) {
     `$source = [System.Drawing.Image]::FromFile(${quoteForPowerShell(sourcePath)})`,
     "$bitmap = New-Object System.Drawing.Bitmap $source.Width, $source.Height, ([System.Drawing.Imaging.PixelFormat]::Format24bppRgb)",
     "$graphics = [System.Drawing.Graphics]::FromImage($bitmap)",
-    "$graphics.Clear([System.Drawing.Color]::FromArgb(7, 27, 65))",
+    `$graphics.Clear([System.Drawing.ColorTranslator]::FromHtml('${colors.midnight}'))`,
     "$graphics.DrawImage($source, 0, 0, $source.Width, $source.Height)",
     "$graphics.Dispose()",
     `$bitmap.Save(${quoteForPowerShell(destinationPath)}, [System.Drawing.Imaging.ImageFormat]::Bmp)`,
@@ -109,13 +110,13 @@ function convertPngToBitmap(sourcePath, destinationPath) {
 }
 
 async function compositeAsset({ fileName, background, logo }) {
-  const bitmapPath = path.join(outputDir, fileName);
+  const bitmapPath = path.join(installerOutputDir, fileName);
   const pngPath = bitmapPath.replace(/\.bmp$/, ".png");
   await sharp(background)
     .png()
     .composite([
       {
-        input: await sharp(iconPath)
+        input: await sharp(transparentLogoPath)
           .resize(logo.size, logo.size, {
             fit: "contain",
             kernel: sharp.kernel.lanczos3,
@@ -126,39 +127,60 @@ async function compositeAsset({ fileName, background, logo }) {
         top: logo.top,
       },
     ])
-    .flatten({ background: colors.navy })
+    .flatten({ background: colors.midnight })
     .png()
     .toFile(pngPath);
   convertPngToBitmap(pngPath, bitmapPath);
   await fs.unlink(pngPath);
 }
 
+async function generateWindowsIcon() {
+  const generatedIconDir = path.join(
+    rootDir,
+    "src-tauri",
+    "assets",
+    ".generated-icons"
+  );
+  await fs.rm(generatedIconDir, { recursive: true, force: true });
+  const tauriCli = require.resolve("@tauri-apps/cli/tauri.js");
+  execFileSync(
+    process.execPath,
+    [tauriCli, "icon", roundedLogoPath, "--output", generatedIconDir],
+    { cwd: rootDir, stdio: "inherit" }
+  );
+  await fs.copyFile(
+    path.join(generatedIconDir, "icon.ico"),
+    path.join(iconOutputDir, "icon.ico")
+  );
+  await fs.rm(generatedIconDir, { recursive: true, force: true });
+}
+
 async function main() {
-  await fs.mkdir(outputDir, { recursive: true });
+  await fs.mkdir(installerOutputDir, { recursive: true });
+  await fs.mkdir(path.dirname(publicLogoPath), { recursive: true });
+  await fs.mkdir(path.join(iconOutputDir, "variants"), { recursive: true });
 
-  await sharp(iconPath)
-    .resize(256, 256, { fit: "contain", kernel: sharp.kernel.lanczos3 })
-    .png()
-    .toFile(
-      path.join(
-        rootDir,
-        "src-tauri",
-        "assets",
-        "icons",
-        "variants",
-        "square.png"
-      )
-    );
+  await Promise.all([
+    sharp(roundedLogoPath)
+      .resize(128, 128, { fit: "contain", kernel: sharp.kernel.lanczos3 })
+      .png()
+      .toFile(publicLogoPath),
+    sharp(roundedLogoPath)
+      .resize(256, 256, { fit: "contain", kernel: sharp.kernel.lanczos3 })
+      .png()
+      .toFile(path.join(iconOutputDir, "variants", "square.png")),
+  ]);
 
+  await generateWindowsIcon();
   await compositeAsset({
     fileName: "nsis-header.bmp",
     background: headerBackground(),
-    logo: { left: 7, top: 8, size: 42 },
+    logo: { left: 8, top: 8, size: 41 },
   });
   await compositeAsset({
     fileName: "nsis-sidebar.bmp",
     background: sidebarBackground(),
-    logo: { left: 28, top: 108, size: 108 },
+    logo: { left: 31, top: 50, size: 102 },
   });
 }
 

@@ -221,9 +221,12 @@ pub struct DeviceAuthResponseInfo {
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
 pub struct OAuthTokens {
+  #[serde(alias = "accessToken")]
   pub access_token: String,
   #[serde(default)]
+  #[serde(alias = "refreshToken")]
   pub refresh_token: Option<String>,
+  #[serde(default, alias = "idToken")]
   pub id_token: Option<String>,
 }
 
@@ -232,8 +235,11 @@ pub struct OAuthTokens {
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VustbProfile {
+  #[serde(default, alias = "uuid")]
   pub id: String,
+  #[serde(default, alias = "username")]
   pub name: String,
+  #[serde(default)]
   pub selected: bool,
 }
 

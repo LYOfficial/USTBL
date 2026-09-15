@@ -10,8 +10,8 @@ use crate::account::helpers::import::hmcl::retrieve_hmcl_account_info;
 use crate::account::helpers::import::ImportLauncherType;
 use crate::account::helpers::{microsoft, misc, offline, vustb};
 use crate::account::models::{
-  AccountError, AccountInfo, AuthServer, DeviceAuthResponseInfo, Player, PlayerInfo, PlayerType,
-  PresetRole, SkinModel, TextureType, VustbAccount,
+  AccountError, AccountInfo, AuthServer, DeviceAuthResponseInfo, OAuthTokens, Player, PlayerInfo,
+  PlayerType, PresetRole, SkinModel, TextureType, VustbAccount,
 };
 use crate::error::USTBLResult;
 use crate::launcher_config::models::LauncherConfig;
@@ -182,7 +182,7 @@ pub async fn login_vustb_account(
     &app,
     USTB_AUTH_SERVER_URL.to_string(),
   )?);
-  let player = authlib_injector::oauth::login(
+  let login = authlib_injector::oauth::login_all(
     &app,
     USTB_AUTH_SERVER_URL.to_string(),
     auth_server.features.openid_configuration_url,
@@ -193,28 +193,32 @@ pub async fn login_vustb_account(
   )
   .await?;
 
+  let selected_player = login
+    .players
+    .iter()
+    .find(|player| player.id == login.selected_player_id)
+    .ok_or(AccountError::UnknownProfile)?;
+
   let account = vustb::fetch_account(
     &app,
-    player
+    selected_player
       .access_token
       .as_deref()
       .ok_or(AccountError::Expired)?,
-    player.id.clone(),
+    login.selected_player_id.clone(),
   )
   .await?;
 
   {
     let account_binding = app.state::<Mutex<AccountInfo>>();
     let mut account_state = account_binding.lock()?;
-    if let Some(index) = account_state
-      .players
-      .iter()
-      .position(|item| item.id == player.id)
-    {
-      account_state.players[index] = player.clone();
-    } else {
-      account_state.players.push(player.clone());
-    }
+    account_state.players.retain(|player| {
+      player
+        .auth_server_url
+        .as_deref()
+        .is_none_or(|url| normalize_url(url) != normalize_url(USTB_AUTH_SERVER_URL))
+    });
+    account_state.players.extend(login.players);
     account_state.vustb_account = Some(account.clone());
     account_state.save()?;
 
@@ -223,7 +227,7 @@ pub async fn login_vustb_account(
     config_state.partial_update(
       &app,
       "states.shared.selected_player_id",
-      &serde_json::to_string(&player.id).unwrap_or_default(),
+      &serde_json::to_string(&login.selected_player_id).unwrap_or_default(),
     )?;
     config_state.save()?;
   }
@@ -241,7 +245,7 @@ pub fn retrieve_vustb_account(app: AppHandle) -> USTBLResult<Option<VustbAccount
 
 #[tauri::command]
 pub async fn sync_vustb_account(app: AppHandle) -> USTBLResult<VustbAccount> {
-  let (player_id, access_token) = {
+  let (access_token, refresh_token) = {
     let binding = app.state::<Mutex<AccountInfo>>();
     let account_state = binding.lock()?;
     let vustb_account = account_state
@@ -254,15 +258,42 @@ pub async fn sync_vustb_account(app: AppHandle) -> USTBLResult<VustbAccount> {
       .find(|item| item.id == vustb_account.player_id)
       .ok_or(AccountError::NotFound)?;
     (
-      vustb_account.player_id.clone(),
       player.access_token.clone().ok_or(AccountError::Expired)?,
+      player.refresh_token.clone(),
     )
   };
-  let refreshed = vustb::fetch_account(&app, &access_token, player_id).await?;
+  let login = authlib_injector::oauth::load_all_profiles(
+    &app,
+    USTB_AUTH_SERVER_URL.to_string(),
+    OAuthTokens {
+      access_token: access_token.clone(),
+      refresh_token,
+      id_token: None,
+    },
+  )
+  .await?;
+  let refreshed =
+    vustb::fetch_account(&app, &access_token, login.selected_player_id.clone()).await?;
   let binding = app.state::<Mutex<AccountInfo>>();
   let mut account_state = binding.lock()?;
+  account_state.players.retain(|player| {
+    player
+      .auth_server_url
+      .as_deref()
+      .is_none_or(|url| normalize_url(url) != normalize_url(USTB_AUTH_SERVER_URL))
+  });
+  account_state.players.extend(login.players);
   account_state.vustb_account = Some(refreshed.clone());
   account_state.save()?;
+
+  let config_binding = app.state::<Mutex<LauncherConfig>>();
+  let mut config_state = config_binding.lock()?;
+  config_state.partial_update(
+    &app,
+    "states.shared.selected_player_id",
+    &serde_json::to_string(&login.selected_player_id).unwrap_or_default(),
+  )?;
+  config_state.save()?;
   Ok(refreshed)
 }
 
