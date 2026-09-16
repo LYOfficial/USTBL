@@ -1,11 +1,12 @@
 use crate::error::USTBLResult;
-use crate::instance::models::misc::Instance;
+use crate::instance::models::misc::{Instance, InstanceError};
 use crate::launch::constants::*;
 use crate::launch::helpers::playtime_sync;
 use crate::launch::models::{LaunchError, LaunchingState};
 use crate::launcher_config::models::{LauncherVisiablity, ProcessPriority};
 use crate::utils::shell::execute_command_line;
 use crate::utils::window::create_webview_window;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::prelude::*;
@@ -14,7 +15,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Instant;
 use std::{fs, thread};
 use tauri::path::BaseDirectory;
@@ -23,6 +24,17 @@ use tokio;
 use tokio::sync::Notify;
 
 const POLLING_OPERATION_INTERVAL_MS: u64 = 2000;
+const PLAY_TIME_SAVE_INTERVAL_SECONDS: u64 = 600;
+const INSTANCE_PLAY_TIME_UPDATED_EVENT: &str = "instance:play-time-updated";
+static PLAY_TIME_WRITE_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+  LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InstancePlayTimeUpdated {
+  instance_id: String,
+  play_time: u128,
+}
 
 struct OutputPipe<T: Read + Send + 'static> {
   app: AppHandle,
@@ -63,25 +75,53 @@ impl<T: Read + Send + 'static> OutputPipe<T> {
   }
 }
 
-pub async fn record_play_time(app: AppHandle, start_time: Instant, instance_id: String) {
+fn play_time_checkpoint(elapsed_seconds: u64, finishing: bool) -> u64 {
+  if finishing {
+    elapsed_seconds
+  } else {
+    elapsed_seconds / PLAY_TIME_SAVE_INTERVAL_SECONDS * PLAY_TIME_SAVE_INTERVAL_SECONDS
+  }
+}
+
+async fn record_play_time_delta(
+  app: &AppHandle,
+  instance_id: &str,
+  delta_seconds: u64,
+) -> USTBLResult<u128> {
+  let _write_guard = PLAY_TIME_WRITE_LOCK.lock().await;
   let instance_in_mem = {
     let binding = app.state::<Mutex<HashMap<String, Instance>>>();
-    let inst = binding.lock().unwrap().get(&instance_id).cloned();
-    inst
+    let instance = binding
+      .lock()?
+      .get(instance_id)
+      .cloned()
+      .ok_or(InstanceError::InstanceNotFoundByID)?;
+    instance
   };
 
-  if let Some(instance_in_mem) = instance_in_mem {
-    // load newest play time in instance config from disk
-    let mut instance = instance_in_mem
-      .load_json_cfg()
-      .await
-      .unwrap_or(instance_in_mem);
+  let mut instance = instance_in_mem
+    .load_json_cfg()
+    .await
+    .unwrap_or(instance_in_mem);
+  instance.play_time = instance.play_time.saturating_add(u128::from(delta_seconds));
+  instance.save_json_cfg().await?;
+  let play_time = instance.play_time;
 
-    let elapsed = start_time.elapsed().as_secs() as u128;
-    instance.play_time = instance.play_time.saturating_add(elapsed);
-
-    let _ = instance.save_json_cfg().await;
+  let binding = app.state::<Mutex<HashMap<String, Instance>>>();
+  if let Ok(mut instances) = binding.lock() {
+    if let Some(current) = instances.get_mut(instance_id) {
+      current.play_time = play_time;
+    }
   }
+
+  let _ = app.emit(
+    INSTANCE_PLAY_TIME_UPDATED_EVENT,
+    InstancePlayTimeUpdated {
+      instance_id: instance_id.to_string(),
+      play_time,
+    },
+  );
+  Ok(play_time)
 }
 
 pub async fn monitor_process(
@@ -137,6 +177,7 @@ pub async fn monitor_process(
     let start_time = start_time.clone();
     let playtime_stop = playtime_stop.clone();
     tokio::spawn(async move {
+      let mut persisted_seconds = 0_u64;
       let mut reported_seconds = 0_u64;
       loop {
         let finishing = tokio::select! {
@@ -149,12 +190,16 @@ pub async fn monitor_process(
           .and_then(|start| *start)
           .map(|start| start.elapsed().as_secs())
           .unwrap_or(0);
-        let pending_seconds = elapsed_seconds.saturating_sub(reported_seconds);
-        let sync_seconds = if finishing {
-          pending_seconds
-        } else {
-          pending_seconds / 600 * 600
-        };
+        let checkpoint = play_time_checkpoint(elapsed_seconds, finishing);
+        let persist_seconds = checkpoint.saturating_sub(persisted_seconds);
+        if persist_seconds > 0 {
+          match record_play_time_delta(&app, &instance_id, persist_seconds).await {
+            Ok(_) => persisted_seconds = checkpoint,
+            Err(error) => log::warn!("Failed to persist instance play time: {error:?}"),
+          }
+        }
+
+        let sync_seconds = checkpoint.saturating_sub(reported_seconds);
         if sync_seconds > 0
           && playtime_sync::queue_playtime_delta(
             &app,
@@ -220,7 +265,6 @@ pub async fn monitor_process(
   };
 
   // handle game process exit
-  let instance_id_clone = instance_id.clone();
   let game_ready_flag = game_ready_flag.clone();
   let stop_polling_flag = stop_polling_flag.clone();
 
@@ -278,11 +322,6 @@ pub async fn monitor_process(
       _ => {}
     }
 
-    let start_time_lock = *start_time.lock().unwrap();
-    if let Some(start_time) = start_time_lock {
-      record_play_time(app.clone(), start_time, instance_id_clone).await;
-    }
-
     if exit_ok {
       if let Some(ref window) = log_window {
         let _ = window.destroy();
@@ -318,6 +357,25 @@ pub async fn monitor_process(
   });
 
   Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::play_time_checkpoint;
+
+  #[test]
+  fn running_play_time_is_persisted_at_ten_minute_boundaries() {
+    assert_eq!(play_time_checkpoint(0, false), 0);
+    assert_eq!(play_time_checkpoint(599, false), 0);
+    assert_eq!(play_time_checkpoint(600, false), 600);
+    assert_eq!(play_time_checkpoint(1201, false), 1200);
+  }
+
+  #[test]
+  fn exiting_game_persists_the_remaining_seconds() {
+    assert_eq!(play_time_checkpoint(61, true), 61);
+    assert_eq!(play_time_checkpoint(1201, true), 1201);
+  }
 }
 
 pub fn kill_process(pid: u32) -> USTBLResult<()> {
