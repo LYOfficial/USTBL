@@ -303,6 +303,19 @@ pub struct VustbCheckinResult {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VustbFriend {
+  pub friendship_id: u64,
+  pub id: u64,
+  pub username: String,
+  pub display_name: String,
+  pub avatar_url: String,
+  pub online: bool,
+  pub instance_name: Option<String>,
+  pub last_seen_at: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
 pub struct OAuthErrorResponse {
   pub error: String,
   pub error_description: Option<String>,

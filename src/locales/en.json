@@ -76,8 +76,7 @@
       "addPlayer": "Add Player",
       "add3rdPartyServer": "Add auth server",
       "sourceHomepage": "View Homepage",
-      "deleteServer": "Delete Auth Server",
-      "importFromOtherLaunchers": "Import"
+      "deleteServer": "Delete Auth Server"
     },
     "playerTypeList": {
       "all": "All Source"
@@ -1246,23 +1245,6 @@
       }
     }
   },
-  "ImportAccountInfoModal": {
-    "header": {
-      "title": "Import Players and Auth Servers"
-    },
-    "launcherDesc": {
-      "HMCL": "Hello Minecraft! Launcher"
-    },
-    "body": {
-      "authServers": "Auth Servers",
-      "players": "Players"
-    },
-    "tooltips": {
-      "existingServer": "Existing auth server data with the same address will be overwritten.",
-      "existingPlayer": "Existing player data with the same UUID will be overwritten.",
-      "expired": "This player token has expired and cannot be imported."
-    }
-  },
   "ImportModpackModal": {
     "header": {
       "title": "Import Modpack"
@@ -2028,6 +2010,17 @@
       }
     },
     "account": {
+      "retrieveVustbFriends": {
+        "success": "Friend list updated",
+        "error": {
+          "title": "Failed to retrieve friend list",
+          "description": {
+            "EXPIRED": "Your login has expired. Please authorize again",
+            "NETWORK_ERROR": "Unable to connect to the Pixel USTB server",
+            "NOT_FOUND": "No Pixel USTB account is signed in"
+          }
+        }
+      },
       "syncVustbAccount": {
         "success": "Pixel USTB account data synchronized",
         "error": {

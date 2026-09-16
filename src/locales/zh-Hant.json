@@ -76,8 +76,7 @@
       "addPlayer": "新增角色",
       "add3rdPartyServer": "新增認證伺服器",
       "sourceHomepage": "訪問首頁",
-      "deleteServer": "刪除此伺服器",
-      "importFromOtherLaunchers": "從其他啟動器匯入"
+      "deleteServer": "刪除此伺服器"
     },
     "playerTypeList": {
       "all": "全部來源"
@@ -1246,23 +1245,6 @@
       }
     }
   },
-  "ImportAccountInfoModal": {
-    "header": {
-      "title": "從其他啟動器匯入帳戶資訊"
-    },
-    "launcherDesc": {
-      "HMCL": "Hello Minecraft! Launcher"
-    },
-    "body": {
-      "authServers": "認證伺服器",
-      "players": "角色"
-    },
-    "tooltips": {
-      "existingServer": "已存在相同地址的認證伺服器，匯入將會覆寫資料",
-      "existingPlayer": "已存在相同 UUID 的角色，匯入將會覆寫資料",
-      "expired": "此角色 Token 已過期，無法匯入。"
-    }
-  },
   "ImportModpackModal": {
     "header": {
       "title": "匯入模組包"
@@ -2028,6 +2010,17 @@
       }
     },
     "account": {
+      "retrieveVustbFriends": {
+        "success": "好友清單已更新",
+        "error": {
+          "title": "取得好友清單失敗",
+          "description": {
+            "EXPIRED": "登入已過期，請重新授權",
+            "NETWORK_ERROR": "無法連線像素北科伺服器",
+            "NOT_FOUND": "尚未登入像素北科帳戶"
+          }
+        }
+      },
       "syncVustbAccount": {
         "success": "像素北科帳戶資料已同步",
         "error": {

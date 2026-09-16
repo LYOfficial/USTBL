@@ -3,7 +3,7 @@ use crate::account::helpers::authlib_injector::info::get_auth_server_info_by_url
 use crate::account::helpers::authlib_injector::oauth::{self, OAuthProfileLogin};
 use crate::account::models::{
   AccountError, AccountInfo, AuthServer, OAuthTokens, VustbAccount, VustbCheckinResult,
-  VustbProfile, VustbProgression, VustbSession,
+  VustbFriend, VustbProfile, VustbProgression, VustbSession,
 };
 use crate::error::{USTBLError, USTBLResult};
 use crate::storage::Storage;
@@ -61,6 +61,18 @@ struct CheckinResponse {
   message: String,
   #[serde(default)]
   experience_gained: u32,
+}
+
+#[derive(Deserialize)]
+struct LauncherFriendResponse {
+  friendship_id: u64,
+  id: u64,
+  username: String,
+  display_name: String,
+  avatar_url: String,
+  online: bool,
+  instance_name: Option<String>,
+  last_seen_at: Option<String>,
 }
 
 fn map_status(status: reqwest::StatusCode) -> AccountError {
@@ -308,6 +320,34 @@ pub async fn post_authenticated<B: Serialize, T: DeserializeOwned>(
     .map_err(|_| AccountError::ParseError.into())
 }
 
+pub async fn put_authenticated<B: Serialize, T: DeserializeOwned>(
+  app: &AppHandle,
+  endpoint: &str,
+  body: &B,
+) -> USTBLResult<T> {
+  let response = send_authenticated(app, |client, access_token| {
+    client
+      .put(format!("{VUSTB_ISSUER}{endpoint}"))
+      .bearer_auth(access_token)
+      .json(body)
+  })
+  .await?;
+  parse_json_response(response, endpoint).await
+}
+
+pub async fn delete_authenticated<T: DeserializeOwned>(
+  app: &AppHandle,
+  endpoint: &str,
+) -> USTBLResult<T> {
+  let response = send_authenticated(app, |client, access_token| {
+    client
+      .delete(format!("{VUSTB_ISSUER}{endpoint}"))
+      .bearer_auth(access_token)
+  })
+  .await?;
+  parse_json_response(response, endpoint).await
+}
+
 pub async fn fetch_account(
   app: &AppHandle,
   access_token: &str,
@@ -367,6 +407,26 @@ pub async fn checkin(app: &AppHandle, player_id: String) -> USTBLResult<VustbChe
     experience_gained: response.experience_gained,
     account,
   })
+}
+
+pub async fn fetch_friends(app: &AppHandle) -> USTBLResult<Vec<VustbFriend>> {
+  let friends: Vec<LauncherFriendResponse> =
+    get_authenticated(app, "/api/community/launcher/friends").await?;
+  Ok(
+    friends
+      .into_iter()
+      .map(|friend| VustbFriend {
+        friendship_id: friend.friendship_id,
+        id: friend.id,
+        username: friend.username,
+        display_name: friend.display_name,
+        avatar_url: absolute_vustb_url(friend.avatar_url),
+        online: friend.online,
+        instance_name: friend.instance_name,
+        last_seen_at: friend.last_seen_at,
+      })
+      .collect(),
+  )
 }
 
 #[cfg(test)]

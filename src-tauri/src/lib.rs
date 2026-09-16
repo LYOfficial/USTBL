@@ -23,6 +23,7 @@ use launcher_config::models::{JavaInfo, LauncherConfig};
 use resource::helpers::mod_db::{initialize_mod_db, ModDataBase};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, OnceLock};
 use storage::Storage;
 use tasks::monitor::TaskMonitor;
@@ -40,6 +41,7 @@ static EXE_DIR: LazyLock<PathBuf> = LazyLock::new(|| EXE_PATH.parent().unwrap().
 static IS_PORTABLE: LazyLock<bool> = LazyLock::new(|| is_portable().unwrap_or(false));
 
 static APP_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+static EXITING_AFTER_PRESENCE_CLEAR: AtomicBool = AtomicBool::new(false);
 
 pub async fn run() -> i32 {
   tauri::Builder::default()
@@ -92,6 +94,7 @@ pub async fn run() -> i32 {
       account::commands::retrieve_vustb_account,
       account::commands::sync_vustb_account,
       account::commands::checkin_vustb_account,
+      account::commands::retrieve_vustb_friends,
       account::commands::logout_vustb_account,
       account::commands::relogin_player_oauth,
       account::commands::cancel_oauth,
@@ -106,8 +109,6 @@ pub async fn run() -> i32 {
       account::commands::fetch_auth_server,
       account::commands::add_auth_server,
       account::commands::delete_auth_server,
-      account::commands::retrieve_other_launcher_account_info,
-      account::commands::import_external_account_info,
       instance::commands::retrieve_instance_list,
       instance::commands::create_instance,
       instance::commands::update_instance_config,
@@ -289,6 +290,11 @@ pub async fn run() -> i32 {
         launch::helpers::playtime_sync::monitor_playtime_sync(app_handle).await;
       });
 
+      let app_handle = app.handle().clone();
+      tauri::async_runtime::spawn(async move {
+        account::helpers::vustb_presence::monitor(app_handle).await;
+      });
+
       // Send statistics
       tokio::spawn(async move {
         utils::sys_info::send_statistics(version, os, exe_sha256).await;
@@ -343,9 +349,22 @@ pub async fn run() -> i32 {
         .ok();
       std::process::exit(1);
     })
-    .run_return(|_app_handle, event| {
-      if let tauri::RunEvent::Exit = event {
-        log::info!("Launcher exited normally.");
+    .run_return(|app_handle, event| match event {
+      tauri::RunEvent::ExitRequested { api, code, .. }
+        if code.is_none() && !EXITING_AFTER_PRESENCE_CLEAR.swap(true, Ordering::SeqCst) =>
+      {
+        api.prevent_exit();
+        let app_handle = app_handle.clone();
+        tauri::async_runtime::spawn(async move {
+          let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            account::helpers::vustb_presence::clear(&app_handle),
+          )
+          .await;
+          app_handle.exit(code.unwrap_or(0));
+        });
       }
+      tauri::RunEvent::Exit => log::info!("Launcher exited normally."),
+      _ => {}
     })
 }

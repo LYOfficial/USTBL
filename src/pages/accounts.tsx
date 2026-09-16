@@ -19,7 +19,6 @@ import {
   LuCirclePlus,
   LuGrid2X2,
   LuHouse,
-  LuImport,
   LuLayoutGrid,
   LuLayoutList,
   LuLink2Off,
@@ -33,7 +32,7 @@ import { Section } from "@/components/common/section";
 import SegmentedControl from "@/components/common/segmented";
 import SelectableButton from "@/components/common/selectable-button";
 import AddPlayerModal from "@/components/modals/add-player-modal";
-import ImportAccountInfoModal from "@/components/modals/import-account-info-modal";
+import VustbFriendsModal from "@/components/modals/vustb-friends-modal";
 import PlayersView from "@/components/players-view";
 import VustbAccountPanel from "@/components/vustb-account-panel";
 import { useLauncherConfig } from "@/contexts/config";
@@ -81,9 +80,9 @@ const AccountsPage = () => {
   } = useDisclosure();
 
   const {
-    isOpen: isImportAccountInfoModalOpen,
-    onOpen: onImportAccountInfoModalOpen,
-    onClose: onImportAccountInfoModalClose,
+    isOpen: isFriendsModalOpen,
+    onOpen: onFriendsModalOpen,
+    onClose: onFriendsModalClose,
   } = useDisclosure();
 
   useEffect(() => {
@@ -226,14 +225,11 @@ const AccountsPage = () => {
                   />
                 </Box>
                 <VStack mt="auto" align="stretch" spacing={0.5}>
-                  <SelectableButton
-                    size="sm"
-                    onClick={onImportAccountInfoModalOpen}
-                  >
+                  <SelectableButton size="sm" onClick={onFriendsModalOpen}>
                     <HStack spacing={2} overflow="hidden">
-                      <Icon as={LuImport} />
+                      <Icon as={LuUsersRound} />
                       <Text fontSize="sm" className="ellipsis-text">
-                        {t("AccountsPage.button.importFromOtherLaunchers")}
+                        好友列表
                       </Text>
                     </HStack>
                   </SelectableButton>
@@ -375,11 +371,9 @@ const AccountsPage = () => {
             : selectedPlayerType
         }
       />
-      <ImportAccountInfoModal
-        isOpen={isImportAccountInfoModalOpen}
-        onClose={onImportAccountInfoModalClose}
-        currAuthServers={authServerList}
-        currPlayers={playerList}
+      <VustbFriendsModal
+        isOpen={isFriendsModalOpen}
+        onClose={onFriendsModalClose}
       />
     </>
   );

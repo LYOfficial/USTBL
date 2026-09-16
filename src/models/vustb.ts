@@ -34,3 +34,14 @@ export interface VustbCheckinResult {
   experienceGained: number;
   account: VustbAccount;
 }
+
+export interface VustbFriend {
+  friendshipId: number;
+  id: number;
+  username: string;
+  displayName: string;
+  avatarUrl: string;
+  online: boolean;
+  instanceName: string | null;
+  lastSeenAt: string | null;
+}
