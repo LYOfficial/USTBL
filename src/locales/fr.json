@@ -2028,6 +2028,18 @@
       }
     },
     "account": {
+      "syncVustbAccount": {
+        "success": "Les données du compte Pixel USTB ont été synchronisées",
+        "error": {
+          "title": "Échec de la synchronisation du compte Pixel USTB",
+          "description": {
+            "EXPIRED": "Votre connexion a expiré. Veuillez autoriser de nouveau",
+            "NETWORK_ERROR": "Impossible de se connecter au serveur Pixel USTB",
+            "PARSE_ERROR": "Le serveur Pixel USTB a renvoyé une réponse invalide",
+            "NOT_FOUND": "Aucun compte Pixel USTB n'est connecté"
+          }
+        }
+      },
       "retrievePlayerList": {
         "error": {
           "title": "Échec de la récupération de la liste des joueurs"

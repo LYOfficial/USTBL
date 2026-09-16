@@ -95,6 +95,15 @@ const VustbAccountPanel = () => {
       setAccount(response.data);
       getPlayerList(true);
       toast({ title: "像素北科账户资料已同步", status: "success" });
+    } else if (String(response.raw_error) === "EXPIRED") {
+      toast({
+        title: "像素北科登录已过期",
+        description: "请在浏览器中重新授权，完成后会自动恢复账户同步。",
+        status: "warning",
+      });
+      setIsSyncing(false);
+      await handleLogin();
+      return;
     } else {
       toast({
         title: response.message,

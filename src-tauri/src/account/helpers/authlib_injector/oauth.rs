@@ -461,6 +461,21 @@ pub async fn refresh_tokens(
     .await?;
 
   if !token_response.status().is_success() {
+    let status = token_response.status();
+    let error = token_response
+      .json::<crate::account::models::OAuthErrorResponse>()
+      .await
+      .ok();
+    log::warn!(
+      "OAuth token refresh failed: status={status}, error={}, description={}",
+      error
+        .as_ref()
+        .map_or("unknown", |value| value.error.as_str()),
+      error
+        .as_ref()
+        .and_then(|value| value.error_description.as_deref())
+        .unwrap_or("unknown")
+    );
     return Err(AccountError::Expired)?;
   }
 
