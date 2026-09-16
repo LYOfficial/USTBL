@@ -4,7 +4,6 @@ import type { AppProps } from "next/app";
 import { useRouter } from "next/router";
 import React, { useEffect, useMemo } from "react";
 import { initReactI18next } from "react-i18next";
-import { Fade } from "@/components/common/transition";
 import GlobalEventHandler from "@/components/special/global-event-handler";
 import { GuidedTourProvider } from "@/components/special/guided-tour-provider";
 import SharedModalsProvider from "@/components/special/shared-modals-provider";
@@ -126,11 +125,9 @@ export default function App({ Component, pageProps }: AppProps) {
                   <TaskContextProvider>
                     <GlobalEventHandler>
                       <MainLayout>
-                        <Fade key={router.pathname.split("/")[1] || ""} in>
-                          <SpecLayout>
-                            <Component {...pageProps} />
-                          </SpecLayout>
-                        </Fade>
+                        <SpecLayout>
+                          <Component {...pageProps} />
+                        </SpecLayout>
                       </MainLayout>
                     </GlobalEventHandler>
                   </TaskContextProvider>
