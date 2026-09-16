@@ -76,8 +76,7 @@
       "addPlayer": "添加角色",
       "add3rdPartyServer": "添加认证服务器",
       "sourceHomepage": "访问主页",
-      "deleteServer": "删除此服务器",
-      "importFromOtherLaunchers": "从其他启动器导入"
+      "deleteServer": "删除此服务器"
     },
     "playerTypeList": {
       "all": "全部来源"
@@ -1246,23 +1245,6 @@
       }
     }
   },
-  "ImportAccountInfoModal": {
-    "header": {
-      "title": "从其他启动器导入账户信息"
-    },
-    "launcherDesc": {
-      "HMCL": "Hello Minecraft! Launcher"
-    },
-    "body": {
-      "authServers": "认证服务器",
-      "players": "角色"
-    },
-    "tooltips": {
-      "existingServer": "已存在相同地址的认证服务器，导入将会覆盖数据",
-      "existingPlayer": "已存在相同 UUID 的角色，导入将会覆盖数据",
-      "expired": "登录令牌已过期，无法导入此角色"
-    }
-  },
   "ImportModpackModal": {
     "header": {
       "title": "导入整合包"
@@ -2028,6 +2010,17 @@
       }
     },
     "account": {
+      "retrieveVustbFriends": {
+        "success": "好友列表已更新",
+        "error": {
+          "title": "获取好友列表失败",
+          "description": {
+            "EXPIRED": "登录已过期，请重新授权",
+            "NETWORK_ERROR": "无法连接像素北科服务器",
+            "NOT_FOUND": "尚未登录像素北科账户"
+          }
+        }
+      },
       "syncVustbAccount": {
         "success": "像素北科账户资料已同步",
         "error": {

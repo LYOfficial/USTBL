@@ -1,8 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
-import { ImportLauncherType, SkinModel, TextureType } from "@/enums/account";
+import { SkinModel, TextureType } from "@/enums/account";
 import { AuthServer, DeviceAuthResponseInfo, Player } from "@/models/account";
 import { InvokeResponse } from "@/models/response";
-import { VustbAccount, VustbCheckinResult } from "@/models/vustb";
+import { VustbAccount, VustbCheckinResult, VustbFriend } from "@/models/vustb";
 import { responseHandler } from "@/utils/response";
 
 /**
@@ -45,6 +45,11 @@ export class AccountService {
     InvokeResponse<VustbCheckinResult>
   > {
     return await invoke("checkin_vustb_account");
+  }
+
+  @responseHandler("account")
+  static async retrieveVustbFriends(): Promise<InvokeResponse<VustbFriend[]>> {
+    return await invoke("retrieve_vustb_friends");
   }
 
   @responseHandler("account")
@@ -286,36 +291,5 @@ export class AccountService {
   @responseHandler("account")
   static async deleteAuthServer(url: string): Promise<InvokeResponse<void>> {
     return await invoke("delete_auth_server", { url });
-  }
-
-  /**
-   * RETRIEVE other launcher account info for importing (stage 1).
-   * @param {ImportLauncherType} launcherType - The external launcher type (e.g., HMCL / PCL).
-   * @returns {Promise<InvokeResponse<[Player[], AuthServer[]]>>} - The other launcher account info for user selection.
-   */
-  @responseHandler("account")
-  static async retrieveOtherLauncherAccountInfo(
-    launcherType: ImportLauncherType
-  ): Promise<InvokeResponse<[Player[], AuthServer[]]>> {
-    return await invoke("retrieve_other_launcher_account_info", {
-      launcherType,
-    });
-  }
-
-  /**
-   * IMPORT external account info into the current launcher (stage 2).
-   * @param {Player[]} players - The array of players to be imported.
-   * @param {AuthServer[]} authServers - The array of authentication servers to be imported.
-   * @returns {Promise<InvokeResponse<void>>}
-   */
-  @responseHandler("account")
-  static async importExternalAccountInfo(
-    players: Player[],
-    authServers: AuthServer[]
-  ): Promise<InvokeResponse<void>> {
-    return await invoke("import_external_account_info", {
-      players,
-      authServers,
-    });
   }
 }

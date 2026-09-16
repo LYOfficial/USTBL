@@ -323,7 +323,12 @@ pub async fn launch_game(
 
   // wait for the game window, create log window if needed
   let (tx, rx) = mpsc::channel();
-  monitor_process(
+  crate::account::helpers::vustb_presence::track_game_started(id, instance.name.clone());
+  let presence_app = app.clone();
+  tauri::async_runtime::spawn(async move {
+    let _ = crate::account::helpers::vustb_presence::sync(&presence_app).await;
+  });
+  let monitor_result = monitor_process(
     app.clone(),
     id,
     child,
@@ -340,7 +345,11 @@ pub async fn launch_game(
         .clone(),
     ),
   )
-  .await?;
+  .await;
+  if let Err(error) = monitor_result {
+    crate::account::helpers::vustb_presence::track_game_stopped(id);
+    return Err(error);
+  }
   let _ = rx.recv();
 
   if game_config.launcher_visibility != LauncherVisiablity::Always {

@@ -76,8 +76,7 @@
       "addPlayer": "Ajouter un joueur",
       "add3rdPartyServer": "Ajouter un serveur d'authentification",
       "sourceHomepage": "Visiter la page d'accueil",
-      "deleteServer": "Supprimer ce serveur",
-      "importFromOtherLaunchers": "Importer depuis d'autres launchers"
+      "deleteServer": "Supprimer ce serveur"
     },
     "playerTypeList": {
       "all": "Les sources"
@@ -1246,23 +1245,6 @@
       }
     }
   },
-  "ImportAccountInfoModal": {
-    "header": {
-      "title": "Importer des comptes depuis d'autres launchers"
-    },
-    "launcherDesc": {
-      "HMCL": "Hello Minecraft! Launcher"
-    },
-    "body": {
-      "authServers": "Serveurs d'authentification",
-      "players": "Joueurs"
-    },
-    "tooltips": {
-      "existingServer": "Les données d'un serveur d'authentification avec la même adresse existent déjà et seront écrasées.",
-      "existingPlayer": "Les données d'un joueur avec le même UUID existent déjà et seront écrasées.",
-      "expired": "Le jeton de ce joueur a expiré et ne peut pas être importé."
-    }
-  },
   "ImportModpackModal": {
     "header": {
       "title": "Importer un pack de mods"
@@ -2028,6 +2010,17 @@
       }
     },
     "account": {
+      "retrieveVustbFriends": {
+        "success": "Liste d’amis actualisée",
+        "error": {
+          "title": "Échec du chargement de la liste d’amis",
+          "description": {
+            "EXPIRED": "Votre session a expiré. Veuillez vous autoriser à nouveau",
+            "NETWORK_ERROR": "Impossible de se connecter au serveur Pixel USTB",
+            "NOT_FOUND": "Aucun compte Pixel USTB connecté"
+          }
+        }
+      },
       "syncVustbAccount": {
         "success": "Les données du compte Pixel USTB ont été synchronisées",
         "error": {

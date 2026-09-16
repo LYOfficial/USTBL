@@ -300,6 +300,13 @@ pub async fn monitor_process(
     stop_polling_flag.store(true, Ordering::SeqCst);
     playtime_stop.notify_one();
     let _ = playtime_task.await;
+    crate::account::helpers::vustb_presence::track_game_stopped(id);
+    let presence_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+      if let Err(error) = crate::account::helpers::vustb_presence::sync(&presence_app).await {
+        log::debug!("vUSTB presence update after game exit skipped: {error:?}");
+      }
+    });
     drop(log_file);
     // handle launcher main window visiablity
     match launcher_visibility {

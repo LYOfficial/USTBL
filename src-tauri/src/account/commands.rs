@@ -6,12 +6,10 @@ use crate::account::helpers::authlib_injector::info::{
 };
 use crate::account::helpers::authlib_injector::jar::check_authlib_jar;
 use crate::account::helpers::authlib_injector::{self};
-use crate::account::helpers::import::hmcl::retrieve_hmcl_account_info;
-use crate::account::helpers::import::ImportLauncherType;
-use crate::account::helpers::{microsoft, misc, offline, vustb};
+use crate::account::helpers::{microsoft, misc, offline, vustb, vustb_presence};
 use crate::account::models::{
   AccountError, AccountInfo, AuthServer, DeviceAuthResponseInfo, Player, PlayerInfo, PlayerType,
-  PresetRole, SkinModel, TextureType, VustbAccount, VustbCheckinResult, VustbSession,
+  PresetRole, SkinModel, TextureType, VustbAccount, VustbCheckinResult, VustbFriend, VustbSession,
 };
 use crate::error::USTBLResult;
 use crate::launcher_config::models::LauncherConfig;
@@ -233,6 +231,7 @@ pub async fn login_vustb_account(
   let sync_app = app.clone();
   tauri::async_runtime::spawn(async move {
     let _ = crate::launch::helpers::playtime_sync::flush_playtime_queue(&sync_app).await;
+    let _ = vustb_presence::sync(&sync_app).await;
   });
   Ok(account)
 }
@@ -315,7 +314,13 @@ pub async fn checkin_vustb_account(app: AppHandle) -> USTBLResult<VustbCheckinRe
 }
 
 #[tauri::command]
+pub async fn retrieve_vustb_friends(app: AppHandle) -> USTBLResult<Vec<VustbFriend>> {
+  vustb::fetch_friends(&app).await
+}
+
+#[tauri::command]
 pub async fn logout_vustb_account(app: AppHandle) -> USTBLResult<()> {
+  let _ = vustb_presence::clear(&app).await;
   {
     let binding = app.state::<Mutex<AccountInfo>>();
     let mut account_state = binding.lock()?;
@@ -848,98 +853,5 @@ pub fn delete_auth_server(app: AppHandle, url: String) -> USTBLResult<()> {
 
   account_state.save()?;
   config_state.save()?;
-  Ok(())
-}
-
-// Stage 1 of importing accounts (players and auth servers) from other launchers
-#[tauri::command]
-pub async fn retrieve_other_launcher_account_info(
-  app: AppHandle,
-  launcher_type: ImportLauncherType,
-) -> USTBLResult<(Vec<Player>, Vec<AuthServer>)> {
-  let (mut player_infos, urls) = match launcher_type {
-    ImportLauncherType::HMCL => retrieve_hmcl_account_info(&app).await?,
-    _ => return Ok((vec![], vec![])),
-  };
-
-  // remove trailing slashes for deduplication
-  let mut url_set = std::collections::HashSet::<String>::new();
-  for u in urls {
-    url_set.insert(normalize_url(u.as_str()));
-  }
-  for p in &mut player_infos {
-    if let Some(url) = p.auth_server_url.as_mut() {
-      *url = normalize_url(url);
-    }
-  }
-
-  // fetch auth servers
-  let mut auth_server_infos = Vec::new();
-  for url in url_set {
-    auth_server_infos.push(fetch_auth_server_info(&app, url).await?);
-  }
-
-  Ok((
-    player_infos
-      .into_iter()
-      .map(|p| Player::from_player_info(p, Some(&auth_server_infos)))
-      .collect(),
-    auth_server_infos
-      .into_iter()
-      .map(AuthServer::from)
-      .collect(),
-  ))
-}
-
-// Stage 2 of importing accounts from other launchers
-#[tauri::command]
-pub async fn import_external_account_info(
-  app: AppHandle,
-  players: Vec<Player>,
-  auth_servers: Vec<AuthServer>,
-) -> USTBLResult<()> {
-  // fetch auth servers
-  let fetch_tasks = auth_servers.into_iter().map(|server| {
-    let app = app.clone();
-    async move { fetch_auth_server_info(&app, server.auth_url).await }
-  });
-
-  let fetched = futures::future::join_all(fetch_tasks).await;
-  let mut fetched_infos = Vec::with_capacity(fetched.len());
-  for r in fetched {
-    fetched_infos.push(r?);
-  }
-
-  let account_binding = app.state::<Mutex<AccountInfo>>();
-  let mut account_state = account_binding.lock()?;
-
-  // servers: same url overwritten
-  for server_info in fetched_infos {
-    if let Some(existing) = account_state
-      .auth_servers
-      .iter_mut()
-      .find(|s| s.auth_url == server_info.auth_url)
-    {
-      *existing = server_info;
-    } else {
-      account_state.auth_servers.push(server_info);
-    }
-  }
-
-  // players: same id overwritten
-  for player in players {
-    let player_info: PlayerInfo = player.into();
-    if let Some(existing) = account_state
-      .players
-      .iter_mut()
-      .find(|p| p.id == player_info.id)
-    {
-      *existing = player_info;
-    } else {
-      account_state.players.push(player_info);
-    }
-  }
-
-  account_state.save()?;
   Ok(())
 }

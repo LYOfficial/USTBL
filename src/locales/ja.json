@@ -76,8 +76,7 @@
       "addPlayer": "キャラクター追加",
       "add3rdPartyServer": "認証サーバー追加",
       "sourceHomepage": "ホームページへ",
-      "deleteServer": "サーバー削除",
-      "importFromOtherLaunchers": "他のランチャーからインポート"
+      "deleteServer": "サーバー削除"
     },
     "playerTypeList": {
       "all": "すべてのソース"
@@ -1246,23 +1245,6 @@
       }
     }
   },
-  "ImportAccountInfoModal": {
-    "header": {
-      "title": "他のランチャーからアカウント情報をインポート"
-    },
-    "launcherDesc": {
-      "HMCL": "Hello Minecraft! Launcher"
-    },
-    "body": {
-      "authServers": "認証サーバー",
-      "players": "キャラクター"
-    },
-    "tooltips": {
-      "existingServer": "同じアドレスの認証サーバーが既に存在するため、インポート時に上書きされます。",
-      "existingPlayer": "同じ UUID のキャラクターが既に存在するため、インポート時に上書きされます。",
-      "expired": "このプレイヤートークンは期限切れのため、インポートできません。"
-    }
-  },
   "ImportModpackModal": {
     "header": {
       "title": "モッドパックをインポート"
@@ -2028,6 +2010,17 @@
       }
     },
     "account": {
+      "retrieveVustbFriends": {
+        "success": "フレンド一覧を更新しました",
+        "error": {
+          "title": "フレンド一覧の取得に失敗しました",
+          "description": {
+            "EXPIRED": "ログインの有効期限が切れました。再認証してください",
+            "NETWORK_ERROR": "Pixel USTB サーバーに接続できません",
+            "NOT_FOUND": "Pixel USTB アカウントにログインしていません"
+          }
+        }
+      },
       "syncVustbAccount": {
         "success": "像素北科アカウント情報を同期しました",
         "error": {
