@@ -2028,6 +2028,18 @@
       }
     },
     "account": {
+      "syncVustbAccount": {
+        "success": "像素北科アカウント情報を同期しました",
+        "error": {
+          "title": "像素北科アカウントの同期に失敗しました",
+          "description": {
+            "EXPIRED": "ログインの有効期限が切れました。再認証してください",
+            "NETWORK_ERROR": "像素北科サーバーに接続できません",
+            "PARSE_ERROR": "像素北科サーバーから無効な応答が返されました",
+            "NOT_FOUND": "像素北科アカウントにログインしていません"
+          }
+        }
+      },
       "retrievePlayerList": {
         "error": {
           "title": "キャラクターリストの取得に失敗"

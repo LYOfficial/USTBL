@@ -2028,6 +2028,18 @@
       }
     },
     "account": {
+      "syncVustbAccount": {
+        "success": "像素北科账户资料已同步",
+        "error": {
+          "title": "同步像素北科账户失败",
+          "description": {
+            "EXPIRED": "登录已过期，请重新授权",
+            "NETWORK_ERROR": "无法连接像素北科服务器",
+            "PARSE_ERROR": "像素北科服务器返回的数据格式错误",
+            "NOT_FOUND": "尚未登录像素北科账户"
+          }
+        }
+      },
       "retrievePlayerList": {
         "error": {
           "title": "获取角色列表失败"

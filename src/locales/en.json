@@ -2028,6 +2028,18 @@
       }
     },
     "account": {
+      "syncVustbAccount": {
+        "success": "Pixel USTB account data synchronized",
+        "error": {
+          "title": "Failed to synchronize Pixel USTB account",
+          "description": {
+            "EXPIRED": "Your login has expired. Please authorize again",
+            "NETWORK_ERROR": "Unable to connect to the Pixel USTB server",
+            "PARSE_ERROR": "Pixel USTB returned an invalid response",
+            "NOT_FOUND": "No Pixel USTB account is signed in"
+          }
+        }
+      },
       "retrievePlayerList": {
         "error": {
           "title": "Failed to retrieve player list"

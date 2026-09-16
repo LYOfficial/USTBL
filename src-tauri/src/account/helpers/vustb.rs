@@ -8,11 +8,13 @@ use crate::account::models::{
 use crate::error::{USTBLError, USTBLResult};
 use crate::storage::Storage;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_http::reqwest::{self, RequestBuilder};
 
 const VUSTB_ISSUER: &str = "https://www.ustb.world";
+static SESSION_REFRESH_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+  LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 #[derive(Deserialize)]
 struct LauncherAccountResponse {
@@ -183,8 +185,19 @@ pub fn store_tokens(app: &AppHandle, tokens: &OAuthTokens) -> USTBLResult<()> {
   Ok(())
 }
 
-pub async fn refresh_session(app: &AppHandle) -> USTBLResult<OAuthTokens> {
+fn access_token_was_replaced(failed_access_token: Option<&str>, current: &OAuthTokens) -> bool {
+  failed_access_token.is_some_and(|token| token != current.access_token)
+}
+
+async fn refresh_session_after(
+  app: &AppHandle,
+  failed_access_token: Option<&str>,
+) -> USTBLResult<OAuthTokens> {
+  let _refresh_guard = SESSION_REFRESH_LOCK.lock().await;
   let current = stored_tokens(app)?;
+  if access_token_was_replaced(failed_access_token, &current) {
+    return Ok(current);
+  }
   let refresh_token = current
     .refresh_token
     .filter(|token| !token.is_empty())
@@ -219,7 +232,7 @@ pub async fn load_all_profiles(app: &AppHandle) -> USTBLResult<OAuthProfileLogin
         .is_some_and(|token| !token.is_empty()) =>
     {
       log::debug!("Refreshing vUSTB session after profile sync failed: {error:?}");
-      let refreshed = refresh_session(app).await?;
+      let refreshed = refresh_session_after(app, Some(&current.access_token)).await?;
       oauth::load_all_profiles(app, USTB_AUTH_SERVER_URL.to_string(), refreshed).await?
     }
     Err(error) => return Err(error),
@@ -245,7 +258,7 @@ where
     return Ok(response);
   }
 
-  let refreshed = refresh_session(app).await?;
+  let refreshed = refresh_session_after(app, Some(&current.access_token)).await?;
   build_request(&client, &refreshed.access_token)
     .send()
     .await
@@ -358,10 +371,10 @@ pub async fn checkin(app: &AppHandle, player_id: String) -> USTBLResult<VustbChe
 
 #[cfg(test)]
 mod tests {
-  use super::tokens_from_state;
+  use super::{access_token_was_replaced, tokens_from_state};
   use crate::account::helpers::authlib_injector::constants::USTB_AUTH_SERVER_URL;
   use crate::account::models::{
-    AccountInfo, PlayerInfo, PlayerType, VustbAccount, VustbProgression, VustbSession,
+    AccountInfo, OAuthTokens, PlayerInfo, PlayerType, VustbAccount, VustbProgression, VustbSession,
   };
   use uuid::Uuid;
 
@@ -424,5 +437,18 @@ mod tests {
     let tokens = tokens_from_state(&state).unwrap();
     assert_eq!(tokens.access_token, "legacy-access");
     assert_eq!(tokens.refresh_token.as_deref(), Some("legacy-refresh"));
+  }
+
+  #[test]
+  fn concurrent_refresh_reuses_tokens_already_replaced_by_another_request() {
+    let current = OAuthTokens {
+      access_token: "new-access".to_string(),
+      refresh_token: Some("new-refresh".to_string()),
+      id_token: None,
+    };
+
+    assert!(access_token_was_replaced(Some("old-access"), &current));
+    assert!(!access_token_was_replaced(Some("new-access"), &current));
+    assert!(!access_token_was_replaced(None, &current));
   }
 }
