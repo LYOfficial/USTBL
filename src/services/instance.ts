@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { InstanceSubdirType } from "@/enums/instance";
 import { GameConfig, GameDirectory } from "@/models/config";
 import {
@@ -24,6 +25,18 @@ import { responseHandler } from "@/utils/response";
  * Service class for managing instances and its local resources.
  */
 export class InstanceService {
+  static onPlayTimeUpdated(
+    callback: (payload: { instanceId: string; playTime: number }) => void
+  ): () => void {
+    const unlisten = getCurrentWebview().listen<{
+      instanceId: string;
+      playTime: number;
+    }>("instance:play-time-updated", (event) => callback(event.payload));
+    return () => {
+      unlisten.then((removeListener) => removeListener());
+    };
+  }
+
   /**
    * RETRIEVE the list of local instances.
    * @returns {Promise<InvokeResponse<InstanceSummary[]>>}

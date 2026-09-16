@@ -64,6 +64,16 @@ export const GlobalDataContextProvider: React.FC<{
     useState<GameClientResourceInfo[]>();
 
   useEffect(() => {
+    return InstanceService.onPlayTimeUpdated(({ instanceId, playTime }) => {
+      setInstanceList((current) =>
+        current?.map((instance) =>
+          instance.id === instanceId ? { ...instance, playTime } : instance
+        )
+      );
+    });
+  }, []);
+
+  useEffect(() => {
     const selectedPlayerId = config.states.shared.selectedPlayerId;
     setSelectedPlayer(
       playerList?.find((player) => player.id === selectedPlayerId)
