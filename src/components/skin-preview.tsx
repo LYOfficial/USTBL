@@ -37,6 +37,7 @@ import { SkinModel } from "@/enums/account";
 
 type AnimationType = "idle" | "walk" | "run" | "wave";
 type backgroundType = "none" | "black" | "panorama";
+type ControlBarVariant = "default" | "overlay";
 
 interface SkinPreviewProps extends Omit<BoxProps, "width" | "height"> {
   skinSrc?: string;
@@ -50,6 +51,7 @@ interface SkinPreviewProps extends Omit<BoxProps, "width" | "height"> {
   errorMessage?: string | null;
   onSkinError?: (msg: string | null) => void;
   showControlBar?: boolean;
+  controlBarVariant?: ControlBarVariant;
   skinModel?: SkinModel;
 }
 
@@ -65,6 +67,7 @@ const SkinPreview: React.FC<SkinPreviewProps> = ({
   errorMessage,
   onSkinError,
   showControlBar = true,
+  controlBarVariant = "default",
   skinModel,
   ...props
 }) => {
@@ -107,7 +110,7 @@ const SkinPreview: React.FC<SkinPreviewProps> = ({
     skinViewerRef.current = new skinview3d.SkinViewer({
       canvas: canvasRef.current,
       width: width,
-      height: height - 40, // Subtract height for control bar and top-margin
+      height: controlBarVariant === "overlay" ? height : height - 40,
     });
 
     skinViewerRef.current.zoom = 0.8;
@@ -120,7 +123,15 @@ const SkinPreview: React.FC<SkinPreviewProps> = ({
       skinViewerRef.current.animation = null;
       setAutoRotate(false);
     }
-  }, [width, height, isPlaying, autoRotate, animationList, currentAnimation]);
+  }, [
+    width,
+    height,
+    isPlaying,
+    autoRotate,
+    animationList,
+    currentAnimation,
+    controlBarVariant,
+  ]);
 
   useEffect(() => {
     initSkinViewer();
@@ -202,6 +213,18 @@ const SkinPreview: React.FC<SkinPreviewProps> = ({
 
   const backgroundTypes = Object.keys(backgroundList) as backgroundType[];
 
+  const overlayButtonProps =
+    controlBarVariant === "overlay"
+      ? {
+          size: "xs",
+          bg: "whiteAlpha.900",
+          color: "gray.800",
+          _hover: { bg: "white" },
+          _active: { bg: "gray.100" },
+          boxShadow: "sm",
+        }
+      : {};
+
   const BackGroundSelector = () => {
     return (
       <Popover placement="top-start">
@@ -213,6 +236,7 @@ const SkinPreview: React.FC<SkinPreviewProps> = ({
             mr={1}
             aria-label="color"
             icon={<LuChevronUp />}
+            {...overlayButtonProps}
             style={
               background === "panorama"
                 ? {
@@ -264,7 +288,14 @@ const SkinPreview: React.FC<SkinPreviewProps> = ({
   }, [background, backgroundList]);
 
   return (
-    <VStack {...props} width={width} height={height}>
+    <VStack
+      {...props}
+      width={width}
+      height={height}
+      spacing={0}
+      position="relative"
+      overflow="hidden"
+    >
       {errorMessage && (
         <VStack
           width={width}
@@ -278,14 +309,22 @@ const SkinPreview: React.FC<SkinPreviewProps> = ({
       )}
       <canvas
         ref={canvasRef}
-        style={{ display: errorMessage ? "none" : undefined }}
+        style={{ display: errorMessage ? "none" : "block" }}
       />
       {showControlBar && (
         <Flex
           alignItems="center"
           justifyContent="space-between"
-          mt={2}
-          width="100%"
+          {...(controlBarVariant === "overlay"
+            ? {
+                position: "absolute",
+                left: 2,
+                right: 8,
+                bottom: 2,
+                zIndex: 2,
+                width: "auto",
+              }
+            : { mt: 2, width: "100%" })}
         >
           <HStack spacing={0}>
             <BackGroundSelector />
@@ -294,6 +333,7 @@ const SkinPreview: React.FC<SkinPreviewProps> = ({
                 aria-label="Switch Animation"
                 icon={animationList[currentAnimation].icon}
                 variant="ghost"
+                {...overlayButtonProps}
                 onClick={() => {
                   const currentIndex = animationTypes.indexOf(currentAnimation);
                   const nextIndex = (currentIndex + 1) % animationTypes.length;
@@ -310,6 +350,7 @@ const SkinPreview: React.FC<SkinPreviewProps> = ({
                 aria-label="Toggle Rotation"
                 icon={autoRotate ? <LuRefreshCw /> : <LuRefreshCwOff />}
                 variant="ghost"
+                {...overlayButtonProps}
                 onClick={() => setAutoRotate(!autoRotate)}
               />
             </Tooltip>
@@ -320,6 +361,7 @@ const SkinPreview: React.FC<SkinPreviewProps> = ({
                 aria-label="Play/Pause Animation"
                 icon={isPlaying ? <LuPause /> : <LuPlay />}
                 variant="ghost"
+                {...overlayButtonProps}
                 onClick={() => {
                   setIsPlaying(!isPlaying);
                   if (isPlaying) {
@@ -329,14 +371,16 @@ const SkinPreview: React.FC<SkinPreviewProps> = ({
               />
             </Tooltip>
           </HStack>
-          <HStack>
-            <Text fontSize="sm">{t("SkinPreview.cape")}</Text>
-            <Switch
-              isChecked={isCapeVisible}
-              onChange={(e) => onCapeVisibilityChange?.(e.target.checked)}
-              colorScheme={primaryColor}
-            />
-          </HStack>
+          {controlBarVariant === "default" && (
+            <HStack>
+              <Text fontSize="sm">{t("SkinPreview.cape")}</Text>
+              <Switch
+                isChecked={isCapeVisible}
+                onChange={(e) => onCapeVisibilityChange?.(e.target.checked)}
+                colorScheme={primaryColor}
+              />
+            </HStack>
+          )}
         </Flex>
       )}
     </VStack>

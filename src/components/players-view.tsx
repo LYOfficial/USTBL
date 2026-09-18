@@ -1,29 +1,23 @@
 import {
   Box,
   BoxProps,
-  Button,
   Grid,
   GridItem,
   HStack,
   IconButton,
   Radio,
   RadioGroup,
-  Text,
   VStack,
-  useDisclosure,
 } from "@chakra-ui/react";
-import { useEffect, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
+import { useEffect, useState } from "react";
 import { LuChevronDown, LuChevronUp } from "react-icons/lu";
-import { TbHanger } from "react-icons/tb";
 import Empty from "@/components/common/empty";
 import { OptionItemGroup } from "@/components/common/option-item";
 import { WrapCard } from "@/components/common/wrap-card";
 import PlayerAvatar from "@/components/player-avatar";
 import PlayerMenu from "@/components/player-menu";
-import PlayerSkinModal from "@/components/player-skin-modal";
+import PlayerSkinCardPreview from "@/components/player-skin-card-preview";
 import { useLauncherConfig } from "@/contexts/config";
-import { PlayerType } from "@/enums/account";
 import { Player } from "@/models/account";
 import { generatePlayerDesc } from "@/utils/account";
 
@@ -47,39 +41,9 @@ const PlayersView: React.FC<PlayersViewProps> = ({
   withMenu = true,
   ...boxProps
 }) => {
-  const { t } = useTranslation();
   const { config, update } = useLauncherConfig();
   const primaryColor = config.appearance.theme.primaryColor;
-  const gridRef = useRef<HTMLDivElement>(null);
-  const [columnCount, setColumnCount] = useState(1);
   const [expandedPlayerId, setExpandedPlayerId] = useState<string>();
-  const [skinModalPlayer, setSkinModalPlayer] = useState<Player>();
-  const {
-    isOpen: isSkinModalOpen,
-    onOpen: onSkinModalOpen,
-    onClose: onSkinModalClose,
-  } = useDisclosure();
-
-  useEffect(() => {
-    const grid = gridRef.current;
-    if (!grid) return;
-
-    const updateColumnCount = () => {
-      setColumnCount(
-        Math.max(
-          1,
-          Math.floor(
-            (grid.clientWidth + CARD_GAP) / (CARD_MIN_WIDTH + CARD_GAP)
-          )
-        )
-      );
-    };
-
-    updateColumnCount();
-    const observer = new ResizeObserver(updateColumnCount);
-    observer.observe(grid);
-    return () => observer.disconnect();
-  }, [viewType]);
 
   useEffect(() => {
     if (
@@ -121,11 +85,6 @@ const PlayersView: React.FC<PlayersViewProps> = ({
     ),
   }));
 
-  const handleOpenSkinModal = (player: Player) => {
-    setSkinModalPlayer(player);
-    onSkinModalOpen();
-  };
-
   return (
     <Box {...boxProps}>
       {players.length > 0 ? (
@@ -134,8 +93,7 @@ const PlayersView: React.FC<PlayersViewProps> = ({
             <OptionItemGroup items={listItems} />
           ) : (
             <Grid
-              ref={gridRef}
-              templateColumns={`repeat(${columnCount}, minmax(0, 1fr))`}
+              templateColumns={`repeat(auto-fill, minmax(${CARD_MIN_WIDTH}px, 1fr))`}
               autoRows={`${CARD_HEIGHT}px`}
               autoFlow="dense"
               gap={`${CARD_GAP}px`}
@@ -147,67 +105,34 @@ const PlayersView: React.FC<PlayersViewProps> = ({
                 return (
                   <GridItem
                     key={player.id}
-                    colSpan={isExpanded ? Math.min(2, columnCount) : 1}
                     rowSpan={isExpanded ? 2 : 1}
                     minW={0}
                     position="relative"
                   >
                     <WrapCard
                       cardContent={
-                        <VStack spacing={0} h="100%">
-                          <PlayerAvatar
-                            avatar={player.avatar}
-                            boxSize="36px"
-                            objectFit="cover"
-                          />
-                          <Text
-                            fontSize="xs-sm"
-                            className="ellipsis-text"
-                            fontWeight={
-                              selectedPlayer?.id === player.id
-                                ? "bold"
-                                : "normal"
-                            }
-                            mt={2}
-                            overflow="hidden"
-                          >
-                            {player.name}
-                          </Text>
-                          <Text
-                            fontSize="xs"
-                            className="secondary-text ellipsis-text"
-                          >
-                            {generatePlayerDesc(player, false)}
-                          </Text>
-                          {isExpanded && withMenu && (
-                            <Button
-                              size="xs"
-                              leftIcon={<TbHanger />}
-                              colorScheme={primaryColor}
-                              variant="subtle"
-                              mt="auto"
-                              mb={2}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                handleOpenSkinModal(player);
-                              }}
-                            >
-                              {t(
-                                `PlayerMenu.label.${
-                                  player.playerType === PlayerType.Offline
-                                    ? "manageSkin"
-                                    : "viewSkin"
-                                }`
-                              )}
-                            </Button>
-                          )}
-                        </VStack>
+                        isExpanded ? (
+                          <PlayerSkinCardPreview player={player} />
+                        ) : (
+                          {
+                            title: player.name,
+                            description: generatePlayerDesc(player, false),
+                            image: (
+                              <PlayerAvatar
+                                avatar={player.avatar}
+                                boxSize="36px"
+                                objectFit="cover"
+                              />
+                            ),
+                          }
+                        )
                       }
                       variant="radio"
                       radioValue={player.id}
                       isSelected={selectedPlayer?.id === player.id}
                       onSelect={() => handleUpdateSelectedPlayer(player.id)}
                       h="100%"
+                      p={isExpanded ? 0 : undefined}
                       overflow="hidden"
                       transition="box-shadow 0.2s ease, border-color 0.2s ease"
                     />
@@ -222,15 +147,26 @@ const PlayersView: React.FC<PlayersViewProps> = ({
                         pointerEvents="none"
                       >
                         <Box pointerEvents="auto">
-                          <PlayerMenu
-                            player={player}
-                            showSkinOperation={false}
-                          />
+                          <Box
+                            rounded="md"
+                            bg={isExpanded ? "whiteAlpha.900" : undefined}
+                            color={isExpanded ? "gray.800" : undefined}
+                            boxShadow={isExpanded ? "sm" : undefined}
+                          >
+                            <PlayerMenu
+                              player={player}
+                              showSkinOperation={false}
+                            />
+                          </Box>
                         </Box>
                         <IconButton
                           pointerEvents="auto"
                           size="xs"
                           variant="ghost"
+                          bg={isExpanded ? "whiteAlpha.900" : undefined}
+                          color={isExpanded ? "gray.800" : undefined}
+                          boxShadow={isExpanded ? "sm" : undefined}
+                          _hover={isExpanded ? { bg: "white" } : undefined}
                           aria-label={isExpanded ? "collapse" : "expand"}
                           icon={
                             isExpanded ? <LuChevronUp /> : <LuChevronDown />
@@ -252,13 +188,6 @@ const PlayersView: React.FC<PlayersViewProps> = ({
         </RadioGroup>
       ) : (
         <Empty withIcon={false} size="sm" />
-      )}
-      {skinModalPlayer && (
-        <PlayerSkinModal
-          player={skinModalPlayer}
-          isOpen={isSkinModalOpen}
-          onClose={onSkinModalClose}
-        />
       )}
     </Box>
   );
