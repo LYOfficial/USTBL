@@ -2639,7 +2639,8 @@
       "idle": "Idle",
       "walk": "Walk",
       "run": "Run",
-      "wave": "Wave"
+      "wave": "Wave",
+      "spring": "Spring"
     },
     "button": {
       "enableRotation": "Enable Rotation",

@@ -2639,7 +2639,8 @@
       "idle": "待機",
       "walk": "歩行",
       "run": "走行",
-      "wave": "手を振る"
+      "wave": "手を振る",
+      "spring": "ゼリー跳ね"
     },
     "button": {
       "enableRotation": "回転を有効化",
