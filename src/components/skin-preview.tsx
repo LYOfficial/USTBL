@@ -36,6 +36,10 @@ import * as skinview3d from "skinview3d";
 import { useLauncherConfig } from "@/contexts/config";
 import { SkinModel } from "@/enums/account";
 import { SpringAnimation } from "@/utils/skin-animation";
+import {
+  configureEnhancedSkinRendering,
+  refreshEnhancedSkinMaterials,
+} from "@/utils/skin-rendering";
 
 type AnimationType = "idle" | "walk" | "run" | "wave" | "spring";
 type backgroundType = "none" | "black" | "panorama";
@@ -55,6 +59,7 @@ interface SkinPreviewProps extends Omit<BoxProps, "width" | "height"> {
   showControlBar?: boolean;
   controlBarVariant?: ControlBarVariant;
   playEntranceAnimation?: boolean;
+  enhancedRendering?: boolean;
   skinModel?: SkinModel;
 }
 
@@ -72,6 +77,7 @@ const SkinPreview: React.FC<SkinPreviewProps> = ({
   showControlBar = true,
   controlBarVariant = "default",
   playEntranceAnimation = false,
+  enhancedRendering = false,
   skinModel,
   ...props
 }) => {
@@ -80,6 +86,7 @@ const SkinPreview: React.FC<SkinPreviewProps> = ({
   const primaryColor = config.appearance.theme.primaryColor;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const skinViewerRef = useRef<skinview3d.SkinViewer | null>(null);
+  const renderingCleanupRef = useRef<(() => void) | null>(null);
   const entrancePlayedRef = useRef(false);
   const [currentAnimation, setCurrentAnimation] =
     useState<AnimationType>(animation);
@@ -131,20 +138,32 @@ const SkinPreview: React.FC<SkinPreviewProps> = ({
 
   const initSkinViewer = useCallback(() => {
     if (!canvasRef.current) return;
+    renderingCleanupRef.current?.();
+    renderingCleanupRef.current = null;
     if (skinViewerRef.current) skinViewerRef.current.dispose();
     skinViewerRef.current = new skinview3d.SkinViewer({
       canvas: canvasRef.current,
       width: width,
       height: controlBarVariant === "overlay" ? height : height - 40,
+      pixelRatio: enhancedRendering
+        ? Math.min(window.devicePixelRatio, 1.5)
+        : undefined,
     });
 
     skinViewerRef.current.zoom = 0.8;
     skinViewerRef.current.controls.enableZoom = false;
-  }, [width, height, controlBarVariant]);
+    if (enhancedRendering) {
+      renderingCleanupRef.current = configureEnhancedSkinRendering(
+        skinViewerRef.current
+      );
+    }
+  }, [width, height, controlBarVariant, enhancedRendering]);
 
   useEffect(() => {
     initSkinViewer();
     return () => {
+      renderingCleanupRef.current?.();
+      renderingCleanupRef.current = null;
       skinViewerRef.current?.dispose();
       skinViewerRef.current = null;
     };
@@ -187,6 +206,9 @@ const SkinPreview: React.FC<SkinPreviewProps> = ({
           } else {
             skinViewerRef.current.resetCape();
           }
+          if (enhancedRendering) {
+            refreshEnhancedSkinMaterials(skinViewerRef.current);
+          }
           onSkinError?.(null);
           if (playEntranceAnimation) {
             playSpringAnimation();
@@ -213,6 +235,7 @@ const SkinPreview: React.FC<SkinPreviewProps> = ({
     onSkinError,
     playEntranceAnimation,
     playSpringAnimation,
+    enhancedRendering,
   ]);
 
   // background
