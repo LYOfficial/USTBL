@@ -101,7 +101,7 @@ export const WrapCard: React.FC<WrapCardProps> = ({
       {...cardProps}
     >
       {variant === "radio" && (
-        <Box position="absolute" top={2} left={2}>
+        <Box position="absolute" top={2} left={2} zIndex={3}>
           <Radio
             value={radioValue}
             onClick={onSelect}

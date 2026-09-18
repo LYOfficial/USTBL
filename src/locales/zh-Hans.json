@@ -2639,7 +2639,8 @@
       "idle": "空闲",
       "walk": "步行 ",
       "run": "跑步",
-      "wave": "挥手"
+      "wave": "挥手",
+      "spring": "果冻弹跳"
     },
     "button": {
       "enableRotation": "启用旋转",
