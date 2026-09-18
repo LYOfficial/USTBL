@@ -50,6 +50,7 @@ const PlayerSkinCardPreview: React.FC<PlayerSkinCardPreviewProps> = ({
           height={EXPANDED_CARD_HEIGHT}
           animation="idle"
           playEntranceAnimation
+          enhancedRendering
           controlBarVariant="overlay"
           showControlBar
         />
