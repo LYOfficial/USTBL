@@ -2639,7 +2639,8 @@
       "idle": "Inactif",
       "walk": "Marche",
       "run": "Course",
-      "wave": "Saluer"
+      "wave": "Saluer",
+      "spring": "Saut gélatineux"
     },
     "button": {
       "enableRotation": "Activer la rotation",
