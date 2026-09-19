@@ -1,7 +1,5 @@
-use crate::account::helpers::authlib_injector::common::{
-  parse_profile_with_policy, retrieve_profile,
-};
-use crate::account::helpers::authlib_injector::constants::{SCOPE, USTB_AUTH_SERVER_URL};
+use crate::account::helpers::authlib_injector::common::{parse_profile, retrieve_profile};
+use crate::account::helpers::authlib_injector::constants::SCOPE;
 use crate::account::helpers::authlib_injector::models::MinecraftProfile;
 use crate::account::helpers::misc::oauth_polling;
 use crate::account::models::{
@@ -289,17 +287,13 @@ async fn parse_token(
     }
   }
 
-  let require_platform_skin = auth_server_url
-    .as_deref()
-    .is_some_and(|url| url.trim_end_matches('/') == USTB_AUTH_SERVER_URL.trim_end_matches('/'));
-  let result = parse_profile_with_policy(
+  let result = parse_profile(
     app,
     &selected_profile,
     Some(tokens.access_token.clone()),
     tokens.refresh_token.clone(),
     auth_server_url,
     Some(selected_profile.name.clone()),
-    require_platform_skin,
   )
   .await;
   if let Err(error) = &result {
@@ -393,14 +387,13 @@ pub async fn load_all_profiles(
 
   for listed_profile in profiles {
     let full_profile = retrieve_profile(app, auth_server_url.clone(), listed_profile.id).await?;
-    let player = parse_profile_with_policy(
+    let player = parse_profile(
       app,
       &full_profile,
       Some(tokens.access_token.clone()),
       tokens.refresh_token.clone(),
       Some(auth_server_url.clone()),
       Some(full_profile.name.clone()),
-      true,
     )
     .await?;
     players.push(player);
