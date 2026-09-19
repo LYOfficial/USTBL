@@ -73,27 +73,6 @@ pub async fn parse_profile(
   auth_server_url: Option<String>,
   auth_account: Option<String>,
 ) -> USTBLResult<PlayerInfo> {
-  parse_profile_with_policy(
-    app,
-    profile,
-    access_token,
-    refresh_token,
-    auth_server_url,
-    auth_account,
-    false,
-  )
-  .await
-}
-
-pub async fn parse_profile_with_policy(
-  app: &AppHandle,
-  profile: &MinecraftProfile,
-  access_token: Option<String>,
-  refresh_token: Option<String>,
-  auth_server_url: Option<String>,
-  auth_account: Option<String>,
-  require_platform_skin: bool,
-) -> USTBLResult<PlayerInfo> {
   let uuid = if let Ok(uuid) = Uuid::parse_str(&profile.id) {
     uuid
   } else if profile.id.trim().len() == 32 {
@@ -145,45 +124,32 @@ pub async fn parse_profile_with_policy(
                   .unwrap_or_default(),
                 preset: None,
               }),
-              Err(error) if require_platform_skin && texture_type == TextureType::Skin => {
-                log::error!(
-                  "Required OAuth profile skin download failed; profile_id={}, error={error:?}",
-                  profile.id
-                );
-                return Err(AccountError::TextureError.into());
-              }
               Err(error) => log::warn!(
-                "Failed to load OAuth profile texture; type={texture_type}, error={error:?}"
+                "Failed to load OAuth profile texture; profile_id={}, type={texture_type}, error={error:?}; using preset skin when needed",
+                profile.id
               ),
             }
           }
         }
       }
-      None if require_platform_skin => {
-        log::error!(
-          "Required OAuth profile texture property is invalid; profile_id={}",
-          profile.id
-        );
-        return Err(AccountError::TextureError.into());
-      }
-      None => log::warn!("OAuth profile texture property is invalid; using preset skin"),
+      None => log::warn!(
+        "OAuth profile texture property is invalid; profile_id={}; using preset skin",
+        profile.id
+      ),
     }
   }
 
   let has_skin = textures
     .iter()
     .any(|texture| texture.texture_type == TextureType::Skin);
-  if require_platform_skin && !has_skin {
-    log::error!(
-      "OAuth profile has no platform skin; profile_id={}",
+  if !has_skin {
+    log::warn!(
+      "OAuth profile has no available skin; profile_id={}; using preset skin",
       profile.id
     );
-    return Err(AccountError::TextureError.into());
-  }
-
-  if !has_skin {
-    // this player didn't have a texture, use preset Steve skin instead
-    textures = load_preset_skin(app, PresetRole::Steve)?;
+    let mut fallback_textures = load_preset_skin(app, PresetRole::Steve)?;
+    fallback_textures.extend(textures);
+    textures = fallback_textures;
   }
 
   Ok(
