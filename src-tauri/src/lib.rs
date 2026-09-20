@@ -98,6 +98,8 @@ pub async fn run() -> i32 {
       account::commands::retrieve_vustb_skin_library,
       account::commands::retrieve_vustb_wardrobe,
       account::commands::collect_vustb_texture,
+      account::commands::apply_vustb_texture_to_player,
+      account::commands::clear_player_texture,
       account::commands::logout_vustb_account,
       account::commands::relogin_player_oauth,
       account::commands::cancel_oauth,

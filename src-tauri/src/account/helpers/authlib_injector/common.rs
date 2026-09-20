@@ -123,6 +123,7 @@ pub async fn parse_profile(
                   .map(|model_str| SkinModel::from_str(&model_str).unwrap_or(SkinModel::Default))
                   .unwrap_or_default(),
                 preset: None,
+                source_hash: None,
               }),
               Err(error) => log::warn!(
                 "Failed to load OAuth profile texture; profile_id={}, type={texture_type}, error={error:?}; using preset skin when needed",

@@ -15,6 +15,7 @@ import { useTranslation } from "react-i18next";
 import { LuCopy, LuEllipsis, LuRefreshCcw, LuTrash } from "react-icons/lu";
 import { TbHanger } from "react-icons/tb";
 import { CommonIconButton } from "@/components/common/common-icon-button";
+import PlayerTextureManagerModal from "@/components/modals/player-texture-manager-modal";
 import PlayerSkinModal from "@/components/player-skin-modal";
 import { useGlobalData } from "@/contexts/global-data";
 import { useSharedModals } from "@/contexts/shared-modal";
@@ -29,12 +30,14 @@ interface PlayerMenuProps {
   player: Player;
   variant?: "dropdown" | "buttonGroup";
   showSkinOperation?: boolean;
+  showTextureManager?: boolean;
 }
 
 export const PlayerMenu: React.FC<PlayerMenuProps> = ({
   player,
   variant = "dropdown",
   showSkinOperation = true,
+  showTextureManager = true,
 }) => {
   const { t } = useTranslation();
   const toast = useToast();
@@ -46,6 +49,11 @@ export const PlayerMenu: React.FC<PlayerMenuProps> = ({
     isOpen: isSkinModalOpen,
     onOpen: onSkinModalOpen,
     onClose: onSkinModalClose,
+  } = useDisclosure();
+  const {
+    isOpen: isTextureManagerOpen,
+    onOpen: onTextureManagerOpen,
+    onClose: onTextureManagerClose,
   } = useDisclosure();
 
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -122,6 +130,15 @@ export const PlayerMenu: React.FC<PlayerMenuProps> = ({
             isLoading: isRefreshing,
           },
         ]),
+    ...(showTextureManager
+      ? [
+          {
+            icon: TbHanger,
+            label: "更换皮肤",
+            onClick: onTextureManagerOpen,
+          },
+        ]
+      : []),
     ...(showSkinOperation
       ? [
           {
@@ -207,6 +224,13 @@ export const PlayerMenu: React.FC<PlayerMenuProps> = ({
           player={player}
           isOpen={isSkinModalOpen}
           onClose={onSkinModalClose}
+        />
+      )}
+      {showTextureManager && (
+        <PlayerTextureManagerModal
+          player={player}
+          isOpen={isTextureManagerOpen}
+          onClose={onTextureManagerClose}
         />
       )}
     </>

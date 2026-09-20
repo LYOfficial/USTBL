@@ -374,7 +374,7 @@ const AccountsPage = () => {
                   rounded="md"
                 >
                   {isLibraryMode ? (
-                    <VskinLibraryView />
+                    <VskinLibraryView selectedPlayer={selectedPlayer} />
                   ) : (
                     <PlayersView
                       selectedPlayer={selectedPlayer}
