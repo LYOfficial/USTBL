@@ -21,6 +21,10 @@ struct LauncherAccountResponse {
   id: u64,
   username: String,
   #[serde(default)]
+  pixel_points: i64,
+  #[serde(default)]
+  shell_points: i64,
+  #[serde(default)]
   display_name: String,
   #[serde(default)]
   avatar_url: String,
@@ -333,6 +337,21 @@ pub async fn put_authenticated<B: Serialize, T: DeserializeOwned>(
   parse_json_response(response, endpoint).await
 }
 
+pub async fn patch_authenticated<B: Serialize, T: DeserializeOwned>(
+  app: &AppHandle,
+  endpoint: &str,
+  body: &B,
+) -> USTBLResult<T> {
+  let response = send_authenticated(app, |client, access_token| {
+    client
+      .patch(format!("{VUSTB_ISSUER}{endpoint}"))
+      .bearer_auth(access_token)
+      .json(body)
+  })
+  .await?;
+  parse_json_response(response, endpoint).await
+}
+
 pub async fn delete_authenticated<T: DeserializeOwned>(
   app: &AppHandle,
   endpoint: &str,
@@ -366,6 +385,8 @@ pub async fn fetch_account(
     },
     avatar_url: absolute_vustb_url(user_info.avatar_url),
     user_group: permission.user_group,
+    pixel_points: user_info.pixel_points,
+    shell_points: user_info.shell_points,
     profiles: profiles.into_profiles(),
     progression: user_info.progression,
     last_checkin: user_info.last_checkin,
@@ -389,6 +410,8 @@ pub async fn fetch_current_account(
     },
     avatar_url: absolute_vustb_url(user_info.avatar_url),
     user_group: permission.user_group,
+    pixel_points: user_info.pixel_points,
+    shell_points: user_info.shell_points,
     profiles: profiles.into_profiles(),
     progression: user_info.progression,
     last_checkin: user_info.last_checkin,
@@ -503,6 +526,8 @@ mod tests {
       username: "user".to_string(),
       avatar_url: String::new(),
       user_group: "user".to_string(),
+      pixel_points: 0,
+      shell_points: 0,
       profiles: vec![],
       progression: VustbProgression::default(),
       last_checkin: None,

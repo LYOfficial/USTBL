@@ -56,8 +56,48 @@ pub fn retrieve_player_list(app: AppHandle) -> USTBLResult<Vec<Player>> {
 }
 
 #[tauri::command]
-pub async fn add_player_offline(app: AppHandle, username: String, uuid: String) -> USTBLResult<()> {
-  let new_player = offline::login(&app, username, uuid).await?;
+pub async fn add_player_offline(
+  app: AppHandle,
+  username: String,
+  uuid: String,
+  textures: Option<Vec<VustbTexture>>,
+) -> USTBLResult<()> {
+  let mut new_player = offline::login(&app, username, uuid).await?;
+  if let Some(textures) = textures {
+    // New creation UI previews Steve when no skin is selected. Preserve the
+    // legacy random preset for callers that omit the optional outfit entirely.
+    new_player.textures = offline::load_preset_skin(&app, PresetRole::Steve)?;
+    let mut seen = HashSet::new();
+    for texture in textures {
+      if !seen.insert(texture.texture_type.clone()) {
+        return Err(AccountError::Invalid.into());
+      }
+      let texture_type = match texture.texture_type.as_str() {
+        "skin" => TextureType::Skin,
+        "cape" => TextureType::Cape,
+        _ => return Err(AccountError::Invalid.into()),
+      };
+      let loaded = if let Some(id) = texture.local_backup_id.as_deref() {
+        if texture_type != TextureType::Skin {
+          return Err(AccountError::Invalid.into());
+        }
+        skin_backup::load_local_skin_backup(id)?
+      } else {
+        Texture {
+          texture_type: texture_type.clone(),
+          image: misc::fetch_image(&app, texture.url).await?,
+          model: texture.model.parse().unwrap_or_default(),
+          preset: None,
+          source_hash: Some(texture.hash),
+        }
+      };
+      new_player
+        .textures
+        .retain(|item| item.texture_type != texture_type);
+      new_player.textures.push(loaded);
+    }
+  }
+  // Resolve the complete outfit before persisting a new local profile.
 
   let account_binding = app.state::<Mutex<AccountInfo>>();
   let mut account_state = account_binding.lock()?;
@@ -246,6 +286,30 @@ pub fn retrieve_vustb_account(app: AppHandle) -> USTBLResult<Option<VustbAccount
 }
 
 #[tauri::command]
+pub async fn refresh_vustb_account(app: AppHandle) -> USTBLResult<VustbAccount> {
+  let (player_id, subject) = {
+    let binding = app.state::<Mutex<AccountInfo>>();
+    let state = binding.lock()?;
+    let account = state.vustb_account.as_ref().ok_or(AccountError::NotFound)?;
+    (account.player_id.clone(), account.subject.clone())
+  };
+  let account = vustb::fetch_current_account(&app, player_id).await?;
+  let binding = app.state::<Mutex<AccountInfo>>();
+  let mut state = binding.lock()?;
+  if state
+    .vustb_account
+    .as_ref()
+    .is_none_or(|value| value.subject != subject)
+    || account.subject != subject
+  {
+    return Err(AccountError::Expired.into());
+  }
+  state.vustb_account = Some(account.clone());
+  state.save()?;
+  Ok(account)
+}
+
+#[tauri::command]
 pub async fn sync_vustb_account(app: AppHandle) -> USTBLResult<VustbAccount> {
   let player_id = {
     let binding = app.state::<Mutex<AccountInfo>>();
@@ -334,11 +398,16 @@ pub async fn retrieve_vustb_skin_library(
 pub async fn retrieve_vustb_wardrobe(
   app: AppHandle,
   texture_type: Option<String>,
+  local_only: Option<bool>,
 ) -> USTBLResult<Vec<VustbTexture>> {
   let include_local_skins = texture_type
     .as_deref()
     .is_none_or(|texture_type| texture_type.eq_ignore_ascii_case("skin"));
-  let mut wardrobe = vustb::fetch_wardrobe(&app, texture_type).await?;
+  let mut wardrobe = if local_only.unwrap_or(false) {
+    Vec::new()
+  } else {
+    vustb::fetch_wardrobe(&app, texture_type).await?
+  };
   if include_local_skins {
     let cloud_hashes = wardrobe
       .iter()
@@ -355,6 +424,106 @@ pub async fn retrieve_vustb_wardrobe(
 #[tauri::command]
 pub async fn collect_vustb_texture(app: AppHandle, hash: String) -> USTBLResult<()> {
   vustb::collect_texture(&app, &hash).await
+}
+
+/// Creation and synchronization are separate: a failed sync must not disguise
+/// successful creation (or encourage another points-consuming POST).
+#[tauri::command]
+pub async fn create_vustb_profile(
+  app: AppHandle,
+  name: String,
+  skin_hash: Option<String>,
+  cape_hash: Option<String>,
+) -> USTBLResult<crate::account::models::VustbProfile> {
+  vustb::post_authenticated(
+    &app,
+    "/api/launcher/profiles",
+    &serde_json::json!({
+      "name": name, "skin_hash": skin_hash, "cape_hash": cape_hash,
+    }),
+  )
+  .await
+}
+
+#[tauri::command]
+pub async fn apply_vustb_outfit(
+  app: AppHandle,
+  player_id: String,
+  textures: Vec<VustbTexture>,
+  clear_skin: bool,
+  clear_cape: bool,
+) -> USTBLResult<()> {
+  let player = {
+    let binding = app.state::<Mutex<AccountInfo>>();
+    let state = binding.lock()?;
+    state
+      .players
+      .iter()
+      .find(|p| p.id == player_id)
+      .cloned()
+      .ok_or(AccountError::NotFound)?
+  };
+  if player.player_type != PlayerType::ThirdParty
+    || !player
+      .auth_server_url
+      .as_deref()
+      .is_some_and(|url| normalize_url(url) == normalize_url(USTB_AUTH_SERVER_URL))
+  {
+    return Err(AccountError::Invalid.into());
+  }
+  let mut body = serde_json::Map::new();
+  let mut replacements = Vec::new();
+  if clear_skin {
+    body.insert("skin_hash".into(), serde_json::Value::Null);
+    replacements.extend(offline::load_preset_skin(&app, PresetRole::Steve)?);
+  }
+  if clear_cape {
+    body.insert("cape_hash".into(), serde_json::Value::Null);
+  }
+  // Fetch before modifying the cloud profile so a download error leaves the
+  // existing outfit untouched. Save both local textures in one state update.
+  for texture in textures {
+    if texture.local_backup || texture.local_backup_id.is_some() {
+      return Err(AccountError::Invalid.into());
+    }
+    let texture_type = match texture.texture_type.as_str() {
+      "skin" => TextureType::Skin,
+      "cape" => TextureType::Cape,
+      _ => return Err(AccountError::Invalid.into()),
+    };
+    let field = format!("{}_hash", texture.texture_type);
+    if body.contains_key(&field) {
+      return Err(AccountError::Invalid.into());
+    }
+    body.insert(field, serde_json::json!(texture.hash));
+    replacements.push(Texture {
+      texture_type,
+      image: misc::fetch_image(&app, texture.url).await?,
+      model: texture.model.parse().unwrap_or_default(),
+      preset: None,
+      source_hash: Some(texture.hash),
+    });
+  }
+  let _: serde_json::Value = vustb::patch_authenticated(
+    &app,
+    &format!("/api/launcher/skins/profiles/{}", player.uuid.simple()),
+    &body,
+  )
+  .await?;
+  let binding = app.state::<Mutex<AccountInfo>>();
+  let mut state = binding.lock()?;
+  let player = state
+    .get_player_by_id_mut(player_id)
+    .ok_or(AccountError::NotFound)?;
+  player
+    .textures
+    .retain(|texture| match texture.texture_type {
+      TextureType::Skin => !body.contains_key("skin_hash"),
+      TextureType::Cape => !body.contains_key("cape_hash"),
+    });
+  player.textures.extend(replacements);
+  state.save()?;
+  Ok(())
 }
 
 fn replace_player_texture(
