@@ -472,6 +472,21 @@ pub async fn collect_texture(app: &AppHandle, hash: &str) -> USTBLResult<()> {
   Ok(())
 }
 
+pub async fn select_profile_texture(
+  app: &AppHandle,
+  profile_uuid: &str,
+  texture_type: &str,
+  hash: Option<&str>,
+) -> USTBLResult<()> {
+  let _: serde_json::Value = put_authenticated(
+    app,
+    &format!("/api/launcher/skins/profiles/{profile_uuid}/{texture_type}"),
+    &serde_json::json!({ "hash": hash }),
+  )
+  .await?;
+  Ok(())
+}
+
 #[cfg(test)]
 mod tests {
   use super::reqwest;

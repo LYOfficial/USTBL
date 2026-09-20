@@ -74,6 +74,8 @@ pub struct Texture {
   pub image: ImageWrapper,
   pub model: SkinModel,
   pub preset: Option<PresetRole>,
+  #[serde(default)]
+  pub source_hash: Option<String>,
 }
 
 // only for the client
@@ -122,7 +124,16 @@ impl Player {
       id: player_info.id,
       name: player_info.name,
       uuid: player_info.uuid,
-      avatar: draw_avatar(36, &player_info.textures[0].image.image),
+      avatar: draw_avatar(
+        36,
+        player_info
+          .textures
+          .iter()
+          .find(|texture| texture.texture_type == TextureType::Skin)
+          .or_else(|| player_info.textures.first())
+          .map(|texture| &texture.image.image)
+          .expect("player textures must contain at least one texture"),
+      ),
       player_type: player_info.player_type,
       auth_account: player_info.auth_account,
       access_token: player_info.access_token,
@@ -332,6 +343,10 @@ pub struct VustbTexture {
   pub url: String,
   #[serde(default)]
   pub collected: bool,
+  #[serde(default)]
+  pub local_backup: bool,
+  #[serde(default)]
+  pub local_backup_id: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
@@ -468,7 +483,12 @@ impl Storage for AccountInfo {
 
 #[cfg(test)]
 mod tests {
-  use super::{AccountInfo, VustbProgression, VustbSession, VustbTexturePage};
+  use super::{
+    AccountInfo, Player, PlayerInfo, PlayerType, SkinModel, Texture, TextureType, VustbProgression,
+    VustbSession, VustbTexturePage,
+  };
+  use image::{Rgba, RgbaImage};
+  use uuid::Uuid;
 
   #[test]
   fn legacy_account_storage_without_vustb_session_still_loads() {
@@ -543,6 +563,37 @@ mod tests {
     assert_eq!(page.total, 1);
     assert!(page.items[0].is_public);
     assert_eq!(page.items[0].uploader_name, "Uploader");
+  }
+
+  #[test]
+  fn player_avatar_uses_skin_even_when_cape_is_first() {
+    let texture = |texture_type, color| Texture {
+      texture_type,
+      image: RgbaImage::from_pixel(64, 64, color).into(),
+      model: SkinModel::Default,
+      preset: None,
+      source_hash: None,
+    };
+    let player = Player::from_player_info(
+      PlayerInfo {
+        id: "player".to_string(),
+        name: "Player".to_string(),
+        uuid: Uuid::nil(),
+        player_type: PlayerType::Offline,
+        auth_account: None,
+        auth_server_url: None,
+        access_token: None,
+        access_token_expires: None,
+        refresh_token: None,
+        textures: vec![
+          texture(TextureType::Cape, Rgba([0, 0, 255, 255])),
+          texture(TextureType::Skin, Rgba([255, 0, 0, 255])),
+        ],
+      },
+      Some(&[]),
+    );
+
+    assert_eq!(player.avatar[0].image.get_pixel(18, 18).0, [255, 0, 0, 255]);
   }
 }
 

@@ -198,6 +198,7 @@ async fn parse_profile(app: &AppHandle, tokens: &OAuthTokens) -> USTBLResult<Pla
           image: fetch_image(app, skin.url.clone()).await?,
           model: skin.variant.clone().unwrap_or_default(),
           preset: None,
+          source_hash: None,
         });
       }
     }
@@ -210,6 +211,7 @@ async fn parse_profile(app: &AppHandle, tokens: &OAuthTokens) -> USTBLResult<Pla
           image: fetch_image(app, cape.url.clone()).await?,
           model: SkinModel::Default,
           preset: None,
+          source_hash: None,
         });
       }
     }
@@ -317,4 +319,90 @@ pub async fn get_access_token(app: &AppHandle, player: &PlayerInfo) -> USTBLResu
   } else {
     Ok(player.access_token.clone().ok_or(AccountError::Invalid)?)
   }
+}
+
+pub async fn set_skin_from_url(
+  app: &AppHandle,
+  player: &PlayerInfo,
+  skin_url: &str,
+  model: SkinModel,
+) -> USTBLResult<()> {
+  let token = get_access_token(app, player).await?;
+  let client = app.state::<reqwest::Client>();
+  let response = client
+    .post(format!("{PROFILE_ENDPOINT}/skins"))
+    .bearer_auth(token)
+    .json(&serde_json::json!({
+      "variant": if model == SkinModel::Slim { "slim" } else { "classic" },
+      "url": skin_url,
+    }))
+    .send()
+    .await
+    .map_err(|_| AccountError::NetworkError)?;
+  if !response.status().is_success() {
+    log::error!(
+      "Minecraft Services skin update failed: status={}",
+      response.status()
+    );
+    return Err(AccountError::TextureError.into());
+  }
+  Ok(())
+}
+
+pub async fn set_skin_from_bytes(
+  app: &AppHandle,
+  player: &PlayerInfo,
+  skin: Vec<u8>,
+  model: SkinModel,
+) -> USTBLResult<()> {
+  let token = get_access_token(app, player).await?;
+  let client = app.state::<reqwest::Client>();
+  let file = reqwest::multipart::Part::bytes(skin)
+    .file_name("skin.png")
+    .mime_str("image/png")
+    .map_err(|_| AccountError::TextureError)?;
+  let form = reqwest::multipart::Form::new()
+    .text(
+      "variant",
+      if model == SkinModel::Slim {
+        "slim"
+      } else {
+        "classic"
+      },
+    )
+    .part("file", file);
+  let response = client
+    .post(format!("{PROFILE_ENDPOINT}/skins"))
+    .bearer_auth(token)
+    .multipart(form)
+    .send()
+    .await
+    .map_err(|_| AccountError::NetworkError)?;
+  if !response.status().is_success() {
+    log::error!(
+      "Minecraft Services local skin upload failed: status={}",
+      response.status()
+    );
+    return Err(AccountError::TextureError.into());
+  }
+  Ok(())
+}
+
+pub async fn clear_skin(app: &AppHandle, player: &PlayerInfo) -> USTBLResult<()> {
+  let token = get_access_token(app, player).await?;
+  let client = app.state::<reqwest::Client>();
+  let response = client
+    .delete(format!("{PROFILE_ENDPOINT}/skins/active"))
+    .bearer_auth(token)
+    .send()
+    .await
+    .map_err(|_| AccountError::NetworkError)?;
+  if !response.status().is_success() {
+    log::error!(
+      "Minecraft Services skin clear failed: status={}",
+      response.status()
+    );
+    return Err(AccountError::TextureError.into());
+  }
+  Ok(())
 }

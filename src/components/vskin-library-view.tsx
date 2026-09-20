@@ -14,12 +14,19 @@ import SegmentedControl from "@/components/common/segmented";
 import VskinTextureModal from "@/components/modals/vskin-texture-modal";
 import VskinTextureThumbnail from "@/components/vskin-texture-thumbnail";
 import { useToast } from "@/contexts/toast";
+import { Player } from "@/models/account";
 import { VustbTexture } from "@/models/vustb";
 import { AccountService } from "@/services/account";
 
 const PAGE_SIZE = 20;
 
-const VskinLibraryView: React.FC = () => {
+interface VskinLibraryViewProps {
+  selectedPlayer?: Player;
+}
+
+const VskinLibraryView: React.FC<VskinLibraryViewProps> = ({
+  selectedPlayer,
+}) => {
   const toast = useToast();
   const [items, setItems] = useState<VustbTexture[]>([]);
   const [total, setTotal] = useState(0);
@@ -163,6 +170,7 @@ const VskinLibraryView: React.FC = () => {
       </HStack>
       <VskinTextureModal
         texture={selectedTexture}
+        player={selectedPlayer}
         isOpen={modal.isOpen}
         onClose={modal.onClose}
         onCollected={handleCollected}
