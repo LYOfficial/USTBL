@@ -16,6 +16,7 @@ import { useGlobalData } from "@/contexts/global-data";
 import { useToast } from "@/contexts/toast";
 import { VustbAccount } from "@/models/vustb";
 import { AccountService } from "@/services/account";
+import { isVustbPlayer } from "@/utils/account";
 
 const groupLabels: Record<string, string> = {
   super_admin: "超级管理员",
@@ -44,6 +45,9 @@ const VustbAccountPanel = ({
   const [isCheckingIn, setIsCheckingIn] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const accountRequest = useRef(0);
+  const profileRevision = JSON.stringify(
+    (getPlayerList() || []).filter(isVustbPlayer).map((player) => player.uuid)
+  );
 
   const loadAccount = useCallback(async () => {
     const request = ++accountRequest.current;
@@ -64,7 +68,7 @@ const VustbAccountPanel = ({
     return () => {
       requests.current++;
     };
-  }, [loadAccount, refreshKey]);
+  }, [loadAccount, refreshKey, profileRevision]);
 
   useEffect(() => {
     onAccountChange?.(account);
