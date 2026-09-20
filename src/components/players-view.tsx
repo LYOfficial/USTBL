@@ -83,7 +83,7 @@ const PlayersView: React.FC<PlayersViewProps> = ({
           onClick: () => handleUpdateSelectedPlayer(player.id),
         }),
     children: withMenu ? (
-      <PlayerMenu player={player} variant="buttonGroup" />
+      <PlayerMenu player={player} variant="buttonGroup" showTextureManager />
     ) : (
       <></>
     ),
@@ -164,6 +164,7 @@ const PlayersView: React.FC<PlayersViewProps> = ({
                             <PlayerMenu
                               player={player}
                               showSkinOperation={false}
+                              showTextureManager
                             />
                           </Box>
                         </Box>
