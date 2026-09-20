@@ -9,7 +9,7 @@ use crate::account::helpers::authlib_injector::{self};
 use crate::account::helpers::{microsoft, misc, offline, skin_backup, vustb, vustb_presence};
 use crate::account::models::{
   AccountError, AccountInfo, AuthServer, DeviceAuthResponseInfo, Player, PlayerInfo, PlayerType,
-  PresetRole, SkinModel, TextureType, VustbAccount, VustbCheckinResult, VustbFriend,
+  PresetRole, SkinModel, Texture, TextureType, VustbAccount, VustbCheckinResult, VustbFriend,
   VustbSession, VustbTexture, VustbTexturePage,
 };
 use crate::error::USTBLResult;
@@ -355,6 +355,189 @@ pub async fn retrieve_vustb_wardrobe(
 #[tauri::command]
 pub async fn collect_vustb_texture(app: AppHandle, hash: String) -> USTBLResult<()> {
   vustb::collect_texture(&app, &hash).await
+}
+
+fn replace_player_texture(
+  app: &AppHandle,
+  player_id: &str,
+  texture_type: TextureType,
+  texture: Option<Texture>,
+) -> USTBLResult<()> {
+  let binding = app.state::<Mutex<AccountInfo>>();
+  let mut state = binding.lock()?;
+  let player = state
+    .get_player_by_id_mut(player_id.to_string())
+    .ok_or(AccountError::NotFound)?;
+  player
+    .textures
+    .retain(|item| item.texture_type != texture_type);
+  if let Some(texture) = texture {
+    player.textures.push(texture);
+  } else if texture_type == TextureType::Skin {
+    player
+      .textures
+      .extend(offline::load_preset_skin(app, PresetRole::Steve)?);
+  }
+  state.save()?;
+  Ok(())
+}
+
+#[tauri::command]
+pub async fn apply_vustb_texture_to_player(
+  app: AppHandle,
+  player_id: String,
+  texture: VustbTexture,
+) -> USTBLResult<()> {
+  let player = {
+    let binding = app.state::<Mutex<AccountInfo>>();
+    let player = binding
+      .lock()?
+      .players
+      .iter()
+      .find(|item| item.id == player_id)
+      .cloned()
+      .ok_or(AccountError::NotFound)?;
+    player
+  };
+  let texture_type = if texture.texture_type.eq_ignore_ascii_case("cape") {
+    TextureType::Cape
+  } else {
+    TextureType::Skin
+  };
+  let local_texture = texture
+    .local_backup_id
+    .as_deref()
+    .map(skin_backup::load_local_skin_backup)
+    .transpose()?;
+  let model = local_texture
+    .as_ref()
+    .map(|texture| texture.model.clone())
+    .unwrap_or_else(|| texture.model.parse().unwrap_or_default());
+
+  if texture_type == TextureType::Skin
+    && matches!(
+      player.player_type,
+      PlayerType::Offline | PlayerType::Microsoft
+    )
+  {
+    let cloud_hashes = vustb::fetch_wardrobe(&app, Some("skin".to_string()))
+      .await
+      .map(|textures| {
+        textures
+          .into_iter()
+          .map(|texture| texture.hash)
+          .collect::<Vec<_>>()
+      })
+      .unwrap_or_default();
+    skin_backup::backup_current_skin(&player, &cloud_hashes)?;
+  }
+
+  match player.player_type {
+    PlayerType::Offline => {}
+    PlayerType::ThirdParty
+      if player
+        .auth_server_url
+        .as_deref()
+        .is_some_and(|url| normalize_url(url) == normalize_url(USTB_AUTH_SERVER_URL)) =>
+    {
+      vustb::select_profile_texture(
+        &app,
+        &player.uuid.simple().to_string(),
+        &texture.texture_type,
+        Some(&texture.hash),
+      )
+      .await?;
+    }
+    PlayerType::Microsoft if texture_type == TextureType::Skin => {
+      if let Some(local_backup_id) = texture.local_backup_id.as_deref() {
+        microsoft::oauth::set_skin_from_bytes(
+          &app,
+          &player,
+          skin_backup::local_skin_backup_bytes(local_backup_id)?,
+          model.clone(),
+        )
+        .await?;
+      } else {
+        microsoft::oauth::set_skin_from_url(&app, &player, &texture.url, model.clone()).await?;
+      }
+    }
+    _ => return Err(AccountError::Invalid.into()),
+  }
+
+  let image = match local_texture {
+    Some(texture) => texture.image,
+    None => misc::fetch_image(&app, texture.url).await?,
+  };
+  replace_player_texture(
+    &app,
+    &player_id,
+    texture_type.clone(),
+    Some(Texture {
+      texture_type,
+      image,
+      model,
+      preset: None,
+      source_hash: (!texture.local_backup).then_some(texture.hash),
+    }),
+  )
+}
+
+#[tauri::command]
+pub async fn clear_player_texture(
+  app: AppHandle,
+  player_id: String,
+  texture_type: TextureType,
+) -> USTBLResult<()> {
+  let player = {
+    let binding = app.state::<Mutex<AccountInfo>>();
+    let player = binding
+      .lock()?
+      .players
+      .iter()
+      .find(|item| item.id == player_id)
+      .cloned()
+      .ok_or(AccountError::NotFound)?;
+    player
+  };
+  if texture_type == TextureType::Skin
+    && matches!(
+      player.player_type,
+      PlayerType::Offline | PlayerType::Microsoft
+    )
+  {
+    let cloud_hashes = vustb::fetch_wardrobe(&app, Some("skin".to_string()))
+      .await
+      .map(|textures| {
+        textures
+          .into_iter()
+          .map(|texture| texture.hash)
+          .collect::<Vec<_>>()
+      })
+      .unwrap_or_default();
+    skin_backup::backup_current_skin(&player, &cloud_hashes)?;
+  }
+  match player.player_type {
+    PlayerType::Offline => {}
+    PlayerType::ThirdParty
+      if player
+        .auth_server_url
+        .as_deref()
+        .is_some_and(|url| normalize_url(url) == normalize_url(USTB_AUTH_SERVER_URL)) =>
+    {
+      vustb::select_profile_texture(
+        &app,
+        &player.uuid.simple().to_string(),
+        &texture_type.to_string().to_lowercase(),
+        None,
+      )
+      .await?;
+    }
+    PlayerType::Microsoft if texture_type == TextureType::Skin => {
+      microsoft::oauth::clear_skin(&app, &player).await?;
+    }
+    _ => return Err(AccountError::Invalid.into()),
+  }
+  replace_player_texture(&app, &player_id, texture_type, None)
 }
 
 #[tauri::command]

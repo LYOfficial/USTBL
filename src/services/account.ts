@@ -86,6 +86,22 @@ export class AccountService {
   }
 
   @responseHandler("account")
+  static async applyVustbTextureToPlayer(
+    playerId: string,
+    texture: VustbTexture
+  ): Promise<InvokeResponse<void>> {
+    return await invoke("apply_vustb_texture_to_player", { playerId, texture });
+  }
+
+  @responseHandler("account")
+  static async clearPlayerTexture(
+    playerId: string,
+    textureType: TextureType
+  ): Promise<InvokeResponse<void>> {
+    return await invoke("clear_player_texture", { playerId, textureType });
+  }
+
+  @responseHandler("account")
   static async logoutVustbAccount(): Promise<InvokeResponse<void>> {
     return await invoke("logout_vustb_account");
   }
