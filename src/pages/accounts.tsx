@@ -25,6 +25,7 @@ import {
   LuPlus,
   LuServer,
   LuServerOff,
+  LuShirt,
   LuUsersRound,
 } from "react-icons/lu";
 import NavMenu from "@/components/common/nav-menu";
@@ -34,6 +35,7 @@ import SelectableButton from "@/components/common/selectable-button";
 import AddPlayerModal from "@/components/modals/add-player-modal";
 import VustbFriendsModal from "@/components/modals/vustb-friends-modal";
 import PlayersView from "@/components/players-view";
+import VskinLibraryView from "@/components/vskin-library-view";
 import VustbAccountPanel from "@/components/vustb-account-panel";
 import { useLauncherConfig } from "@/contexts/config";
 import { useGlobalData } from "@/contexts/global-data";
@@ -47,6 +49,7 @@ const USTB_AUTH_SERVER_URL = "https://www.ustb.world/skinapi/";
 
 // Fixed types that don't show auth URL as description and don't show homepage/delete buttons
 const FIXED_PLAYER_TYPES = ["all", "offline", "microsoft"];
+const VSKIN_LIBRARY = "vskin-library";
 // Preset auth servers that show homepage but can't be deleted
 const isPresetAuthServer = (url: string) => url === USTB_AUTH_SERVER_URL;
 
@@ -64,6 +67,7 @@ const AccountsPage = () => {
   const [selectedPlayerType, setSelectedPlayerType] = useState<string>("all");
   const [playerList, setPlayerList] = useState<Player[]>([]);
   const [authServerList, setAuthServerList] = useState<AuthServer[]>([]);
+  const isLibraryMode = selectedPlayerType === VSKIN_LIBRARY;
 
   // extract "像素北科" as a pinned entry, separate from dynamic auth server list
   const ustbAuthServer = authServerList.find(
@@ -225,6 +229,18 @@ const AccountsPage = () => {
                   />
                 </Box>
                 <VStack mt="auto" align="stretch" spacing={0.5}>
+                  <SelectableButton
+                    size="sm"
+                    isSelected={isLibraryMode}
+                    onClick={() => setSelectedPlayerType(VSKIN_LIBRARY)}
+                  >
+                    <HStack spacing={2} overflow="hidden">
+                      <Icon as={LuShirt} />
+                      <Text fontSize="sm" className="ellipsis-text">
+                        皮肤库
+                      </Text>
+                    </HStack>
+                  </SelectableButton>
                   <SelectableButton size="sm" onClick={onFriendsModalOpen}>
                     <HStack spacing={2} overflow="hidden">
                       <Icon as={LuUsersRound} />
@@ -256,99 +272,116 @@ const AccountsPage = () => {
                 height="100%"
                 title={
                   playerTypeList.find((item) => item.key === selectedPlayerType)
-                    ?.label
+                    ?.label || (isLibraryMode ? "皮肤库" : undefined)
                 }
                 description={
+                  !isLibraryMode &&
                   !FIXED_PLAYER_TYPES.includes(selectedPlayerType)
                     ? selectedPlayerType
                     : undefined
                 }
                 headExtra={
-                  <HStack spacing={2} alignItems="flex-start">
-                    {!FIXED_PLAYER_TYPES.includes(selectedPlayerType) && (
-                      <Tooltip label={t("AccountsPage.button.sourceHomepage")}>
-                        <IconButton
-                          aria-label="home"
-                          size="xs"
-                          fontSize="sm"
-                          variant="ghost"
-                          icon={<LuHouse />}
-                          onClick={() => {
-                            const homepageUrl = authServerList.find(
-                              (server) => server.authUrl === selectedPlayerType
-                            )?.homepageUrl;
-                            if (homepageUrl) {
-                              openUrl(homepageUrl);
-                            }
-                          }}
-                        />
-                      </Tooltip>
-                    )}
-                    {!FIXED_PLAYER_TYPES.includes(selectedPlayerType) &&
-                      !isPresetAuthServer(selectedPlayerType) && (
-                        <Tooltip label={t("AccountsPage.button.deleteServer")}>
+                  !isLibraryMode ? (
+                    <HStack spacing={2} alignItems="flex-start">
+                      {!FIXED_PLAYER_TYPES.includes(selectedPlayerType) && (
+                        <Tooltip
+                          label={t("AccountsPage.button.sourceHomepage")}
+                        >
                           <IconButton
                             aria-label="home"
                             size="xs"
                             fontSize="sm"
-                            colorScheme="red"
                             variant="ghost"
-                            icon={<LuServerOff />}
+                            icon={<LuHouse />}
                             onClick={() => {
-                              openGenericConfirmDialog({
-                                title: t(
-                                  "DeleteAuthServerAlertDialog.dialog.title"
-                                ),
-                                body: t(
-                                  "DeleteAuthServerAlertDialog.dialog.content",
-                                  {
-                                    name: authServerList.find(
-                                      (server) =>
-                                        server.authUrl === selectedPlayerType
-                                    )?.name,
-                                  }
-                                ),
-                                btnOK: t("General.delete"),
-                                isAlert: true,
-                                onOKCallback: handleDeleteAuthServer,
-                                showSuppressBtn: true,
-                                suppressKey: "deleteAuthServerAlert",
-                              });
+                              const homepageUrl = authServerList.find(
+                                (server) =>
+                                  server.authUrl === selectedPlayerType
+                              )?.homepageUrl;
+                              if (homepageUrl) {
+                                openUrl(homepageUrl);
+                              }
                             }}
                           />
                         </Tooltip>
                       )}
-                    <SegmentedControl
-                      selected={selectedViewType}
-                      onSelectItem={(s) => {
-                        update("states.accountsPage.viewType", s as string);
-                      }}
-                      size="2xs"
-                      ml={1}
-                      items={viewTypeList.map((item) => ({
-                        ...item,
-                        value: item.key,
-                        label: <Icon as={item.icon} />,
-                      }))}
-                      withTooltip
-                    />
-                    <Button
-                      leftIcon={<LuPlus />}
-                      size="xs"
-                      colorScheme={primaryColor}
-                      onClick={onAddPlayerModalOpen}
-                    >
-                      {t("AccountsPage.button.addPlayer")}
-                    </Button>
-                  </HStack>
+                      {!FIXED_PLAYER_TYPES.includes(selectedPlayerType) &&
+                        !isPresetAuthServer(selectedPlayerType) && (
+                          <Tooltip
+                            label={t("AccountsPage.button.deleteServer")}
+                          >
+                            <IconButton
+                              aria-label="home"
+                              size="xs"
+                              fontSize="sm"
+                              colorScheme="red"
+                              variant="ghost"
+                              icon={<LuServerOff />}
+                              onClick={() => {
+                                openGenericConfirmDialog({
+                                  title: t(
+                                    "DeleteAuthServerAlertDialog.dialog.title"
+                                  ),
+                                  body: t(
+                                    "DeleteAuthServerAlertDialog.dialog.content",
+                                    {
+                                      name: authServerList.find(
+                                        (server) =>
+                                          server.authUrl === selectedPlayerType
+                                      )?.name,
+                                    }
+                                  ),
+                                  btnOK: t("General.delete"),
+                                  isAlert: true,
+                                  onOKCallback: handleDeleteAuthServer,
+                                  showSuppressBtn: true,
+                                  suppressKey: "deleteAuthServerAlert",
+                                });
+                              }}
+                            />
+                          </Tooltip>
+                        )}
+                      <SegmentedControl
+                        selected={selectedViewType}
+                        onSelectItem={(s) => {
+                          update("states.accountsPage.viewType", s as string);
+                        }}
+                        size="2xs"
+                        ml={1}
+                        items={viewTypeList.map((item) => ({
+                          ...item,
+                          value: item.key,
+                          label: <Icon as={item.icon} />,
+                        }))}
+                        withTooltip
+                      />
+                      <Button
+                        leftIcon={<LuPlus />}
+                        size="xs"
+                        colorScheme={primaryColor}
+                        onClick={onAddPlayerModalOpen}
+                      >
+                        {t("AccountsPage.button.addPlayer")}
+                      </Button>
+                    </HStack>
+                  ) : undefined
                 }
               >
-                <Box overflowY="auto" flexGrow={1} minH={0} rounded="md">
-                  <PlayersView
-                    selectedPlayer={selectedPlayer}
-                    players={filterPlayersByType(selectedPlayerType)}
-                    viewType={selectedViewType}
-                  />
+                <Box
+                  overflowY={isLibraryMode ? "hidden" : "auto"}
+                  flexGrow={1}
+                  minH={0}
+                  rounded="md"
+                >
+                  {isLibraryMode ? (
+                    <VskinLibraryView />
+                  ) : (
+                    <PlayersView
+                      selectedPlayer={selectedPlayer}
+                      players={filterPlayersByType(selectedPlayerType)}
+                      viewType={selectedViewType}
+                    />
+                  )}
                 </Box>
               </Section>
             </GridItem>
