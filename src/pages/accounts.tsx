@@ -33,6 +33,7 @@ import { Section } from "@/components/common/section";
 import SegmentedControl from "@/components/common/segmented";
 import SelectableButton from "@/components/common/selectable-button";
 import AddPlayerModal from "@/components/modals/add-player-modal";
+import PlayerTextureManagerModal from "@/components/modals/player-texture-manager-modal";
 import VustbFriendsModal from "@/components/modals/vustb-friends-modal";
 import PlayersView from "@/components/players-view";
 import VskinLibraryView from "@/components/vskin-library-view";
@@ -43,7 +44,9 @@ import { useSharedModals } from "@/contexts/shared-modal";
 import { useToast } from "@/contexts/toast";
 import { PlayerType } from "@/enums/account";
 import { AuthServer, Player } from "@/models/account";
+import { VustbAccount } from "@/models/vustb";
 import { AccountService } from "@/services/account";
+import { playerCreationSource } from "@/utils/player-creation";
 
 const USTB_AUTH_SERVER_URL = "https://www.ustb.world/skinapi/";
 
@@ -68,6 +71,10 @@ const AccountsPage = () => {
   const [playerList, setPlayerList] = useState<Player[]>([]);
   const [authServerList, setAuthServerList] = useState<AuthServer[]>([]);
   const isLibraryMode = selectedPlayerType === VSKIN_LIBRARY;
+  const [account, setAccount] = useState<VustbAccount | null>(null);
+  const [accountRevision, setAccountRevision] = useState(0);
+  const creation = useDisclosure();
+  const creationSource = playerCreationSource(selectedPlayerType);
 
   // extract "像素北科" as a pinned entry, separate from dynamic auth server list
   const ustbAuthServer = authServerList.find(
@@ -198,12 +205,14 @@ const AccountsPage = () => {
     <>
       <Grid templateRows="auto minmax(0, 1fr)" h="100%">
         <GridItem
-          pb={4}
           borderBottomWidth="1px"
           borderColor="blackAlpha.200"
           _dark={{ borderColor: "whiteAlpha.300" }}
         >
-          <VustbAccountPanel />
+          <VustbAccountPanel
+            refreshKey={accountRevision}
+            onAccountChange={setAccount}
+          />
         </GridItem>
         <GridItem minH={0} pt={4}>
           <Grid templateColumns="1fr 3fr" gap={4} h="100%">
@@ -380,6 +389,7 @@ const AccountsPage = () => {
                       selectedPlayer={selectedPlayer}
                       players={filterPlayersByType(selectedPlayerType)}
                       viewType={selectedViewType}
+                      onCreate={creationSource ? creation.onOpen : undefined}
                     />
                   )}
                 </Box>
@@ -388,6 +398,15 @@ const AccountsPage = () => {
           </Grid>
         </GridItem>
       </Grid>
+      <PlayerTextureManagerModal
+        isOpen={creation.isOpen && !!creationSource}
+        creationSource={creationSource}
+        onClose={creation.onClose}
+        account={account}
+        onCreated={() => {
+          setAccountRevision((value) => value + 1);
+        }}
+      />
       <AddPlayerModal
         isOpen={isAddPlayerModalOpen}
         onClose={onAddPlayerModalClose}

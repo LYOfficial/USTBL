@@ -286,6 +286,10 @@ pub struct VustbAccount {
   pub username: String,
   pub avatar_url: String,
   pub user_group: String,
+  #[serde(default)]
+  pub pixel_points: i64,
+  #[serde(default)]
+  pub shell_points: i64,
   pub profiles: Vec<VustbProfile>,
   #[serde(default)]
   pub progression: VustbProgression,
