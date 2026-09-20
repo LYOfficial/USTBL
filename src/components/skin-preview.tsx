@@ -1,4 +1,5 @@
 import {
+  Box,
   BoxProps,
   Flex,
   HStack,
@@ -23,9 +24,9 @@ import {
   FaPersonRunning,
   FaPersonWalking,
   FaRegCircle,
+  FaRegImage,
 } from "react-icons/fa6";
 import {
-  LuChevronUp,
   LuCircleX,
   LuPause,
   LuPlay,
@@ -36,6 +37,7 @@ import * as skinview3d from "skinview3d";
 import { useLauncherConfig } from "@/contexts/config";
 import { SkinModel } from "@/enums/account";
 import { SpringAnimation } from "@/utils/skin-animation";
+import { createSkinPreviewResizer } from "@/utils/skin-preview-resize";
 import {
   configureEnhancedSkinRendering,
   refreshEnhancedSkinMaterials,
@@ -87,12 +89,24 @@ const SkinPreview: React.FC<SkinPreviewProps> = ({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const skinViewerRef = useRef<skinview3d.SkinViewer | null>(null);
   const renderingCleanupRef = useRef<(() => void) | null>(null);
+  const resizerRef = useRef<ReturnType<typeof createSkinPreviewResizer> | null>(
+    null
+  );
+  const canvasHeight = Math.max(
+    1,
+    controlBarVariant === "overlay" ? height : height - 40
+  );
+  const sizeRef = useRef({ width, height: canvasHeight });
   const entrancePlayedRef = useRef(false);
   const [currentAnimation, setCurrentAnimation] =
     useState<AnimationType>(animation);
   const [background, setBackground] = useState<backgroundType>(canvasBg);
   const [autoRotate, setAutoRotate] = useState(false);
   const [isPlaying, setIsPlaying] = useState(true);
+
+  useEffect(() => {
+    sizeRef.current = { width, height: canvasHeight };
+  }, [width, canvasHeight]);
 
   // animation
   const animationList = useMemo(
@@ -138,13 +152,14 @@ const SkinPreview: React.FC<SkinPreviewProps> = ({
 
   const initSkinViewer = useCallback(() => {
     if (!canvasRef.current) return;
+    resizerRef.current?.dispose();
     renderingCleanupRef.current?.();
     renderingCleanupRef.current = null;
     if (skinViewerRef.current) skinViewerRef.current.dispose();
     skinViewerRef.current = new skinview3d.SkinViewer({
       canvas: canvasRef.current,
-      width: width,
-      height: controlBarVariant === "overlay" ? height : height - 40,
+      width: Math.max(1, sizeRef.current.width),
+      height: sizeRef.current.height,
       pixelRatio: enhancedRendering
         ? Math.min(window.devicePixelRatio, 1.5)
         : undefined,
@@ -152,22 +167,29 @@ const SkinPreview: React.FC<SkinPreviewProps> = ({
 
     skinViewerRef.current.zoom = 0.8;
     skinViewerRef.current.controls.enableZoom = false;
+    resizerRef.current = createSkinPreviewResizer(skinViewerRef.current);
     if (enhancedRendering) {
       renderingCleanupRef.current = configureEnhancedSkinRendering(
         skinViewerRef.current
       );
     }
-  }, [width, height, controlBarVariant, enhancedRendering]);
+  }, [enhancedRendering]);
 
   useEffect(() => {
     initSkinViewer();
     return () => {
+      resizerRef.current?.dispose();
+      resizerRef.current = null;
       renderingCleanupRef.current?.();
       renderingCleanupRef.current = null;
       skinViewerRef.current?.dispose();
       skinViewerRef.current = null;
     };
   }, [initSkinViewer]);
+
+  useEffect(() => {
+    resizerRef.current?.resize(width, canvasHeight);
+  }, [width, canvasHeight, initSkinViewer]);
 
   useEffect(() => {
     const viewer = skinViewerRef.current;
@@ -184,39 +206,42 @@ const SkinPreview: React.FC<SkinPreviewProps> = ({
       viewer.animation = animationList[currentAnimation].createAnimation();
     }
     if (!isPlaying) setAutoRotate(false);
-  }, [animationList, autoRotate, currentAnimation, isPlaying]);
+  }, [animationList, autoRotate, currentAnimation, isPlaying, initSkinViewer]);
 
   useEffect(() => {
     onCapeVisibilityChange?.(isCapeVisible);
   }, [onCapeVisibilityChange, isCapeVisible]);
 
   useEffect(() => {
+    const viewer = skinViewerRef.current;
+    if (!viewer || !skinSrc) return;
+    let cancelled = false;
     (async () => {
       try {
-        if (skinViewerRef.current && skinSrc) {
-          await skinViewerRef.current.loadSkin(skinSrc, {
-            model: skinModel
-              ? skinModel === SkinModel.Slim
-                ? "slim"
-                : "default"
-              : "auto-detect",
-          });
-          if (isCapeVisible && capeSrc) {
-            await skinViewerRef.current.loadCape(capeSrc);
-          } else {
-            skinViewerRef.current.resetCape();
-          }
-          if (enhancedRendering) {
-            refreshEnhancedSkinMaterials(skinViewerRef.current);
-          }
-          onSkinError?.(null);
-          if (playEntranceAnimation) {
-            playSpringAnimation();
-          }
+        await viewer.loadSkin(skinSrc, {
+          model: skinModel
+            ? skinModel === SkinModel.Slim
+              ? "slim"
+              : "default"
+            : "auto-detect",
+        });
+        if (cancelled || skinViewerRef.current !== viewer) return;
+        if (isCapeVisible && capeSrc) {
+          await viewer.loadCape(capeSrc);
+        } else {
+          viewer.resetCape();
+        }
+        if (cancelled || skinViewerRef.current !== viewer) return;
+        if (enhancedRendering) {
+          refreshEnhancedSkinMaterials(viewer);
+        }
+        onSkinError?.(null);
+        if (playEntranceAnimation) {
+          playSpringAnimation();
         }
       } catch (error) {
-        initSkinViewer(); // reset viewer on error
-        let errorMsg =
+        if (cancelled || skinViewerRef.current !== viewer) return;
+        const errorMsg =
           error instanceof Error
             ? error.message
             : t("SkinPreview.error.loadSkin");
@@ -224,6 +249,9 @@ const SkinPreview: React.FC<SkinPreviewProps> = ({
         logger.error(`SkinPreview error: ${errorMsg}`);
       }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [
     skinViewerRef,
     skinSrc,
@@ -288,22 +316,10 @@ const SkinPreview: React.FC<SkinPreviewProps> = ({
       <Popover placement="top-start">
         <PopoverTrigger>
           <IconButton
-            size="xs"
-            colorScheme={backgroundList[background].colorScheme}
-            variant={backgroundList[background].btnVariant}
-            mr={1}
-            aria-label="color"
-            icon={<LuChevronUp />}
+            variant="ghost"
+            aria-label="切换预览背景"
+            icon={<FaRegImage />}
             {...overlayButtonProps}
-            style={
-              background === "panorama"
-                ? {
-                    backgroundImage: `url(${backgroundList["panorama"].bg})`,
-                    backgroundSize: "cover",
-                    backgroundPosition: "center",
-                  }
-                : {}
-            }
           />
         </PopoverTrigger>
         <PopoverContent width="auto" maxWidth="none">
@@ -343,7 +359,7 @@ const SkinPreview: React.FC<SkinPreviewProps> = ({
 
   useEffect(() => {
     backgroundList[background].operation();
-  }, [background, backgroundList]);
+  }, [background, backgroundList, initSkinViewer]);
 
   return (
     <VStack
@@ -357,7 +373,7 @@ const SkinPreview: React.FC<SkinPreviewProps> = ({
       {errorMessage && (
         <VStack
           width={width}
-          height={height - 40}
+          height={canvasHeight}
           justifyContent="center"
           spacing={4}
         >
@@ -365,10 +381,25 @@ const SkinPreview: React.FC<SkinPreviewProps> = ({
           <Text className="secondary-text">{errorMessage}</Text>
         </VStack>
       )}
-      <canvas
-        ref={canvasRef}
-        style={{ display: errorMessage ? "none" : "block" }}
-      />
+      <Box
+        width="100%"
+        height={canvasHeight}
+        flexShrink={0}
+        display={errorMessage ? "none" : "flex"}
+        justifyContent="center"
+        overflow="hidden"
+      >
+        <canvas
+          ref={canvasRef}
+          style={{
+            display: "block",
+            width: "auto",
+            height: "100%",
+            maxWidth: "none",
+            flexShrink: 0,
+          }}
+        />
+      </Box>
       {showControlBar && (
         <Flex
           alignItems="center"
