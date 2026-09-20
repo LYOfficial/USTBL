@@ -72,7 +72,7 @@ const InstancesLayout: React.FC<InstancesLayoutProps> = ({ children }) => {
       {showNavBar && (
         <GridItem className="content-full-y">
           <VStack align="stretch" h="100%" spacing={4}>
-            <Box flex="1" overflowY="auto">
+            <Box flex="1" minH={0} overflowY="auto">
               <NavMenu
                 selectedKeys={[selectedKey]}
                 onClick={(value) => {
