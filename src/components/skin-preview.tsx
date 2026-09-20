@@ -79,7 +79,7 @@ const SkinPreview: React.FC<SkinPreviewProps> = ({
   showControlBar = true,
   controlBarVariant = "default",
   playEntranceAnimation = false,
-  enhancedRendering = false,
+  enhancedRendering = true,
   skinModel,
   ...props
 }) => {
