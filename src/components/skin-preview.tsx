@@ -24,9 +24,9 @@ import {
   FaPersonRunning,
   FaPersonWalking,
   FaRegCircle,
+  FaRegImage,
 } from "react-icons/fa6";
 import {
-  LuChevronUp,
   LuCircleX,
   LuPause,
   LuPlay,
@@ -316,22 +316,10 @@ const SkinPreview: React.FC<SkinPreviewProps> = ({
       <Popover placement="top-start">
         <PopoverTrigger>
           <IconButton
-            size="xs"
-            colorScheme={backgroundList[background].colorScheme}
-            variant={backgroundList[background].btnVariant}
-            mr={1}
-            aria-label="color"
-            icon={<LuChevronUp />}
+            variant="ghost"
+            aria-label="切换预览背景"
+            icon={<FaRegImage />}
             {...overlayButtonProps}
-            style={
-              background === "panorama"
-                ? {
-                    backgroundImage: `url(${backgroundList["panorama"].bg})`,
-                    backgroundSize: "cover",
-                    backgroundPosition: "center",
-                  }
-                : {}
-            }
           />
         </PopoverTrigger>
         <PopoverContent width="auto" maxWidth="none">
