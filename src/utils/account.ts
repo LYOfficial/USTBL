@@ -4,6 +4,22 @@ import { Player } from "@/models/account";
 
 export const EXPIRED_ACCESS_TOKEN_PLACEHOLDER = "%failed:access_token_expired%";
 
+export function isVustbPlayer(player: Player) {
+  if (player.playerType !== PlayerType.ThirdParty || !player.authServer)
+    return false;
+  try {
+    const url = new URL(player.authServer.authUrl);
+    return (
+      url.origin === "https://www.ustb.world" &&
+      url.pathname.replace(/\/+$/, "") === "/skinapi" &&
+      !url.search &&
+      !url.hash
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function isUuidValid(uuid: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
     uuid
