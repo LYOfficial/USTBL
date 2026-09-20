@@ -168,6 +168,27 @@ pub fn list_local_skin_backups(cloud_hashes: &HashSet<String>) -> USTBLResult<Ve
   Ok(textures)
 }
 
+pub fn load_local_skin_backup(id: &str) -> USTBLResult<Texture> {
+  let index = load_index()?;
+  let backup = index
+    .backups
+    .into_iter()
+    .find(|backup| backup.id == id)
+    .ok_or(AccountError::NotFound)?;
+  let image = load_image_from_dir(&backup_path(id)?).ok_or(AccountError::TextureError)?;
+  Ok(Texture {
+    texture_type: TextureType::Skin,
+    image: image.into(),
+    model: backup.model,
+    preset: None,
+    source_hash: None,
+  })
+}
+
+pub fn local_skin_backup_bytes(id: &str) -> USTBLResult<Vec<u8>> {
+  fs::read(backup_path(id)?).map_err(|_| AccountError::TextureError.into())
+}
+
 #[cfg(test)]
 mod tests {
   use super::texture_hash;
