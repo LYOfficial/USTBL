@@ -21,7 +21,7 @@ import { useLauncherConfig } from "@/contexts/config";
 import { Player } from "@/models/account";
 import { generatePlayerDesc } from "@/utils/account";
 
-const CARD_MIN_WIDTH = 167.2;
+const CARD_MIN_WIDTH = 160;
 const CARD_HEIGHT = 108;
 const CARD_GAP = 14;
 const CARD_TRANSITION_MS = 280;
