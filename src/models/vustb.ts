@@ -56,6 +56,8 @@ export interface VustbTexture {
   createdAt: string | null;
   url: string;
   collected: boolean;
+  localBackup?: boolean;
+  localBackupId?: string;
 }
 
 export interface VustbTexturePage {

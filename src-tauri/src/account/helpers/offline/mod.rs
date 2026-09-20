@@ -26,6 +26,7 @@ pub fn load_preset_skin(app: &AppHandle, preset_role: PresetRole) -> USTBLResult
       SkinModel::Default
     },
     preset: Some(preset_role),
+    source_hash: None,
   }])
 }
 
