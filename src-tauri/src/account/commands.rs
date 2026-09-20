@@ -1056,8 +1056,161 @@ pub fn update_player_skin_offline_local(
   Ok(())
 }
 
+fn is_vustb_player(player: &PlayerInfo) -> bool {
+  player.player_type == PlayerType::ThirdParty
+    && player
+      .auth_server_url
+      .as_deref()
+      .and_then(|url| Url::parse(url).ok())
+      .is_some_and(|url| {
+        url.scheme() == "https"
+          && url.host_str() == Some("www.ustb.world")
+          && url.port().is_none()
+          && url.path().trim_end_matches('/') == "/skinapi"
+          && url.query().is_none()
+          && url.fragment().is_none()
+      })
+}
+
+/// Called only after cloud deletion succeeds (or for local-only removals).
+fn remove_local_player(state: &mut AccountInfo, player_id: &str) -> USTBLResult<()> {
+  let index = state
+    .players
+    .iter()
+    .position(|player| player.id == player_id)
+    .ok_or(AccountError::NotFound)?;
+  let removed = state.players.remove(index);
+  let replacement_id = state
+    .players
+    .iter()
+    .find(|player| is_vustb_player(player))
+    .map(|player| player.id.clone())
+    .unwrap_or_default();
+  if let Some(account) = state.vustb_account.as_mut() {
+    if is_vustb_player(&removed) {
+      account
+        .profiles
+        .retain(|profile| uuid::Uuid::parse_str(&profile.id).ok() != Some(removed.uuid));
+    }
+    if account.player_id == player_id {
+      if state.vustb_session.is_some() {
+        account.player_id = replacement_id;
+      } else {
+        state.vustb_account = None;
+      }
+    }
+  }
+  Ok(())
+}
+
+#[cfg(test)]
+mod deletion_tests {
+  use super::*;
+
+  fn state() -> AccountInfo {
+    serde_json::from_value(serde_json::json!({
+      "players": [{
+        "id": "cloud", "name": "Cloud", "uuid": "00000000-0000-0000-0000-000000000001",
+        "playerType": "3rdparty", "authServerUrl": USTB_AUTH_SERVER_URL, "textures": []
+      }, {
+        "id": "local", "name": "Local", "uuid": "00000000-0000-0000-0000-000000000001",
+        "playerType": "offline", "textures": []
+      }],
+      "authServers": [],
+      "vustbAccount": {
+        "subject": "42", "username": "Owner", "avatarUrl": "", "userGroup": "user",
+        "playerId": "cloud", "profiles": [{"id": "00000000000000000000000000000001", "name": "Cloud"}]
+      },
+      "vustbSession": {"accessToken": "test-session"},
+      "isOauthProcessing": false
+    }))
+    .unwrap()
+  }
+
+  #[test]
+  fn last_cloud_profile_removal_preserves_account_and_independent_session() {
+    let mut state = state();
+    remove_local_player(&mut state, "cloud").unwrap();
+    assert_eq!(state.players.len(), 1);
+    let account = state.vustb_account.unwrap();
+    assert!(account.profiles.is_empty());
+    assert!(account.player_id.is_empty());
+    assert_eq!(state.vustb_session.unwrap().access_token, "test-session");
+  }
+
+  #[test]
+  fn local_removal_does_not_modify_cloud_profile_with_same_uuid() {
+    let mut state = state();
+    remove_local_player(&mut state, "local").unwrap();
+    let account = state.vustb_account.unwrap();
+    assert_eq!(account.profiles.len(), 1);
+    assert_eq!(account.player_id, "cloud");
+  }
+
+  #[test]
+  fn missing_player_leaves_state_unchanged() {
+    let mut state = state();
+    let before = serde_json::to_value(&state).unwrap();
+    assert!(remove_local_player(&mut state, "missing").is_err());
+    assert_eq!(serde_json::to_value(&state).unwrap(), before);
+  }
+
+  #[test]
+  fn linked_player_moves_to_another_cloud_profile() {
+    let mut state = state();
+    let mut another = state.players[0].clone();
+    another.id = "another".into();
+    another.uuid = uuid::Uuid::from_u128(2);
+    state.players.push(another);
+    remove_local_player(&mut state, "cloud").unwrap();
+    assert_eq!(state.vustb_account.unwrap().player_id, "another");
+  }
+
+  #[test]
+  fn only_builtin_third_party_profiles_use_cloud_deletion() {
+    let mut player = state().players.remove(0);
+    assert!(is_vustb_player(&player));
+    player.auth_server_url = Some(USTB_AUTH_SERVER_URL.trim_end_matches('/').into());
+    assert!(is_vustb_player(&player));
+    player.auth_server_url = Some("https://WWW.USTB.WORLD:443/skinapi/".into());
+    assert!(is_vustb_player(&player));
+    player.auth_server_url = Some("https://www.ustb.world:8443/skinapi/".into());
+    assert!(!is_vustb_player(&player));
+    player.auth_server_url = Some(USTB_AUTH_SERVER_URL.into());
+    player.player_type = PlayerType::Microsoft;
+    assert!(!is_vustb_player(&player));
+    player.player_type = PlayerType::ThirdParty;
+    player.auth_server_url = Some("https://other.example/skinapi/".into());
+    assert!(!is_vustb_player(&player));
+  }
+}
+
 #[tauri::command]
 pub async fn delete_player(app: AppHandle, player_id: String) -> USTBLResult<()> {
+  let player = {
+    let binding = app.state::<Mutex<AccountInfo>>();
+    let state = binding.lock()?;
+    state
+      .players
+      .iter()
+      .find(|player| player.id == player_id)
+      .cloned()
+      .ok_or(AccountError::NotFound)?
+  };
+  if is_vustb_player(&player) {
+    // Preserve legacy player-bound tokens before removing even the last profile.
+    let tokens = vustb::stored_tokens(&app)?;
+    vustb::store_tokens(&app, &tokens)?;
+    let result: serde_json::Value = vustb::delete_authenticated(
+      &app,
+      &format!("/api/launcher/profiles/{}", player.uuid.simple()),
+    )
+    .await?;
+    if result.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
+      return Err(AccountError::ParseError.into());
+    }
+  }
+
   {
     let account_binding = app.state::<Mutex<AccountInfo>>();
     let mut account_state = account_binding.lock()?;
@@ -1065,36 +1218,7 @@ pub async fn delete_player(app: AppHandle, player_id: String) -> USTBLResult<()>
     let config_binding = app.state::<Mutex<LauncherConfig>>();
     let mut config_state = config_binding.lock()?;
 
-    let initial_len = account_state.players.len();
-    account_state.players.retain(|s| s.id != player_id);
-    if account_state.players.len() == initial_len {
-      return Err(AccountError::NotFound.into());
-    }
-
-    let deleted_linked_vustb_player = account_state
-      .vustb_account
-      .as_ref()
-      .is_some_and(|account| account.player_id == player_id);
-    if deleted_linked_vustb_player {
-      if account_state.vustb_session.is_some() {
-        let replacement_player_id = account_state
-          .players
-          .iter()
-          .find(|player| {
-            player
-              .auth_server_url
-              .as_deref()
-              .is_some_and(|url| normalize_url(url) == normalize_url(USTB_AUTH_SERVER_URL))
-          })
-          .map(|player| player.id.clone())
-          .unwrap_or_default();
-        if let Some(account) = account_state.vustb_account.as_mut() {
-          account.player_id = replacement_player_id;
-        }
-      } else {
-        account_state.vustb_account = None;
-      }
-    }
+    remove_local_player(&mut account_state, &player_id)?;
 
     if config_state.states.shared.selected_player_id == player_id {
       config_state.partial_update(

@@ -24,6 +24,7 @@ import { PlayerType } from "@/enums/account";
 import { AccountServiceError } from "@/enums/service-error";
 import { Player } from "@/models/account";
 import { AccountService } from "@/services/account";
+import { isVustbPlayer } from "@/utils/account";
 import { copyText } from "@/utils/copy";
 
 interface PlayerMenuProps {
@@ -58,6 +59,7 @@ export const PlayerMenu: React.FC<PlayerMenuProps> = ({
 
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const deletesCloudProfile = isVustbPlayer(player);
 
   const handleDeletePlayer = () => {
     setIsDeleting(true);
@@ -65,24 +67,27 @@ export const PlayerMenu: React.FC<PlayerMenuProps> = ({
       title: t("PlayerMenu.toast.deleting"),
       status: "loading",
     });
-    AccountService.deletePlayer(player.id).then((response) => {
-      if (response.status === "success") {
-        getPlayerList(true);
+    AccountService.deletePlayer(player.id)
+      .then((response) => {
+        if (response.status === "success") {
+          getPlayerList(true);
+          toast({
+            title: response.message,
+            status: "success",
+          });
+        } else {
+          toast({
+            title: response.message,
+            description: response.details,
+            status: "error",
+          });
+        }
+      })
+      .finally(() => {
         closeToast(loadingToast);
-        toast({
-          title: response.message,
-          status: "success",
-        });
-      } else {
-        toast({
-          title: response.message,
-          description: response.details,
-          status: "error",
-        });
-      }
-      setIsDeleting(false);
-      closeSharedModal("generic-confirm");
-    });
+        setIsDeleting(false);
+        closeSharedModal("generic-confirm");
+      });
   };
 
   const handleRefreshPlayer = () => {
@@ -162,14 +167,16 @@ export const PlayerMenu: React.FC<PlayerMenuProps> = ({
       onClick: () => {
         openGenericConfirmDialog({
           title: t("DeletePlayerAlertDialog.dialog.title"),
-          body: t("DeletePlayerAlertDialog.dialog.content", {
-            name: player.name,
-          }),
+          body: deletesCloudProfile
+            ? `确定永久删除像素北科角色「${player.name}」吗？这会同时删除云端角色，无法恢复，也不会退还创建积分。账户、衣柜和材质不受影响。`
+            : t("DeletePlayerAlertDialog.dialog.content", {
+                name: player.name,
+              }),
           btnOK: t("General.delete"),
           isAlert: true,
           onOKCallback: handleDeletePlayer,
-          showSuppressBtn: true,
-          suppressKey: "deletePlayerAlert",
+          showSuppressBtn: !deletesCloudProfile,
+          suppressKey: deletesCloudProfile ? undefined : "deletePlayerAlert",
         });
       },
       isLoading: isDeleting,
