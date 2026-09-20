@@ -45,3 +45,20 @@ export interface VustbFriend {
   instanceName: string | null;
   lastSeenAt: string | null;
 }
+
+export interface VustbTexture {
+  hash: string;
+  type: "skin" | "cape";
+  name: string;
+  model: "classic" | "slim";
+  isPublic: boolean;
+  uploaderName: string;
+  createdAt: string | null;
+  url: string;
+  collected: boolean;
+}
+
+export interface VustbTexturePage {
+  total: number;
+  items: VustbTexture[];
+}

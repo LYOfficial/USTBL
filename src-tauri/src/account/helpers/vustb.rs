@@ -3,7 +3,7 @@ use crate::account::helpers::authlib_injector::info::get_auth_server_info_by_url
 use crate::account::helpers::authlib_injector::oauth::{self, OAuthProfileLogin};
 use crate::account::models::{
   AccountError, AccountInfo, AuthServer, OAuthTokens, VustbAccount, VustbCheckinResult,
-  VustbFriend, VustbProfile, VustbProgression, VustbSession,
+  VustbFriend, VustbProfile, VustbProgression, VustbSession, VustbTexture, VustbTexturePage,
 };
 use crate::error::{USTBLError, USTBLResult};
 use crate::storage::Storage;
@@ -85,6 +85,20 @@ fn map_status(status: reqwest::StatusCode) -> AccountError {
   }
 }
 
+fn response_error(status: reqwest::StatusCode, value: Option<serde_json::Value>) -> USTBLError {
+  let detail = value.and_then(|value| match value.get("detail") {
+    Some(serde_json::Value::String(detail)) => Some(detail.clone()),
+    Some(detail) => Some(detail.to_string()),
+    None => value
+      .get("error_description")
+      .and_then(|detail| detail.as_str())
+      .map(str::to_string),
+  });
+  detail
+    .map(USTBLError)
+    .unwrap_or_else(|| map_status(status).into())
+}
+
 fn absolute_vustb_url(url: String) -> String {
   if url.starts_with("http://") || url.starts_with("https://") {
     url
@@ -102,11 +116,13 @@ async fn parse_json_response<T: DeserializeOwned>(
   endpoint: &str,
 ) -> USTBLResult<T> {
   if !response.status().is_success() {
+    let status = response.status();
     log::error!(
       "vUSTB account request failed: endpoint={endpoint}, status={}",
-      response.status()
+      status
     );
-    return Err(map_status(response.status()).into());
+    let value = response.json::<serde_json::Value>().await.ok();
+    return Err(response_error(status, value));
   }
 
   let value = response
@@ -299,25 +315,7 @@ pub async fn post_authenticated<B: Serialize, T: DeserializeOwned>(
       .json(body)
   })
   .await?;
-  if !response.status().is_success() {
-    let status = response.status();
-    let detail = response
-      .json::<serde_json::Value>()
-      .await
-      .ok()
-      .and_then(|value| {
-        value
-          .get("detail")
-          .and_then(|value| value.as_str())
-          .map(str::to_string)
-      })
-      .unwrap_or_else(|| format!("像素北科 API 返回 HTTP {status}"));
-    return Err(USTBLError(detail));
-  }
-  response
-    .json::<T>()
-    .await
-    .map_err(|_| AccountError::ParseError.into())
+  parse_json_response(response, endpoint).await
 }
 
 pub async fn put_authenticated<B: Serialize, T: DeserializeOwned>(
@@ -429,9 +427,55 @@ pub async fn fetch_friends(app: &AppHandle) -> USTBLResult<Vec<VustbFriend>> {
   )
 }
 
+fn normalize_texture_urls(items: &mut [VustbTexture]) {
+  for item in items {
+    item.url = absolute_vustb_url(std::mem::take(&mut item.url));
+  }
+}
+
+pub async fn fetch_skin_library(
+  app: &AppHandle,
+  page: u32,
+  limit: u32,
+  texture_type: Option<String>,
+) -> USTBLResult<VustbTexturePage> {
+  let mut endpoint = format!("/api/launcher/skins/library?page={page}&limit={limit}");
+  if let Some(texture_type) = texture_type.filter(|value| !value.is_empty()) {
+    endpoint.push_str("&texture_type=");
+    endpoint.push_str(&texture_type);
+  }
+  let mut result: VustbTexturePage = get_authenticated(app, &endpoint).await?;
+  normalize_texture_urls(&mut result.items);
+  Ok(result)
+}
+
+pub async fn fetch_wardrobe(
+  app: &AppHandle,
+  texture_type: Option<String>,
+) -> USTBLResult<Vec<VustbTexture>> {
+  let endpoint = texture_type
+    .filter(|value| !value.is_empty())
+    .map(|value| format!("/api/launcher/skins/wardrobe?texture_type={value}"))
+    .unwrap_or_else(|| "/api/launcher/skins/wardrobe".to_string());
+  let mut result: Vec<VustbTexture> = get_authenticated(app, &endpoint).await?;
+  normalize_texture_urls(&mut result);
+  Ok(result)
+}
+
+pub async fn collect_texture(app: &AppHandle, hash: &str) -> USTBLResult<()> {
+  let _: serde_json::Value = post_authenticated(
+    app,
+    &format!("/api/launcher/skins/library/{hash}/collect"),
+    &serde_json::json!({}),
+  )
+  .await?;
+  Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-  use super::{access_token_was_replaced, tokens_from_state};
+  use super::reqwest;
+  use super::{access_token_was_replaced, response_error, tokens_from_state};
   use crate::account::helpers::authlib_injector::constants::USTB_AUTH_SERVER_URL;
   use crate::account::models::{
     AccountInfo, OAuthTokens, PlayerInfo, PlayerType, VustbAccount, VustbProgression, VustbSession,
@@ -510,5 +554,20 @@ mod tests {
     assert!(access_token_was_replaced(Some("old-access"), &current));
     assert!(!access_token_was_replaced(Some("new-access"), &current));
     assert!(!access_token_was_replaced(None, &current));
+  }
+
+  #[test]
+  fn api_error_detail_is_preserved_for_reauthentication_prompt() {
+    let error = response_error(
+      reqwest::StatusCode::FORBIDDEN,
+      Some(serde_json::json!({
+        "detail": "当前启动器登录授权版本过旧，请退出像素北科账户后重新登录"
+      })),
+    );
+
+    assert_eq!(
+      error.0,
+      "当前启动器登录授权版本过旧，请退出像素北科账户后重新登录"
+    );
   }
 }

@@ -10,6 +10,7 @@ use crate::account::helpers::{microsoft, misc, offline, vustb, vustb_presence};
 use crate::account::models::{
   AccountError, AccountInfo, AuthServer, DeviceAuthResponseInfo, Player, PlayerInfo, PlayerType,
   PresetRole, SkinModel, TextureType, VustbAccount, VustbCheckinResult, VustbFriend, VustbSession,
+  VustbTexture, VustbTexturePage,
 };
 use crate::error::USTBLResult;
 use crate::launcher_config::models::LauncherConfig;
@@ -316,6 +317,29 @@ pub async fn checkin_vustb_account(app: AppHandle) -> USTBLResult<VustbCheckinRe
 #[tauri::command]
 pub async fn retrieve_vustb_friends(app: AppHandle) -> USTBLResult<Vec<VustbFriend>> {
   vustb::fetch_friends(&app).await
+}
+
+#[tauri::command]
+pub async fn retrieve_vustb_skin_library(
+  app: AppHandle,
+  page: u32,
+  limit: u32,
+  texture_type: Option<String>,
+) -> USTBLResult<VustbTexturePage> {
+  vustb::fetch_skin_library(&app, page, limit, texture_type).await
+}
+
+#[tauri::command]
+pub async fn retrieve_vustb_wardrobe(
+  app: AppHandle,
+  texture_type: Option<String>,
+) -> USTBLResult<Vec<VustbTexture>> {
+  vustb::fetch_wardrobe(&app, texture_type).await
+}
+
+#[tauri::command]
+pub async fn collect_vustb_texture(app: AppHandle, hash: String) -> USTBLResult<()> {
+  vustb::collect_texture(&app, &hash).await
 }
 
 #[tauri::command]
