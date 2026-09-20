@@ -343,7 +343,7 @@ const AccountsPage = () => {
                   </HStack>
                 }
               >
-                <Box overflow="auto" flexGrow={1} rounded="md">
+                <Box overflowY="auto" flexGrow={1} minH={0} rounded="md">
                   <PlayersView
                     selectedPlayer={selectedPlayer}
                     players={filterPlayersByType(selectedPlayerType)}
