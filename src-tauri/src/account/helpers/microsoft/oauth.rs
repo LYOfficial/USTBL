@@ -198,6 +198,7 @@ async fn parse_profile(app: &AppHandle, tokens: &OAuthTokens) -> USTBLResult<Pla
           image: fetch_image(app, skin.url.clone()).await?,
           model: skin.variant.clone().unwrap_or_default(),
           preset: None,
+          source_hash: None,
         });
       }
     }
@@ -210,6 +211,7 @@ async fn parse_profile(app: &AppHandle, tokens: &OAuthTokens) -> USTBLResult<Pla
           image: fetch_image(app, cape.url.clone()).await?,
           model: SkinModel::Default,
           preset: None,
+          source_hash: None,
         });
       }
     }

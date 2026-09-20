@@ -74,6 +74,8 @@ pub struct Texture {
   pub image: ImageWrapper,
   pub model: SkinModel,
   pub preset: Option<PresetRole>,
+  #[serde(default)]
+  pub source_hash: Option<String>,
 }
 
 // only for the client
@@ -332,6 +334,10 @@ pub struct VustbTexture {
   pub url: String,
   #[serde(default)]
   pub collected: bool,
+  #[serde(default)]
+  pub local_backup: bool,
+  #[serde(default)]
+  pub local_backup_id: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
