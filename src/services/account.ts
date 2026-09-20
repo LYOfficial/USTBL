@@ -6,6 +6,7 @@ import {
   VustbAccount,
   VustbCheckinResult,
   VustbFriend,
+  VustbProfile,
   VustbTexture,
   VustbTexturePage,
 } from "@/models/vustb";
@@ -15,6 +16,29 @@ import { responseHandler } from "@/utils/response";
  * Service class for managing accounts, players, and authentication servers.
  */
 export class AccountService {
+  @responseHandler("account")
+  static async createVustbProfile(
+    name: string,
+    skinHash?: string,
+    capeHash?: string
+  ): Promise<InvokeResponse<VustbProfile>> {
+    return await invoke("create_vustb_profile", { name, skinHash, capeHash });
+  }
+
+  @responseHandler("account")
+  static async applyVustbOutfit(
+    playerId: string,
+    textures: VustbTexture[],
+    clearSkin: boolean,
+    clearCape: boolean
+  ): Promise<InvokeResponse<void>> {
+    return await invoke("apply_vustb_outfit", {
+      playerId,
+      textures,
+      clearSkin,
+      clearCape,
+    });
+  }
   /** Begin the built-in 像素北科 Device Flow. */
   @responseHandler("account")
   static async fetchVustbOAuthCode(): Promise<
@@ -47,6 +71,11 @@ export class AccountService {
   }
 
   @responseHandler("account")
+  static async refreshVustbAccount(): Promise<InvokeResponse<VustbAccount>> {
+    return await invoke("refresh_vustb_account");
+  }
+
+  @responseHandler("account")
   static async checkinVustbAccount(): Promise<
     InvokeResponse<VustbCheckinResult>
   > {
@@ -73,9 +102,10 @@ export class AccountService {
 
   @responseHandler("account")
   static async retrieveVustbWardrobe(
-    textureType?: "skin" | "cape"
+    textureType?: "skin" | "cape",
+    localOnly = false
   ): Promise<InvokeResponse<VustbTexture[]>> {
-    return await invoke("retrieve_vustb_wardrobe", { textureType });
+    return await invoke("retrieve_vustb_wardrobe", { textureType, localOnly });
   }
 
   @responseHandler("account")
@@ -124,11 +154,13 @@ export class AccountService {
   @responseHandler("account")
   static async addPlayerOffline(
     username: string,
-    uuid?: string
+    uuid?: string,
+    textures?: VustbTexture[]
   ): Promise<InvokeResponse<void>> {
     return await invoke("add_player_offline", {
       username,
       uuid: uuid || "",
+      textures,
     });
   }
 

@@ -23,6 +23,8 @@ export interface VustbAccount {
   username: string;
   avatarUrl: string;
   userGroup: string;
+  pixelPoints: number;
+  shellPoints: number;
   profiles: VustbProfile[];
   progression: VustbProgression;
   lastCheckin: string | null;

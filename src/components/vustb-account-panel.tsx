@@ -10,7 +10,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { LuCalendarCheck, LuRefreshCw } from "react-icons/lu";
 import { useGlobalData } from "@/contexts/global-data";
 import { useToast } from "@/contexts/toast";
@@ -29,7 +29,13 @@ const groupLabels: Record<string, string> = {
 
 const userGroupLabel = (group: string) => groupLabels[group] || group || "用户";
 
-const VustbAccountPanel = () => {
+const VustbAccountPanel = ({
+  refreshKey = 0,
+  onAccountChange,
+}: {
+  refreshKey?: number;
+  onAccountChange?: (account: VustbAccount | null) => void;
+}) => {
   const toast = useToast();
   const { getAuthServerList, getPlayerList } = useGlobalData();
   const [account, setAccount] = useState<VustbAccount | null>(null);
@@ -37,17 +43,35 @@ const VustbAccountPanel = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [isCheckingIn, setIsCheckingIn] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const accountRequest = useRef(0);
 
   const loadAccount = useCallback(async () => {
+    const request = ++accountRequest.current;
     const response = await AccountService.retrieveVustbAccount();
-    if (response.status === "success") setAccount(response.data);
+    if (request !== accountRequest.current || response.status !== "success")
+      return;
+    setAccount(response.data);
+    if (response.data) {
+      const refreshed = await AccountService.refreshVustbAccount();
+      if (request === accountRequest.current && refreshed.status === "success")
+        setAccount(refreshed.data);
+    }
   }, []);
 
   useEffect(() => {
+    const requests = accountRequest;
     loadAccount();
-  }, [loadAccount]);
+    return () => {
+      requests.current++;
+    };
+  }, [loadAccount, refreshKey]);
+
+  useEffect(() => {
+    onAccountChange?.(account);
+  }, [account, onAccountChange]);
 
   const handleLogin = async () => {
+    accountRequest.current++;
     setIsLoggingIn(true);
     const codeResponse = await AccountService.fetchVustbOAuthCode();
     if (codeResponse.status !== "success") {
@@ -89,6 +113,7 @@ const VustbAccountPanel = () => {
   };
 
   const handleSync = async () => {
+    accountRequest.current++;
     setIsSyncing(true);
     const response = await AccountService.syncVustbAccount();
     if (response.status === "success") {
@@ -115,6 +140,7 @@ const VustbAccountPanel = () => {
   };
 
   const handleLogout = async () => {
+    accountRequest.current++;
     setIsLoggingOut(true);
     const response = await AccountService.logoutVustbAccount();
     if (response.status === "success") {
@@ -133,6 +159,7 @@ const VustbAccountPanel = () => {
   };
 
   const handleCheckin = async () => {
+    accountRequest.current++;
     setIsCheckingIn(true);
     const response = await AccountService.checkinVustbAccount();
     if (response.status === "success") {
@@ -191,7 +218,7 @@ const VustbAccountPanel = () => {
   );
 
   return (
-    <Box minH="112px" pr={2} pl={{ base: 6, md: 8 }} py={3}>
+    <Box minH="112px" px={{ base: 6, md: 8 }} py={3}>
       <HStack spacing={3} justify="space-between">
         <HStack minW={0} spacing={3}>
           <Avatar
@@ -211,6 +238,10 @@ const VustbAccountPanel = () => {
             <Text fontSize="sm" className="secondary-text">
               {userGroupLabel(account.userGroup)} · {account.profiles.length}{" "}
               个游戏角色
+            </Text>
+            <Text fontSize="sm" className="secondary-text">
+              像素积分 {account.pixelPoints ?? 0} · 贝壳积分{" "}
+              {account.shellPoints ?? 0}
             </Text>
           </Box>
         </HStack>

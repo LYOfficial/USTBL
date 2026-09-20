@@ -1,6 +1,7 @@
 import {
   Box,
   BoxProps,
+  Button,
   Grid,
   GridItem,
   HStack,
@@ -10,9 +11,9 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { useEffect, useState } from "react";
-import { LuChevronDown, LuChevronUp } from "react-icons/lu";
+import { LuChevronDown, LuChevronUp, LuPlus } from "react-icons/lu";
 import Empty from "@/components/common/empty";
-import { OptionItemGroup } from "@/components/common/option-item";
+import { OptionItem, OptionItemGroup } from "@/components/common/option-item";
 import { WrapCard } from "@/components/common/wrap-card";
 import PlayerAvatar from "@/components/player-avatar";
 import PlayerMenu from "@/components/player-menu";
@@ -32,6 +33,7 @@ interface PlayersViewProps extends BoxProps {
   viewType: string;
   onSelectCallback?: () => void;
   withMenu?: boolean;
+  onCreate?: () => void;
 }
 
 const PlayersView: React.FC<PlayersViewProps> = ({
@@ -40,6 +42,7 @@ const PlayersView: React.FC<PlayersViewProps> = ({
   viewType,
   onSelectCallback = () => {},
   withMenu = true,
+  onCreate,
   ...boxProps
 }) => {
   const { config, update } = useLauncherConfig();
@@ -89,12 +92,61 @@ const PlayersView: React.FC<PlayersViewProps> = ({
     ),
   }));
 
+  const createButton = onCreate && (
+    <Button
+      className="create-player-card"
+      aria-label="创建角色"
+      onClick={onCreate}
+      variant="ghost"
+      border="1px dashed"
+      borderColor="gray.400"
+      rounded="md"
+      w="100%"
+      h={viewType === "list" ? "100%" : `${CARD_HEIGHT}px`}
+      position={viewType === "list" ? "absolute" : undefined}
+      inset={viewType === "list" ? 0 : undefined}
+      minW={0}
+      fontSize="24px"
+    >
+      <LuPlus />
+    </Button>
+  );
+  const createCard =
+    createButton &&
+    (viewType === "list" ? (
+      <OptionItem
+        title={"\u00a0"}
+        description={"\u00a0"}
+        prefixElement={<Box boxSize="32px" />}
+        position="relative"
+      >
+        {createButton}
+      </OptionItem>
+    ) : (
+      createButton
+    ));
+
   return (
-    <Box {...boxProps}>
-      {players.length > 0 ? (
+    <Box
+      minH={onCreate ? `${CARD_HEIGHT}px` : undefined}
+      {...boxProps}
+      sx={{
+        "& .create-player-card": {
+          opacity: 0,
+          transition: "opacity 150ms ease",
+        },
+        "&:hover .create-player-card, &:focus-within .create-player-card": {
+          opacity: 1,
+        },
+        "@media (hover: none)": { "& .create-player-card": { opacity: 1 } },
+      }}
+    >
+      {players.length > 0 || onCreate ? (
         <RadioGroup value={selectedPlayer?.id}>
           {viewType === "list" ? (
-            <OptionItemGroup items={listItems} />
+            <OptionItemGroup
+              items={createCard ? [...listItems, createCard] : listItems}
+            />
           ) : (
             <Grid
               templateColumns={`repeat(auto-fill, minmax(${CARD_MIN_WIDTH}px, 1fr))`}
@@ -190,6 +242,7 @@ const PlayersView: React.FC<PlayersViewProps> = ({
                   </GridItem>
                 );
               })}
+              {createCard}
             </Grid>
           )}
         </RadioGroup>
