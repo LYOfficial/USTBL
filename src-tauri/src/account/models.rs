@@ -316,6 +316,32 @@ pub struct VustbFriend {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VustbTexture {
+  pub hash: String,
+  #[serde(rename = "type")]
+  pub texture_type: String,
+  pub name: String,
+  pub model: String,
+  #[serde(alias = "is_public")]
+  pub is_public: bool,
+  #[serde(default, alias = "uploader_name")]
+  pub uploader_name: String,
+  #[serde(alias = "created_at")]
+  pub created_at: Option<String>,
+  pub url: String,
+  #[serde(default)]
+  pub collected: bool,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VustbTexturePage {
+  pub total: u64,
+  pub items: Vec<VustbTexture>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
 pub struct OAuthErrorResponse {
   pub error: String,
   pub error_description: Option<String>,
@@ -442,7 +468,7 @@ impl Storage for AccountInfo {
 
 #[cfg(test)]
 mod tests {
-  use super::{AccountInfo, VustbProgression, VustbSession};
+  use super::{AccountInfo, VustbProgression, VustbSession, VustbTexturePage};
 
   #[test]
   fn legacy_account_storage_without_vustb_session_still_loads() {
@@ -492,6 +518,31 @@ mod tests {
     assert_eq!(value["nextLevelExperience"], 7);
     assert_eq!(value["checkinDays"], 1);
     assert_eq!(value["playTimeSeconds"], 600);
+  }
+
+  #[test]
+  fn texture_page_accepts_launcher_api_snake_case() {
+    let page: VustbTexturePage = serde_json::from_str(
+      r#"{
+        "total": 1,
+        "items": [{
+          "hash": "texture-hash",
+          "type": "skin",
+          "name": "Example",
+          "model": "slim",
+          "is_public": true,
+          "uploader_name": "Uploader",
+          "created_at": "2026-09-19T00:00:00Z",
+          "url": "/static/textures/texture-hash.png",
+          "collected": false
+        }]
+      }"#,
+    )
+    .unwrap();
+
+    assert_eq!(page.total, 1);
+    assert!(page.items[0].is_public);
+    assert_eq!(page.items[0].uploader_name, "Uploader");
   }
 }
 

@@ -2,7 +2,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { SkinModel, TextureType } from "@/enums/account";
 import { AuthServer, DeviceAuthResponseInfo, Player } from "@/models/account";
 import { InvokeResponse } from "@/models/response";
-import { VustbAccount, VustbCheckinResult, VustbFriend } from "@/models/vustb";
+import {
+  VustbAccount,
+  VustbCheckinResult,
+  VustbFriend,
+  VustbTexture,
+  VustbTexturePage,
+} from "@/models/vustb";
 import { responseHandler } from "@/utils/response";
 
 /**
@@ -50,6 +56,33 @@ export class AccountService {
   @responseHandler("account")
   static async retrieveVustbFriends(): Promise<InvokeResponse<VustbFriend[]>> {
     return await invoke("retrieve_vustb_friends");
+  }
+
+  @responseHandler("account")
+  static async retrieveVustbSkinLibrary(
+    page: number,
+    limit: number,
+    textureType?: "skin" | "cape"
+  ): Promise<InvokeResponse<VustbTexturePage>> {
+    return await invoke("retrieve_vustb_skin_library", {
+      page,
+      limit,
+      textureType,
+    });
+  }
+
+  @responseHandler("account")
+  static async retrieveVustbWardrobe(
+    textureType?: "skin" | "cape"
+  ): Promise<InvokeResponse<VustbTexture[]>> {
+    return await invoke("retrieve_vustb_wardrobe", { textureType });
+  }
+
+  @responseHandler("account")
+  static async collectVustbTexture(
+    hash: string
+  ): Promise<InvokeResponse<void>> {
+    return await invoke("collect_vustb_texture", { hash });
   }
 
   @responseHandler("account")
