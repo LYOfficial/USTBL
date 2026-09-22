@@ -15,6 +15,7 @@ use crate::instance::helpers::misc::{
 use crate::instance::helpers::modpack::misc::{
   extract_overrides, get_download_params, ModpackMetaInfo,
 };
+use crate::instance::helpers::modpack::multimc::profile::ResolvedMultiMc;
 use crate::instance::helpers::mods::common::{
   compress_icon, get_mod_info_from_dir, get_mod_info_from_jar,
 };
@@ -968,6 +969,26 @@ pub async fn create_instance(
   // Guard removes version_path on any early return (errors)
   let dir_guard = RemoveDirGuard::new(version_path.clone());
 
+  let modpack_file = modpack_path.as_ref().map(fs::File::open).transpose()?;
+  let mut component_import = if let Some(file) = &modpack_file {
+    ResolvedMultiMc::from_archive(client.inner(), file).await?
+  } else {
+    None
+  };
+  if component_import.is_some() && optifine.is_some() {
+    return Err(crate::error::USTBLError(
+      "Cannot overlay OptiFine on an imported component profile".into(),
+    ));
+  }
+  if component_import
+    .as_ref()
+    .is_some_and(|p| p.client.client_version.as_deref() != Some(&game.id))
+  {
+    return Err(crate::error::USTBLError(
+      "Selected Minecraft version differs from the imported component profile".into(),
+    ));
+  }
+
   let optifine_info = optifine.as_ref().map(|info| OptiFine {
     filename: info.filename.clone(),
     version: format!("{}_{}", info.r#type, info.patch),
@@ -975,7 +996,7 @@ pub async fn create_instance(
   });
 
   // Create instance config
-  let instance = Instance {
+  let mut instance = Instance {
     id: format!("{}:{}", directory.name, name.clone()),
     name: name.clone(),
     version: game.id.clone(),
@@ -1002,6 +1023,14 @@ pub async fn create_instance(
     spec_game_config: None,
   };
 
+  if component_import.is_some() {
+    instance.mod_loader.status = ModLoaderStatus::Installed;
+    let mut config = get_global_game_config(&app);
+    config.version_isolation = true;
+    instance.use_spec_game_config = true;
+    instance.spec_game_config = Some(config);
+  }
+
   // Download version info, retrying through both official and mirror routes.
   let official_version_url =
     Url::parse(&game.url).map_err(|_| InstanceError::ClientJsonParseError)?;
@@ -1021,8 +1050,11 @@ pub async fn create_instance(
   if version_sources.is_empty() {
     version_sources.push(official_version_url);
   }
-  let mut version_info: McClientInfo =
-    fetch_json_with_fallbacks(client.inner(), &version_sources, 10).await?;
+  let mut version_info: McClientInfo = if let Some(import) = &component_import {
+    import.client.clone()
+  } else {
+    fetch_json_with_fallbacks(client.inner(), &version_sources, 10).await?
+  };
 
   version_info.id = name.clone();
   version_info.jar = Some(name.clone());
@@ -1035,6 +1067,23 @@ pub async fn create_instance(
   vanilla_patch.priority = Some(0);
   version_info.patches.push(vanilla_patch);
 
+  if let Some(import) = &mut component_import {
+    import.client = version_info;
+    import.materialize(
+      modpack_file.as_ref().unwrap(),
+      &directory.dir.join("libraries"),
+      &version_path,
+    )?;
+    version_info = import.client.clone();
+    if instance.mod_loader.loader_type != ModLoaderType::Unknown {
+      version_info.patches.push(McClientInfo {
+        id: instance.mod_loader.loader_type.to_string().to_lowercase(),
+        version: Some(instance.mod_loader.version.clone()),
+        ..Default::default()
+      });
+    }
+  }
+
   let mut task_params = Vec::<PTaskParam>::new();
 
   // Download client (use task)
@@ -1043,42 +1092,51 @@ pub async fn create_instance(
     .get("client")
     .ok_or(InstanceError::ClientJsonParseError)?;
 
-  let original_client_url = Url::parse(&client_download_info.url.clone())
-    .map_err(|_| InstanceError::ClientJsonParseError)?;
-  let official_client_url = Url::parse(&format!(
-    "https://piston-data.mojang.com/v1/objects/{}/client.jar",
-    client_download_info.sha1
-  ))
-  .map_err(|_| InstanceError::ClientJsonParseError)?;
-  let mut client_sources = Vec::new();
-  for source in &priority_list {
-    let candidate = match source {
-      SourceType::Official => official_client_url.clone(),
-      SourceType::BMCLAPIMirror => {
-        get_download_api(SourceType::BMCLAPIMirror, ResourceType::Launcher)?
-          .join(&format!("version/{}/client", game.id))?
-      }
+  if !client_download_info.url.is_empty() {
+    let original_client_url = Url::parse(&client_download_info.url.clone())
+      .map_err(|_| InstanceError::ClientJsonParseError)?;
+    let official_client_url = if component_import.is_some() {
+      original_client_url.clone()
+    } else {
+      Url::parse(&format!(
+        "https://piston-data.mojang.com/v1/objects/{}/client.jar",
+        client_download_info.sha1
+      ))
+      .map_err(|_| InstanceError::ClientJsonParseError)?
     };
-    if !client_sources.contains(&candidate) {
-      client_sources.push(candidate);
+    let mut client_sources = Vec::new();
+    for source in &priority_list {
+      let candidate = match source {
+        SourceType::Official => official_client_url.clone(),
+        SourceType::BMCLAPIMirror => {
+          if component_import.is_some() {
+            continue;
+          }
+          get_download_api(SourceType::BMCLAPIMirror, ResourceType::Launcher)?
+            .join(&format!("version/{}/client", game.id))?
+        }
+      };
+      if !client_sources.contains(&candidate) {
+        client_sources.push(candidate);
+      }
     }
-  }
-  if client_sources.is_empty() {
-    client_sources.push(original_client_url.clone());
-  }
-  if !client_sources.contains(&original_client_url) {
-    client_sources.push(original_client_url);
-  }
-  let client_src = client_sources.remove(0);
+    if client_sources.is_empty() {
+      client_sources.push(original_client_url.clone());
+    }
+    if !client_sources.contains(&original_client_url) {
+      client_sources.push(original_client_url);
+    }
+    let client_src = client_sources.remove(0);
 
-  task_params.push(PTaskParam::Download(DownloadParam {
-    src: client_src,
-    dest: instance.version_path.join(format!("{}.jar", name)),
-    filename: None,
-    sha1: Some(client_download_info.sha1.clone()),
-    custom_headers: None,
-    transfer_options: DownloadTransferOptions::resumable(client_sources, 10),
-  }));
+    task_params.push(PTaskParam::Download(DownloadParam {
+      src: client_src,
+      dest: instance.version_path.join(format!("{}.jar", name)),
+      filename: None,
+      sha1: (!client_download_info.sha1.is_empty()).then(|| client_download_info.sha1.clone()),
+      custom_headers: None,
+      transfer_options: DownloadTransferOptions::resumable(client_sources, 10),
+    }));
+  }
   let subdirs = get_instance_subdir_paths(
     &app,
     &instance,
@@ -1112,7 +1170,7 @@ pub async fn create_instance(
   }
 
   // download loader (installer)
-  if instance.mod_loader.loader_type != ModLoaderType::Unknown {
+  if component_import.is_none() && instance.mod_loader.loader_type != ModLoaderType::Unknown {
     install_mod_loader(
       app.clone(),
       &priority_list,
@@ -1138,11 +1196,9 @@ pub async fn create_instance(
   }
 
   // If modpack path is provided, install it
-  if let Some(modpack_path) = modpack_path {
-    let path = PathBuf::from(modpack_path);
-    let file = fs::File::open(&path).map_err(|_| InstanceError::FileNotFoundError)?;
-    task_params.extend(get_download_params(&app, &file, &version_path).await?);
-    extract_overrides(&file, &version_path)?;
+  if let Some(file) = &modpack_file {
+    task_params.extend(get_download_params(&app, file, &version_path).await?);
+    extract_overrides(file, &version_path)?;
   }
 
   schedule_progressive_task_group(
@@ -1300,7 +1356,7 @@ pub async fn check_change_mod_loader_availablity(
     .await
     .map_err(|_| InstanceError::NotSupportChangeModLoader)?;
 
-  if current_info.patches.is_empty() {
+  if current_info.patches.is_empty() || current_info.component_profile.is_some() {
     return Err(InstanceError::NotSupportChangeModLoader.into());
   }
 
@@ -1335,6 +1391,9 @@ pub async fn change_mod_loader(
     .version_path
     .join(format!("{}.json", instance.name));
   let current_info: McClientInfo = load_json_async(&json_path).await?;
+  if current_info.component_profile.is_some() {
+    return Err(InstanceError::NotSupportChangeModLoader.into());
+  }
   let vanilla_info = current_info
     .patches
     .first()
