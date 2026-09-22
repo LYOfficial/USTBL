@@ -121,10 +121,31 @@ pub fn extract_overrides(file: &File, instance_path: &Path) -> USTBLResult<()> {
   let mut archive = ZipArchive::new(file)?;
   for i in 0..archive.len() {
     let mut file = archive.by_index(i)?;
-    let path = file.mangled_name();
-    let outpath = if path.starts_with(format!("{}/", overrides_path)) {
-      // Remove "{overrides}/" prefix and join with instance path
-      let relative_path = path.strip_prefix(format!("{}/", overrides_path)).unwrap();
+    let prefix = format!("{}/", overrides_path.trim_end_matches('/'));
+    let outpath = if let Some(relative) = file.name().strip_prefix(&prefix) {
+      if relative.is_empty() || file.is_dir() {
+        continue;
+      }
+      let relative_path = super::multimc::profile::safe_relative(relative)?;
+      if file.unix_mode().is_some_and(|m| m & 0o170000 == 0o120000) {
+        return Err(crate::error::USTBLError(
+          "Modpack symlinks are not supported".into(),
+        ));
+      }
+      // An override must not replace launcher-owned metadata at the instance root.
+      let instance_name = instance_path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy();
+      if relative.eq_ignore_ascii_case("ustblcfg.json")
+        || relative.eq_ignore_ascii_case("ustbl-multimc-components.json")
+        || relative.eq_ignore_ascii_case(&format!("{instance_name}.json"))
+        || relative.eq_ignore_ascii_case(&format!("{instance_name}.jar"))
+      {
+        return Err(crate::error::USTBLError(format!(
+          "Modpack override conflicts with instance metadata: {relative}"
+        )));
+      }
       instance_path.join(relative_path)
     } else {
       continue;
