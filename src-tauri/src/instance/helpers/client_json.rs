@@ -81,6 +81,36 @@ pub struct McClientInfo {
   pub main_class: Option<String>,
   pub jar: Option<String>,
   pub client_version: Option<String>,
+  /// Extra component metadata; command generation still uses the standard fields above.
+  pub component_profile: Option<ComponentLaunchProfile>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ComponentLaunchProfile {
+  /// Platform-specific rules are resolved at import time, not reinterpreted as Mojang rules.
+  pub platform: String,
+  pub compatible_java_majors: Vec<i32>,
+  pub compatible_java_name: Option<String>,
+  /// Download-only artifacts (e.g. a ForgeWrapper installer), never put on the classpath.
+  pub maven_files: Vec<DownloadsArtifact>,
+}
+
+impl ComponentLaunchProfile {
+  pub fn current_platform() -> String {
+    format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+  }
+
+  pub fn validate_platform(&self) -> USTBLResult<()> {
+    if self.platform != Self::current_platform() {
+      return Err(USTBLError(format!(
+        "Component profile was imported for {}; re-import the modpack on {}",
+        self.platform,
+        Self::current_platform()
+      )));
+    }
+    Ok(())
+  }
 }
 
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
@@ -523,6 +553,11 @@ pub async fn replace_native_libraries(
   client_info: &mut McClientInfo,
   instance: &Instance,
 ) -> USTBLResult<()> {
+  // A component profile already specifies its graphics stack and platform rules.
+  // Vanilla replacement heuristics must not replace its explicit natives.
+  if client_info.component_profile.is_some() {
+    return Ok(());
+  }
   #[cfg(any(
     all(
       any(target_arch = "x86", target_arch = "x86_64"),

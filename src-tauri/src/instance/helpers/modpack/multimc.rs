@@ -13,6 +13,8 @@ use std::path::Path;
 use tauri::AppHandle;
 use zip::ZipArchive;
 
+pub mod profile;
+
 #[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct MultiMcCacheRequires {
@@ -43,6 +45,8 @@ structstruck::strike! {
     pub cfg: HashMap<String, String>,
     #[serde(skip)]
     pub base_path: String,
+    #[serde(skip)]
+    pub game_dir: String,
   }
 }
 
@@ -86,29 +90,34 @@ impl ModpackManifest for MultiMcManifest {
     let mut cfg_file = archive.by_name(&cfg_path)?;
     let mut cfg_str = String::new();
     cfg_file.read_to_string(&mut cfg_str)?;
+    drop(cfg_file);
 
     let config = Config::builder()
       .add_source(config::File::from_str(&cfg_str, config::FileFormat::Ini))
       .build()?;
 
     manifest.base_path = base_path;
+    manifest.game_dir = if archive
+      .file_names()
+      .any(|n| n.starts_with(&format!("{}minecraft/", manifest.base_path)))
+    {
+      "minecraft/".into()
+    } else {
+      ".minecraft/".into()
+    };
     manifest.cfg = config.try_deserialize::<HashMap<String, String>>()?;
 
     Ok(manifest)
   }
 
-  async fn get_meta_info(&self, app: &AppHandle) -> USTBLResult<ModpackMetaInfo> {
+  async fn get_meta_info(&self, _app: &AppHandle) -> USTBLResult<ModpackMetaInfo> {
     let client_version = self.get_client_version()?;
     let mod_loader = if let Ok((loader_type, version)) = self.get_mod_loader_type_version() {
-      Some(
-        ModLoader {
-          loader_type,
-          version,
-          ..Default::default()
-        }
-        .with_branch(app, client_version.clone())
-        .await?,
-      )
+      Some(ModLoader {
+        loader_type,
+        version,
+        ..Default::default()
+      })
     } else {
       None
     };
@@ -142,6 +151,7 @@ impl ModpackManifest for MultiMcManifest {
           return Ok((ModLoaderType::Fabric, get_version(component)?))
         }
         "net.neoforged" => return Ok((ModLoaderType::NeoForge, get_version(component)?)),
+        "org.quiltmc.quilt-loader" => return Ok((ModLoaderType::Quilt, get_version(component)?)),
         _ => continue,
       }
     }
@@ -158,7 +168,7 @@ impl ModpackManifest for MultiMcManifest {
   }
 
   fn get_overrides_path(&self) -> String {
-    format!("{}.minecraft/", self.base_path)
+    format!("{}{}", self.base_path, self.game_dir)
   }
 }
 
