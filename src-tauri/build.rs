@@ -3,6 +3,18 @@ use std::path::Path;
 use std::{env, fs};
 
 fn main() {
+  // Unit tests now exercise the download pipeline, which links Windows dialogs.
+  // Tauri embeds this dependency in the application manifest, but not in Rust's
+  // test harness; use the same common-controls version for the test harness.
+  if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+    && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+  {
+    println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+    println!("cargo:rustc-link-arg=/MANIFESTDEPENDENCY:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'");
+    // The app already has Tauri's resource manifest; do not embed a second one.
+    println!("cargo:rustc-link-arg-bin=USTBL=/MANIFEST:NO");
+  }
+
   if std::env::var("GITHUB_ACTIONS").is_err() {
     // Load env variables from ".env" file, if not exists, use ".env.template" to set default value.
     from_filename(".env.template").ok();

@@ -35,6 +35,7 @@ pub struct LaunchArguments {
 
   // compatibility with HMCL
   pub primary_jar_name: String,
+  pub primary_jar: String,
 
   // auth params
   pub auth_access_token: String,
@@ -153,10 +154,10 @@ pub async fn generate_launch_command(
     return Err(InstanceError::InstanceNotFoundByID.into());
   };
 
+  let mut seen_paths = HashSet::new();
   let mut class_paths: Vec<String> = get_nonnative_library_paths(&client_info, libraries_dir)?
     .into_iter()
-    .collect::<HashSet<_>>()
-    .into_iter()
+    .filter(|p| seen_paths.insert(p.clone()))
     .map(|p| p.to_string_lossy().to_string())
     .collect();
   class_paths.push(client_jar_path.clone());
@@ -178,6 +179,7 @@ pub async fn generate_launch_command(
 
     version_name: selected_instance.name.clone(),
     primary_jar_name: format!("{}.jar", selected_instance.name.clone()),
+    primary_jar: client_jar_path.clone(),
     version_type: if !game_config.game_window.custom_info.is_empty() {
       game_config.game_window.custom_info.clone()
     } else {
@@ -319,6 +321,11 @@ pub async fn generate_launch_command(
     // specified jvm params
     let mut client_jvm_args = client_args.to_jvm_arguments(&launch_feature)?;
     if let Some(classpath_pos) = client_jvm_args.iter().position(|s| s == "-cp") {
+      if client_jvm_args.get(classpath_pos + 1).map(String::as_str) != Some("${classpath}") {
+        return Err(USTBLError(
+          "Unsupported explicit component classpath; expected -cp ${classpath}".into(),
+        ));
+      }
       // remove -cp and "${classpath}" and move them to the env to make command shorter
       client_jvm_args.remove(classpath_pos);
       client_jvm_args.remove(classpath_pos);
