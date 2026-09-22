@@ -17,7 +17,6 @@ use futures::future::join_all;
 use futures::stream::{self, StreamExt, TryStreamExt};
 use semver::Version;
 use std::collections::{HashMap, HashSet};
-use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 use tokio::fs;
@@ -40,7 +39,7 @@ fn vanilla_download_param(
     src,
     dest,
     filename: None,
-    sha1: Some(sha1),
+    sha1: (!sha1.is_empty()).then_some(sha1),
     custom_headers: None,
     transfer_options: DownloadTransferOptions::resumable(sources, VANILLA_DOWNLOAD_ATTEMPTS),
   })
@@ -99,11 +98,22 @@ pub async fn get_invalid_library_files(
   let mut artifacts = Vec::new();
   artifacts.extend(get_native_library_artifacts(client_info));
   artifacts.extend(get_nonnative_library_artifacts(client_info));
+  if let Some(profile) = &client_info.component_profile {
+    artifacts.extend(profile.maven_files.clone());
+  }
 
   let futs = artifacts.into_iter().map(move |artifact| async move {
     let file_path = library_path.join(&artifact.path);
     let exists = fs::try_exists(&file_path).await?;
-    if exists && (!check_hash || validate_sha1(file_path.clone(), artifact.sha1.clone()).is_ok()) {
+    let size_matches = !exists
+      || artifact.size <= 0
+      || fs::metadata(&file_path).await?.len() == artifact.size as u64;
+    if exists
+      && size_matches
+      && (!check_hash
+        || artifact.sha1.is_empty()
+        || validate_sha1(file_path.clone(), artifact.sha1.clone()).is_ok())
+    {
       Ok(None)
     } else if artifact.url.is_empty() {
       Err(LaunchError::GameFilesIncomplete.into())
@@ -192,7 +202,8 @@ pub fn merge_library_lists(
   libraries_a: &[LibrariesValue],
   libraries_b: &[LibrariesValue],
 ) -> Vec<LibrariesValue> {
-  let mut library_map: HashMap<LibraryKey, LibrariesValue> = HashMap::new();
+  let mut library_map: HashMap<LibraryKey, usize> = HashMap::new();
+  let mut result: Vec<LibrariesValue> = Vec::new();
 
   for library in libraries_a.iter().chain(libraries_b.iter()) {
     if let Ok(library_parts) = parse_library_name(&library.name, None) {
@@ -205,21 +216,24 @@ pub fn merge_library_lists(
 
       let new_version = library_parts.pack_version;
 
-      if let Some(existing_library) = library_map.get(&key) {
+      if let Some(&index) = library_map.get(&key) {
+        let existing_library = &result[index];
         let existing_version = parse_library_name(&existing_library.name, None)
           .map(|parts| parts.pack_version)
           .unwrap_or("0.1.0".to_string());
 
-        if parse_sem_version(&new_version) > parse_sem_version(&existing_version) {
-          library_map.insert(key, library.clone());
+        // A later patch may replace the source/hash without changing the coordinate.
+        if parse_sem_version(&new_version) >= parse_sem_version(&existing_version) {
+          result[index] = library.clone();
         }
       } else {
-        library_map.insert(key, library.clone());
+        library_map.insert(key, result.len());
+        result.push(library.clone());
       }
     }
   }
 
-  library_map.into_values().collect()
+  result
 }
 
 fn parse_sem_version(version: &str) -> Version {
@@ -274,7 +288,18 @@ pub fn get_nonnative_library_paths(
   libraries = merge_library_lists(&libraries, &[]); // remove duplicates to prevent launch errors
   let mut result = Vec::new();
   for library in libraries {
-    result.push(library_path.join(convert_library_name_to_path(&library.name, None)?));
+    let declared = library
+      .downloads
+      .as_ref()
+      .and_then(|d| d.artifact.as_ref())
+      .map(|a| a.path.as_str())
+      .filter(|p| !p.is_empty());
+    let path = if let Some(path) = declared {
+      path.to_string()
+    } else {
+      convert_library_name_to_path(&library.name, None)?
+    };
+    result.push(library_path.join(path));
   }
   Ok(result)
 }
@@ -293,7 +318,18 @@ pub fn get_native_library_paths(
     }
     if let Some(natives) = &library.natives {
       if let Some(native) = get_natives_string(natives) {
-        let path = convert_library_name_to_path(&library.name, Some(native))?;
+        let declared = library
+          .downloads
+          .as_ref()
+          .and_then(|d| d.classifiers.as_ref())
+          .and_then(|c| c.get(&native))
+          .map(|a| a.path.as_str())
+          .filter(|p| !p.is_empty());
+        let path = if let Some(path) = declared {
+          path.to_string()
+        } else {
+          convert_library_name_to_path(&library.name, Some(native))?
+        };
         #[cfg(target_os = "linux")]
         {
           if use_native_glfw && library.name.to_lowercase().contains("glfw") {
@@ -332,26 +368,58 @@ pub async fn extract_native_libraries(
     use_native_glfw,
     use_native_openal,
   )?;
-  let tasks: Vec<tokio::task::JoinHandle<USTBLResult<()>>> = native_libraries
-    .into_iter()
-    .map(|library_path| {
-      let patches_dir_clone = natives_dir.clone();
-      tokio::spawn(async move {
-        let file = Cursor::new(fs::read(library_path).await?);
-        let mut jar = ZipArchive::new(file)?;
-        jar.extract(&patches_dir_clone)?;
-        Ok(())
+  // Respect library order when archives contain the same native filename.
+  // Concurrent extraction used to overwrite files nondeterministically and
+  // discard extraction errors. Keep blocking zip I/O off the async executor.
+  for source in native_libraries {
+    let excludes = client_info
+      .libraries
+      .iter()
+      .find_map(|library| {
+        let native = get_natives_string(library.natives.as_ref()?)?;
+        let artifact = library
+          .downloads
+          .as_ref()?
+          .classifiers
+          .as_ref()?
+          .get(&native)?;
+        (library_path.join(&artifact.path) == source).then(|| {
+          library
+            .extract
+            .as_ref()
+            .and_then(|e| e.exclude.clone())
+            .unwrap_or_default()
+        })
       })
+      .unwrap_or_default();
+    let destination = natives_dir.clone();
+    tokio::task::spawn_blocking(move || -> USTBLResult<()> {
+      let mut jar = ZipArchive::new(std::fs::File::open(source)?)?;
+      for index in 0..jar.len() {
+        let mut entry = jar.by_index(index)?;
+        if entry.is_dir()
+          || entry.name().starts_with("META-INF/")
+          || excludes
+            .iter()
+            .any(|prefix| entry.name().starts_with(prefix))
+        {
+          continue;
+        }
+        if entry.unix_mode().is_some_and(|m| m & 0o170000 == 0o120000) {
+          return Err(USTBLError("Native archive contains a symbolic link".into()));
+        }
+        let relative = entry
+          .enclosed_name()
+          .ok_or_else(|| USTBLError("Unsafe native archive path".into()))?;
+        let output = destination.join(relative);
+        if let Some(parent) = output.parent() {
+          std::fs::create_dir_all(parent)?;
+        }
+        std::io::copy(&mut entry, &mut std::fs::File::create(output)?)?;
+      }
+      Ok(())
     })
-    .collect();
-
-  let results = futures::future::join_all(tasks).await;
-
-  for result in results {
-    if let Err(e) = result {
-      println!("Error handling artifact: {:?}", e);
-      return Err(crate::error::USTBLError::from(e));
-    }
+    .await??;
   }
 
   Ok(())
@@ -469,6 +537,35 @@ mod tests {
   use crate::tasks::download::DownloadRetryPolicy;
   use std::path::PathBuf;
   use url::Url;
+
+  #[test]
+  fn merging_libraries_preserves_classpath_order_and_separate_classifiers() {
+    use crate::instance::helpers::client_json::LibrariesValue;
+    let library = |name: &str| LibrariesValue {
+      name: name.into(),
+      ..Default::default()
+    };
+    let merged = super::merge_library_lists(
+      &[
+        library("com.google.guava:guava:15.0"),
+        library("example:bootstrap:1"),
+        library("example:native:1:natives-windows"),
+      ],
+      &[
+        library("com.google.guava:guava:17.0"),
+        library("example:native:1:natives-linux"),
+      ],
+    );
+    assert_eq!(
+      merged.iter().map(|l| l.name.as_str()).collect::<Vec<_>>(),
+      [
+        "com.google.guava:guava:17.0",
+        "example:bootstrap:1",
+        "example:native:1:natives-windows",
+        "example:native:1:natives-linux"
+      ]
+    );
+  }
 
   #[test]
   fn vanilla_downloads_retry_from_the_fallback_source_ten_times() {
