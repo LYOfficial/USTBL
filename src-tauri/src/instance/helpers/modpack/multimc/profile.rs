@@ -1,6 +1,8 @@
 //! MultiMC component metadata -> USTBL's existing client JSON / download pipeline.
 //! Format/behaviour references (independent Rust implementation): PrismLauncher
-//! 74b3116d, OneSixVersionFormat/LaunchProfile; HMCL 77b42b6f, MultiMCInstancePatch.
+//! a94a081b9c1347d65157ae3162d9adb8fee93c6a for component metadata resolution;
+//! HMCL f532df20e6ab82b508da4e0b94448a36c118f949 for MultiMC import and
+//! 76d35af5b92201d6db827c5a01d9e7caac5ddcaa for `libraries`/`+libraries` merging.
 //! No loader-name or mod-name heuristics belong in the resolver.
 
 use super::{ModpackManifest, MultiMcManifest};
