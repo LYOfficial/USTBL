@@ -12,7 +12,7 @@ use crate::launch::helpers::command_generator::{
 use crate::launch::helpers::file_validator::{
   extract_native_libraries, get_invalid_assets, get_invalid_library_files, prepare_legacy_assets,
 };
-use crate::launch::helpers::jre_selector::select_java_runtime;
+use crate::launch::helpers::jre_selector::{select_component_java, select_java_runtime};
 use crate::launch::helpers::log_parser::parse_crash_report_path_from_log;
 use crate::launch::helpers::misc::get_separator;
 use crate::launch::helpers::process_monitor::{
@@ -65,20 +65,36 @@ pub async fn select_suitable_jre(
     .join(format!("{}.json", instance.name));
   let client_info = load_json_async::<McClientInfo>(&client_path).await?;
 
+  if let Some(profile) = &client_info.component_profile {
+    profile.validate_platform()?;
+  }
+
   refresh_and_update_javas(&app).await;
   let javas = javas_state.lock()?.clone();
 
-  let selected_java = select_java_runtime(
-    &app,
-    &game_config.game_java,
-    &javas,
-    &instance,
-    client_info
-      .java_version
-      .as_ref()
-      .map_or(0i32, |v| v.major_version),
-  )
-  .await?;
+  let selected_java = if let Some(profile) = client_info
+    .component_profile
+    .as_ref()
+    .filter(|p| !p.compatible_java_majors.is_empty())
+  {
+    select_component_java(
+      &game_config.game_java,
+      &javas,
+      &profile.compatible_java_majors,
+    )?
+  } else {
+    select_java_runtime(
+      &app,
+      &game_config.game_java,
+      &javas,
+      &instance,
+      client_info
+        .java_version
+        .as_ref()
+        .map_or(0i32, |v| v.major_version),
+    )
+    .await?
+  };
 
   let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
   let mut launching = launching_queue_state.lock()?;
@@ -146,14 +162,6 @@ pub async fn validate_game_files(
   let [root_dir, libraries_dir, natives_dir, assets_dir] = dirs.as_slice() else {
     return Err(InstanceError::InstanceNotFoundByID.into());
   };
-  extract_native_libraries(
-    &client_info,
-    libraries_dir,
-    natives_dir,
-    workaround.use_native_glfw,
-    workaround.use_native_openal,
-  )
-  .await?;
 
   let priority_list = {
     let launcher_config = launcher_config_state.lock()?;
@@ -176,6 +184,15 @@ pub async fn validate_game_files(
   };
 
   if incomplete_files.is_empty() {
+    // Missing native jars must be repaired before extraction, not vice versa.
+    extract_native_libraries(
+      &client_info,
+      libraries_dir,
+      natives_dir,
+      workaround.use_native_glfw,
+      workaround.use_native_openal,
+    )
+    .await?;
     prepare_legacy_assets(root_dir, assets_dir, &client_info.asset_index.id).await?;
     Ok(())
   } else {
