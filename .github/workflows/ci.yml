@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+    paths-ignore:
+      - "**/*.md"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/release-notes/**"
+  pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/release-notes/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  Frontend:
+    # Pull requests from branches in the same repository are already covered by the push run.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Check version consistency
+        run: npm run version check
+
+      - name: Lint
+        run: npx eslint --max-warnings=0 "src/**/*.{js,jsx,ts,tsx}" "scripts/**/*.js"
+
+      - name: Check locale keys
+        run: |
+          npm run locale diff en
+          npm run locale diff zh-Hans
+
+      - name: Run script tests
+        run: node --test scripts/tests/*.test.cjs
+
+      - name: Build frontend
+        run: npm run build
+
+  Rust:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          key: ci-x86_64-pc-windows-msvc
+
+      # Same scope as lint-staged: only Rust files changed by this push or pull request fail the check.
+      # Existing unformatted files elsewhere are reported by cargo fmt but ignored here.
+      - name: Check formatting of changed Rust files
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          $zeroSha = "0000000000000000000000000000000000000000"
+          $base = $null
+          if ($env:EVENT_NAME -eq "pull_request") {
+            $base = $env:PR_BASE_SHA
+          } elseif ($env:EVENT_NAME -eq "push" -and $env:PUSH_BEFORE_SHA -and $env:PUSH_BEFORE_SHA -ne $zeroSha) {
+            git cat-file -e "$($env:PUSH_BEFORE_SHA)^{commit}" 2>$null
+            if ($LASTEXITCODE -eq 0) { $base = $env:PUSH_BEFORE_SHA }
+          }
+          if (-not $base) {
+            $base = git merge-base HEAD "origin/$($env:DEFAULT_BRANCH)" 2>$null
+          }
+          if (-not $base -or $base -eq (git rev-parse HEAD)) {
+            Write-Host "No comparable base commit; skipping changed-file format check."
+            exit 0
+          }
+
+          $changed = @(git diff --name-only --diff-filter=ACMR $base HEAD -- "src-tauri/src" |
+            Where-Object { $_ -like "*.rs" })
+          if ($changed.Count -eq 0) {
+            Write-Host "No changed Rust files."
+            exit 0
+          }
+
+          $root = (Get-Location).Path
+          $unformatted = @(cargo fmt --manifest-path src-tauri/Cargo.toml -- --check -l 2>$null |
+            Where-Object { $_.Trim() -like "*.rs" } |
+            ForEach-Object {
+              $path = $_.Trim() -replace '^\\\\\?\\', ''
+              [IO.Path]::GetRelativePath($root, $path).Replace('\', '/')
+            })
+          $failed = @($changed | Where-Object { $unformatted -contains $_ })
+
+          Write-Host "Changed Rust files:"
+          $changed | ForEach-Object { Write-Host "  $_" }
+          if ($failed.Count -gt 0) {
+            Write-Host "::error::Changed Rust files are not formatted. Run rustfmt on:"
+            $failed | ForEach-Object { Write-Host "  $_" }
+            exit 1
+          }
+          Write-Host "All changed Rust files are formatted."
+          # cargo fmt exits non-zero for pre-existing unformatted files; do not let pwsh propagate it.
+          exit 0
+
+      # tauri::generate_context! requires the configured frontendDist to exist at compile time.
+      - name: Prepare placeholder frontend output
+        run: mkdir -p out && echo '<!doctype html>' > out/index.html
+
+      - name: Run Rust tests
+        working-directory: src-tauri
+        run: cargo test --locked --lib
