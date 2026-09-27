@@ -105,7 +105,7 @@ npm run tauri build
 npm run tauri build -- --target x86_64-pc-windows-msvc
 ```
 
-构建产物位于 `src-tauri/target/<target>/release/`，NSIS 安装程序位于对应的 `bundle/nsis/` 目录。Windows CI 同时产出安装版和便携版；便携版会由 `scripts/release/bundle_portable_assets.py` 注入所需资源。
+构建产物位于 `src-tauri/target/<target>/release/`，NSIS 安装程序位于对应的 `bundle/nsis/` 目录。便携版不是裸 `USTBL.exe`，需要由 `scripts/release/bundle_portable_assets.py` 注入所需资源，Release workflow 会自动完成这一步。
 
 常用维护命令：
 
@@ -145,11 +145,27 @@ npm run tauri build -- --target x86_64-pc-windows-msvc
 
 ## 发布与自动化
 
-- `Win-Build.yml` 为 x86、x64 和 Windows ARM64 构建应用与便携包。
-- `nightly.yml` 维护夜间构建；`release.yml` 汇总产物并创建草稿 Release。
-- `update_version_list.yml` 与 `update_mod_data.yml` 会通过 Pull Request 更新 Minecraft 版本和 Mod 数据。
+- `ci.yml`：推送与 Pull Request 时执行版本一致性、ESLint、翻译键、脚本测试、前端构建、改动 Rust 文件的格式检查和 `cargo test --locked --lib`。
+- `release.yml`：只基于默认分支运行，构建 Windows x86_64 产物并创建草稿 Release。以下两种方式都会触发：
+  - 推送到 `main` 的提交中新增或修改了合法命名的 `.github/release-notes/v<version>.md`（版本号须与 `package.json` 一致；删除文案文件不会触发，一次推送改动多个文案文件会报错）。
+  - 同一版本尚未发布的草稿会在新构建成功后被替换；已发布的版本不会重新构建，修改其文案请直接在 GitHub Release 页面编辑。
+  - 在 Actions 页面选择 Release 并点击 Run workflow，填写不带 `v` 的版本号；此时文案文件可选，`previous_tag` 留空时使用最近的 `v*` 标签。
 
-不要在本地提交工作流自动生成的结果前忽略其来源、范围或许可要求。发布前应在干净工作区完成版本检查、前端构建和目标平台的 Tauri 构建。
+发布步骤：
+
+1. 用 `npm run version bump <version>` 更新版本。
+2. 按 `.github/release-notes/TEMPLATE.md` 编写 `.github/release-notes/v<version>.md`，与版本更新一起合入 `main`，即自动开始构建；手动运行且未提供文案文件时，发布文案改为罗列本次包含的提交（提交号 + 标题）。Full Changelog 链接会自动追加。
+3. 在草稿 Release 中核对文案和文件后手动发布，发布时 GitHub 才会在构建提交上创建 `v<version>` 标签。
+
+每个 Release 固定包含以下文件，启动器自动更新与 vUSTB 的 Release 同步依赖这些文件名：
+
+| 文件                                          | 说明                   |
+| --------------------------------------------- | ---------------------- |
+| `USTBL_<version>_x64-setup.exe`               | NSIS 安装版            |
+| `USTBL_<version>_windows_x86_64_portable.exe` | 注入资源的便携版       |
+| `SHA256SUMS.txt`                              | 上述两个文件的 SHA-256 |
+
+Release 构建需要仓库 Secret `USTBL_CURSEFORGE_API_KEY`（CI 中不读取 `.env`）。上游仓库缺少该 Secret 时构建失败；fork 中仅给出警告，可用于测试流程。
 
 ## 贡献与许可
 
