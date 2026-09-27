@@ -246,7 +246,8 @@ const MainLayout = ({ children }: MainLayoutProps) => {
         ) : (
           <AdvancedCard
             level="back"
-            h="100%"
+            flex="1"
+            minH={0}
             overflow="auto"
             mt={1}
             mb={4}
