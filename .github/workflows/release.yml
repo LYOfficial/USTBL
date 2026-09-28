@@ -1,0 +1,362 @@
+# Build USTBL and create a draft GitHub Release with a fixed asset list.
+#
+# Triggers:
+#   - push to main that adds or modifies .github/release-notes/v<version>.md (version = package.json)
+#   - manual "Run workflow" with a version input (notes file optional)
+# An unpublished draft for the same version is replaced after the new build succeeds.
+# Published versions are never rebuilt; edit their text on the GitHub release page.
+#
+# Assets (x86_64 only, names consumed by the launcher updater and vUSTB release sync):
+#   USTBL_<version>_x64-setup.exe
+#   USTBL_<version>_windows_x86_64_portable.exe
+#   SHA256SUMS.txt
+#
+# Release notes: .github/release-notes/v<version>.md when present, otherwise the list of
+# commits included since the previous tag. The release is always created as a draft on the
+# built commit; the tag is created by GitHub only when a maintainer publishes the draft.
+name: Release
+
+on:
+  # Adding or modifying .github/release-notes/v<version>.md on the default branch starts a release.
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/release-notes/v*.md"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without v, must equal package.json (e.g. 0.4.5)"
+        required: true
+        type: string
+      previous_tag:
+        description: "Tag used for the commit list and compare link (default: nearest v* tag)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  RUST_TARGET: x86_64-pc-windows-msvc
+
+jobs:
+  Prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      # none: nothing to release; build: build and create (or replace) the draft release
+      mode: ${{ steps.validate.outputs.mode }}
+      version: ${{ steps.validate.outputs.version }}
+      tag: ${{ steps.validate.outputs.tag }}
+      sha: ${{ steps.validate.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+          package-manager-cache: false
+
+      - name: Validate release request
+        id: validate
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_PREVIOUS_TAG: ${{ inputs.previous_tag }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]]; then
+            echo "::error::Releases must be built from the default branch ($DEFAULT_BRANCH), got $GITHUB_REF"
+            exit 1
+          fi
+
+          notes_pattern='^\.github/release-notes/v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)\.md$'
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            # Added or modified notes files with a valid version name start a release;
+            # deleted notes files are ignored.
+            if [[ -n "$PUSH_BEFORE_SHA" ]] && git cat-file -e "${PUSH_BEFORE_SHA}^{commit}" 2>/dev/null; then
+              base="$PUSH_BEFORE_SHA"
+            else
+              base="$(git rev-parse "${GITHUB_SHA}^")"
+            fi
+            mapfile -t changed < <(git diff --name-only --diff-filter=AM "$base" "$GITHUB_SHA" -- .github/release-notes)
+            versions=()
+            for file in "${changed[@]}"; do
+              if [[ "$file" =~ $notes_pattern ]]; then
+                versions+=("${BASH_REMATCH[1]}")
+              elif [[ "$file" != ".github/release-notes/TEMPLATE.md" ]]; then
+                echo "::notice::Ignoring $file (not named v<version>.md)"
+              fi
+            done
+            if [[ ${#versions[@]} -eq 0 ]]; then
+              echo "No added or modified release notes file in this push; nothing to release."
+              echo "mode=none" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [[ ${#versions[@]} -gt 1 ]]; then
+              echo "::error::Multiple release notes files changed in one push: ${versions[*]}"
+              exit 1
+            fi
+            INPUT_VERSION="${versions[0]}"
+            echo "Release triggered by .github/release-notes/v$INPUT_VERSION.md"
+          fi
+
+          version="${INPUT_VERSION#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Invalid version: $INPUT_VERSION"
+            exit 1
+          fi
+          if [[ -n "$INPUT_PREVIOUS_TAG" && ! "$INPUT_PREVIOUS_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Invalid previous tag: $INPUT_PREVIOUS_TAG"
+            exit 1
+          fi
+          if [[ -n "$INPUT_PREVIOUS_TAG" ]] && ! git rev-parse -q --verify "refs/tags/$INPUT_PREVIOUS_TAG" >/dev/null; then
+            echo "::error::Previous tag $INPUT_PREVIOUS_TAG does not exist"
+            exit 1
+          fi
+
+          tag="v$version"
+
+          # Published releases (tag exists) are never rebuilt; edit their text on GitHub instead.
+          # Drafts have no tag yet and are replaced after the new build succeeds.
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+              echo "::notice::$tag is already published; notes file changes are not applied to published releases."
+              echo "mode=none" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::error::Tag $tag already exists"
+            exit 1
+          fi
+
+          npm run version check
+          pkg_version="$(node -p "require('./package.json').version")"
+          if [[ "$pkg_version" != "$version" ]]; then
+            echo "::error::Requested version $version does not match package.json version $pkg_version"
+            exit 1
+          fi
+
+          {
+            echo "mode=build"
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "sha=$GITHUB_SHA"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Compose release notes
+        if: steps.validate.outputs.mode == 'build'
+        env:
+          VERSION: ${{ steps.validate.outputs.version }}
+          INPUT_PREVIOUS_TAG: ${{ inputs.previous_tag }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release/generate_changelog_draft.py \
+            --version "$VERSION" \
+            --repository "$GITHUB_REPOSITORY" \
+            --previous-tag "$INPUT_PREVIOUS_TAG" \
+            --head "$GITHUB_SHA" \
+            --output release-notes.md
+          {
+            echo "## Release notes preview"
+            echo
+            cat release-notes.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        if: steps.validate.outputs.mode == 'build'
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
+
+  Build-Windows:
+    needs: Prepare
+    if: needs.Prepare.outputs.mode == 'build'
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.Prepare.outputs.sha }}
+
+      # Release builds install from package-lock.json without a restored npm cache.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+          package-manager-cache: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.RUST_TARGET }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          key: release-${{ env.RUST_TARGET }}
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # build.rs skips .env on GitHub Actions, so compile-time keys must come from secrets.
+      - name: Check build secrets
+        shell: bash
+        env:
+          USTBL_CURSEFORGE_API_KEY: ${{ secrets.USTBL_CURSEFORGE_API_KEY }}
+          IS_FORK: ${{ github.event.repository.fork }}
+        run: |
+          if [[ -n "$USTBL_CURSEFORGE_API_KEY" ]]; then
+            echo "USTBL_CURSEFORGE_API_KEY is configured."
+          elif [[ "$IS_FORK" == "true" ]]; then
+            echo "::warning::USTBL_CURSEFORGE_API_KEY secret is missing; CurseForge modpack installation will fail in this test build."
+          else
+            echo "::error::USTBL_CURSEFORGE_API_KEY secret is required for release builds."
+            exit 1
+          fi
+
+      # Call the Tauri CLI directly: `npm run tauri build -- --target` may forward the target to Cargo.
+      - name: Build installer
+        env:
+          USTBL_CURSEFORGE_API_KEY: ${{ secrets.USTBL_CURSEFORGE_API_KEY }}
+        run: npx tauri build --ci --target ${{ env.RUST_TARGET }}
+
+      - name: Package fixed release assets
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.Prepare.outputs.version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $releaseDir = "src-tauri/target/$env:RUST_TARGET/release"
+          $setupName = "USTBL_$($env:VERSION)_x64-setup.exe"
+          $portableName = "USTBL_$($env:VERSION)_windows_x86_64_portable.exe"
+
+          $setupSource = Join-Path $releaseDir "bundle/nsis/$setupName"
+          if (-not (Test-Path -LiteralPath $setupSource)) {
+            Get-ChildItem -LiteralPath (Join-Path $releaseDir "bundle/nsis") | Format-Table Name, Length
+            throw "Expected NSIS installer not found: $setupSource"
+          }
+
+          python scripts/release/bundle_portable_assets.py -p $releaseDir -o $portableName "USTBL.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Portable bundling failed" }
+
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          Copy-Item -LiteralPath $setupSource -Destination "release-assets/$setupName"
+          Move-Item -LiteralPath (Join-Path $releaseDir $portableName) -Destination "release-assets/$portableName"
+
+          # bundle_portable_assets.py appends: zip + "PORT" + u32 offset + u32 length.
+          $bytes = [IO.File]::ReadAllBytes((Resolve-Path "release-assets/$portableName"))
+          $marker = [Text.Encoding]::ASCII.GetString($bytes, $bytes.Length - 12, 4)
+          if ($marker -ne "PORT") { throw "Portable executable is missing the embedded assets trailer" }
+
+          $lines = foreach ($name in @($setupName, $portableName)) {
+            $hash = (Get-FileHash -LiteralPath "release-assets/$name" -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $name"
+          }
+          [IO.File]::WriteAllText((Join-Path (Get-Location) "release-assets/SHA256SUMS.txt"), (($lines -join "`n") + "`n"))
+
+          Get-ChildItem release-assets | Format-Table Name, Length
+          Get-Content release-assets/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-assets
+          path: release-assets/*
+          if-no-files-found: error
+
+  Create-Draft-Release:
+    needs: [Prepare, Build-Windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-assets
+          path: release-assets
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-notes
+          path: .
+
+      - name: Verify fixed asset list
+        env:
+          VERSION: ${{ needs.Prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          expected="$(printf '%s\n' \
+            "SHA256SUMS.txt" \
+            "USTBL_${VERSION}_windows_x86_64_portable.exe" \
+            "USTBL_${VERSION}_x64-setup.exe" | LC_ALL=C sort)"
+          actual="$(ls -1 release-assets | LC_ALL=C sort)"
+          if [[ "$expected" != "$actual" ]]; then
+            echo "::error::Unexpected release assets"
+            echo "Expected:"; echo "$expected"
+            echo "Actual:"; echo "$actual"
+            exit 1
+          fi
+          (cd release-assets && sha256sum --check SHA256SUMS.txt)
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.Prepare.outputs.version }}
+          TAG: ${{ needs.Prepare.outputs.tag }}
+          SHA: ${{ needs.Prepare.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          # Drafts have no tag yet, so look them up by tag name. Existing drafts for this version
+          # are replaced only now, after the new build succeeded; published releases are never touched.
+          releases="$(gh api "repos/$GH_REPO/releases?per_page=100" --paginate \
+            --jq ".[] | select(.tag_name == \"$TAG\") | \"\(.id) \(.draft) \(.html_url)\"")"
+          replaced=()
+          while read -r id draft url; do
+            [[ -z "$id" ]] && continue
+            if [[ "$draft" != "true" ]]; then
+              echo "::error::Release $TAG is already published: $url"
+              exit 1
+            fi
+            gh api -X DELETE "repos/$GH_REPO/releases/$id"
+            replaced+=("$url")
+            echo "Deleted previous draft $url"
+          done <<< "$releases"
+
+          prerelease=()
+          if [[ "$VERSION" == *-* ]]; then
+            prerelease=(--prerelease)
+          fi
+
+          url="$(gh release create "$TAG" \
+            --draft \
+            "${prerelease[@]}" \
+            --target "$SHA" \
+            --title "USTBL $TAG" \
+            --notes-file release-notes.md \
+            "release-assets/USTBL_${VERSION}_x64-setup.exe" \
+            "release-assets/USTBL_${VERSION}_windows_x86_64_portable.exe" \
+            "release-assets/SHA256SUMS.txt")"
+
+          {
+            echo "## Draft release created"
+            echo
+            echo "$url"
+            if [[ ${#replaced[@]} -gt 0 ]]; then
+              echo
+              echo "Replaced previous draft(s): ${replaced[*]}"
+            fi
+            echo
+            echo "Review the notes and assets, then publish the draft on GitHub to create tag \`$TAG\`."
+          } >> "$GITHUB_STEP_SUMMARY"
