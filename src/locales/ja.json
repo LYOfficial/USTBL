@@ -2630,7 +2630,8 @@
       "intelligence": "AI",
       "help": "マニュアルとヘルプ",
       "about": "バージョン情報",
-      "dev-test": "開発・テストページ"
+      "dev-test": "開発・テストページ",
+      "resource-acceleration": "リソースアクセラレーション"
     }
   },
   "SkinPreview": {
@@ -2765,6 +2766,43 @@
   "WorldLevelDataModal": {
     "header": {
       "title": "ワールド情報 - {{worldName}}"
+    }
+  },
+  "ResourceAccelerationSettingsPage": {
+    "services": {
+      "title": "Acceleration targets",
+      "github": {
+        "title": "GitHub",
+        "description": "Accelerate GitHub website, API, and assets"
+      }
+    },
+    "status": {
+      "title": "Status",
+      "current": "Current status",
+      "running": "{{elapsed}} 加速中",
+      "stopped": "Stopped"
+    },
+    "actions": {
+      "start": "Start",
+      "stop": "Stop"
+    },
+    "notice": {
+      "title": "Note",
+      "description": "有効にすると Windows の Hosts を CDN アドレスに更新します。停止すると USTBL が管理するエントリを削除します。"
+    },
+    "toast": {
+      "started": "Acceleration started",
+      "stopped": "Acceleration stopped"
+    },
+    "progress": {
+      "title": "CDN Hosts の進捗",
+      "loading": "CDN Hosts を読み込み中"
+    },
+    "latency": {
+      "title": "ノード接続性",
+      "test": "接続をテスト",
+      "empty": "加速ノードをテストすると遅延が表示されます。",
+      "failed": "利用不可"
     }
   }
 }

@@ -132,7 +132,7 @@ export const OptionItem: React.FC<OptionItemProps> = ({
         p={0.5}
         {...boxProps}
       >
-        <HStack spacing={2.5} overflow="hidden">
+        <HStack spacing={2.5} overflow="hidden" flex="1 1 auto" minW={0}>
           {prefixElement && (
             <Skeleton isLoaded={!isLoading} flex="0 0 auto">
               {prefixElement}

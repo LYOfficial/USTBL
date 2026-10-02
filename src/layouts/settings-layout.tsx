@@ -19,6 +19,7 @@ import {
   LuGamepad2,
   LuInfo,
   LuPalette,
+  LuRocket,
   LuSettings,
 } from "react-icons/lu";
 import NavMenu from "@/components/common/nav-menu";
@@ -38,6 +39,7 @@ const SettingsLayout: React.FC<SettingsLayoutProps> = ({ children }) => {
   const settingsDomainList: { key: string; icon: IconType }[][] = [
     [
       { key: "global-game", icon: LuGamepad2 },
+      { key: "resource-acceleration", icon: LuRocket },
       { key: "java", icon: LuCoffee },
     ],
     [

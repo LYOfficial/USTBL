@@ -183,8 +183,13 @@ impl DownloadTask {
   }
 
   fn sources(param: &DownloadParam) -> Vec<Url> {
-    let mut sources = Vec::with_capacity(1 + param.transfer_options.fallback_sources.len());
+    let mut sources = Vec::with_capacity(2 + param.transfer_options.fallback_sources.len() * 2);
     for source in std::iter::once(&param.src).chain(&param.transfer_options.fallback_sources) {
+      if let Some(proxy) = github_proxy_url(source) {
+        if !sources.contains(&proxy) {
+          sources.push(proxy);
+        }
+      }
       if !sources.contains(source) {
         sources.push(source.clone());
       }
@@ -376,7 +381,10 @@ impl DownloadTask {
     Ok((
       async move {
         let sources = Self::sources(&param);
-        let attempts = param.transfer_options.retry_policy.max_attempts();
+        let mut attempts = param.transfer_options.retry_policy.max_attempts();
+        if sources.iter().any(is_github_proxy_source) {
+          attempts = attempts.max(sources.len());
+        }
         let use_request_retry = param
           .transfer_options
           .retry_policy
@@ -430,9 +438,34 @@ impl DownloadTask {
   }
 }
 
+fn is_github_proxy_source(source: &Url) -> bool {
+  source.host_str() == Some("www.ustb.world")
+    && source.path() == "/api/resource-acceleration/github/proxy"
+}
+
+fn github_proxy_url(source: &Url) -> Option<Url> {
+  const PROXY_BASE: &str = "https://www.ustb.world/api/resource-acceleration/github/proxy";
+  const HOSTS: [&str; 18] = [
+    "github.com", "api.github.com", "codeload.github.com", "raw.githubusercontent.com",
+    "github.githubassets.com", "avatars.githubusercontent.com", "objects.githubusercontent.com",
+    "cloud.githubusercontent.com", "camo.githubusercontent.com", "desktop.githubusercontent.com",
+    "favicons.githubusercontent.com", "github-production-release-asset-2e65be.s3.amazonaws.com",
+    "github-production-repository-file-5c1aeb.s3.amazonaws.com",
+    "github-production-user-asset-6210df.s3.amazonaws.com", "github-com.s3.amazonaws.com",
+    "github-cloud.s3.amazonaws.com",
+    "release-assets.githubusercontent.com", "github-releases.githubusercontent.com",
+  ];
+  if source.scheme() != "https" || !source.host_str().is_some_and(|host| HOSTS.contains(&host)) {
+    return None;
+  }
+  let mut proxy = Url::parse(PROXY_BASE).ok()?;
+  proxy.query_pairs_mut().append_pair("url", source.as_str());
+  Some(proxy)
+}
+
 #[cfg(test)]
 mod tests {
-  use super::{DownloadParam, DownloadRetryPolicy, DownloadTask, DownloadTransferOptions};
+  use super::{github_proxy_url, DownloadParam, DownloadRetryPolicy, DownloadTask, DownloadTransferOptions};
   use serde_json::json;
   use std::path::PathBuf;
   use tauri::Url;
@@ -476,5 +509,14 @@ mod tests {
       serde_json::to_value(&param.transfer_options.retry_policy).unwrap(),
       json!({ "strategy": "resumable", "maxAttempts": 10 })
     );
+  }
+
+  #[test]
+  fn github_download_sources_put_proxy_before_direct_source() {
+    let source = Url::parse("https://github.com/example/project/releases/download/v1/file.zip").unwrap();
+    let proxy = github_proxy_url(&source).expect("GitHub URL should be proxied");
+    assert_eq!(proxy.host_str(), Some("www.ustb.world"));
+    assert_eq!(proxy.path(), "/api/resource-acceleration/github/proxy");
+    assert_eq!(proxy.query_pairs().find(|(key, _)| key == "url").map(|(_, value)| value), Some(source.as_str().into()));
   }
 }

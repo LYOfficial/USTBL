@@ -2623,6 +2623,7 @@
   "SettingsLayout": {
     "settingsDomainList": {
       "global-game": "全局游戏设置",
+      "resource-acceleration": "资源加速",
       "java": "Java",
       "general": "通用",
       "appearance": "外观",
@@ -2765,6 +2766,43 @@
   "WorldLevelDataModal": {
     "header": {
       "title": "世界基础数据 - {{worldName}}"
+    }
+  },
+  "ResourceAccelerationSettingsPage": {
+    "services": {
+      "title": "加速项目",
+      "github": {
+        "title": "GitHub",
+        "description": "加速 GitHub 网站、API 与资源域名"
+      }
+    },
+    "status": {
+      "title": "运行状态",
+      "current": "当前状态",
+      "running": "已启动，加速时间 {{elapsed}}",
+      "stopped": "未启动"
+    },
+    "actions": {
+      "start": "启动加速",
+      "stop": "停止加速"
+    },
+    "notice": {
+      "title": "说明",
+      "description": "开启后更新 Windows Hosts 到 CDN 地址；停止加速后会移除 USTBL 管理的 Hosts 条目。"
+    },
+    "toast": {
+      "started": "资源加速已启动",
+      "stopped": "资源加速已停止"
+    },
+    "progress": {
+      "title": "CDN Hosts 加载进度",
+      "loading": "正在加载 CDN Hosts"
+    },
+    "latency": {
+      "title": "节点连通性",
+      "test": "测试连接",
+      "empty": "测试加速节点后显示延迟。",
+      "failed": "无法访问"
     }
   }
 }

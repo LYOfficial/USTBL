@@ -1,3 +1,4 @@
+mod accelerator;
 mod account;
 mod discover;
 mod error;
@@ -86,6 +87,10 @@ pub async fn run() -> i32 {
       launcher_config::commands::check_launcher_update,
       launcher_config::commands::download_launcher_update,
       launcher_config::commands::install_launcher_update,
+      accelerator::commands::start_resource_acceleration,
+      accelerator::commands::stop_resource_acceleration,
+      accelerator::commands::retrieve_resource_acceleration_status,
+      accelerator::commands::test_resource_acceleration_latency,
       account::commands::retrieve_player_list,
       account::commands::add_player_offline,
       account::commands::fetch_oauth_code,
@@ -219,6 +224,9 @@ pub async fn run() -> i32 {
       let auto_purge_launcher_logs = launcher_config.general.advanced.auto_purge_launcher_logs;
       let launcher_mcp_config = launcher_config.intelligence.mcp_server.launcher.clone();
       app.manage(Mutex::new(launcher_config));
+      app.manage(tokio::sync::Mutex::new(
+        accelerator::ResourceAccelerationService::default(),
+      ));
 
       let account_info = AccountInfo::load().unwrap_or_default();
       app.manage(Mutex::new(account_info.clone()));
@@ -364,6 +372,12 @@ pub async fn run() -> i32 {
         api.prevent_exit();
         let app_handle = app_handle.clone();
         tauri::async_runtime::spawn(async move {
+          {
+            let service =
+              app_handle.state::<tokio::sync::Mutex<accelerator::ResourceAccelerationService>>();
+            let mut service = service.lock().await;
+            let _ = service.stop().await;
+          }
           let _ = tokio::time::timeout(
             std::time::Duration::from_secs(2),
             account::helpers::vustb_presence::clear(&app_handle),

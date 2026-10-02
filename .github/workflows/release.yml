@@ -213,6 +213,7 @@ jobs:
         shell: bash
         env:
           USTBL_CURSEFORGE_API_KEY: ${{ secrets.USTBL_CURSEFORGE_API_KEY }}
+          USTBL_GITHUB_PROXY_PASSWORD: ${{ secrets.USTBL_GITHUB_PROXY_PASSWORD }}
           IS_FORK: ${{ github.event.repository.fork }}
         run: |
           if [[ -n "$USTBL_CURSEFORGE_API_KEY" ]]; then
@@ -223,11 +224,22 @@ jobs:
             echo "::error::USTBL_CURSEFORGE_API_KEY secret is required for release builds."
             exit 1
           fi
+          if [[ -z "$USTBL_GITHUB_PROXY_PASSWORD" ]]; then
+            if [[ "$IS_FORK" == "true" ]]; then
+              echo "::warning::USTBL_GITHUB_PROXY_PASSWORD secret is missing; browser GitHub acceleration will be unavailable in this fork build."
+            else
+              echo "::error::USTBL_GITHUB_PROXY_PASSWORD secret is required for release builds."
+              exit 1
+            fi
+          else
+            echo "USTBL_GITHUB_PROXY_PASSWORD is configured."
+          fi
 
       # Call the Tauri CLI directly: `npm run tauri build -- --target` may forward the target to Cargo.
       - name: Build installer
         env:
           USTBL_CURSEFORGE_API_KEY: ${{ secrets.USTBL_CURSEFORGE_API_KEY }}
+          USTBL_GITHUB_PROXY_PASSWORD: ${{ secrets.USTBL_GITHUB_PROXY_PASSWORD }}
         run: npx tauri build --ci --target ${{ env.RUST_TARGET }}
 
       - name: Package fixed release assets

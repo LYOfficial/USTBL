@@ -1,5 +1,5 @@
-use dotenvy::{dotenv_override, from_filename};
-use std::path::Path;
+use dotenvy::from_path_override;
+use std::path::{Path, PathBuf};
 use std::{env, fs};
 
 fn main() {
@@ -15,10 +15,21 @@ fn main() {
     println!("cargo:rustc-link-arg-bin=USTBL=/MANIFEST:NO");
   }
 
-  if std::env::var("GITHUB_ACTIONS").is_err() {
-    // Load env variables from ".env" file, if not exists, use ".env.template" to set default value.
-    from_filename(".env.template").ok();
-    dotenv_override().ok();
+  if env::var("GITHUB_ACTIONS").is_err() {
+    // Load development variables from the repository root so Cargo and Next.js use the same .env.
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    if let Some(project_root) = manifest_dir.parent() {
+      from_path_override(project_root.join(".env.template")).ok();
+      from_path_override(project_root.join(".env")).ok();
+      println!(
+        "cargo:rerun-if-changed={}",
+        project_root.join(".env").display()
+      );
+      println!(
+        "cargo:rerun-if-changed={}",
+        project_root.join(".env.template").display()
+      );
+    }
   }
 
   let out_dir = env::var("OUT_DIR").unwrap_or_else(|_| "".to_string());

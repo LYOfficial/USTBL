@@ -2630,7 +2630,8 @@
       "intelligence": "智慧",
       "help": "文件與幫助",
       "about": "關於",
-      "dev-test": "開發 - 測試頁"
+      "dev-test": "開發 - 測試頁",
+      "resource-acceleration": "資源加速"
     }
   },
   "SkinPreview": {
@@ -2765,6 +2766,43 @@
   "WorldLevelDataModal": {
     "header": {
       "title": "世界基本資料 - {{worldName}}"
+    }
+  },
+  "ResourceAccelerationSettingsPage": {
+    "services": {
+      "title": "Acceleration targets",
+      "github": {
+        "title": "GitHub",
+        "description": "Accelerate GitHub website, API, and assets"
+      }
+    },
+    "status": {
+      "title": "Status",
+      "current": "Current status",
+      "running": "已啟動，加速時間 {{elapsed}}",
+      "stopped": "Stopped"
+    },
+    "actions": {
+      "start": "Start",
+      "stop": "Stop"
+    },
+    "notice": {
+      "title": "Note",
+      "description": "開啟後更新 Windows Hosts 到 CDN 位址；停止加速後會移除 USTBL 管理的 Hosts 條目。"
+    },
+    "toast": {
+      "started": "Acceleration started",
+      "stopped": "Acceleration stopped"
+    },
+    "progress": {
+      "title": "CDN Hosts 載入進度",
+      "loading": "正在載入 CDN Hosts"
+    },
+    "latency": {
+      "title": "節點連線性",
+      "test": "測試連線",
+      "empty": "測試加速節點後顯示延遲。",
+      "failed": "無法存取"
     }
   }
 }

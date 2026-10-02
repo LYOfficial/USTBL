@@ -2623,6 +2623,7 @@
   "SettingsLayout": {
     "settingsDomainList": {
       "global-game": "Game Settings",
+      "resource-acceleration": "Resource Acceleration",
       "java": "Java",
       "general": "General",
       "appearance": "Appearance",
@@ -2765,6 +2766,43 @@
   "WorldLevelDataModal": {
     "header": {
       "title": "World Level Data - {{worldName}}"
+    }
+  },
+  "ResourceAccelerationSettingsPage": {
+    "services": {
+      "title": "Acceleration targets",
+      "github": {
+        "title": "GitHub",
+        "description": "Accelerate GitHub website, API, and assets"
+      }
+    },
+    "status": {
+      "title": "Status",
+      "current": "Current status",
+      "running": "Running for {{elapsed}}",
+      "stopped": "Stopped"
+    },
+    "actions": {
+      "start": "Start",
+      "stop": "Stop"
+    },
+    "notice": {
+      "title": "Note",
+      "description": "USTBL updates Windows Hosts entries to CDN addresses. Stop acceleration to remove the entries managed by USTBL."
+    },
+    "toast": {
+      "started": "Acceleration started",
+      "stopped": "Acceleration stopped"
+    },
+    "progress": {
+      "title": "CDN Hosts progress",
+      "loading": "Loading CDN Hosts"
+    },
+    "latency": {
+      "title": "Node connectivity",
+      "test": "Test connection",
+      "empty": "Test the acceleration nodes to view latency.",
+      "failed": "Unavailable"
     }
   }
 }
