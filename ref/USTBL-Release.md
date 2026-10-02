@@ -46,7 +46,6 @@ Actions → Release → Run workflow（只能选默认分支）：
 | `Multiple release notes files changed` | 一次推送只改动一个版本的文案文件 |
 | `Tag vX already exists` | 该版本已发布，请发新版本 |
 | `must be built from the default branch` | 只能在 `main` 上运行 |
-| `USTBL_CURSEFORGE_API_KEY secret is required` | 配置上面的 Secret |
 
 ## CI 检查
 
