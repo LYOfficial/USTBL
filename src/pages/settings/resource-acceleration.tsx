@@ -80,9 +80,7 @@ const ResourceAccelerationSettingsPage = () => {
 
   const handleStart = async () => {
     setLoading(true);
-    const response = await ResourceAccelerationService.start(
-      githubEnabled
-    );
+    const response = await ResourceAccelerationService.start(githubEnabled);
     setLoading(false);
     if (response.status === "success") {
       setStatus(response.data);
@@ -172,10 +170,7 @@ const ResourceAccelerationSettingsPage = () => {
                 colorScheme={primaryColor}
                 isLoading={loading}
                 onClick={status.running ? handleStop : handleStart}
-                isDisabled={
-                  loading ||
-                  (!status.running && !githubEnabled)
-                }
+                isDisabled={loading || (!status.running && !githubEnabled)}
               >
                 {t(
                   status.running
