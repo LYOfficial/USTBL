@@ -4,6 +4,14 @@ import {
   HStack,
   Icon,
   IconButton,
+  Modal,
+  ModalBody,
+  ModalContent,
+  ModalFooter,
+  ModalHeader,
+  ModalOverlay,
+  Checkbox,
+  Button,
   Tab,
   TabList,
   Tabs,
@@ -43,6 +51,8 @@ const WindowTitleBar = () => {
   const { config } = useLauncherConfig();
   const { tasks } = useTaskContext();
   const [isMaximized, setIsMaximized] = useState(false);
+  const [closeDialogOpen, setCloseDialogOpen] = useState(false);
+  const [rememberCloseChoice, setRememberCloseChoice] = useState(false);
   const primaryColor = config.appearance.theme.primaryColor;
   const isSimplified = config.appearance.theme.headNavStyle === "simplified";
   const isDownloadIndicatorShown = tasks.length > 0;
@@ -103,8 +113,8 @@ const WindowTitleBar = () => {
     try {
       const appWindow = await getAppWindow();
       await appWindow.minimize();
-    } catch {
-      // Ignore when running with insufficient window permission.
+    } catch (error) {
+      console.error("USTBL 窗口最小化失败", error);
     }
   };
 
@@ -121,8 +131,29 @@ const WindowTitleBar = () => {
         await appWindow.maximize();
       }
       setIsMaximized(await appWindow.isMaximized());
-    } catch {
-      // Ignore when running with insufficient window permission.
+    } catch (error) {
+      console.error("USTBL 窗口最大化切换失败", error);
+    }
+  };
+
+  const applyCloseBehavior = async (behavior: "tray" | "exit") => {
+    if (!isTauriRuntime) {
+      return;
+    }
+
+    try {
+      const appWindow = await getAppWindow();
+      if (rememberCloseChoice) {
+        window.localStorage.setItem("ustbl.closeBehavior", behavior);
+      }
+      setCloseDialogOpen(false);
+      if (behavior === "tray") {
+        await appWindow.hide();
+      } else {
+        await appWindow.close();
+      }
+    } catch (error) {
+      console.error(`USTBL 窗口${behavior === "tray" ? "隐藏到托盘" : "关闭"}失败`, error);
     }
   };
 
@@ -131,12 +162,14 @@ const WindowTitleBar = () => {
       return;
     }
 
-    try {
-      const appWindow = await getAppWindow();
-      await appWindow.close();
-    } catch {
-      // Ignore when running with insufficient window permission.
+    const stored = window.localStorage.getItem("ustbl.closeBehavior");
+    if (stored === "tray" || stored === "exit") {
+      setRememberCloseChoice(false);
+      await applyCloseBehavior(stored);
+      return;
     }
+    setRememberCloseChoice(false);
+    setCloseDialogOpen(true);
   };
 
   const onStartDrag = async () => {
@@ -185,22 +218,23 @@ const WindowTitleBar = () => {
   };
 
   return (
-    <HStack
-      justify="space-between"
-      h="44px"
-      px={2}
-      borderBottomWidth="1px"
-      borderColor="gray.200"
-      bg="white"
-      _dark={{ borderColor: "gray.700", bg: "gray.800" }}
-      userSelect="none"
-      spacing={2}
-      onMouseDown={onDragMouseDown}
-      onDoubleClick={onDragDoubleClick}
-    >
-      <HStack px={2} h="100%" flexShrink={0}>
-        <TitleShort transform="scale(0.85)" transformOrigin="left center" />
-      </HStack>
+    <>
+      <HStack
+        justify="space-between"
+        h="44px"
+        px={2}
+        borderBottomWidth="1px"
+        borderColor="gray.200"
+        bg="white"
+        _dark={{ borderColor: "gray.700", bg: "gray.800" }}
+        userSelect="none"
+        spacing={2}
+        onMouseDown={onDragMouseDown}
+        onDoubleClick={onDragDoubleClick}
+      >
+        <HStack px={2} h="100%" flexShrink={0}>
+          <TitleShort transform="scale(0.85)" transformOrigin="left center" />
+        </HStack>
 
       <Tabs
         variant="soft-rounded"
@@ -277,7 +311,34 @@ const WindowTitleBar = () => {
           onClick={onClose}
         />
       </HStack>
-    </HStack>
+      </HStack>
+
+      <Modal isOpen={closeDialogOpen} onClose={() => setCloseDialogOpen(false)} isCentered>
+        <ModalOverlay bg="blackAlpha.500" />
+        <ModalContent>
+          <ModalHeader>关闭 USTBL</ModalHeader>
+          <ModalBody>
+            <Text>请选择关闭后的处理方式。</Text>
+            <Checkbox
+              mt={4}
+              colorScheme={primaryColor}
+              isChecked={rememberCloseChoice}
+              onChange={(event) => setRememberCloseChoice(event.target.checked)}
+            >
+              记住我的选择，之后不再询问
+            </Checkbox>
+          </ModalBody>
+          <ModalFooter gap={3}>
+            <Button variant="outline" onClick={() => void applyCloseBehavior("exit")}>
+              直接关闭
+            </Button>
+            <Button colorScheme={primaryColor} onClick={() => void applyCloseBehavior("tray")}>
+              最小化到托盘
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+    </>
   );
 };
 

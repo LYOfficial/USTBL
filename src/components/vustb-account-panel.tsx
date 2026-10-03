@@ -49,17 +49,23 @@ const VustbAccountPanel = ({
     (getPlayerList() || []).filter(isVustbPlayer).map((player) => player.uuid)
   );
 
+  const avatarCacheKey = (subject: string) => `ustbl.vustb.avatar.${subject}`;
+  const withCachedAvatar = (value: VustbAccount) => {
+    const cached = window.localStorage.getItem(avatarCacheKey(value.subject));
+    return cached ? { ...value, avatarUrl: cached } : value;
+  };
+  const cacheAvatar = (value: VustbAccount) => {
+    if (value.avatarUrl) {
+      window.localStorage.setItem(avatarCacheKey(value.subject), value.avatarUrl);
+    }
+  };
+
   const loadAccount = useCallback(async () => {
     const request = ++accountRequest.current;
     const response = await AccountService.retrieveVustbAccount();
     if (request !== accountRequest.current || response.status !== "success")
       return;
-    setAccount(response.data);
-    if (response.data) {
-      const refreshed = await AccountService.refreshVustbAccount();
-      if (request === accountRequest.current && refreshed.status === "success")
-        setAccount(refreshed.data);
-    }
+    setAccount(response.data ? withCachedAvatar(response.data) : null);
   }, []);
 
   useEffect(() => {
@@ -94,6 +100,7 @@ const VustbAccountPanel = ({
         codeResponse.data
       );
       if (loginResponse.status === "success") {
+        cacheAvatar(loginResponse.data);
         setAccount(loginResponse.data);
         getPlayerList(true);
         getAuthServerList(true);
@@ -121,6 +128,7 @@ const VustbAccountPanel = ({
     setIsSyncing(true);
     const response = await AccountService.syncVustbAccount();
     if (response.status === "success") {
+      cacheAvatar(response.data);
       setAccount(response.data);
       getPlayerList(true);
       toast({ title: "像素北科账户资料已同步", status: "success" });
@@ -167,7 +175,7 @@ const VustbAccountPanel = ({
     setIsCheckingIn(true);
     const response = await AccountService.checkinVustbAccount();
     if (response.status === "success") {
-      setAccount(response.data.account);
+      setAccount(withCachedAvatar(response.data.account));
       toast({ title: response.data.message || "签到成功", status: "success" });
     } else {
       toast({

@@ -1,7 +1,7 @@
 import { Button, HStack, Switch, useDisclosure } from "@chakra-ui/react";
 import { appLogDir } from "@tauri-apps/api/path";
 import { openPath } from "@tauri-apps/plugin-opener";
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LuLanguages } from "react-icons/lu";
 import { MenuSelector } from "@/components/common/menu-selector";
@@ -26,8 +26,16 @@ const GeneralSettingsPage = () => {
   const { config, setConfig, update } = useLauncherConfig();
   const generalConfigs = config.general;
   const primaryColor = config.appearance.theme.primaryColor;
+  const [closeBehavior, setCloseBehavior] = useState("ask");
   const { removeHistory } = useRoutingHistory();
   const { openGenericConfirmDialog, closeSharedModal } = useSharedModals();
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem("ustbl.closeBehavior");
+    if (stored === "tray" || stored === "exit") {
+      setCloseBehavior(stored);
+    }
+  }, []);
 
   const {
     isOpen: isSyncConfigExportModalOpen,
@@ -201,6 +209,28 @@ const GeneralSettingsPage = () => {
                   e.target.checked
                 );
               }}
+            />
+          ),
+        },
+        {
+          title: "关闭窗口时的行为",
+          description: "选择关闭按钮是否将 USTBL 留在右下角托盘。",
+          children: (
+            <MenuSelector
+              options={[
+                { value: "ask", label: "每次询问" },
+                { value: "tray", label: "最小化到托盘" },
+                { value: "exit", label: "直接退出" },
+              ]}
+              value={closeBehavior}
+              onSelect={(value) => {
+                const nextValue = typeof value === "string" ? value : "ask";
+                setCloseBehavior(nextValue);
+                if (nextValue === "ask") window.localStorage.removeItem("ustbl.closeBehavior");
+                else window.localStorage.setItem("ustbl.closeBehavior", nextValue);
+              }}
+              placeholder="每次询问"
+              buttonProps={{ flex: "0 0 auto" }}
             />
           ),
         },

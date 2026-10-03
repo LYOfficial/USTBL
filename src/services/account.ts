@@ -4,6 +4,7 @@ import { AuthServer, DeviceAuthResponseInfo, Player } from "@/models/account";
 import { InvokeResponse } from "@/models/response";
 import {
   VustbAccount,
+  VustbAnnouncement,
   VustbCheckinResult,
   VustbFriend,
   VustbProfile,
@@ -85,6 +86,11 @@ export class AccountService {
   @responseHandler("account")
   static async retrieveVustbFriends(): Promise<InvokeResponse<VustbFriend[]>> {
     return await invoke("retrieve_vustb_friends");
+  }
+
+  @responseHandler("account")
+  static async retrieveVustbAnnouncements(): Promise<InvokeResponse<VustbAnnouncement[]>> {
+    return await invoke("retrieve_vustb_announcements");
   }
 
   @responseHandler("account")

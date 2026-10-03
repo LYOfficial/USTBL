@@ -48,6 +48,14 @@ export interface VustbFriend {
   lastSeenAt: string | null;
 }
 
+export interface VustbAnnouncement {
+  id: number;
+  title: string;
+  content: string;
+  starts_at: string;
+  expires_at?: string | null;
+}
+
 export interface VustbTexture {
   hash: string;
   type: "skin" | "cape";

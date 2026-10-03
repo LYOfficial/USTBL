@@ -11,6 +11,8 @@ import LaunchProcessModal from "@/components/modals/launch-process-modal";
 import NotifyNewVersionModal from "@/components/modals/notify-new-version-modal";
 import ReLoginPlayerModal from "@/components/modals/relogin-player-modal";
 import SpotlightSearchModal from "@/components/modals/spotlight-search-modal";
+import VustbAnnouncementModal from "@/components/modals/vustb-announcement-modal";
+import VustbFriendsModal from "@/components/modals/vustb-friends-modal";
 import { SharedModalContextProvider } from "@/contexts/shared-modal";
 import { useSharedModals } from "@/contexts/shared-modal";
 
@@ -43,6 +45,8 @@ const SharedModals: React.FC<{ children: React.ReactNode }> = ({
     "notify-new-version": NotifyNewVersionModal,
     relogin: ReLoginPlayerModal,
     "spotlight-search": SpotlightSearchModal,
+    "vustb-announcement": VustbAnnouncementModal,
+    "vustb-friends": VustbFriendsModal,
   };
 
   return (

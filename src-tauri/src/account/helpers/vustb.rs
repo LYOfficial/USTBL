@@ -79,6 +79,15 @@ struct LauncherFriendResponse {
   last_seen_at: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct VustbAnnouncement {
+  pub id: i64,
+  pub title: String,
+  pub content: String,
+  pub starts_at: String,
+  pub expires_at: Option<String>,
+}
+
 fn map_status(status: reqwest::StatusCode) -> AccountError {
   if status == reqwest::StatusCode::UNAUTHORIZED {
     AccountError::Expired
@@ -448,6 +457,10 @@ pub async fn fetch_friends(app: &AppHandle) -> USTBLResult<Vec<VustbFriend>> {
       })
       .collect(),
   )
+}
+
+pub async fn fetch_launcher_announcements(app: &AppHandle) -> USTBLResult<Vec<VustbAnnouncement>> {
+  get_authenticated(app, "/api/launcher/announcements").await
 }
 
 fn normalize_texture_urls(items: &mut [VustbTexture]) {

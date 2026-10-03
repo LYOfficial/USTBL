@@ -1,20 +1,69 @@
 import { useRouter } from "next/router";
+import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useLauncherConfig } from "@/contexts/config";
+import { useGlobalData } from "@/contexts/global-data";
 import { useSharedModals } from "@/contexts/shared-modal";
 import useDeepLink from "@/hooks/deep-link";
 import { useDragAndDrop, useTauriFileDrop } from "@/hooks/drag-and-drop";
 import useKeyboardShortcut from "@/hooks/keyboard-shortcut";
+import { AccountService } from "@/services/account";
+import { useToast } from "@/contexts/toast";
 
 // Handle global keyboard shortcuts, DnD events, etc.
 const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
   const { openSharedModal } = useSharedModals();
+  const toast = useToast();
+  const { selectedInstance } = useGlobalData();
   const { newerVersion } = useLauncherConfig();
   const router = useRouter();
-  const isStandAlone = router.pathname.startsWith("/standalone");
+  const isStandAlone =
+    router.pathname.startsWith("/standalone") || router.pathname === "/tray-popup";
   const hasNotifiedNewVersion = useRef(false);
+  const hasNotifiedAnnouncement = useRef(false);
+
+  useEffect(() => {
+    let disposed = false;
+    const setup = async () => {
+      const [launchUnlisten, launchRequestUnlisten, launchErrorUnlisten, friendsUnlisten, accelerationUnlisten, accelerationErrorUnlisten] = await Promise.all([
+        listen<string>("ustbl:tray-launch", (event) => {
+          if (!disposed && event.payload) openSharedModal("launch", { instanceId: event.payload });
+        }),
+        listen("ustbl:tray-launch-request", () => {
+          if (selectedInstance && !disposed) {
+            openSharedModal("launch", { instanceId: selectedInstance.id });
+          }
+        }),
+        listen<string>("ustbl:tray-launch-failed", (event) => {
+          if (!disposed) toast({ title: "启动游戏失败", description: event.payload, status: "error" });
+        }),
+        listen("ustbl:tray-friends", () => {
+          if (!disposed) openSharedModal("vustb-friends", { isTray: true });
+        }),
+        listen("ustbl:tray-acceleration-started", () => {
+          if (!disposed) toast({ title: "GitHub 加速已启动", status: "success" });
+        }),
+        listen<string>("ustbl:tray-acceleration-failed", (event) => {
+          if (!disposed) toast({ title: "GitHub 加速启动失败", description: event.payload, status: "error" });
+        }),
+      ]);
+      return () => {
+        launchUnlisten();
+        launchRequestUnlisten();
+        launchErrorUnlisten();
+        friendsUnlisten();
+        accelerationUnlisten();
+        accelerationErrorUnlisten();
+      };
+    };
+    const cleanup = setup();
+    return () => {
+      disposed = true;
+      void cleanup.then((value) => value?.());
+    };
+  }, [openSharedModal, selectedInstance, toast]);
 
   useEffect(() => {
     if (
@@ -26,6 +75,17 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
       openSharedModal("notify-new-version", { newVersion: newerVersion });
     }
   }, [isStandAlone, newerVersion, openSharedModal]);
+
+  useEffect(() => {
+    if (isStandAlone || hasNotifiedAnnouncement.current) return;
+    void AccountService.retrieveVustbAnnouncements().then((response) => {
+      const announcement = response.status === "success" ? response.data[0] : undefined;
+      if (announcement) {
+        hasNotifiedAnnouncement.current = true;
+        openSharedModal("vustb-announcement", { announcement });
+      }
+    });
+  }, [isStandAlone, openSharedModal]);
 
   // ----------------- Keyboard Shortcuts -----------------
   const spotlightShortcuts = useMemo(

@@ -27,9 +27,10 @@ import { AccountService } from "@/services/account";
 interface VustbFriendsModalProps {
   isOpen: boolean;
   onClose: () => void;
+  isTray?: boolean;
 }
 
-const VustbFriendsModal = ({ isOpen, onClose }: VustbFriendsModalProps) => {
+const VustbFriendsModal = ({ isOpen, onClose, isTray = false }: VustbFriendsModalProps) => {
   const [friends, setFriends] = useState<VustbFriend[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
@@ -72,9 +73,13 @@ const VustbFriendsModal = ({ isOpen, onClose }: VustbFriendsModalProps) => {
   }, [isOpen, loadFriends]);
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size="lg" isCentered>
+    <Modal isOpen={isOpen} onClose={onClose} size="lg" isCentered={!isTray}>
       <ModalOverlay />
-      <ModalContent>
+      <ModalContent
+        {...(isTray
+          ? { position: "fixed", right: 4, bottom: 4, m: 0, maxW: "420px" }
+          : {})}
+      >
         <ModalHeader>
           <HStack spacing={2}>
             <Icon as={LuUsersRound} />

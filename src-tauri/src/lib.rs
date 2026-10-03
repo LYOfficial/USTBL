@@ -34,6 +34,7 @@ use utils::web::build_ustbl_client;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 use tauri::path::BaseDirectory;
 use tauri::Manager;
+use tauri::{Emitter, PhysicalPosition, Position};
 
 static EXE_PATH: LazyLock<PathBuf> = LazyLock::new(|| std::env::current_exe().unwrap());
 
@@ -44,6 +45,30 @@ static IS_PORTABLE: LazyLock<bool> = LazyLock::new(|| is_portable().unwrap_or(fa
 static APP_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 static EXITING_AFTER_PRESENCE_CLEAR: AtomicBool = AtomicBool::new(false);
 
+pub fn show_tray_popup(app: &tauri::AppHandle, view: &str, message: Option<String>) {
+  if let Some(window) = app.get_webview_window("tray_popup") {
+    if let Ok(Some(monitor)) = app.primary_monitor() {
+      let work_area = monitor.work_area();
+      let scale = monitor.scale_factor();
+      let popup_width_logical = if view == "friends" { 420.0 } else { 260.0 };
+      let popup_width = (popup_width_logical * scale).ceil() as i32;
+      let popup_height_logical = match view {
+        "friends" => 460.0,
+        "notification" => 220.0,
+        _ => 280.0,
+      };
+      let popup_height = (popup_height_logical * scale).ceil() as i32;
+      let x = work_area.position.x + work_area.size.width as i32 - popup_width - (12.0 * scale) as i32;
+      let y = work_area.position.y + work_area.size.height as i32 - popup_height - (12.0 * scale) as i32;
+      let _ = window.set_position(Position::Physical(PhysicalPosition::new(x, y)));
+    }
+    let _ = window.set_skip_taskbar(true);
+    let _ = window.show();
+    let _ = window.set_focus();
+    let _ = window.emit("tray-popup-open", serde_json::json!({ "view": view, "message": message }));
+  }
+}
+
 pub async fn run() -> i32 {
   tauri::Builder::default()
     .plugin(tauri_plugin_clipboard_manager::init())
@@ -52,6 +77,7 @@ pub async fn run() -> i32 {
     .plugin(tauri_plugin_fs::init())
     .plugin(tauri_plugin_http::init())
     .plugin(tauri_plugin_opener::init())
+    .plugin(tauri_plugin_notification::init())
     .plugin(tauri_plugin_os::init())
     .plugin(tauri_plugin_process::init())
     .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -103,6 +129,7 @@ pub async fn run() -> i32 {
       account::commands::apply_vustb_outfit,
       account::commands::checkin_vustb_account,
       account::commands::retrieve_vustb_friends,
+      account::commands::retrieve_vustb_announcements,
       account::commands::retrieve_vustb_skin_library,
       account::commands::retrieve_vustb_wardrobe,
       account::commands::collect_vustb_texture,
@@ -227,6 +254,9 @@ pub async fn run() -> i32 {
       app.manage(tokio::sync::Mutex::new(
         accelerator::ResourceAccelerationService::default(),
       ));
+      if let Some(tray_popup) = app.get_webview_window("tray_popup") {
+        let _ = tray_popup.set_skip_taskbar(true);
+      }
 
       let account_info = AccountInfo::load().unwrap_or_default();
       app.manage(Mutex::new(account_info.clone()));
@@ -328,9 +358,23 @@ pub async fn run() -> i32 {
       // On macOS, some shortcuts depend on default menu: https://github.com/tauri-apps/tauri/issues/12458
       #[cfg(not(target_os = "macos"))]
       {
-        use tauri::menu::MenuBuilder;
-        let menu = MenuBuilder::new(app).build()?;
-        app.set_menu(menu)?;
+        use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
+        let mut tray = TrayIconBuilder::with_id("main").tooltip("USTBL");
+        if let Some(icon) = app.default_window_icon().cloned() {
+          tray = tray.icon(icon);
+        }
+        tray
+          .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click { button: MouseButton::Left, .. } = event {
+              if let Some(window) = tray.app_handle().get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+              }
+            } else if let TrayIconEvent::Click { button: MouseButton::Right, .. } = event {
+              show_tray_popup(tray.app_handle(), "menu", None);
+            }
+          })
+          .build(app)?;
       }
 
       // Registering the deep links at runtime on Linux and Windows

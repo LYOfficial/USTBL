@@ -273,6 +273,12 @@ pub async fn login_vustb_account(
   let sync_app = app.clone();
   tauri::async_runtime::spawn(async move {
     let _ = crate::launch::helpers::playtime_sync::flush_playtime_queue(&sync_app).await;
+    let _ = vustb::post_authenticated::<_, serde_json::Value>(
+      &sync_app,
+      "/api/launcher/playtime/claim",
+      &serde_json::json!({}),
+    )
+    .await;
     let _ = vustb_presence::sync(&sync_app).await;
   });
   Ok(account)
@@ -355,6 +361,12 @@ pub async fn sync_vustb_account(app: AppHandle) -> USTBLResult<VustbAccount> {
   let sync_app = app.clone();
   tauri::async_runtime::spawn(async move {
     let _ = crate::launch::helpers::playtime_sync::flush_playtime_queue(&sync_app).await;
+    let _ = vustb::post_authenticated::<_, serde_json::Value>(
+      &sync_app,
+      "/api/launcher/playtime/claim",
+      &serde_json::json!({}),
+    )
+    .await;
   });
   Ok(refreshed)
 }
@@ -382,6 +394,13 @@ pub async fn checkin_vustb_account(app: AppHandle) -> USTBLResult<VustbCheckinRe
 #[tauri::command]
 pub async fn retrieve_vustb_friends(app: AppHandle) -> USTBLResult<Vec<VustbFriend>> {
   vustb::fetch_friends(&app).await
+}
+
+#[tauri::command]
+pub async fn retrieve_vustb_announcements(
+  app: AppHandle,
+) -> USTBLResult<Vec<vustb::VustbAnnouncement>> {
+  vustb::fetch_launcher_announcements(&app).await
 }
 
 #[tauri::command]

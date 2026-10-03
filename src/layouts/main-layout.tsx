@@ -30,7 +30,8 @@ interface MainLayoutProps {
 
 const MainLayout = ({ children }: MainLayoutProps) => {
   const router = useRouter();
-  const isStandAlone = router.pathname.startsWith("/standalone");
+  const isStandAlone =
+    router.pathname.startsWith("/standalone") || router.pathname === "/tray-popup";
   const { config, update } = useLauncherConfig();
   const { colorMode } = useColorMode();
   const isDarkenBg = colorMode === "dark";
@@ -212,7 +213,7 @@ const MainLayout = ({ children }: MainLayoutProps) => {
         }}
       >
         {children}
-        {isDev && <DevToolbar />}
+        {isDev && !isStandAlone && <DevToolbar />}
       </div>
     );
   }

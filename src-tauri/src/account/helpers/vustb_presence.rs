@@ -15,6 +15,8 @@ const PRESENCE_INTERVAL: Duration = Duration::from_secs(120);
 static CLIENT_ID: OnceLock<String> = OnceLock::new();
 static ACTIVE_GAMES: LazyLock<Mutex<BTreeMap<u64, String>>> =
   LazyLock::new(|| Mutex::new(BTreeMap::new()));
+static FRIEND_STATES: LazyLock<Mutex<BTreeMap<u64, (bool, Option<String>)>>> =
+  LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
 fn valid_client_id(value: &str) -> bool {
   (8..=64).contains(&value.len())
@@ -85,6 +87,21 @@ pub async fn monitor(app: AppHandle) {
   loop {
     if let Err(error) = sync(&app).await {
       log::debug!("vUSTB presence heartbeat skipped: {error:?}");
+    }
+    if let Ok(friends) = crate::account::helpers::vustb::fetch_friends(&app).await {
+      if let Ok(mut previous) = FRIEND_STATES.lock() {
+        for friend in friends {
+          let state = (friend.online, friend.instance_name.clone());
+          if let Some((was_online, old_instance)) = previous.get(&friend.id).cloned() {
+            if !was_online && state.0 {
+              crate::show_tray_popup(&app, "notification", Some(format!("{} 上线了", friend.display_name)));
+            } else if state.0 && old_instance != state.1 && state.1.is_some() {
+              crate::show_tray_popup(&app, "notification", Some(format!("{} 正在玩 {}", friend.display_name, state.1.clone().unwrap_or_default())));
+            }
+          }
+          previous.insert(friend.id, state);
+        }
+      }
     }
     tokio::time::sleep(PRESENCE_INTERVAL).await;
   }
