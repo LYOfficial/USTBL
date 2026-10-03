@@ -114,6 +114,14 @@ export default function App({ Component, pageProps }: AppProps) {
   // when switching tabs in game instance page
   // see https://github.com/USTB-SkyCode/USTBL/pull/491
 
+  if (router.pathname === "/tray-popup") {
+    return (
+      <ChakraProvider theme={chakraExtendTheme}>
+        <Component {...pageProps} />
+      </ChakraProvider>
+    );
+  }
+
   return (
     <ChakraProvider theme={chakraExtendTheme}>
       <ToastContextProvider>

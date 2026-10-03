@@ -10,6 +10,7 @@ mod partial;
 mod resource;
 mod storage;
 mod tasks;
+mod tray_popup;
 mod utils;
 
 use account::helpers::authlib_injector::info::refresh_and_update_auth_servers;
@@ -34,7 +35,7 @@ use utils::web::build_ustbl_client;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 use tauri::path::BaseDirectory;
 use tauri::Manager;
-use tauri::{Emitter, PhysicalPosition, Position};
+use tauri::{Emitter, PhysicalPosition, PhysicalSize, Position, Size};
 
 static EXE_PATH: LazyLock<PathBuf> = LazyLock::new(|| std::env::current_exe().unwrap());
 
@@ -47,26 +48,31 @@ static EXITING_AFTER_PRESENCE_CLEAR: AtomicBool = AtomicBool::new(false);
 
 pub fn show_tray_popup(app: &tauri::AppHandle, view: &str, message: Option<String>) {
   if let Some(window) = app.get_webview_window("tray_popup") {
-    if let Ok(Some(monitor)) = app.primary_monitor() {
-      let work_area = monitor.work_area();
-      let scale = monitor.scale_factor();
-      let popup_width_logical = if view == "friends" { 420.0 } else { 260.0 };
-      let popup_width = (popup_width_logical * scale).ceil() as i32;
-      let popup_height_logical = match view {
-        "friends" => 460.0,
-        "notification" => 220.0,
-        _ => 280.0,
-      };
-      let popup_height = (popup_height_logical * scale).ceil() as i32;
-      let x = work_area.position.x + work_area.size.width as i32 - popup_width - (12.0 * scale) as i32;
-      let y = work_area.position.y + work_area.size.height as i32 - popup_height - (12.0 * scale) as i32;
-      let _ = window.set_position(Position::Physical(PhysicalPosition::new(x, y)));
-    }
+    position_tray_popup(app, &window, view);
     let _ = window.set_skip_taskbar(true);
     let _ = window.show();
     let _ = window.set_focus();
     let _ = window.emit("tray-popup-open", serde_json::json!({ "view": view, "message": message }));
   }
+}
+
+pub(crate) fn position_tray_popup(app: &tauri::AppHandle, window: &tauri::WebviewWindow, view: &str) {
+    if let Ok(Some(monitor)) = app.primary_monitor() {
+      let work_area = monitor.work_area();
+      let scale = monitor.scale_factor();
+      let popup_width = ((if view == "friends" { 360.0 } else { 268.0 }) * scale).ceil() as u32;
+      let popup_height_logical = match view {
+        "friends" => 560.0,
+        "notification" => 200.0,
+        _ => 300.0,
+      };
+      let requested_height = (popup_height_logical * scale).ceil() as u32;
+      let popup_height = requested_height.min(work_area.size.height.saturating_sub((24.0 * scale) as u32));
+      let x = work_area.position.x + work_area.size.width as i32 - popup_width as i32 - (12.0 * scale) as i32;
+      let y = work_area.position.y + work_area.size.height as i32 - popup_height as i32 - (12.0 * scale) as i32;
+      let _ = window.set_size(Size::Physical(PhysicalSize::new(popup_width, popup_height)));
+      let _ = window.set_position(Position::Physical(PhysicalPosition::new(x, y)));
+    }
 }
 
 pub async fn run() -> i32 {
@@ -230,6 +236,7 @@ pub async fn run() -> i32 {
       utils::commands::delete_directory,
       utils::commands::retrieve_truetype_font_list,
       utils::commands::check_service_availability,
+      tray_popup::resize,
     ])
     .setup(|app| {
       // init APP_DATA_DIR

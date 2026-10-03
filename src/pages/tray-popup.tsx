@@ -3,44 +3,96 @@ import {
   Badge,
   Box,
   Button,
-  CloseButton,
   Flex,
-  Heading,
-  HStack,
-  Icon,
   Spinner,
   Text,
-  VStack,
-  useColorModeValue,
 } from "@chakra-ui/react";
-import {
-  getCurrentWindow,
-  LogicalSize,
-  PhysicalPosition,
-  currentMonitor,
-} from "@tauri-apps/api/window";
-import { getAllWindows } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
+import { getAllWindows, getCurrentWindow } from "@tauri-apps/api/window";
 import { exit } from "@tauri-apps/plugin-process";
 import { useCallback, useEffect, useState } from "react";
-import {
-  LuGamepad2,
-  LuGauge,
-  LuLogOut,
-  LuPlay,
-  LuRefreshCw,
-  LuSquareArrowOutUpRight,
-  LuUsersRound,
-} from "react-icons/lu";
+import { VustbFriend } from "@/models/vustb";
 import { AccountService } from "@/services/account";
 import { ResourceAccelerationService } from "@/services/resource-acceleration";
-import { VustbFriend } from "@/models/vustb";
 
 type View = "menu" | "friends" | "notification";
+
+const PANEL_BACKGROUND = "#3b4452";
+const PANEL_TEXT = "#f3f4f6";
+const PANEL_MUTED_TEXT = "#c8d0da";
+const PANEL_SEPARATOR = "rgba(255, 255, 255, 0.2)";
+const HOVER_BACKGROUND = "#536171";
+const ACTIVE_BACKGROUND = "#2f78b7";
 
 const closePopup = async () => {
   await getCurrentWindow().hide();
 };
+
+interface MenuItemProps {
+  children: React.ReactNode;
+  onClick: () => void;
+  isLoading?: boolean;
+  isDanger?: boolean;
+}
+
+const MenuItem = ({
+  children,
+  onClick,
+  isLoading = false,
+  isDanger = false,
+}: MenuItemProps) => (
+  <Button
+    variant="unstyled"
+    display="flex"
+    alignItems="center"
+    justifyContent="flex-start"
+    w="100%"
+    h="39px"
+    px="16px"
+    borderRadius="0"
+    color={isDanger ? "#ffb4ae" : PANEL_TEXT}
+    fontSize="14px"
+    fontWeight="400"
+    textAlign="left"
+    whiteSpace="nowrap"
+    isLoading={isLoading}
+    _hover={{ bg: HOVER_BACKGROUND }}
+    _active={{ bg: ACTIVE_BACKGROUND }}
+    _focusVisible={{ boxShadow: `inset 0 0 0 1px ${ACTIVE_BACKGROUND}` }}
+    onClick={onClick}
+  >
+    <Text noOfLines={1}>{children}</Text>
+  </Button>
+);
+
+const ViewTransition = ({
+  children,
+  view,
+}: {
+  children: React.ReactNode;
+  view: View;
+}) => (
+  <Box
+    key={view}
+    h="100%"
+    animation="tray-popup-view-enter 180ms ease-out"
+    sx={{
+      "@keyframes tray-popup-view-enter": {
+        from: {
+          opacity: 0,
+          transform: `translateX(${view === "friends" ? "20px" : "-20px"})`,
+        },
+        to: {
+          opacity: 1,
+          transform: "translateX(0)",
+        },
+      },
+    }}
+  >
+    {children}
+  </Box>
+);
 
 export default function TrayPopup() {
   const [view, setView] = useState<View>("menu");
@@ -48,35 +100,26 @@ export default function TrayPopup() {
   const [friends, setFriends] = useState<VustbFriend[]>([]);
   const [loading, setLoading] = useState(false);
   const [accelerationRunning, setAccelerationRunning] = useState(false);
-  const panelBackground = useColorModeValue("white", "gray.900");
-  const panelText = useColorModeValue("gray.800", "white");
-  const panelBorder = useColorModeValue("gray.200", "whiteAlpha.200");
-  const itemBackground = useColorModeValue("gray.50", "whiteAlpha.100");
 
   const resizePopup = useCallback(async (nextView: View) => {
-    const width = nextView === "friends" ? 420 : 260;
-    const height = nextView === "friends" ? 460 : nextView === "notification" ? 220 : 280;
-    const currentWindow = getCurrentWindow();
-    await currentWindow.setSize(new LogicalSize(width, height));
-    const monitor = await currentMonitor();
-    if (monitor) {
-      const physicalWidth = Math.ceil(width * monitor.scaleFactor);
-      const physicalHeight = Math.ceil(height * monitor.scaleFactor);
-      const margin = Math.ceil(12 * monitor.scaleFactor);
-      await currentWindow.setPosition(
-        new PhysicalPosition(
-          monitor.workArea.position.x + monitor.workArea.size.width - physicalWidth - margin,
-          monitor.workArea.position.y + monitor.workArea.size.height - physicalHeight - margin
-        )
-      );
-    }
+    await invoke("resize_tray_popup", { view: nextView });
   }, []);
+
+  const changeView = useCallback(
+    (nextView: View) => {
+      setView(nextView);
+      void resizePopup(nextView);
+    },
+    [resizePopup]
+  );
 
   const loadFriends = useCallback(async () => {
     setLoading(true);
     const response = await AccountService.retrieveVustbFriends();
     if (response.status === "success") {
-      setFriends([...response.data].sort((a, b) => Number(b.online) - Number(a.online)));
+      setFriends(
+        [...response.data].sort((a, b) => Number(b.online) - Number(a.online))
+      );
     }
     setLoading(false);
   }, []);
@@ -84,15 +127,18 @@ export default function TrayPopup() {
   useEffect(() => {
     let disposed = false;
     const setup = async () => {
-      const unlisten = await listen<{ view: View; message?: string }>("tray-popup-open", (event) => {
-        if (disposed) return;
-        setView(event.payload.view);
-        setMessage(event.payload.message || "");
-        void resizePopup(event.payload.view);
-        if (event.payload.view === "notification") {
-          window.setTimeout(() => void closePopup(), 4500);
+      const unlisten = await listen<{ view: View; message?: string }>(
+        "tray-popup-open",
+        (event) => {
+          if (disposed) return;
+          setView(event.payload.view);
+          setMessage(event.payload.message || "");
+          void resizePopup(event.payload.view);
+          if (event.payload.view === "notification") {
+            window.setTimeout(() => void closePopup(), 4500);
+          }
         }
-      });
+      );
       return unlisten;
     };
     const cleanup = setup();
@@ -109,7 +155,8 @@ export default function TrayPopup() {
   useEffect(() => {
     if (view !== "menu") return;
     void ResourceAccelerationService.status().then((response) => {
-      if (response.status === "success") setAccelerationRunning(response.data.running);
+      if (response.status === "success")
+        setAccelerationRunning(response.data.running);
     });
   }, [view]);
 
@@ -119,14 +166,11 @@ export default function TrayPopup() {
     setLoading(false);
     if (response.status === "success") {
       setAccelerationRunning(true);
-      setView("notification");
-      void resizePopup("notification");
       setMessage("GitHub 加速已启动");
     } else {
-      setView("notification");
-      void resizePopup("notification");
       setMessage(response.details || "GitHub 加速启动失败");
     }
+    changeView("notification");
   };
 
   const stopAcceleration = async () => {
@@ -137,8 +181,13 @@ export default function TrayPopup() {
   };
 
   const triggerMain = async (event: string) => {
-    if (event === "ustbl:tray-show-main" || event === "ustbl:tray-launch-request") {
-      const main = (await getAllWindows()).find((window) => window.label === "main");
+    if (
+      event === "ustbl:tray-show-main" ||
+      event === "ustbl:tray-launch-request"
+    ) {
+      const main = (await getAllWindows()).find(
+        (window) => window.label === "main"
+      );
       await main?.show();
       await main?.setFocus();
     }
@@ -146,25 +195,174 @@ export default function TrayPopup() {
     await closePopup();
   };
 
-  return (
-    <Box bg={panelBackground} color={panelText} borderWidth="1px" borderColor={panelBorder} borderRadius="lg" boxShadow="dark-lg" p={3} h="100vh" overflow="hidden">
-      <Flex align="center" justify="space-between" mb={3}>
-        <HStack spacing={2}><Icon as={view === "friends" ? LuUsersRound : view === "notification" ? LuGauge : LuGamepad2} color="blue.300" /><Heading size="sm">USTBL</Heading></HStack>
-        <CloseButton onClick={() => void closePopup()} />
+  const renderMenu = () => (
+    <Box>
+      <MenuItem onClick={() => void triggerMain("ustbl:tray-show-main")}>
+        打开 USTBL
+      </MenuItem>
+      <MenuItem onClick={() => void triggerMain("ustbl:tray-launch-request")}>
+        启动游戏
+      </MenuItem>
+      <Box borderTop="1px solid" borderColor={PANEL_SEPARATOR} />
+      <MenuItem onClick={() => changeView("friends")}>好友列表</MenuItem>
+      <Box borderTop="1px solid" borderColor={PANEL_SEPARATOR} />
+      <MenuItem
+        isLoading={loading}
+        onClick={() =>
+          void (accelerationRunning ? stopAcceleration() : startAcceleration())
+        }
+      >
+        {accelerationRunning ? "关闭资源加速" : "启用资源加速"}
+      </MenuItem>
+      <Box borderTop="1px solid" borderColor={PANEL_SEPARATOR} />
+      <MenuItem isDanger onClick={() => void exit(0)}>
+        退出 USTBL
+      </MenuItem>
+    </Box>
+  );
+
+  const renderNotification = () => (
+    <Flex direction="column" h="100%">
+      <Box flex="1" px={4} py={5}>
+        <Text fontSize="16px" fontWeight="600" color={PANEL_TEXT} mb={2}>
+          {message.includes("失败") ? "加速启动失败" : "GitHub 加速"}
+        </Text>
+        <Text color={PANEL_MUTED_TEXT} fontSize="14px" lineHeight="1.5">
+          {message}
+        </Text>
+      </Box>
+      <Box borderTop="1px solid" borderColor={PANEL_SEPARATOR}>
+        <MenuItem onClick={() => changeView("menu")}>返回</MenuItem>
+      </Box>
+    </Flex>
+  );
+
+  const renderFriends = () => (
+    <Flex direction="column" h="100%" minH={0}>
+      <Box px={4} py={3} borderBottom="1px solid" borderColor={PANEL_SEPARATOR}>
+        <Text color={PANEL_TEXT} fontSize="16px" fontWeight="600">
+          好友列表
+        </Text>
+      </Box>
+      <Box
+        flex="1"
+        minH={0}
+        overflowY="auto"
+        px={2}
+        py={2}
+        css={{
+          "&::-webkit-scrollbar": { width: "8px" },
+          "&::-webkit-scrollbar-thumb": {
+            background: "#687586",
+            borderRadius: "4px",
+          },
+          "&::-webkit-scrollbar-track": { background: "transparent" },
+        }}
+      >
+        {loading && friends.length === 0 ? (
+          <Flex justify="center" py={6}>
+            <Spinner color="#9bb8d0" />
+          </Flex>
+        ) : friends.length === 0 ? (
+          <Text
+            color={PANEL_MUTED_TEXT}
+            fontSize="14px"
+            textAlign="center"
+            py={6}
+          >
+            暂无好友
+          </Text>
+        ) : (
+          friends.map((friend) => (
+            <Flex
+              key={friend.id}
+              align="center"
+              gap={3}
+              minH="58px"
+              px={2}
+              py={2}
+              borderRadius="2px"
+              _hover={{ bg: HOVER_BACKGROUND }}
+            >
+              <Avatar
+                size="sm"
+                src={friend.avatarUrl}
+                name={friend.displayName}
+              />
+              <Box flex="1" minW={0}>
+                <Text color={PANEL_TEXT} fontSize="14px" noOfLines={1}>
+                  {friend.displayName}
+                </Text>
+                {friend.online && friend.instanceName && (
+                  <Text color="#9dd49f" fontSize="12px" noOfLines={1}>
+                    正在玩 {friend.instanceName}
+                  </Text>
+                )}
+              </Box>
+              <Badge
+                colorScheme={friend.online ? "green" : "gray"}
+                flexShrink={0}
+              >
+                {friend.online ? "在线" : "离线"}
+              </Badge>
+            </Flex>
+          ))
+        )}
+      </Box>
+      <Flex
+        gap={2}
+        px={2}
+        py={2}
+        borderTop="1px solid"
+        borderColor={PANEL_SEPARATOR}
+      >
+        <Button
+          flex="1"
+          h="36px"
+          variant="unstyled"
+          color={PANEL_TEXT}
+          fontSize="14px"
+          borderRadius="2px"
+          isLoading={loading}
+          _hover={{ bg: HOVER_BACKGROUND }}
+          _active={{ bg: ACTIVE_BACKGROUND }}
+          onClick={() => void loadFriends()}
+        >
+          刷新
+        </Button>
+        <Button
+          flex="1"
+          h="36px"
+          variant="unstyled"
+          color={PANEL_TEXT}
+          fontSize="14px"
+          borderRadius="2px"
+          _hover={{ bg: HOVER_BACKGROUND }}
+          _active={{ bg: ACTIVE_BACKGROUND }}
+          onClick={() => changeView("menu")}
+        >
+          返回
+        </Button>
       </Flex>
-      {view === "menu" && <VStack align="stretch" spacing={1}>
-        <Button size="sm" variant="outline" colorScheme="blue" leftIcon={<LuSquareArrowOutUpRight />} justifyContent="flex-start" onClick={() => void triggerMain("ustbl:tray-show-main")}>打开 USTBL</Button>
-        <Button size="sm" variant="outline" colorScheme="blue" leftIcon={<LuPlay />} justifyContent="flex-start" onClick={() => void triggerMain("ustbl:tray-launch-request")}>启动游戏</Button>
-        <Button size="sm" variant="outline" colorScheme="blue" leftIcon={<LuUsersRound />} justifyContent="flex-start" onClick={() => { setView("friends"); void resizePopup("friends"); }}>查看好友列表</Button>
-        <Button size="sm" variant="outline" colorScheme="blue" justifyContent="flex-start" leftIcon={<LuGauge />} isLoading={loading} onClick={() => void (accelerationRunning ? stopAcceleration() : startAcceleration())}>{accelerationRunning ? "关闭资源加速" : "启用资源加速"}</Button>
-        <Button size="sm" variant="outline" colorScheme="red" leftIcon={<LuLogOut />} justifyContent="flex-start" onClick={() => void exit(0)}>退出</Button>
-      </VStack>}
-      {view === "notification" && <VStack align="stretch" spacing={3} py={5}><Heading size="md">{message.includes("失败") ? "加速启动失败" : "GitHub 加速"}</Heading><Text opacity={0.75}>{message}</Text><Button size="sm" variant="outline" colorScheme="blue" onClick={() => { setView("menu"); void resizePopup("menu"); }}>返回</Button></VStack>}
-      {view === "friends" && <VStack align="stretch" spacing={2} overflowY="auto" maxH="380px">
-        <Button size="sm" leftIcon={<LuRefreshCw />} isLoading={loading} onClick={() => void loadFriends()}>刷新</Button>
-        {loading && friends.length === 0 ? <Spinner alignSelf="center" /> : friends.map((friend) => <HStack key={friend.id} p={2} bg={itemBackground} borderRadius="md"><Avatar size="sm" src={friend.avatarUrl} name={friend.displayName} /><Box flex={1}><Text fontSize="sm">{friend.displayName}</Text>{friend.online && friend.instanceName && <Text fontSize="xs" color="green.500">正在玩 {friend.instanceName}</Text>}</Box><Badge colorScheme={friend.online ? "green" : "gray"}>{friend.online ? "在线" : "离线"}</Badge></HStack>)}
-        <Button size="sm" variant="outline" colorScheme="blue" onClick={() => { setView("menu"); void resizePopup("menu"); }}>返回</Button>
-      </VStack>}
+    </Flex>
+  );
+
+  return (
+    <Box
+      h="100vh"
+      overflow="hidden"
+      bg={PANEL_BACKGROUND}
+      color={PANEL_TEXT}
+      border="1px solid"
+      borderColor="rgba(255, 255, 255, 0.16)"
+      borderRadius="4px"
+      boxShadow="0 6px 18px rgba(0, 0, 0, 0.38)"
+    >
+      <ViewTransition view={view}>
+        {view === "menu" && renderMenu()}
+        {view === "friends" && renderFriends()}
+        {view === "notification" && renderNotification()}
+      </ViewTransition>
     </Box>
   );
 }
