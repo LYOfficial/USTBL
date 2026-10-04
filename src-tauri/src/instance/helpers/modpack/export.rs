@@ -226,9 +226,7 @@ pub fn list_files(instance: &Instance) -> USTBLResult<ModpackFileList> {
     };
     let rel_str = rel_path.to_string_lossy().replace('\\', "/");
 
-    if BLACKLIST.contains(rel_str.as_str())
-      || is_launcher_metadata_path(rel_str.as_str(), name)
-    {
+    if BLACKLIST.contains(rel_str.as_str()) || is_launcher_metadata_path(rel_str.as_str(), name) {
       return false;
     }
     if REGEX_BLACKLIST.is_match(rel_str.as_str()) {

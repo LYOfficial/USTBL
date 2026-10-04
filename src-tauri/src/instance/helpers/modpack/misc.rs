@@ -182,7 +182,10 @@ mod tests {
     let instance_path = root.join("instance");
     let mut archive = zip::ZipWriter::new(File::create(&archive_path).unwrap());
     for (path, content) in [
-      ("modrinth.index.json", r#"{"versionId":"1","name":"test","files":[],"dependencies":{"minecraft":"1.20.1"}}"#),
+      (
+        "modrinth.index.json",
+        r#"{"versionId":"1","name":"test","files":[],"dependencies":{"minecraft":"1.20.1"}}"#,
+      ),
       ("overrides/ustblcfg.json", "old config"),
       ("overrides/config/example.cfg", "kept"),
     ] {

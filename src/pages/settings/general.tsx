@@ -226,8 +226,10 @@ const GeneralSettingsPage = () => {
               onSelect={(value) => {
                 const nextValue = typeof value === "string" ? value : "ask";
                 setCloseBehavior(nextValue);
-                if (nextValue === "ask") window.localStorage.removeItem("ustbl.closeBehavior");
-                else window.localStorage.setItem("ustbl.closeBehavior", nextValue);
+                if (nextValue === "ask")
+                  window.localStorage.removeItem("ustbl.closeBehavior");
+                else
+                  window.localStorage.setItem("ustbl.closeBehavior", nextValue);
               }}
               placeholder="每次询问"
               buttonProps={{ flex: "0 0 auto" }}

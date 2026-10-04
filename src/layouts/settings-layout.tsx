@@ -76,7 +76,10 @@ const SettingsLayout: React.FC<SettingsLayoutProps> = ({ children }) => {
                     )}
                   </HStack>
                 ),
-                value: item.key === "messages" ? "/messages" : `/settings/${item.key}`,
+                value:
+                  item.key === "messages"
+                    ? "/messages"
+                    : `/settings/${item.key}`,
               }))}
             />
           ))}

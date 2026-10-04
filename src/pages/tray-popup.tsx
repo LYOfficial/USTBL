@@ -162,7 +162,9 @@ export default function TrayPopup() {
   }, [view]);
 
   useEffect(() => {
-    setMessageQuiet(window.localStorage.getItem("ustbl.message.quiet.global") === "true");
+    setMessageQuiet(
+      window.localStorage.getItem("ustbl.message.quiet.global") === "true"
+    );
   }, [view]);
 
   const startAcceleration = async () => {
@@ -211,7 +213,18 @@ export default function TrayPopup() {
       <Box borderTop="1px solid" borderColor={PANEL_SEPARATOR} />
       <MenuItem onClick={() => changeView("friends")}>好友列表</MenuItem>
       <Box borderTop="1px solid" borderColor={PANEL_SEPARATOR} />
-      <MenuItem onClick={() => { const next = !messageQuiet; window.localStorage.setItem("ustbl.message.quiet.global", String(next)); setMessageQuiet(next); }}>{messageQuiet ? "开启消息提醒" : "消息免打扰"}</MenuItem>
+      <MenuItem
+        onClick={() => {
+          const next = !messageQuiet;
+          window.localStorage.setItem(
+            "ustbl.message.quiet.global",
+            String(next)
+          );
+          setMessageQuiet(next);
+        }}
+      >
+        {messageQuiet ? "开启消息提醒" : "消息免打扰"}
+      </MenuItem>
       <Box borderTop="1px solid" borderColor={PANEL_SEPARATOR} />
       <MenuItem
         isLoading={loading}

@@ -50,13 +50,16 @@ const VustbAccountPanel = ({
   );
 
   const avatarCacheKey = (subject: string) => `ustbl.vustb.avatar.${subject}`;
-  const withCachedAvatar = (value: VustbAccount) => {
+  const withCachedAvatar = useCallback((value: VustbAccount) => {
     const cached = window.localStorage.getItem(avatarCacheKey(value.subject));
     return cached ? { ...value, avatarUrl: cached } : value;
-  };
+  }, []);
   const cacheAvatar = (value: VustbAccount) => {
     if (value.avatarUrl) {
-      window.localStorage.setItem(avatarCacheKey(value.subject), value.avatarUrl);
+      window.localStorage.setItem(
+        avatarCacheKey(value.subject),
+        value.avatarUrl
+      );
     }
   };
 
@@ -66,7 +69,7 @@ const VustbAccountPanel = ({
     if (request !== accountRequest.current || response.status !== "success")
       return;
     setAccount(response.data ? withCachedAvatar(response.data) : null);
-  }, []);
+  }, [withCachedAvatar]);
 
   useEffect(() => {
     const requests = accountRequest;

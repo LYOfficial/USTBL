@@ -1006,7 +1006,8 @@
       "nightly": "Version de construction nocturne",
       "beta": "Version de test"
     },
-    "viewOnWiki": "Voir sur Minecraft Wiki"
+    "viewOnWiki": "Voir sur Minecraft Wiki",
+    "optional": "Optionnel"
   },
   "GeneralSettingsPage": {
     "language": {
@@ -2597,6 +2598,16 @@
         "error": {
           "title": "Échec de l’ajout d’icônes d’instance personnalisées"
         }
+      },
+      "exportModpack": {
+        "error": {
+          "title": "Échec de l’exportation"
+        }
+      },
+      "retrieveExportableFileList": {
+        "error": {
+          "title": "Échec de la liste des fichiers"
+        }
       }
     },
     "task": {
@@ -2819,5 +2830,51 @@
     "inputPlaceholder": "Saisissez un message texte",
     "offline": "Cet ami est hors ligne et ne peut pas discuter",
     "server": "Messages du serveur"
+  },
+  "ExportModpackModal": {
+    "header": {
+      "title": "Exporter le modpack"
+    },
+    "button": {
+      "export": "Exporter"
+    },
+    "error": {
+      "title": "Échec de l’exportation",
+      "invalidName": "Veuillez saisir un nom de modpack valide",
+      "invalidVersion": "Veuillez saisir un numéro de version valide",
+      "noFileSelected": "Veuillez sélectionner au moins un fichier"
+    },
+    "errorMessage": {
+      "1": "Le nom ne peut pas être vide",
+      "2": "Le nom contient des caractères invalides",
+      "3": "Le nom est trop long (255 caractères maximum)"
+    },
+    "fileTreeTranslation": {
+      "config": "Configuration",
+      "mods": "Mods",
+      "optionsTxt": "Paramètres du jeu",
+      "resourcepacks": "Packs de ressources",
+      "saves": "Sauvegardes",
+      "shaderpacks": "Packs de shaders"
+    },
+    "label": {
+      "author": "Auteur",
+      "basicInfo": "Informations générales",
+      "description": "Description",
+      "exportFormat": "Format d’exportation",
+      "exportOptions": "Options d’exportation",
+      "includedFiles": "Fichiers inclus",
+      "minMemory": "Mémoire minimale (Mo)",
+      "modpackName": "Nom du modpack",
+      "modpackVersion": "Version du modpack",
+      "noCreateRemoteFiles": "Désactiver les fichiers distants",
+      "skipCurseForgeRemoteFiles": "Ignorer les fichiers distants CurseForge"
+    },
+    "tooltip": {
+      "exportFormat": {
+        "Modrinth": "Taille réduite ; les mods requis sont téléchargés depuis un manifeste lors de l’importation.",
+        "MultiMC": "Compatible avec les principaux lanceurs ; exporté comme une instance complète."
+      }
+    }
   }
 }

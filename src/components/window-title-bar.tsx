@@ -1,5 +1,7 @@
 import {
   Box,
+  Button,
+  Checkbox,
   Divider,
   HStack,
   Icon,
@@ -10,8 +12,6 @@ import {
   ModalFooter,
   ModalHeader,
   ModalOverlay,
-  Checkbox,
-  Button,
   Tab,
   TabList,
   Tabs,
@@ -28,8 +28,8 @@ import {
   LuCircleUserRound,
   LuCompass,
   LuCopy,
-  LuMinus,
   LuMessageCircle,
+  LuMinus,
   LuSettings,
   LuSquare,
   LuX,
@@ -155,7 +155,10 @@ const WindowTitleBar = () => {
         await appWindow.close();
       }
     } catch (error) {
-      console.error(`USTBL 窗口${behavior === "tray" ? "隐藏到托盘" : "关闭"}失败`, error);
+      console.error(
+        `USTBL 窗口${behavior === "tray" ? "隐藏到托盘" : "关闭"}失败`,
+        error
+      );
     }
   };
 
@@ -238,84 +241,88 @@ const WindowTitleBar = () => {
           <TitleShort transform="scale(0.85)" transformOrigin="left center" />
         </HStack>
 
-      <Tabs
-        variant="soft-rounded"
-        size="sm"
-        colorScheme={primaryColor}
-        index={selectedIndex}
-        onChange={onTabChange}
-        flex={1}
-        minW={0}
-      >
-        <TabList h="100%" alignItems="center" borderBottom="none">
-          {navList.map((item, index) => (
-            <Tooltip
-              key={item.path}
-              label={t(`HeadNavBar.navList.${item.label}`)}
-              placement="bottom"
-              isDisabled={!isSimplified || selectedIndex === index}
-            >
-              <Tab
-                h="30px"
-                fontWeight={selectedIndex === index ? "600" : "normal"}
-                color={selectedIndex === index ? "inherit" : unselectTabColor}
+        <Tabs
+          variant="soft-rounded"
+          size="sm"
+          colorScheme={primaryColor}
+          index={selectedIndex}
+          onChange={onTabChange}
+          flex={1}
+          minW={0}
+        >
+          <TabList h="100%" alignItems="center" borderBottom="none">
+            {navList.map((item, index) => (
+              <Tooltip
+                key={item.path}
+                label={t(`HeadNavBar.navList.${item.label}`)}
+                placement="bottom"
+                isDisabled={!isSimplified || selectedIndex === index}
               >
-                <HStack spacing={2} id={`head-navbar-tab-${item.label}`}>
-                  <Icon as={item.icon} />
-                  {(!isSimplified || selectedIndex === index) && (
-                    <Text>{t(`HeadNavBar.navList.${item.label}`)}</Text>
-                  )}
-                </HStack>
-              </Tab>
-            </Tooltip>
-          ))}
-        </TabList>
-      </Tabs>
+                <Tab
+                  h="30px"
+                  fontWeight={selectedIndex === index ? "600" : "normal"}
+                  color={selectedIndex === index ? "inherit" : unselectTabColor}
+                >
+                  <HStack spacing={2} id={`head-navbar-tab-${item.label}`}>
+                    <Icon as={item.icon} />
+                    {(!isSimplified || selectedIndex === index) && (
+                      <Text>{t(`HeadNavBar.navList.${item.label}`)}</Text>
+                    )}
+                  </HStack>
+                </Tab>
+              </Tooltip>
+            ))}
+          </TabList>
+        </Tabs>
 
-      {isDownloadIndicatorShown && (
-        <HStack spacing={2} h="100%" px={1.5} flexShrink={0}>
-          <Divider
-            orientation="vertical"
-            h="18px"
-            borderColor="var(--chakra-colors-chakra-placeholder-color)"
-          />
-          <DownloadIndicator />
+        {isDownloadIndicatorShown && (
+          <HStack spacing={2} h="100%" px={1.5} flexShrink={0}>
+            <Divider
+              orientation="vertical"
+              h="18px"
+              borderColor="var(--chakra-colors-chakra-placeholder-color)"
+            />
+            <DownloadIndicator />
+          </HStack>
+        )}
+
+        <HStack h="100%" minW="24px" flexShrink={0}>
+          <Box w="100%" h="100%" />
         </HStack>
-      )}
 
-      <HStack h="100%" minW="24px" flexShrink={0}>
-        <Box w="100%" h="100%" />
+        <HStack spacing={0.5}>
+          <IconButton
+            aria-label="minimize"
+            size="sm"
+            variant="ghost"
+            icon={<Icon as={LuMinus} pointerEvents="none" />}
+            onClick={onMinimize}
+          />
+          <IconButton
+            aria-label="maximize"
+            size="sm"
+            variant="ghost"
+            icon={
+              <Icon as={isMaximized ? LuCopy : LuSquare} pointerEvents="none" />
+            }
+            onClick={onToggleMaximize}
+          />
+          <IconButton
+            aria-label="close"
+            size="sm"
+            variant="ghost"
+            colorScheme="red"
+            icon={<Icon as={LuX} pointerEvents="none" />}
+            onClick={onClose}
+          />
+        </HStack>
       </HStack>
 
-      <HStack spacing={0.5}>
-        <IconButton
-          aria-label="minimize"
-          size="sm"
-          variant="ghost"
-          icon={<Icon as={LuMinus} pointerEvents="none" />}
-          onClick={onMinimize}
-        />
-        <IconButton
-          aria-label="maximize"
-          size="sm"
-          variant="ghost"
-          icon={
-            <Icon as={isMaximized ? LuCopy : LuSquare} pointerEvents="none" />
-          }
-          onClick={onToggleMaximize}
-        />
-        <IconButton
-          aria-label="close"
-          size="sm"
-          variant="ghost"
-          colorScheme="red"
-          icon={<Icon as={LuX} pointerEvents="none" />}
-          onClick={onClose}
-        />
-      </HStack>
-      </HStack>
-
-      <Modal isOpen={closeDialogOpen} onClose={() => setCloseDialogOpen(false)} isCentered>
+      <Modal
+        isOpen={closeDialogOpen}
+        onClose={() => setCloseDialogOpen(false)}
+        isCentered
+      >
         <ModalOverlay bg="blackAlpha.500" />
         <ModalContent>
           <ModalHeader>关闭 USTBL</ModalHeader>
@@ -331,10 +338,16 @@ const WindowTitleBar = () => {
             </Checkbox>
           </ModalBody>
           <ModalFooter gap={3}>
-            <Button variant="outline" onClick={() => void applyCloseBehavior("exit")}>
+            <Button
+              variant="outline"
+              onClick={() => void applyCloseBehavior("exit")}
+            >
               直接关闭
             </Button>
-            <Button colorScheme={primaryColor} onClick={() => void applyCloseBehavior("tray")}>
+            <Button
+              colorScheme={primaryColor}
+              onClick={() => void applyCloseBehavior("tray")}
+            >
               最小化到托盘
             </Button>
           </ModalFooter>

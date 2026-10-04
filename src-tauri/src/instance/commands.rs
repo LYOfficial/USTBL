@@ -12,13 +12,13 @@ use crate::instance::helpers::misc::{
   get_instance_game_config, get_instance_subdir_path_by_id, get_instance_subdir_paths,
   refresh_and_update_instances, unify_instance_name,
 };
-use crate::instance::helpers::modpack::misc::{
-  extract_overrides, get_download_params, ModpackMetaInfo,
-};
 use crate::instance::helpers::modpack::export::{
   collect_modrinth_files, create_modpack_zip, generate_modrinth_manifest,
-  generate_multimc_instance_cfg, generate_multimc_manifest, list_files,
-  validate_export_options, ExportFormat, ExportModpackOptions,
+  generate_multimc_instance_cfg, generate_multimc_manifest, list_files, validate_export_options,
+  ExportFormat, ExportModpackOptions,
+};
+use crate::instance::helpers::modpack::misc::{
+  extract_overrides, get_download_params, ModpackMetaInfo,
 };
 use crate::instance::helpers::modpack::multimc::profile::ResolvedMultiMc;
 use crate::instance::helpers::mods::common::{
@@ -38,9 +38,8 @@ use crate::instance::helpers::server::{
 use crate::instance::helpers::world::{load_level_data_from_nbt, load_world_info_from_dir};
 use crate::instance::models::misc::{
   Instance, InstanceError, InstanceSubdirType, InstanceSummary, LocalModInfo, ModLoader,
-  ModpackFileList,
-  ModLoaderStatus, ModLoaderType, OptiFine, ResourcePackInfo, SchematicInfo, ScreenshotInfo,
-  ShaderPackInfo,
+  ModLoaderStatus, ModLoaderType, ModpackFileList, OptiFine, ResourcePackInfo, SchematicInfo,
+  ScreenshotInfo, ShaderPackInfo,
 };
 use crate::instance::models::world::base::WorldInfo;
 use crate::instance::models::world::level::LevelData;
@@ -1569,21 +1568,33 @@ pub async fn export_modpack(
         &selected_files,
         options.no_create_remote_files.unwrap_or(false),
         options.skip_curseforge_remote_files.unwrap_or(false),
-      ).await?;
+      )
+      .await?;
       manifest.files = remote_files;
       let json = serde_json::to_string_pretty(&manifest)
         .map_err(|_| InstanceError::ModpackManifestParseError)?;
-      ("overrides".to_string(), local_files, vec![("modrinth.index.json".to_string(), json)])
+      (
+        "overrides".to_string(),
+        local_files,
+        vec![("modrinth.index.json".to_string(), json)],
+      )
     }
     ExportFormat::MultiMC => {
       let manifest = generate_multimc_manifest(&instance, &options)?;
       let json = serde_json::to_string_pretty(&manifest)
         .map_err(|_| InstanceError::ModpackManifestParseError)?;
-      (".minecraft".to_string(), selected_files, vec![
-        ("mmc-pack.json".to_string(), json),
-        ("instance.cfg".to_string(), generate_multimc_instance_cfg(&instance, &options)),
-        (".packignore".to_string(), String::new()),
-      ])
+      (
+        ".minecraft".to_string(),
+        selected_files,
+        vec![
+          ("mmc-pack.json".to_string(), json),
+          (
+            "instance.cfg".to_string(),
+            generate_multimc_instance_cfg(&instance, &options),
+          ),
+          (".packignore".to_string(), String::new()),
+        ],
+      )
     }
   };
   create_modpack_zip(&save_path, &prefix, overrides, extras).await?;

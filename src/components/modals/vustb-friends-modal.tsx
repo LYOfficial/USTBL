@@ -30,7 +30,11 @@ interface VustbFriendsModalProps {
   isTray?: boolean;
 }
 
-const VustbFriendsModal = ({ isOpen, onClose, isTray = false }: VustbFriendsModalProps) => {
+const VustbFriendsModal = ({
+  isOpen,
+  onClose,
+  isTray = false,
+}: VustbFriendsModalProps) => {
   const [friends, setFriends] = useState<VustbFriend[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
