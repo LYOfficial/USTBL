@@ -27,7 +27,6 @@ import { TitleShort } from "@/components/logo-title";
 import { useLauncherConfig } from "@/contexts/config";
 import { useSharedModals } from "@/contexts/shared-modal";
 import { useTaskContext } from "@/contexts/task";
-import { AccountService } from "@/services/account";
 
 const HeadNavBar = () => {
   const router = useRouter();
@@ -38,20 +37,8 @@ const HeadNavBar = () => {
 
   const { openSharedModal } = useSharedModals();
   const [isAnimating, setIsAnimating] = useState(false);
-  const [hasVustbAccount, setHasVustbAccount] = useState(false);
   const { tasks } = useTaskContext();
   const isDownloadIndicatorShown = tasks.length > 0;
-
-  useEffect(() => {
-    let disposed = false;
-    const check = async () => {
-      const response = await AccountService.retrieveVustbAccount();
-      if (!disposed) setHasVustbAccount(response.status === "success" && Boolean(response.data));
-    };
-    void check();
-    const timer = window.setInterval(() => void check(), 2000);
-    return () => { disposed = true; window.clearInterval(timer); };
-  }, []);
 
   const unselectTabColor = useColorModeValue("gray.600", "gray.400");
 
@@ -71,8 +58,8 @@ const HeadNavBar = () => {
     { icon: LuZap, label: "launch", path: "/launch" },
     { icon: LuBox, label: "instances", path: "/instances" },
     { icon: LuCircleUserRound, label: "accounts", path: "/accounts" },
+    { icon: LuMessageCircle, label: "messages", path: "/messages" },
     { icon: LuCompass, label: "discover", path: "/discover" },
-    ...(hasVustbAccount ? [{ icon: LuMessageCircle, label: "messages", path: "/messages" }] : []),
     { icon: LuSettings, label: "settings", path: "/settings" },
   ];
 
@@ -112,7 +99,6 @@ const HeadNavBar = () => {
                   isDisabled={!isSimplified || selectedIndex === index}
                 >
                   <Tab
-                    className={item.label === "messages" && hasVustbAccount ? "messages-nav-reveal" : undefined}
                     fontWeight={selectedIndex === index ? "600" : "normal"}
                     color={
                       selectedIndex === index ? "inherit" : unselectTabColor

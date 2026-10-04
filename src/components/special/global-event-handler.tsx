@@ -79,22 +79,36 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
   }, [isStandAlone, newerVersion, openSharedModal]);
 
   useEffect(() => {
-    if (isStandAlone) return;
+    if (isStandAlone || router.pathname.startsWith("/messages")) return;
     let disposed = false;
     let streamStarted = false;
+    let nextAccountRetryAt = 0;
+    let accountRetryDelay = 30000;
+    let nextServerMessageRetryAt = 0;
     const poll = async () => {
+      const now = Date.now();
+      if (now < nextAccountRetryAt) return;
       const account = await AccountService.retrieveVustbAccount();
       if (disposed || account.status !== "success" || !account.data) {
         streamStarted = false;
         knownMessageIds.current = null;
+        nextAccountRetryAt = Date.now() + accountRetryDelay;
+        accountRetryDelay = Math.min(accountRetryDelay * 2, 300000);
         return;
       }
+      nextAccountRetryAt = 0;
+      accountRetryDelay = 30000;
       if (!streamStarted) {
         streamStarted = true;
         void AccountService.startVustbFriendMessageStream();
       }
+      if (router.pathname.startsWith("/messages") || Date.now() < nextServerMessageRetryAt) return;
       const response = await AccountService.retrieveVustbServerMessages();
-      if (disposed || response.status !== "success") return;
+      if (disposed || response.status !== "success") {
+        nextServerMessageRetryAt = Date.now() + 30000;
+        return;
+      }
+      nextServerMessageRetryAt = 0;
       const messages = response.data.flatMap((group) => group.messages);
       const ids = new Set(messages.map((message) => message.id));
       if (knownMessageIds.current === null) {
@@ -128,9 +142,9 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
       const hidden = !(await getCurrentWindow().isVisible().catch(() => true));
       if (hidden) void invoke("show_message_notification", { message: `${message.sender}: ${message.content}` });
     });
-    const timer = window.setInterval(() => void poll(), 7000);
+    const timer = window.setInterval(() => void poll(), 30000);
     return () => { disposed = true; window.clearInterval(timer); unlisten?.(); };
-  }, [isStandAlone]);
+  }, [isStandAlone, router.pathname]);
 
   // ----------------- Keyboard Shortcuts -----------------
   const spotlightShortcuts = useMemo(

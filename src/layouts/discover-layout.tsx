@@ -21,7 +21,6 @@ import {
 import NavMenu, { MenuItem } from "@/components/common/nav-menu";
 import { useLauncherConfig } from "@/contexts/config";
 import { useSharedModals } from "@/contexts/shared-modal";
-import { AccountService } from "@/services/account";
 
 interface DiscoverMenuItemConfig {
   key: string;
@@ -37,18 +36,6 @@ const DiscoverLayout: React.FC<{ children: React.ReactNode }> = ({
   const { t } = useTranslation();
   const { openSharedModal } = useSharedModals();
   const { config } = useLauncherConfig();
-  const [hasVustbAccount, setHasVustbAccount] = React.useState(false);
-
-  React.useEffect(() => {
-    let disposed = false;
-    const check = async () => {
-      const response = await AccountService.retrieveVustbAccount();
-      if (!disposed) setHasVustbAccount(response.status === "success" && Boolean(response.data));
-    };
-    void check();
-    const timer = window.setInterval(() => void check(), 2000);
-    return () => { disposed = true; window.clearInterval(timer); };
-  }, []);
 
   const handleSearch = () => {
     openSharedModal("spotlight-search");
@@ -82,7 +69,6 @@ const DiscoverLayout: React.FC<{ children: React.ReactNode }> = ({
         route: "/discover/install-modpack",
       },
     ],
-    ...(hasVustbAccount ? [[{ key: "messages", icon: LuMessagesSquare, route: "/messages" }]] : []),
   ];
 
   const createMenuItems = (

@@ -18,7 +18,6 @@ import {
   LuFlaskConical,
   LuGamepad2,
   LuInfo,
-  LuMessageCircle,
   LuPalette,
   LuRocket,
   LuSettings,
@@ -26,7 +25,6 @@ import {
 import NavMenu from "@/components/common/nav-menu";
 import { useLauncherConfig } from "@/contexts/config";
 import { isDev } from "@/utils/env";
-import { AccountService } from "@/services/account";
 
 interface SettingsLayoutProps {
   children: React.ReactNode;
@@ -37,20 +35,7 @@ const SettingsLayout: React.FC<SettingsLayoutProps> = ({ children }) => {
   const { t } = useTranslation();
   const { config, newerVersion } = useLauncherConfig();
   const primaryColor = config.appearance.theme.primaryColor;
-  const [hasVustbAccount, setHasVustbAccount] = React.useState(false);
-  React.useEffect(() => {
-    let disposed = false;
-    const check = async () => {
-      const response = await AccountService.retrieveVustbAccount();
-      if (!disposed) setHasVustbAccount(response.status === "success" && Boolean(response.data));
-    };
-    void check();
-    const timer = window.setInterval(() => void check(), 2000);
-    return () => { disposed = true; window.clearInterval(timer); };
-  }, []);
-
   const settingsDomainList: { key: string; icon: IconType }[][] = [
-    ...(hasVustbAccount ? [[{ key: "messages", icon: LuMessageCircle }]] : []),
     [
       { key: "global-game", icon: LuGamepad2 },
       { key: "resource-acceleration", icon: LuRocket },

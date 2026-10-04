@@ -469,10 +469,10 @@ pub async fn start_vustb_friend_message_stream(app: AppHandle) -> USTBLResult<()
           }
         }
         Ok(response) => {
-          log::debug!("vUSTB friend stream returned status {}", response.status());
+          log::trace!("vUSTB friend stream returned status {}", response.status());
         }
         Err(error) => {
-          log::debug!("vUSTB friend stream unavailable: {error:?}");
+          log::trace!("vUSTB friend stream unavailable: {error:?}");
         }
       }
       tokio::time::sleep(std::time::Duration::from_secs(2)).await;

@@ -131,11 +131,12 @@ async fn parse_json_response<T: DeserializeOwned>(
 ) -> USTBLResult<T> {
   if !response.status().is_success() {
     let status = response.status();
-    log::error!(
-      "vUSTB account request failed: endpoint={endpoint}, status={}",
-      status
-    );
     let value = response.json::<serde_json::Value>().await.ok();
+    log::error!(
+      "vUSTB account request failed: endpoint={endpoint}, status={}, body={}",
+      status,
+      value.as_ref().map(serde_json::Value::to_string).unwrap_or_default()
+    );
     return Err(response_error(status, value));
   }
 
@@ -146,14 +147,6 @@ async fn parse_json_response<T: DeserializeOwned>(
       log::error!("vUSTB account JSON parse failed: endpoint={endpoint}, error={error}");
       AccountError::ParseError
     })?;
-  let shape = match &value {
-    serde_json::Value::Object(object) => {
-      format!("object keys={:?}", object.keys().collect::<Vec<_>>())
-    }
-    serde_json::Value::Array(array) => format!("array len={}", array.len()),
-    _ => "scalar".to_string(),
-  };
-  log::debug!("vUSTB account response parsed: endpoint={endpoint}, {shape}");
   serde_json::from_value(value).map_err(|error| {
     log::error!("vUSTB account fields parse failed: endpoint={endpoint}, error={error}");
     AccountError::ParseError.into()
