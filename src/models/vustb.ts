@@ -48,12 +48,41 @@ export interface VustbFriend {
   lastSeenAt: string | null;
 }
 
+export interface VustbFriendMessage {
+  id: string;
+  sender_id: number;
+  recipient_id: number;
+  sender: string;
+  content: string;
+  created_at: string;
+}
+
 export interface VustbAnnouncement {
   id: number;
   title: string;
   content: string;
   starts_at: string;
   expires_at?: string | null;
+}
+
+export interface VustbServerMessage {
+  id: number;
+  serverId: number;
+  serverName: string;
+  serverAddress: string;
+  sourceType: "server" | "ustbl";
+  sender: string;
+  content: string;
+  metadata?: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface VustbServerMessageGroup {
+  id: number;
+  name: string;
+  address: string;
+  status?: Record<string, unknown> | null;
+  messages: VustbServerMessage[];
 }
 
 export interface VustbTexture {

@@ -100,6 +100,7 @@ export default function TrayPopup() {
   const [friends, setFriends] = useState<VustbFriend[]>([]);
   const [loading, setLoading] = useState(false);
   const [accelerationRunning, setAccelerationRunning] = useState(false);
+  const [messageQuiet, setMessageQuiet] = useState(false);
 
   const resizePopup = useCallback(async (nextView: View) => {
     await invoke("resize_tray_popup", { view: nextView });
@@ -160,6 +161,10 @@ export default function TrayPopup() {
     });
   }, [view]);
 
+  useEffect(() => {
+    setMessageQuiet(window.localStorage.getItem("ustbl.message.quiet.global") === "true");
+  }, [view]);
+
   const startAcceleration = async () => {
     setLoading(true);
     const response = await ResourceAccelerationService.start(true);
@@ -206,6 +211,8 @@ export default function TrayPopup() {
       <Box borderTop="1px solid" borderColor={PANEL_SEPARATOR} />
       <MenuItem onClick={() => changeView("friends")}>好友列表</MenuItem>
       <Box borderTop="1px solid" borderColor={PANEL_SEPARATOR} />
+      <MenuItem onClick={() => { const next = !messageQuiet; window.localStorage.setItem("ustbl.message.quiet.global", String(next)); setMessageQuiet(next); }}>{messageQuiet ? "开启消息提醒" : "消息免打扰"}</MenuItem>
+      <Box borderTop="1px solid" borderColor={PANEL_SEPARATOR} />
       <MenuItem
         isLoading={loading}
         onClick={() =>
@@ -225,7 +232,7 @@ export default function TrayPopup() {
     <Flex direction="column" h="100%">
       <Box flex="1" px={4} py={5}>
         <Text fontSize="16px" fontWeight="600" color={PANEL_TEXT} mb={2}>
-          {message.includes("失败") ? "加速启动失败" : "GitHub 加速"}
+          {message.includes("失败") ? "加速启动失败" : "消息提醒"}
         </Text>
         <Text color={PANEL_MUTED_TEXT} fontSize="14px" lineHeight="1.5">
           {message}

@@ -136,6 +136,10 @@ pub async fn run() -> i32 {
       account::commands::checkin_vustb_account,
       account::commands::retrieve_vustb_friends,
       account::commands::retrieve_vustb_announcements,
+      account::commands::retrieve_vustb_server_messages,
+      account::commands::send_vustb_server_message,
+      account::commands::send_vustb_friend_message,
+      account::commands::start_vustb_friend_message_stream,
       account::commands::retrieve_vustb_skin_library,
       account::commands::retrieve_vustb_wardrobe,
       account::commands::collect_vustb_texture,
@@ -237,6 +241,7 @@ pub async fn run() -> i32 {
       utils::commands::retrieve_truetype_font_list,
       utils::commands::check_service_availability,
       tray_popup::resize,
+      tray_popup::show_message_notification,
     ])
     .setup(|app| {
       // init APP_DATA_DIR

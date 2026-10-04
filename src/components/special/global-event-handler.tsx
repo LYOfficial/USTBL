@@ -1,4 +1,6 @@
 import { useRouter } from "next/router";
+import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useLauncherConfig } from "@/contexts/config";
@@ -7,8 +9,8 @@ import { useSharedModals } from "@/contexts/shared-modal";
 import useDeepLink from "@/hooks/deep-link";
 import { useDragAndDrop, useTauriFileDrop } from "@/hooks/drag-and-drop";
 import useKeyboardShortcut from "@/hooks/keyboard-shortcut";
-import { AccountService } from "@/services/account";
 import { useToast } from "@/contexts/toast";
+import { AccountService } from "@/services/account";
 
 // Handle global keyboard shortcuts, DnD events, etc.
 const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
@@ -22,7 +24,7 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
   const isStandAlone =
     router.pathname.startsWith("/standalone") || router.pathname === "/tray-popup";
   const hasNotifiedNewVersion = useRef(false);
-  const hasNotifiedAnnouncement = useRef(false);
+  const knownMessageIds = useRef<Set<number> | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -77,15 +79,58 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
   }, [isStandAlone, newerVersion, openSharedModal]);
 
   useEffect(() => {
-    if (isStandAlone || hasNotifiedAnnouncement.current) return;
-    void AccountService.retrieveVustbAnnouncements().then((response) => {
-      const announcement = response.status === "success" ? response.data[0] : undefined;
-      if (announcement) {
-        hasNotifiedAnnouncement.current = true;
-        openSharedModal("vustb-announcement", { announcement });
+    if (isStandAlone) return;
+    let disposed = false;
+    let streamStarted = false;
+    const poll = async () => {
+      const account = await AccountService.retrieveVustbAccount();
+      if (disposed || account.status !== "success" || !account.data) {
+        streamStarted = false;
+        knownMessageIds.current = null;
+        return;
       }
+      if (!streamStarted) {
+        streamStarted = true;
+        void AccountService.startVustbFriendMessageStream();
+      }
+      const response = await AccountService.retrieveVustbServerMessages();
+      if (disposed || response.status !== "success") return;
+      const messages = response.data.flatMap((group) => group.messages);
+      const ids = new Set(messages.map((message) => message.id));
+      if (knownMessageIds.current === null) {
+        knownMessageIds.current = ids;
+        return;
+      }
+      const quiet = window.localStorage.getItem("ustbl.message.quiet.global") === "true";
+      if (!quiet) {
+        const hidden = typeof window !== "undefined" && !(await getCurrentWindow().isVisible().catch(() => true));
+        if (hidden) {
+          const freshMessages = messages
+            .filter((message) => !knownMessageIds.current?.has(message.id))
+            .filter((message) => window.localStorage.getItem(`ustbl.message.quiet.server.${message.serverId}`) !== "true")
+            .slice(-5);
+          for (const message of freshMessages) {
+            void invoke("show_message_notification", { message: `${message.serverName} · ${message.sender}: ${message.content}` });
+          }
+        }
+      }
+      knownMessageIds.current = ids;
+
+    };
+    void poll();
+    const unlisten = AccountService.onVustbFriendMessage(async (message) => {
+      if (disposed || window.localStorage.getItem("ustbl.message.quiet.global") === "true") return;
+      const account = await AccountService.retrieveVustbAccount();
+      if (account.status !== "success" || !account.data) return;
+      const currentUserId = Number(account.data.subject);
+      const friendId = message.sender_id === currentUserId ? message.recipient_id : message.sender_id;
+      if (window.localStorage.getItem(`ustbl.message.quiet.friend.${friendId}`) === "true") return;
+      const hidden = !(await getCurrentWindow().isVisible().catch(() => true));
+      if (hidden) void invoke("show_message_notification", { message: `${message.sender}: ${message.content}` });
     });
-  }, [isStandAlone, openSharedModal]);
+    const timer = window.setInterval(() => void poll(), 7000);
+    return () => { disposed = true; window.clearInterval(timer); unlisten?.(); };
+  }, [isStandAlone]);
 
   // ----------------- Keyboard Shortcuts -----------------
   const spotlightShortcuts = useMemo(

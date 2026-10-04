@@ -514,7 +514,8 @@
       "world": "世界",
       "resourcepack": "資源包",
       "shader": "光影包",
-      "datapack": "資料包"
+      "datapack": "資料包",
+      "messages": "消息"
     }
   },
   "InstallModpackPage": {
@@ -1200,7 +1201,8 @@
       "accounts": "帳戶",
       "discover": "發現",
       "search": "搜尋",
-      "settings": "設定"
+      "settings": "設定",
+      "messages": "消息"
     }
   },
   "HelpSettingsPage": {
@@ -2631,7 +2633,8 @@
       "help": "文件與幫助",
       "about": "關於",
       "dev-test": "開發 - 測試頁",
-      "resource-acceleration": "資源加速"
+      "resource-acceleration": "資源加速",
+      "messages": "消息"
     }
   },
   "SkinPreview": {
@@ -2804,5 +2807,17 @@
       "empty": "測試加速節點後顯示延遲。",
       "failed": "無法存取"
     }
+  },
+  "MessagesPage": {
+    "announcement": "公告",
+    "title": "訊息",
+    "empty": "暫無訊息",
+    "friends": "好友訊息",
+    "quiet": "訊息免打擾",
+    "send": "傳送",
+    "loginRequired": "登入像素北科帳號後即可查看訊息",
+    "inputPlaceholder": "輸入純文字訊息",
+    "offline": "好友目前離線，無法對話",
+    "server": "伺服器訊息"
   }
 }

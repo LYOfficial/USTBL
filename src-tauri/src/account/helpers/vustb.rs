@@ -3,7 +3,8 @@ use crate::account::helpers::authlib_injector::info::get_auth_server_info_by_url
 use crate::account::helpers::authlib_injector::oauth::{self, OAuthProfileLogin};
 use crate::account::models::{
   AccountError, AccountInfo, AuthServer, OAuthTokens, VustbAccount, VustbCheckinResult,
-  VustbFriend, VustbProfile, VustbProgression, VustbSession, VustbTexture, VustbTexturePage,
+  VustbFriend, VustbProfile, VustbProgression, VustbServerMessage, VustbServerMessageGroup,
+  VustbSession, VustbTexture, VustbTexturePage,
 };
 use crate::error::{USTBLError, USTBLResult};
 use crate::storage::Storage;
@@ -461,6 +462,47 @@ pub async fn fetch_friends(app: &AppHandle) -> USTBLResult<Vec<VustbFriend>> {
 
 pub async fn fetch_launcher_announcements(app: &AppHandle) -> USTBLResult<Vec<VustbAnnouncement>> {
   get_authenticated(app, "/api/launcher/announcements").await
+}
+
+pub async fn fetch_server_messages(app: &AppHandle) -> USTBLResult<Vec<VustbServerMessageGroup>> {
+  get_authenticated(app, "/api/launcher/messages/servers").await
+}
+
+pub async fn send_server_message(
+  app: &AppHandle,
+  server_id: u64,
+  sender_mc_id: &str,
+  content: &str,
+) -> USTBLResult<VustbServerMessage> {
+  post_authenticated(
+    app,
+    &format!("/api/launcher/messages/servers/{server_id}"),
+    &serde_json::json!({ "sender_mc_id": sender_mc_id, "content": content }),
+  )
+  .await
+}
+
+pub async fn send_friend_message(
+  app: &AppHandle,
+  friend_id: u64,
+  content: &str,
+) -> USTBLResult<serde_json::Value> {
+  post_authenticated(
+    app,
+    "/api/launcher/messages/friends",
+    &serde_json::json!({ "friend_id": friend_id, "content": content }),
+  )
+  .await
+}
+
+pub async fn open_friend_event_stream(app: &AppHandle) -> USTBLResult<reqwest::Response> {
+  send_authenticated(app, |client, access_token| {
+    client
+      .get(format!("{VUSTB_ISSUER}/api/launcher/messages/events"))
+      .bearer_auth(access_token)
+      .header("Accept", "text/event-stream")
+  })
+  .await
 }
 
 fn normalize_texture_urls(items: &mut [VustbTexture]) {

@@ -514,7 +514,8 @@
       "world": "Mondes",
       "resourcepack": "Packs de ressources",
       "shader": "Packs de shaders",
-      "datapack": "Packs de données"
+      "datapack": "Packs de données",
+      "messages": "消息"
     }
   },
   "InstallModpackPage": {
@@ -1200,7 +1201,8 @@
       "accounts": "Comptes",
       "discover": "Découvrir",
       "search": "Recherche",
-      "settings": "Paramètres"
+      "settings": "Paramètres",
+      "messages": "消息"
     }
   },
   "HelpSettingsPage": {
@@ -2631,7 +2633,8 @@
       "help": "Aide & Doc",
       "about": "À propos",
       "dev-test": "Développement - Page de test",
-      "resource-acceleration": "Acceleration des ressources"
+      "resource-acceleration": "Acceleration des ressources",
+      "messages": "消息"
     }
   },
   "SkinPreview": {
@@ -2804,5 +2807,17 @@
       "empty": "Testez les nœuds pour afficher la latence.",
       "failed": "Indisponible"
     }
+  },
+  "MessagesPage": {
+    "announcement": "Annonces",
+    "title": "Messages",
+    "empty": "Aucun message",
+    "friends": "Messages des amis",
+    "quiet": "Ne pas déranger",
+    "send": "Envoyer",
+    "loginRequired": "Connectez-vous à votre compte Pixel Beike pour voir les messages",
+    "inputPlaceholder": "Saisissez un message texte",
+    "offline": "Cet ami est hors ligne et ne peut pas discuter",
+    "server": "Messages du serveur"
   }
 }

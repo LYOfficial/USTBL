@@ -514,7 +514,8 @@
       "world": "ワールド",
       "resourcepack": "リソースパック",
       "shader": "シェーダーパック",
-      "datapack": "データパック"
+      "datapack": "データパック",
+      "messages": "消息"
     }
   },
   "InstallModpackPage": {
@@ -1200,7 +1201,8 @@
       "accounts": "アカウント",
       "discover": "ディスカバー",
       "search": "メタサーチ",
-      "settings": "設定"
+      "settings": "設定",
+      "messages": "消息"
     }
   },
   "HelpSettingsPage": {
@@ -2631,7 +2633,8 @@
       "help": "マニュアルとヘルプ",
       "about": "バージョン情報",
       "dev-test": "開発・テストページ",
-      "resource-acceleration": "リソースアクセラレーション"
+      "resource-acceleration": "リソースアクセラレーション",
+      "messages": "消息"
     }
   },
   "SkinPreview": {
@@ -2804,5 +2807,17 @@
       "empty": "加速ノードをテストすると遅延が表示されます。",
       "failed": "利用不可"
     }
+  },
+  "MessagesPage": {
+    "announcement": "お知らせ",
+    "title": "メッセージ",
+    "empty": "メッセージはありません",
+    "friends": "友達のメッセージ",
+    "quiet": "おやすみモード",
+    "send": "送信",
+    "loginRequired": "メッセージを見るにはPixel Beikeアカウントにログインしてください",
+    "inputPlaceholder": "テキストメッセージを入力",
+    "offline": "友達はオフラインのためチャットできません",
+    "server": "サーバーメッセージ"
   }
 }

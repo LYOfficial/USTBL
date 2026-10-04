@@ -514,7 +514,8 @@
       "world": "世界",
       "resourcepack": "资源包",
       "shader": "光影",
-      "datapack": "数据包"
+      "datapack": "数据包",
+      "messages": "消息"
     }
   },
   "InstallModpackPage": {
@@ -1200,7 +1201,8 @@
       "accounts": "账户",
       "discover": "发现",
       "search": "搜索",
-      "settings": "设置"
+      "settings": "设置",
+      "messages": "消息"
     }
   },
   "HelpSettingsPage": {
@@ -2631,7 +2633,8 @@
       "intelligence": "智能",
       "help": "文档",
       "about": "关于",
-      "dev-test": "开发 - 测试页"
+      "dev-test": "开发 - 测试页",
+      "messages": "消息"
     }
   },
   "SkinPreview": {
@@ -2804,5 +2807,17 @@
       "empty": "测试加速节点后显示延迟。",
       "failed": "无法访问"
     }
+  },
+  "MessagesPage": {
+    "announcement": "公告",
+    "title": "消息",
+    "empty": "暂无消息",
+    "friends": "好友消息",
+    "quiet": "消息免打扰",
+    "send": "发送",
+    "loginRequired": "登录像素北科账号后可查看消息",
+    "inputPlaceholder": "输入纯文本消息",
+    "offline": "好友不在线，无法对话",
+    "server": "服务器消息"
   }
 }

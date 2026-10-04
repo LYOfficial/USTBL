@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { SkinModel, TextureType } from "@/enums/account";
 import { AuthServer, DeviceAuthResponseInfo, Player } from "@/models/account";
 import { InvokeResponse } from "@/models/response";
@@ -7,6 +8,9 @@ import {
   VustbAnnouncement,
   VustbCheckinResult,
   VustbFriend,
+  VustbFriendMessage,
+  VustbServerMessage,
+  VustbServerMessageGroup,
   VustbProfile,
   VustbTexture,
   VustbTexturePage,
@@ -91,6 +95,50 @@ export class AccountService {
   @responseHandler("account")
   static async retrieveVustbAnnouncements(): Promise<InvokeResponse<VustbAnnouncement[]>> {
     return await invoke("retrieve_vustb_announcements");
+  }
+
+  @responseHandler("account")
+  static async retrieveVustbServerMessages(): Promise<InvokeResponse<VustbServerMessageGroup[]>> {
+    return await invoke("retrieve_vustb_server_messages");
+  }
+
+  @responseHandler("account")
+  static async sendVustbServerMessage(
+    serverId: number,
+    senderMcId: string,
+    content: string,
+  ): Promise<InvokeResponse<VustbServerMessage>> {
+    return await invoke("send_vustb_server_message", {
+      serverId,
+      senderMcId,
+      content,
+    });
+  }
+
+  @responseHandler("account")
+  static async sendVustbFriendMessage(friendId: number, content: string): Promise<InvokeResponse<Record<string, unknown>>> {
+    return await invoke("send_vustb_friend_message", { friendId, content });
+  }
+
+  static async startVustbFriendMessageStream(): Promise<void> {
+    await invoke("start_vustb_friend_message_stream");
+  }
+
+  static onVustbFriendMessage(
+    callback: (message: VustbFriendMessage) => void,
+  ): () => void {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen<VustbFriendMessage>("ustbl:friend-message", (event) => {
+      if (!disposed) callback(event.payload);
+    }).then((cleanup) => {
+      if (disposed) cleanup();
+      else unlisten = cleanup;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }
 
   @responseHandler("account")

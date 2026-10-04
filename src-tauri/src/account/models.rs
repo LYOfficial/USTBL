@@ -332,6 +332,37 @@ pub struct VustbFriend {
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct VustbServerMessage {
+  pub id: u64,
+  #[serde(alias = "server_id")]
+  pub server_id: u64,
+  #[serde(alias = "server_name")]
+  pub server_name: String,
+  #[serde(alias = "server_address")]
+  pub server_address: String,
+  #[serde(alias = "source_type")]
+  pub source_type: String,
+  pub sender: String,
+  pub content: String,
+  #[serde(default, alias = "metadata")]
+  pub metadata: Option<Value>,
+  #[serde(alias = "created_at")]
+  pub created_at: String,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VustbServerMessageGroup {
+  pub id: u64,
+  pub name: String,
+  pub address: String,
+  #[serde(default)]
+  pub status: Option<Value>,
+  pub messages: Vec<VustbServerMessage>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VustbTexture {
   pub hash: String,
   #[serde(rename = "type")]

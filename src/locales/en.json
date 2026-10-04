@@ -514,7 +514,8 @@
       "world": "Worlds",
       "resourcepack": "Resource Packs",
       "shader": "Shader Packs",
-      "datapack": "Data Packs"
+      "datapack": "Data Packs",
+      "messages": "消息"
     }
   },
   "InstallModpackPage": {
@@ -1200,7 +1201,8 @@
       "accounts": "Accounts",
       "discover": "Discover",
       "search": "Search",
-      "settings": "Settings"
+      "settings": "Settings",
+      "messages": "消息"
     }
   },
   "HelpSettingsPage": {
@@ -2631,7 +2633,8 @@
       "intelligence": "Intelligence",
       "help": "Docs",
       "about": "About",
-      "dev-test": "Dev - Test Page"
+      "dev-test": "Dev - Test Page",
+      "messages": "消息"
     }
   },
   "SkinPreview": {
@@ -2804,5 +2807,17 @@
       "empty": "Test the acceleration nodes to view latency.",
       "failed": "Unavailable"
     }
+  },
+  "MessagesPage": {
+    "announcement": "Announcements",
+    "title": "Messages",
+    "empty": "No messages",
+    "friends": "Friend messages",
+    "quiet": "Do not disturb",
+    "send": "Send",
+    "loginRequired": "Log in to your Pixel Beike account to view messages",
+    "inputPlaceholder": "Enter a plain text message",
+    "offline": "This friend is offline and cannot chat",
+    "server": "Server messages"
   }
 }

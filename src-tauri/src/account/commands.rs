@@ -10,7 +10,7 @@ use crate::account::helpers::{microsoft, misc, offline, skin_backup, vustb, vust
 use crate::account::models::{
   AccountError, AccountInfo, AuthServer, DeviceAuthResponseInfo, Player, PlayerInfo, PlayerType,
   PresetRole, SkinModel, Texture, TextureType, VustbAccount, VustbCheckinResult, VustbFriend,
-  VustbSession, VustbTexture, VustbTexturePage,
+  VustbServerMessage, VustbServerMessageGroup, VustbSession, VustbTexture, VustbTexturePage,
 };
 use crate::error::USTBLResult;
 use crate::launcher_config::models::LauncherConfig;
@@ -19,9 +19,12 @@ use crate::utils::fs::get_app_resource_filepath;
 use crate::utils::web::normalize_url;
 use std::collections::HashSet;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use url::Url;
+
+static FRIEND_STREAM_RUNNING: AtomicBool = AtomicBool::new(false);
 
 #[tauri::command]
 pub fn retrieve_player_list(app: AppHandle) -> USTBLResult<Vec<Player>> {
@@ -404,6 +407,82 @@ pub async fn retrieve_vustb_announcements(
 }
 
 #[tauri::command]
+pub async fn retrieve_vustb_server_messages(
+  app: AppHandle,
+) -> USTBLResult<Vec<VustbServerMessageGroup>> {
+  vustb::fetch_server_messages(&app).await
+}
+
+#[tauri::command]
+pub async fn send_vustb_server_message(
+  app: AppHandle,
+  server_id: u64,
+  sender_mc_id: String,
+  content: String,
+) -> USTBLResult<VustbServerMessage> {
+  vustb::send_server_message(&app, server_id, &sender_mc_id, &content).await
+}
+
+#[tauri::command]
+pub async fn send_vustb_friend_message(
+  app: AppHandle,
+  friend_id: u64,
+  content: String,
+) -> USTBLResult<serde_json::Value> {
+  vustb::send_friend_message(&app, friend_id, &content).await
+}
+
+#[tauri::command]
+pub async fn start_vustb_friend_message_stream(app: AppHandle) -> USTBLResult<()> {
+  if FRIEND_STREAM_RUNNING.swap(true, Ordering::SeqCst) {
+    return Ok(());
+  }
+  tauri::async_runtime::spawn(async move {
+    while FRIEND_STREAM_RUNNING.load(Ordering::SeqCst) {
+      match vustb::open_friend_event_stream(&app).await {
+        Ok(mut response) if response.status().is_success() => {
+          let mut buffer = String::new();
+          loop {
+            match response.chunk().await {
+              Ok(Some(chunk)) => {
+                buffer.push_str(&String::from_utf8_lossy(&chunk));
+                while let Some(end) = buffer.find("\n\n") {
+                  let event = buffer[..end].to_string();
+                  buffer.drain(..end + 2);
+                  let data = event
+                    .lines()
+                    .find_map(|line| line.strip_prefix("data: "));
+                  let Some(data) = data else { continue };
+                  let Ok(value) = serde_json::from_str::<serde_json::Value>(data) else {
+                    continue;
+                  };
+                  if value.get("type").and_then(|item| item.as_str()) != Some("friend_message") {
+                    continue;
+                  }
+                  if let Some(message) = value.get("message") {
+                    let _ = app.emit("ustbl:friend-message", message.clone());
+                  }
+                }
+              }
+              Ok(None) | Err(_) => break,
+            }
+          }
+        }
+        Ok(response) => {
+          log::debug!("vUSTB friend stream returned status {}", response.status());
+        }
+        Err(error) => {
+          log::debug!("vUSTB friend stream unavailable: {error:?}");
+        }
+      }
+      tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+    FRIEND_STREAM_RUNNING.store(false, Ordering::SeqCst);
+  });
+  Ok(())
+}
+
+#[tauri::command]
 pub async fn retrieve_vustb_skin_library(
   app: AppHandle,
   page: u32,
@@ -730,6 +809,7 @@ pub async fn clear_player_texture(
 
 #[tauri::command]
 pub async fn logout_vustb_account(app: AppHandle) -> USTBLResult<()> {
+  FRIEND_STREAM_RUNNING.store(false, Ordering::SeqCst);
   let _ = vustb_presence::clear(&app).await;
   {
     let binding = app.state::<Mutex<AccountInfo>>();

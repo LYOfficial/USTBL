@@ -16,6 +16,7 @@ import DiscoverLayout from "@/layouts/discover-layout";
 import InstanceDetailsLayout from "@/layouts/instance-details-layout";
 import InstancesLayout from "@/layouts/instances-layout";
 import MainLayout from "@/layouts/main-layout";
+import MessagesLayout from "@/layouts/messages-layout";
 import SettingsLayout from "@/layouts/settings-layout";
 import { localeResources } from "@/locales";
 import chakraExtendTheme from "@/styles/chakra-theme";
@@ -66,6 +67,7 @@ export default function App({ Component, pageProps }: AppProps) {
     () => [
       { prefix: "/discover", key: "discover" },
       { prefix: "/settings", key: "settings" },
+      { prefix: "/messages", key: "messages" },
       {
         prefix: "/instances/details",
         key: "instances-details",
@@ -82,6 +84,7 @@ export default function App({ Component, pageProps }: AppProps) {
     () => ({
       discover: [DiscoverLayout],
       settings: [SettingsLayout],
+      messages: [MessagesLayout],
       "instances-details": [InstancesLayout, InstanceDetailsLayout],
       instances: [InstancesLayout],
     }),
