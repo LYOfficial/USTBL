@@ -1,16 +1,17 @@
-import { useRouter } from "next/router";
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
+import { getAllWindows } from "@tauri-apps/api/window";
+import { useRouter } from "next/router";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useLauncherConfig } from "@/contexts/config";
 import { useGlobalData } from "@/contexts/global-data";
 import { useSharedModals } from "@/contexts/shared-modal";
+import { useToast } from "@/contexts/toast";
 import useDeepLink from "@/hooks/deep-link";
 import { useDragAndDrop, useTauriFileDrop } from "@/hooks/drag-and-drop";
 import useKeyboardShortcut from "@/hooks/keyboard-shortcut";
-import { useToast } from "@/contexts/toast";
 import { AccountService } from "@/services/account";
+import { appendFriendMessage } from "@/services/friend-message-cache";
 
 // Handle global keyboard shortcuts, DnD events, etc.
 const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
@@ -22,16 +23,42 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
   const { newerVersion } = useLauncherConfig();
   const router = useRouter();
   const isStandAlone =
-    router.pathname.startsWith("/standalone") || router.pathname === "/tray-popup";
+    router.pathname.startsWith("/standalone") ||
+    router.pathname === "/tray-popup";
   const hasNotifiedNewVersion = useRef(false);
   const knownMessageIds = useRef<Set<number> | null>(null);
+
+  const isMainWindowHidden = async () => {
+    let mainWindow;
+    try {
+      mainWindow = (await getAllWindows()).find(
+        (window) => window.label === "main"
+      );
+    } catch {
+      return false;
+    }
+    if (!mainWindow) return false;
+    const [visible, minimized] = await Promise.all([
+      mainWindow.isVisible().catch(() => true),
+      mainWindow.isMinimized().catch(() => false),
+    ]);
+    return !visible || minimized;
+  };
 
   useEffect(() => {
     let disposed = false;
     const setup = async () => {
-      const [launchUnlisten, launchRequestUnlisten, launchErrorUnlisten, friendsUnlisten, accelerationUnlisten, accelerationErrorUnlisten] = await Promise.all([
+      const [
+        launchUnlisten,
+        launchRequestUnlisten,
+        launchErrorUnlisten,
+        friendsUnlisten,
+        accelerationUnlisten,
+        accelerationErrorUnlisten,
+      ] = await Promise.all([
         listen<string>("ustbl:tray-launch", (event) => {
-          if (!disposed && event.payload) openSharedModal("launch", { instanceId: event.payload });
+          if (!disposed && event.payload)
+            openSharedModal("launch", { instanceId: event.payload });
         }),
         listen("ustbl:tray-launch-request", () => {
           if (selectedInstance && !disposed) {
@@ -39,16 +66,27 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
           }
         }),
         listen<string>("ustbl:tray-launch-failed", (event) => {
-          if (!disposed) toast({ title: "启动游戏失败", description: event.payload, status: "error" });
+          if (!disposed)
+            toast({
+              title: "启动游戏失败",
+              description: event.payload,
+              status: "error",
+            });
         }),
         listen("ustbl:tray-friends", () => {
           if (!disposed) openSharedModal("vustb-friends", { isTray: true });
         }),
         listen("ustbl:tray-acceleration-started", () => {
-          if (!disposed) toast({ title: "GitHub 加速已启动", status: "success" });
+          if (!disposed)
+            toast({ title: "GitHub 加速已启动", status: "success" });
         }),
         listen<string>("ustbl:tray-acceleration-failed", (event) => {
-          if (!disposed) toast({ title: "GitHub 加速启动失败", description: event.payload, status: "error" });
+          if (!disposed)
+            toast({
+              title: "GitHub 加速启动失败",
+              description: event.payload,
+              status: "error",
+            });
         }),
       ]);
       return () => {
@@ -79,7 +117,6 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
   }, [isStandAlone, newerVersion, openSharedModal]);
 
   useEffect(() => {
-    if (isStandAlone || router.pathname.startsWith("/messages")) return;
     let disposed = false;
     let streamStarted = false;
     let nextAccountRetryAt = 0;
@@ -102,7 +139,7 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
         streamStarted = true;
         void AccountService.startVustbFriendMessageStream();
       }
-      if (router.pathname.startsWith("/messages") || Date.now() < nextServerMessageRetryAt) return;
+      if (Date.now() < nextServerMessageRetryAt) return;
       const response = await AccountService.retrieveVustbServerMessages();
       if (disposed || response.status !== "success") {
         nextServerMessageRetryAt = Date.now() + 30000;
@@ -115,36 +152,70 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
         knownMessageIds.current = ids;
         return;
       }
-      const quiet = window.localStorage.getItem("ustbl.message.quiet.global") === "true";
+      const quiet =
+        window.localStorage.getItem("ustbl.message.quiet.global") === "true";
       if (!quiet) {
-        const hidden = typeof window !== "undefined" && !(await getCurrentWindow().isVisible().catch(() => true));
+        const hidden = await isMainWindowHidden();
         if (hidden) {
           const freshMessages = messages
             .filter((message) => !knownMessageIds.current?.has(message.id))
-            .filter((message) => window.localStorage.getItem(`ustbl.message.quiet.server.${message.serverId}`) !== "true")
+            .filter(
+              (message) =>
+                window.localStorage.getItem(
+                  `ustbl.message.quiet.server.${message.serverId}`
+                ) !== "true"
+            )
             .slice(-5);
           for (const message of freshMessages) {
-            void invoke("show_message_notification", { message: `${message.serverName} · ${message.sender}: ${message.content}` });
+            void invoke("show_message_notification", {
+              message: `${message.serverName} · ${message.sender}: ${message.content}`,
+            });
           }
         }
       }
       knownMessageIds.current = ids;
-
     };
     void poll();
+    const timer = window.setInterval(() => void poll(), 30000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    void AccountService.startVustbFriendMessageStream();
     const unlisten = AccountService.onVustbFriendMessage(async (message) => {
-      if (disposed || window.localStorage.getItem("ustbl.message.quiet.global") === "true") return;
+      if (disposed) return;
       const account = await AccountService.retrieveVustbAccount();
       if (account.status !== "success" || !account.data) return;
       const currentUserId = Number(account.data.subject);
-      const friendId = message.sender_id === currentUserId ? message.recipient_id : message.sender_id;
-      if (window.localStorage.getItem(`ustbl.message.quiet.friend.${friendId}`) === "true") return;
-      const hidden = !(await getCurrentWindow().isVisible().catch(() => true));
-      if (hidden) void invoke("show_message_notification", { message: `${message.sender}: ${message.content}` });
+      const friendId =
+        message.sender_id === currentUserId
+          ? message.recipient_id
+          : message.sender_id;
+      appendFriendMessage(currentUserId, friendId, message);
+      if (message.sender_id === currentUserId) return;
+      if (window.localStorage.getItem("ustbl.message.quiet.global") === "true")
+        return;
+      if (
+        window.localStorage.getItem(
+          `ustbl.message.quiet.friend.${friendId}`
+        ) === "true"
+      )
+        return;
+      if (await isMainWindowHidden()) {
+        void invoke("show_message_notification", {
+          message: `${message.sender}: ${message.content}`,
+        });
+      }
     });
-    const timer = window.setInterval(() => void poll(), 30000);
-    return () => { disposed = true; window.clearInterval(timer); unlisten?.(); };
-  }, [isStandAlone, router.pathname]);
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   // ----------------- Keyboard Shortcuts -----------------
   const spotlightShortcuts = useMemo(

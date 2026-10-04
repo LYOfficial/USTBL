@@ -12,11 +12,17 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { VustbFriend, VustbFriendMessage } from "@/models/vustb";
 import { AccountService } from "@/services/account";
+import {
+  appendFriendMessage,
+  clearFriendMessages,
+  readFriendMessages,
+} from "@/services/friend-message-cache";
 
 export default function MessagesFriendsPage() {
   const [friends, setFriends] = useState<VustbFriend[]>([]);
   const [selected, setSelected] = useState<VustbFriend>();
   const [messages, setMessages] = useState<VustbFriendMessage[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<number>();
   const [content, setContent] = useState("");
   const [quiet, setQuiet] = useState<Record<number, boolean>>({});
   const [contextMenu, setContextMenu] = useState<{
@@ -55,6 +61,18 @@ export default function MessagesFriendsPage() {
   };
 
   useEffect(() => {
+    let disposed = false;
+    void AccountService.retrieveVustbAccount().then((response) => {
+      if (disposed || response.status !== "success" || !response.data) return;
+      const userId = Number(response.data.subject);
+      if (Number.isFinite(userId)) setCurrentUserId(userId);
+    });
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  useEffect(() => {
     void load();
     const timer = window.setInterval(() => void load(), 15000);
     return () => window.clearInterval(timer);
@@ -63,6 +81,12 @@ export default function MessagesFriendsPage() {
   useEffect(() => {
     void AccountService.startVustbFriendMessageStream();
     const unlisten = AccountService.onVustbFriendMessage((message) => {
+      const friendId =
+        message.sender_id === currentUserId
+          ? message.recipient_id
+          : message.sender_id;
+      if (!currentUserId || !Number.isFinite(friendId)) return;
+      appendFriendMessage(currentUserId, friendId, message);
       if (
         selectedId.current === message.sender_id ||
         selectedId.current === message.recipient_id
@@ -75,12 +99,12 @@ export default function MessagesFriendsPage() {
       }
     });
     return unlisten;
-  }, []);
+  }, [currentUserId]);
 
   useEffect(() => {
     selectedId.current = selected?.id;
-    setMessages([]);
-  }, [selected?.id]);
+    setMessages(readFriendMessages(currentUserId, selected?.id ?? 0));
+  }, [currentUserId, selected?.id]);
 
   const latestMessageId = messages[messages.length - 1]?.id;
   useEffect(() => {
@@ -111,7 +135,17 @@ export default function MessagesFriendsPage() {
       selected.id,
       content.trim()
     );
-    if (response.status === "success") setContent("");
+    if (response.status === "success") {
+      setContent("");
+      if (currentUserId && response.data) {
+        appendFriendMessage(currentUserId, selected.id, response.data);
+        setMessages((current) =>
+          current.some((item) => item.id === response.data.id)
+            ? current
+            : [...current, response.data]
+        );
+      }
+    }
   };
   const visibleMessages = useMemo(() => messages, [messages]);
 
@@ -268,24 +302,39 @@ export default function MessagesFriendsPage() {
           p={1}
           onClick={(event) => event.stopPropagation()}
         >
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              const value = !quiet[contextMenu.friendId];
-              setQuiet((current) => ({
-                ...current,
-                [contextMenu.friendId]: value,
-              }));
-              window.localStorage.setItem(
-                `ustbl.message.quiet.friend.${contextMenu.friendId}`,
-                String(value)
-              );
-              setContextMenu(undefined);
-            }}
-          >
-            {quiet[contextMenu.friendId] ? "开启好友提醒" : "好友消息免打扰"}
-          </Button>
+          <VStack align="stretch" spacing={0}>
+            <Button
+              size="sm"
+              variant="ghost"
+              justifyContent="flex-start"
+              onClick={() => {
+                const value = !quiet[contextMenu.friendId];
+                setQuiet((current) => ({
+                  ...current,
+                  [contextMenu.friendId]: value,
+                }));
+                window.localStorage.setItem(
+                  `ustbl.message.quiet.friend.${contextMenu.friendId}`,
+                  String(value)
+                );
+                setContextMenu(undefined);
+              }}
+            >
+              {quiet[contextMenu.friendId] ? "开启好友提醒" : "好友消息免打扰"}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              justifyContent="flex-start"
+              onClick={() => {
+                clearFriendMessages(currentUserId, contextMenu.friendId);
+                if (contextMenu.friendId === selected?.id) setMessages([]);
+                setContextMenu(undefined);
+              }}
+            >
+              清除聊天记录
+            </Button>
+          </VStack>
         </Box>
       )}
     </Flex>

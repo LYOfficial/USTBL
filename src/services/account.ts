@@ -9,9 +9,9 @@ import {
   VustbCheckinResult,
   VustbFriend,
   VustbFriendMessage,
+  VustbProfile,
   VustbServerMessage,
   VustbServerMessageGroup,
-  VustbProfile,
   VustbTexture,
   VustbTexturePage,
 } from "@/models/vustb";
@@ -93,12 +93,16 @@ export class AccountService {
   }
 
   @responseHandler("account")
-  static async retrieveVustbAnnouncements(): Promise<InvokeResponse<VustbAnnouncement[]>> {
+  static async retrieveVustbAnnouncements(): Promise<
+    InvokeResponse<VustbAnnouncement[]>
+  > {
     return await invoke("retrieve_vustb_announcements");
   }
 
   @responseHandler("account")
-  static async retrieveVustbServerMessages(): Promise<InvokeResponse<VustbServerMessageGroup[]>> {
+  static async retrieveVustbServerMessages(): Promise<
+    InvokeResponse<VustbServerMessageGroup[]>
+  > {
     return await invoke("retrieve_vustb_server_messages");
   }
 
@@ -106,7 +110,7 @@ export class AccountService {
   static async sendVustbServerMessage(
     serverId: number,
     senderMcId: string,
-    content: string,
+    content: string
   ): Promise<InvokeResponse<VustbServerMessage>> {
     return await invoke("send_vustb_server_message", {
       serverId,
@@ -116,7 +120,10 @@ export class AccountService {
   }
 
   @responseHandler("account")
-  static async sendVustbFriendMessage(friendId: number, content: string): Promise<InvokeResponse<Record<string, unknown>>> {
+  static async sendVustbFriendMessage(
+    friendId: number,
+    content: string
+  ): Promise<InvokeResponse<VustbFriendMessage>> {
     return await invoke("send_vustb_friend_message", { friendId, content });
   }
 
@@ -125,7 +132,7 @@ export class AccountService {
   }
 
   static onVustbFriendMessage(
-    callback: (message: VustbFriendMessage) => void,
+    callback: (message: VustbFriendMessage) => void
   ): () => void {
     let disposed = false;
     let unlisten: (() => void) | undefined;
