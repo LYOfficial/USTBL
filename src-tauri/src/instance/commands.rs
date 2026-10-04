@@ -1555,6 +1555,9 @@ pub async fn export_modpack(
       selected_files.push((relative, full));
     }
   }
+  selected_files.retain(|(relative, _)| {
+    !crate::instance::helpers::modpack::misc::is_launcher_metadata_path(relative, &instance.name)
+  });
   if selected_files.is_empty() {
     return Err(InstanceError::ModpackManifestParseError.into());
   }

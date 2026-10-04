@@ -82,6 +82,13 @@ pub struct ModpackMetaInfo {
   pub mod_loader: Option<ModLoader>,
 }
 
+pub(crate) fn is_launcher_metadata_path(relative: &str, instance_name: &str) -> bool {
+  relative.eq_ignore_ascii_case("ustblcfg.json")
+    || relative.eq_ignore_ascii_case("ustbl-multimc-components.json")
+    || relative.eq_ignore_ascii_case(&format!("{instance_name}.json"))
+    || relative.eq_ignore_ascii_case(&format!("{instance_name}.jar"))
+}
+
 impl ModpackMetaInfo {
   pub async fn from_archive(app: &AppHandle, file: &File) -> USTBLResult<Self> {
     for parser in get_parsers() {
@@ -137,14 +144,8 @@ pub fn extract_overrides(file: &File, instance_path: &Path) -> USTBLResult<()> {
         .file_name()
         .unwrap_or_default()
         .to_string_lossy();
-      if relative.eq_ignore_ascii_case("ustblcfg.json")
-        || relative.eq_ignore_ascii_case("ustbl-multimc-components.json")
-        || relative.eq_ignore_ascii_case(&format!("{instance_name}.json"))
-        || relative.eq_ignore_ascii_case(&format!("{instance_name}.jar"))
-      {
-        return Err(crate::error::USTBLError(format!(
-          "Modpack override conflicts with instance metadata: {relative}"
-        )));
+      if is_launcher_metadata_path(relative, &instance_name) {
+        continue;
       }
       instance_path.join(relative_path)
     } else {
@@ -165,4 +166,41 @@ pub fn extract_overrides(file: &File, instance_path: &Path) -> USTBLResult<()> {
     }
   }
   Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use std::io::Write;
+  use zip::write::SimpleFileOptions;
+
+  #[test]
+  fn launcher_metadata_override_is_skipped() {
+    let root = std::env::temp_dir().join(format!("ustbl-modpack-test-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    let archive_path = root.join("pack.mrpack");
+    let instance_path = root.join("instance");
+    let mut archive = zip::ZipWriter::new(File::create(&archive_path).unwrap());
+    for (path, content) in [
+      ("modrinth.index.json", r#"{"versionId":"1","name":"test","files":[],"dependencies":{"minecraft":"1.20.1"}}"#),
+      ("overrides/ustblcfg.json", "old config"),
+      ("overrides/config/example.cfg", "kept"),
+    ] {
+      archive
+        .start_file(path, SimpleFileOptions::default())
+        .unwrap();
+      archive.write_all(content.as_bytes()).unwrap();
+    }
+    archive.finish().unwrap();
+
+    let file = File::open(&archive_path).unwrap();
+    extract_overrides(&file, &instance_path).unwrap();
+
+    assert!(!instance_path.join("ustblcfg.json").exists());
+    assert_eq!(
+      fs::read_to_string(instance_path.join("config/example.cfg")).unwrap(),
+      "kept"
+    );
+    let _ = fs::remove_dir_all(root);
+  }
 }

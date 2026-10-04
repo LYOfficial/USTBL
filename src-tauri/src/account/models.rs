@@ -339,7 +339,7 @@ pub struct VustbServerMessage {
   #[serde(alias = "server_name")]
   pub server_name: String,
   #[serde(alias = "server_address")]
-  pub server_address: String,
+  pub server_address: Option<String>,
   #[serde(alias = "source_type")]
   pub source_type: String,
   pub sender: String,
@@ -355,7 +355,7 @@ pub struct VustbServerMessage {
 pub struct VustbServerMessageGroup {
   pub id: u64,
   pub name: String,
-  pub address: String,
+  pub address: Option<String>,
   #[serde(default)]
   pub status: Option<Value>,
   pub messages: Vec<VustbServerMessage>,

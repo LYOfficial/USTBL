@@ -69,7 +69,7 @@ export interface VustbServerMessage {
   id: number;
   serverId: number;
   serverName: string;
-  serverAddress: string;
+  serverAddress: string | null;
   sourceType: "server" | "ustbl";
   sender: string;
   content: string;
@@ -80,7 +80,7 @@ export interface VustbServerMessage {
 export interface VustbServerMessageGroup {
   id: number;
   name: string;
-  address: string;
+  address: string | null;
   status?: Record<string, unknown> | null;
   messages: VustbServerMessage[];
 }

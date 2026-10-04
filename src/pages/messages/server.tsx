@@ -176,7 +176,9 @@ export default function MessagesServerPage() {
                   color={quiet[group.id] ? "orange.400" : "gray.500"}
                   noOfLines={1}
                 >
-                  {quiet[group.id] ? "免打扰" : group.address}
+                  {quiet[group.id]
+                    ? "免打扰"
+                    : group.address || "公网地址已隐藏"}
                 </Text>
               </Box>
             </Button>
