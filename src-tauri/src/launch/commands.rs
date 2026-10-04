@@ -217,6 +217,13 @@ pub async fn validate_selected_player(
 ) -> USTBLResult<bool> {
   let mut player = get_selected_player_info(&app)?.clone();
 
+  if player.player_type == PlayerType::Microsoft {
+    if !microsoft::oauth::validate(&app, &player).await? {
+      return Ok(false);
+    }
+    player = get_selected_player_info(&app)?;
+  }
+
   let metadata = if player.player_type == PlayerType::ThirdParty {
     authlib_injector::jar::check_authlib_jar(&app)
       .await
@@ -252,7 +259,7 @@ pub async fn validate_selected_player(
 
   match player.player_type {
     PlayerType::ThirdParty => authlib_injector::common::validate(&app, &player).await,
-    PlayerType::Microsoft => microsoft::oauth::validate(&app, &player).await,
+    PlayerType::Microsoft => Ok(true),
     PlayerType::Offline => Ok(true),
   }
 }

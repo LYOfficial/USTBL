@@ -20,11 +20,11 @@ structstruck::strike! {
 #[strikethrough[serde(rename_all = "camelCase")]]
 pub struct ModrinthFile {
   pub path: String,
-  pub hashes: struct {
+  pub hashes: struct ModrinthFileHashes {
     pub sha1: String,
     pub sha512: String,
   },
-  pub env: Option<pub struct {
+  pub env: Option<pub struct ModrinthFileEnv {
     pub client: String,
     pub server: String,
   }>,
@@ -33,9 +33,13 @@ pub struct ModrinthFile {
 }
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Default, Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ModrinthManifest {
+  #[serde(default)]
+  pub format_version: u64,
+  #[serde(default)]
+  pub game: String,
   pub version_id: String,
   pub name: String,
   pub summary: Option<String>,

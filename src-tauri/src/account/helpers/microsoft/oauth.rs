@@ -8,13 +8,14 @@ use crate::account::helpers::microsoft::models::{
 use crate::account::helpers::misc::{self, fetch_image, oauth_polling};
 use crate::account::helpers::offline::load_preset_skin;
 use crate::account::models::{
-  AccountError, DeviceAuthResponse, DeviceAuthResponseInfo, OAuthTokens, PlayerInfo, PlayerType,
+  AccountError, AccountInfo, DeviceAuthResponse, DeviceAuthResponseInfo, OAuthTokens, PlayerInfo, PlayerType,
   PresetRole, SkinModel, Texture, TextureType,
 };
 use crate::error::USTBLResult;
 use serde_json::{json, Value};
 use std::ops::Add;
 use std::str::FromStr;
+use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_http::reqwest;
@@ -276,22 +277,50 @@ pub async fn refresh(app: &AppHandle, player: &PlayerInfo) -> USTBLResult<Player
     .await
     .map_err(|_| AccountError::ParseError)?;
 
-  parse_profile(app, &tokens).await
+  let mut refreshed_player = parse_profile(app, &tokens).await?;
+  refreshed_player.id = player.id.clone();
+  Ok(refreshed_player)
 }
 
 pub async fn validate(app: &AppHandle, player: &PlayerInfo) -> USTBLResult<bool> {
+  let access_token = match get_access_token(app, player).await {
+    Ok(token) => token,
+    Err(error) if error == AccountError::Expired.into() => return Ok(false),
+    Err(error) => return Err(error),
+  };
+  let status = validate_access_token(app, &access_token).await?;
+  if status == reqwest::StatusCode::UNAUTHORIZED {
+    let current_player = {
+      let binding = app.state::<Mutex<AccountInfo>>();
+      let accounts = binding.lock()?;
+      accounts.players.iter().find(|item| item.id == player.id).cloned()
+        .ok_or(AccountError::NotFound)?
+    };
+    let refreshed_player = match refresh(app, &current_player).await {
+      Ok(player) => player,
+      Err(error) if error == AccountError::Expired.into() => return Ok(false),
+      Err(error) => return Err(error),
+    };
+    let token = refreshed_player.access_token.clone().ok_or(AccountError::Invalid)?;
+    misc::update_player_by_id(app, &player.id, refreshed_player)?;
+    return Ok(validate_access_token(app, &token).await?.is_success());
+  }
+  Ok(status.is_success())
+}
+
+async fn validate_access_token(app: &AppHandle, access_token: &str) -> USTBLResult<reqwest::StatusCode> {
   let client = app.state::<reqwest::Client>();
   let response = client
     .get(PROFILE_ENDPOINT)
     .header(
       "Authorization",
-      format!("Bearer {}", get_access_token(app, player).await?),
+      format!("Bearer {access_token}"),
     )
     .send()
     .await
     .map_err(|_| AccountError::NetworkError)?;
 
-  Ok(response.status().is_success())
+  Ok(response.status())
 }
 
 /// Returns the access token for the player, refreshing it if necessary.

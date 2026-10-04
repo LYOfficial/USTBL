@@ -20,3 +20,8 @@ export enum ModLoaderType {
   LiteLoader = "LiteLoader",
   Quilt = "Quilt",
 }
+
+export enum ExportModpackFormat {
+  Modrinth = "Modrinth",
+  MultiMC = "MultiMC",
+}

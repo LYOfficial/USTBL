@@ -54,7 +54,7 @@ pub async fn download_optifine_installer(
   Ok(())
 }
 
-async fn download_optifine_libraries(
+pub async fn download_optifine_libraries(
   app: &AppHandle,
   priority: &[SourceType],
   instance: &Instance,

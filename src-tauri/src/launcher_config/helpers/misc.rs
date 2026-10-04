@@ -9,8 +9,11 @@ use rand::Rng;
 use std::fs;
 use std::path::{PathBuf, MAIN_SEPARATOR};
 use std::sync::Mutex;
+use std::time::{Duration, SystemTime};
 use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Manager};
+
+const DOWNLOAD_CACHE_RETENTION_DAYS: u64 = 30;
 
 impl LauncherConfig {
   pub fn setup_with_app(&mut self, app: &AppHandle) -> USTBLResult<()> {
@@ -140,6 +143,44 @@ impl LauncherConfig {
       let _ = self.update(key, &value);
     }
   }
+}
+
+pub async fn auto_clear_download_cache(app: &AppHandle) -> USTBLResult<()> {
+  let cache_dir = {
+    let config = app.state::<Mutex<LauncherConfig>>();
+    let value = config.lock()?.download.cache.directory.clone();
+    value
+  };
+  let now = SystemTime::now();
+  let retention = Duration::from_secs(DOWNLOAD_CACHE_RETENTION_DAYS * 24 * 60 * 60);
+  let mut entries = match tokio::fs::read_dir(&cache_dir).await {
+    Ok(entries) => entries,
+    Err(_) => return Ok(()),
+  };
+  while let Some(entry) = entries.next_entry().await? {
+    let metadata = match entry.metadata().await {
+      Ok(metadata) => metadata,
+      Err(_) => continue,
+    };
+    if !metadata.is_file() {
+      continue;
+    }
+    let is_stale = metadata
+      .modified()
+      .ok()
+      .and_then(|modified| now.duration_since(modified).ok())
+      .is_some_and(|age| age > retention);
+    if is_stale {
+      if let Err(error) = tokio::fs::remove_file(entry.path()).await {
+        log::warn!(
+          "Failed to remove stale download cache entry {:?}: {}",
+          entry.path(),
+          error
+        );
+      }
+    }
+  }
+  Ok(())
 }
 
 fn get_official_minecraft_directory(app: &AppHandle) -> GameDirectory {

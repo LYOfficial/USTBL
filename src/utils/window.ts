@@ -11,7 +11,7 @@ export const createWindow = (
   windowLabel = windowLabel.replaceAll(" ", "_");
 
   const newWindow = new WebviewWindow(windowLabel, {
-    title: "",
+    title: "USTBL",
     minWidth: 800,
     minHeight: 550,
     width: 800,

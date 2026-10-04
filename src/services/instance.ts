@@ -3,9 +3,11 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { InstanceSubdirType } from "@/enums/instance";
 import { GameConfig, GameDirectory } from "@/models/config";
 import {
+  ExportModpackOptions,
   GameServerInfo,
   InstanceSummary,
   LocalModInfo,
+  ModpackFileList,
   ModpackMetaInfo,
   ResourcePackInfo,
   SchematicInfo,
@@ -59,6 +61,7 @@ export class InstanceService {
    * @param {OptiFineResourceInfo} [optifine] - Optional OptiFine installation.
    * @param {string} [modpackPath] - Optional path to the modpack archive file.
    * @param {boolean} [isInstallFabricApi] - Optional flag to indicate whether to install Fabric API (only valid when modLoader is Fabric).
+   * @param {string} [modpackVersion] - Optional modpack version to display with the instance.
    * @returns {Promise<InvokeResponse<null>>}
    */
   @responseHandler("instance")
@@ -71,7 +74,8 @@ export class InstanceService {
     modLoader: ModLoaderResourceInfo,
     optifine?: OptiFineResourceInfo,
     modpackPath?: string,
-    isInstallFabricApi?: boolean
+    isInstallFabricApi?: boolean,
+    modpackVersion?: string
   ): Promise<InvokeResponse<null>> {
     return await invoke("create_instance", {
       directory,
@@ -83,6 +87,7 @@ export class InstanceService {
       optifine,
       modpackPath,
       isInstallFabricApi,
+      modpackVersion,
     });
   }
 
@@ -489,6 +494,28 @@ export class InstanceService {
   ): Promise<InvokeResponse<ModpackMetaInfo>> {
     return await invoke("retrieve_modpack_meta_info", {
       path,
+    });
+  }
+
+  @responseHandler("instance")
+  static async retrieveExportableFileList(
+    instanceId: string
+  ): Promise<InvokeResponse<ModpackFileList>> {
+    return await invoke("list_modpack_files", { instanceId });
+  }
+
+  @responseHandler("instance")
+  static async exportModpack(
+    instanceId: string,
+    savePath: string,
+    options: ExportModpackOptions,
+    files: string[]
+  ): Promise<InvokeResponse<void>> {
+    return await invoke("export_modpack", {
+      instanceId,
+      savePath,
+      options,
+      files,
     });
   }
 

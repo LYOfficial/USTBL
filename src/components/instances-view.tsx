@@ -48,9 +48,18 @@ const InstancesView: React.FC<InstancesViewProps> = ({
     description: [generateInstanceDesc(instance), instance.description]
       .filter(Boolean)
       .join(", "),
-    ...{
-      titleExtra: instance.starred && <Icon as={FaStar} color="yellow.500" />,
-    },
+    titleExtra: (instance.modpackVersion != null || instance.starred) && (
+      <HStack spacing={1}>
+        {instance.modpackVersion != null && (
+          <Box as="span" fontSize="xs-sm" color="gray.500">
+            {instance.modpackVersion.startsWith("v")
+              ? instance.modpackVersion
+              : `v${instance.modpackVersion}`}
+          </Box>
+        )}
+        {instance.starred && <Icon as={FaStar} color="yellow.500" />}
+      </HStack>
+    ),
     maxTitleLines: 1,
     maxDescriptionLines: 2,
     titleLineWrap: false,

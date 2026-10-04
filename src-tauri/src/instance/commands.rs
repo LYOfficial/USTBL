@@ -15,6 +15,11 @@ use crate::instance::helpers::misc::{
 use crate::instance::helpers::modpack::misc::{
   extract_overrides, get_download_params, ModpackMetaInfo,
 };
+use crate::instance::helpers::modpack::export::{
+  collect_modrinth_files, create_modpack_zip, generate_modrinth_manifest,
+  generate_multimc_instance_cfg, generate_multimc_manifest, list_files,
+  validate_export_options, ExportFormat, ExportModpackOptions,
+};
 use crate::instance::helpers::modpack::multimc::profile::ResolvedMultiMc;
 use crate::instance::helpers::mods::common::{
   compress_icon, get_mod_info_from_dir, get_mod_info_from_jar,
@@ -33,6 +38,7 @@ use crate::instance::helpers::server::{
 use crate::instance::helpers::world::{load_level_data_from_nbt, load_world_info_from_dir};
 use crate::instance::models::misc::{
   Instance, InstanceError, InstanceSubdirType, InstanceSummary, LocalModInfo, ModLoader,
+  ModpackFileList,
   ModLoaderStatus, ModLoaderType, OptiFine, ResourcePackInfo, SchematicInfo, ScreenshotInfo,
   ShaderPackInfo,
 };
@@ -951,6 +957,7 @@ pub async fn create_instance(
   optifine: Option<OptiFineResourceInfo>,
   modpack_path: Option<String>,
   mut is_install_fabric_api: Option<bool>,
+  modpack_version: Option<String>,
 ) -> USTBLResult<()> {
   let client = app.state::<reqwest::Client>();
   let launcher_config_state = app.state::<Mutex<LauncherConfig>>();
@@ -1021,6 +1028,7 @@ pub async fn create_instance(
     play_time: 0,
     use_spec_game_config: false,
     spec_game_config: None,
+    modpack_version,
   };
 
   if component_import.is_some() {
@@ -1504,5 +1512,77 @@ pub fn add_custom_instance_icon(
   let dest_path = Path::new(&version_path).join("icon");
   fs::copy(source_path, &dest_path)?;
 
+  Ok(())
+}
+
+#[tauri::command]
+pub async fn list_modpack_files(
+  app: AppHandle,
+  instance_id: String,
+) -> USTBLResult<ModpackFileList> {
+  let instance = {
+    let binding = app.state::<Mutex<HashMap<String, Instance>>>();
+    let state = binding.lock()?;
+    state
+      .get(&instance_id)
+      .ok_or(InstanceError::InstanceNotFoundByID)?
+      .clone()
+  };
+  tokio::task::spawn_blocking(move || list_files(&instance)).await?
+}
+
+#[tauri::command]
+pub async fn export_modpack(
+  app: AppHandle,
+  instance_id: String,
+  save_path: String,
+  options: ExportModpackOptions,
+  files: Vec<String>,
+) -> USTBLResult<()> {
+  let instance = {
+    let binding = app.state::<Mutex<HashMap<String, Instance>>>();
+    let state = binding.lock()?;
+    state
+      .get(&instance_id)
+      .ok_or(InstanceError::InstanceNotFoundByID)?
+      .clone()
+  };
+  validate_export_options(&instance, &options)?;
+  let mut selected_files = Vec::new();
+  for relative in files {
+    let full = instance.version_path.join(&relative);
+    if tokio::fs::try_exists(&full).await.unwrap_or(false) {
+      selected_files.push((relative, full));
+    }
+  }
+  if selected_files.is_empty() {
+    return Err(InstanceError::ModpackManifestParseError.into());
+  }
+  let (prefix, overrides, extras) = match options.format {
+    ExportFormat::Modrinth => {
+      let mut manifest = generate_modrinth_manifest(&instance, &options)?;
+      let (remote_files, local_files) = collect_modrinth_files(
+        &app,
+        &selected_files,
+        options.no_create_remote_files.unwrap_or(false),
+        options.skip_curseforge_remote_files.unwrap_or(false),
+      ).await?;
+      manifest.files = remote_files;
+      let json = serde_json::to_string_pretty(&manifest)
+        .map_err(|_| InstanceError::ModpackManifestParseError)?;
+      ("overrides".to_string(), local_files, vec![("modrinth.index.json".to_string(), json)])
+    }
+    ExportFormat::MultiMC => {
+      let manifest = generate_multimc_manifest(&instance, &options)?;
+      let json = serde_json::to_string_pretty(&manifest)
+        .map_err(|_| InstanceError::ModpackManifestParseError)?;
+      (".minecraft".to_string(), selected_files, vec![
+        ("mmc-pack.json".to_string(), json),
+        ("instance.cfg".to_string(), generate_multimc_instance_cfg(&instance, &options)),
+        (".packignore".to_string(), String::new()),
+      ])
+    }
+  };
+  create_modpack_zip(&save_path, &prefix, overrides, extras).await?;
   Ok(())
 }

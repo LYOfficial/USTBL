@@ -21,6 +21,7 @@ use instance::helpers::mods::translation::LocalModTranslationsCache;
 use instance::models::misc::Instance;
 use launch::models::LaunchingState;
 use launcher_config::helpers::java::refresh_and_update_javas;
+use launcher_config::helpers::misc::auto_clear_download_cache;
 use launcher_config::models::{JavaInfo, LauncherConfig};
 use resource::helpers::mod_db::{initialize_mod_db, ModDataBase};
 use std::collections::HashMap;
@@ -187,6 +188,8 @@ pub async fn run() -> i32 {
       instance::commands::change_mod_loader,
       instance::commands::retrieve_modpack_meta_info,
       instance::commands::add_custom_instance_icon,
+      instance::commands::list_modpack_files,
+      instance::commands::export_modpack,
       instance::shared::retrieve_shared_instance_list,
       instance::shared::retrieve_shared_instance_detail,
       instance::shared::retrieve_shared_instance_startup_notifications,
@@ -338,6 +341,11 @@ pub async fn run() -> i32 {
       let app_handle = app.handle().clone();
       tauri::async_runtime::spawn(async move {
         refresh_and_update_javas(&app_handle).await;
+      });
+
+      let app_handle = app.handle().clone();
+      tauri::async_runtime::spawn(async move {
+        let _ = auto_clear_download_cache(&app_handle).await;
       });
 
       // Initialize mod database
