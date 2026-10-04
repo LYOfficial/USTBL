@@ -268,6 +268,14 @@ pub async fn run() -> i32 {
       ));
       if let Some(tray_popup) = app.get_webview_window("tray_popup") {
         let _ = tray_popup.set_skip_taskbar(true);
+        let app_handle = app.handle().clone();
+        tray_popup.on_window_event(move |event| {
+          if matches!(event, tauri::WindowEvent::Focused(false)) {
+            if let Some(window) = app_handle.get_webview_window("tray_popup") {
+              let _ = window.hide();
+            }
+          }
+        });
       }
 
       let account_info = AccountInfo::load().unwrap_or_default();
