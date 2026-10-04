@@ -167,6 +167,24 @@ def _message_list(value):
 
 
 def _prime_cursor(server, config):
+    try:
+        bootstrap = _request(
+            config,
+            'GET',
+            f"/api/mcdr/messages/{int(config['server_id'])}?bootstrap=true",
+        )
+    except RuntimeError as exc:
+        if 'HTTP 404' not in str(exc):
+            raise
+        bootstrap = None
+    if isinstance(bootstrap, dict) and 'last_id' in bootstrap:
+        try:
+            cursor = max(0, int(bootstrap['last_id']))
+            PLUGIN_STATE['last_id'] = cursor
+            _debug(server, config, f'启动游标已定位到 {cursor}，静默跳过历史消息')
+            return
+        except (TypeError, ValueError):
+            pass
     cursor = 0
     scanned = 0
     while True:

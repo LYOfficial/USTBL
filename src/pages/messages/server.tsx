@@ -29,6 +29,7 @@ export default function MessagesServerPage() {
   const [error, setError] = useState<string>();
   const requestVersion = useRef(0);
   const nextRetryAt = useRef(0);
+  const messageScrollRef = useRef<HTMLDivElement>(null);
 
   const load = async () => {
     if (Date.now() < nextRetryAt.current) return;
@@ -71,6 +72,17 @@ export default function MessagesServerPage() {
     () => groups.find((group) => group.id === selectedId),
     [groups, selectedId]
   );
+  const latestMessageId = selected?.messages.length
+    ? selected.messages[selected.messages.length - 1].id
+    : undefined;
+  useEffect(() => {
+    const element = messageScrollRef.current;
+    if (!element) return;
+    const frame = window.requestAnimationFrame(() => {
+      element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [selectedId, latestMessageId]);
   const setServerQuiet = (serverId: number, value: boolean) => {
     setQuiet((current) => ({ ...current, [serverId]: value }));
     window.localStorage.setItem(
@@ -172,7 +184,7 @@ export default function MessagesServerPage() {
         )}
       </VStack>
       <Flex direction="column" flex={1} minW={0}>
-        <Box flex={1} overflowY="auto" p={3}>
+        <Box ref={messageScrollRef} flex={1} overflowY="auto" p={3}>
           {selected?.messages.map((message: VustbServerMessage) => (
             <Box
               key={message.id}

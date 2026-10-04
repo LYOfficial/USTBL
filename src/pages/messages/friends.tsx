@@ -28,6 +28,7 @@ export default function MessagesFriendsPage() {
   const [error, setError] = useState<string>();
   const selectedId = useRef<number>();
   const nextRetryAt = useRef(0);
+  const messageScrollRef = useRef<HTMLDivElement>(null);
 
   const load = async () => {
     if (Date.now() < nextRetryAt.current) return;
@@ -80,6 +81,16 @@ export default function MessagesFriendsPage() {
     selectedId.current = selected?.id;
     setMessages([]);
   }, [selected?.id]);
+
+  const latestMessageId = messages[messages.length - 1]?.id;
+  useEffect(() => {
+    const element = messageScrollRef.current;
+    if (!element) return;
+    const frame = window.requestAnimationFrame(() => {
+      element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [selected?.id, messages.length, latestMessageId]);
 
   useEffect(() => {
     setQuiet(
@@ -197,7 +208,7 @@ export default function MessagesFriendsPage() {
         )}
       </VStack>
       <Flex direction="column" flex={1} minW={0}>
-        <Box flex={1} overflowY="auto" p={3}>
+        <Box ref={messageScrollRef} flex={1} overflowY="auto" p={3}>
           {visibleMessages.map((message) => (
             <Box
               key={String(message.id)}

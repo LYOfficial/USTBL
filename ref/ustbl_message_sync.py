@@ -158,6 +158,60 @@ def _server_status(server):
     return status
 
 
+def _message_list(value):
+    if isinstance(value, dict) and isinstance(value.get('messages'), list):
+        return value['messages']
+    if isinstance(value, list):
+        return value
+    raise RuntimeError(f'接口返回格式不是数组: {type(value).__name__}')
+
+
+def _prime_cursor(server, config):
+    try:
+        bootstrap = _request(
+            config,
+            'GET',
+            f"/api/mcdr/messages/{int(config['server_id'])}?bootstrap=true",
+        )
+    except RuntimeError as exc:
+        if 'HTTP 404' not in str(exc):
+            raise
+        bootstrap = None
+    if isinstance(bootstrap, dict) and 'last_id' in bootstrap:
+        try:
+            cursor = max(0, int(bootstrap['last_id']))
+            PLUGIN_STATE['last_id'] = cursor
+            _debug(server, config, f'启动游标已定位到 {cursor}，静默跳过历史消息')
+            return
+        except (TypeError, ValueError):
+            pass
+    cursor = 0
+    scanned = 0
+    while True:
+        messages = _message_list(
+            _request(
+                config,
+                'GET',
+                f"/api/mcdr/messages/{int(config['server_id'])}?after_id={cursor}",
+            )
+        )
+        if not messages:
+            break
+        next_cursor = cursor
+        for item in messages:
+            if isinstance(item, dict):
+                try:
+                    next_cursor = max(next_cursor, int(item['id']))
+                except (KeyError, TypeError, ValueError):
+                    continue
+        scanned += len(messages)
+        if next_cursor <= cursor:
+            break
+        cursor = next_cursor
+    PLUGIN_STATE['last_id'] = cursor
+    _debug(server, config, f'启动游标已定位到 {cursor}，静默跳过 {scanned} 条历史消息')
+
+
 def on_load(server: PluginServerInterface, old):
     config = _load_config(server)
     if not config.get('token') and config.get('mcdr_token'):
@@ -178,7 +232,7 @@ def on_load(server: PluginServerInterface, old):
         f'token_configured={bool(config["token"])}，debug_logging={_is_enabled(config.get("debug_logging"))}'
     )
     _debug(server, config, f'插件已加载，api_base={config["api_base"]!r}, server_id={config["server_id"]}, token_configured={bool(config["token"])}')
-    PLUGIN_STATE.update(running=True, config=config, last_id=0, last_config_warning=None)
+    PLUGIN_STATE.update(running=True, config=config, last_id=0, cursor_primed=False, last_config_warning=None)
     server.register_help_message('!!ustbl', '显示 USTBL 消息同步状态')
     server.register_command(
         Literal('!!ustbl').runs(
@@ -198,16 +252,17 @@ def on_load(server: PluginServerInterface, old):
                     time.sleep(10)
                     continue
                 now = time.monotonic()
+                if not PLUGIN_STATE.get('cursor_primed'):
+                    _prime_cursor(server, config)
+                    PLUGIN_STATE['cursor_primed'] = True
+                    continue
                 _debug(server, config, f'开始轮询 server_id={config["server_id"]}, after_id={PLUGIN_STATE["last_id"]}')
                 messages = _request(
                     config,
                     'GET',
                     f"/api/mcdr/messages/{int(config['server_id'])}?after_id={PLUGIN_STATE['last_id']}",
                 )
-                if isinstance(messages, dict) and isinstance(messages.get('messages'), list):
-                    messages = messages['messages']
-                if not isinstance(messages, list):
-                    raise RuntimeError(f'接口返回格式不是数组: {type(messages).__name__}')
+                messages = _message_list(messages)
                 _debug(server, config, f'轮询成功，收到 {len(messages)} 条消息')
                 broadcast_count = 0
                 for item in messages:
@@ -227,6 +282,7 @@ def on_load(server: PluginServerInterface, old):
                     server.say(text)
                     PLUGIN_STATE['last_id'] = max(PLUGIN_STATE['last_id'], message_id)
                     broadcast_count += 1
+                    server.logger.info(f'收到 USTBL 消息并广播到 Minecraft: {text}')
                     _debug(server, config, f'已广播到 Minecraft: {text!r}')
                 if messages:
                     _debug(server, config, f'本轮实际广播 {broadcast_count} 条，last_id={PLUGIN_STATE["last_id"]}')
@@ -286,5 +342,6 @@ def on_info(server: PluginServerInterface, info: Info):
             f"/api/mcdr/messages/{int(config['server_id'])}",
             {'sender': sender, 'content': content},
         )
+        server.logger.info(f'已同步 Minecraft 消息到 USTBL: {sender}: {content}')
     except Exception as exc:
         server.logger.warning(f'USTBL 服务器消息上报失败: {exc}')
