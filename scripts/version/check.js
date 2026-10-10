@@ -22,10 +22,25 @@ const cargoToml = fs.readFileSync(
 );
 const cargoVersion = cargoToml.match(/version\s*=\s*"([^"]+)"/)[1];
 
+// Read Cargo.lock. It records the workspace package version, and `cargo test --locked` fails
+// outright when it drifts from Cargo.toml, so it has to be checked alongside the others.
+const cargoLock = fs.readFileSync(
+  path.join(__dirname, "../../src-tauri/Cargo.lock"),
+  "utf8"
+);
+const cargoLockMatch = cargoLock.match(
+  /\[\[package\]\]\r?\nname = "USTBL"\r?\nversion = "([^"]+)"/
+);
+if (!cargoLockMatch) {
+  console.error("\n❌ Could not find the USTBL package entry in Cargo.lock");
+  process.exit(1);
+}
+
 const versions = {
   "package.json": packageJson.version,
   "tauri.conf.json": tauriConfig.version,
   "Cargo.toml": cargoVersion,
+  "Cargo.lock": cargoLockMatch[1],
 };
 
 console.log("Found versions:");
