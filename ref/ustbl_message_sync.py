@@ -13,7 +13,7 @@ from mcdreforged.api.all import *
 
 PLUGIN_METADATA = {
     'id': 'ustbl_message_sync',
-    'version': '1.2.0',
+    'version': '1.2.1',
     'name': 'USTBL Message Sync',
     'description': '通过 vUSTB 同步服务器与 USTBL 纯文本消息',
     'author': 'USTBL Team',
@@ -30,6 +30,11 @@ DEFAULT_CONFIG = {
     'request_timeout': 20,
     'debug_logging': False,
 }
+# Java 栈帧里的 <init>/<clinit> 等成员标记会被下面的聊天正则当成玩家名，
+# 把模组日志刷进服务器消息流；这些候选不可能真的是玩家名，直接排除。
+STACK_TRACE_LINE = re.compile(r'^\s*at\s|^\s*\.{3}\s*\d+\s*more|^\s*(?:Caused by|Suppressed):')
+JAVA_MEMBER_MARKERS = frozenset({'init', 'clinit'})
+IMPLAUSIBLE_SENDER = re.compile(r'[();/$<>]')
 PLUGIN_STATE = {'running': False, 'thread': None, 'config': None, 'last_id': 0}
 
 
@@ -324,12 +329,20 @@ def on_unload(server: PluginServerInterface):
 def on_info(server: PluginServerInterface, info: Info):
     sender = str(getattr(info, 'player', '') or '').strip()
     content = str(getattr(info, 'content', '') or '').strip()
-    if not sender or not bool(getattr(info, 'is_player', False)):
+    is_player = bool(getattr(info, 'is_player', False))
+    if not (is_player and sender):
+        # 只对「非 MCDR 已确认的玩家聊天」做兜底解析。模组日志（尤其是 Java 栈帧）
+        # 里必然出现 <init>/<clinit>，不拦掉就会被下面的 <玩家> 正则当成发送者。
+        if STACK_TRACE_LINE.match(str(getattr(info, 'raw_content', '') or '')) or STACK_TRACE_LINE.match(content):
+            return
         match = re.search(r'<([^>]+)>\s*(.*)', content)
         if match:
-            sender, content = match.group(1).strip(), match.group(2).strip()
+            candidate = match.group(1).strip()
+            if candidate in JAVA_MEMBER_MARKERS or IMPLAUSIBLE_SENDER.search(candidate):
+                return
+            sender, content = candidate, match.group(2).strip()
     if not sender or not content:
-        if bool(getattr(info, 'is_player', False)):
+        if is_player:
             server.logger.warning(f'USTBL 服务器消息未能解析玩家聊天: {getattr(info, "raw_content", content)!r}')
         return
     config = PLUGIN_STATE.get('config') or _load_config(server)

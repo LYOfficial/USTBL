@@ -94,13 +94,18 @@ const tagLists: Record<string, any> = {
 };
 
 const downloadSourceLists: Record<string, OtherResourceSource[]> = {
-  mod: [OtherResourceSource.Modrinth],
-  world: [OtherResourceSource.Modrinth],
-  resourcepack: [OtherResourceSource.Modrinth],
-  shader: [OtherResourceSource.Modrinth],
-  modpack: [OtherResourceSource.Modrinth],
-  datapack: [OtherResourceSource.Modrinth],
+  mod: [OtherResourceSource.Modrinth, OtherResourceSource.CurseForge],
+  world: [OtherResourceSource.Modrinth, OtherResourceSource.CurseForge],
+  resourcepack: [OtherResourceSource.Modrinth, OtherResourceSource.CurseForge],
+  shader: [OtherResourceSource.Modrinth, OtherResourceSource.CurseForge],
+  modpack: [OtherResourceSource.Modrinth, OtherResourceSource.CurseForge],
+  datapack: [OtherResourceSource.Modrinth, OtherResourceSource.CurseForge],
 };
+
+/// CurseForge and Modrinth use different sort vocabularies, so the selected
+/// sort has to follow the download source.
+const defaultSortBy = (downloadSource: OtherResourceSource): string =>
+  sortByLists[downloadSource]?.[0] ?? "relevance";
 
 const ResourceDownloaderMenu: React.FC<ResourceDownloaderMenuProps> = ({
   label,
@@ -316,7 +321,9 @@ const ResourceDownloader: React.FC<ResourceDownloaderProps> = ({
   const [searchQuery, setSearchQuery] = useState<string>(initialSearchQuery);
   const [gameVersion, setGameVersion] = useState<string>("");
   const [selectedTag, setSelectedTag] = useState<string>("All");
-  const [sortBy, setSortBy] = useState<string>("relevance");
+  const [sortBy, setSortBy] = useState<string>(
+    defaultSortBy(initialDownloadSource)
+  );
   const [downloadSource, setDownloadSource] = useState<OtherResourceSource>(
     initialDownloadSource
   );
@@ -342,9 +349,10 @@ const ResourceDownloader: React.FC<ResourceDownloaderProps> = ({
   );
 
   const onDownloadSourceChange = (e: string) => {
-    setDownloadSource(e as OtherResourceSource);
+    const nextSource = e as OtherResourceSource;
+    setDownloadSource(nextSource);
     setSelectedTag("All");
-    setSortBy("relevance");
+    setSortBy(defaultSortBy(nextSource));
   };
 
   const handleFetchResourceListByName = useCallback(

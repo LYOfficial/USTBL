@@ -583,6 +583,13 @@
           "auto": "Auto Select",
           "official": "Prioritize Official Source",
           "mirror": "Prioritize Mirror Source"
+        },
+        "resourceStrategy": {
+          "title": "Resource Download Source Selection Strategy",
+          "description": "How Modrinth / CurseForge metadata and files are fetched for mods, shader packs and resource packs; the MCIM mirror can be used for acceleration",
+          "auto": "Auto Select",
+          "official": "Prioritize Official Source",
+          "mirror": "Prioritize Mirror Source (MCIM)"
         }
       }
     },
@@ -1577,6 +1584,7 @@
       "offline": "Offline",
       "bmclapi": "BMCLAPI",
       "curseforge": "CurseForge",
+      "mcim": "MCIM Mirror",
       "modrinth": "Modrinth",
       "mojang": "Mojang",
       "forge": "Forge",

@@ -5,21 +5,20 @@ use crate::resource::helpers::misc::apply_other_resource_enhancements;
 use crate::resource::helpers::mod_db::handle_search_query;
 use crate::resource::models::{
   OtherResourceApiEndpoint, OtherResourceFileInfo, OtherResourceInfo, OtherResourceRequestType,
-  OtherResourceSearchQuery, OtherResourceSearchRes, OtherResourceVersionPack,
+  OtherResourceSearchQuery, OtherResourceSearchRes, OtherResourceSource, OtherResourceVersionPack,
   OtherResourceVersionPackQuery, ResourceError,
 };
 use crate::tasks::download::DownloadParam;
 use hex;
 use misc::{
-  get_modrinth_api, make_modrinth_request, map_modrinth_file_to_version_pack, ModrinthProject,
+  make_modrinth_request_with_fallbacks, map_modrinth_file_to_version_pack, ModrinthProject,
   ModrinthSearchRes, ModrinthVersionPack,
 };
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use tauri::{AppHandle, Manager};
-use tauri_plugin_http::reqwest;
+use tauri::AppHandle;
 use url::Url;
 
 const ALL_FILTER: &str = "All";
@@ -28,8 +27,6 @@ pub async fn fetch_resource_list_by_name_modrinth(
   app: &AppHandle,
   query: &OtherResourceSearchQuery,
 ) -> USTBLResult<OtherResourceSearchRes> {
-  let url = get_modrinth_api(OtherResourceApiEndpoint::Search, None)?;
-
   let OtherResourceSearchQuery {
     resource_type,
     search_query,
@@ -40,7 +37,7 @@ pub async fn fetch_resource_list_by_name_modrinth(
     page_size,
   } = query;
 
-  let handled_search_query = handle_search_query(app, search_query)
+  let handled_search_query = handle_search_query(app, search_query, &OtherResourceSource::Modrinth)
     .await
     .unwrap_or(search_query.clone()); // Handle Chinese query
 
@@ -62,10 +59,10 @@ pub async fn fetch_resource_list_by_name_modrinth(
   params.insert("limit".to_string(), page_size.to_string());
   params.insert("index".to_string(), sort_by.to_string());
 
-  let client = app.state::<reqwest::Client>();
-  let results = make_modrinth_request::<ModrinthSearchRes, ()>(
-    &client,
-    &url,
+  let results = make_modrinth_request_with_fallbacks::<ModrinthSearchRes, HashMap<String, String>>(
+    app,
+    OtherResourceApiEndpoint::Search,
+    None,
     OtherResourceRequestType::GetWithParams(&params),
   )
   .await?;
@@ -87,8 +84,6 @@ pub async fn fetch_resource_version_packs_modrinth(
     mod_loader,
     game_versions,
   } = query;
-
-  let url = get_modrinth_api(OtherResourceApiEndpoint::VersionPack, Some(resource_id))?;
 
   let mut params = HashMap::new();
   if mod_loader != ALL_FILTER {
@@ -112,14 +107,14 @@ pub async fn fetch_resource_version_packs_modrinth(
     }
   }
 
-  let client = app.state::<reqwest::Client>();
-
-  let results = make_modrinth_request::<Vec<ModrinthVersionPack>, ()>(
-    &client,
-    &url,
-    OtherResourceRequestType::GetWithParams(&params),
-  )
-  .await?;
+  let results =
+    make_modrinth_request_with_fallbacks::<Vec<ModrinthVersionPack>, HashMap<String, String>>(
+      app,
+      OtherResourceApiEndpoint::VersionPack,
+      Some(resource_id),
+      OtherResourceRequestType::GetWithParams(&params),
+    )
+    .await?;
 
   Ok(map_modrinth_file_to_version_pack(results))
 }
@@ -138,15 +133,14 @@ pub async fn fetch_remote_resource_by_local_modrinth(
   let mut params = HashMap::new();
   params.insert("algorithm".to_string(), "sha1".to_string());
 
-  let url = get_modrinth_api(OtherResourceApiEndpoint::FromLocal, Some(&hash_string))?;
-  let client = app.state::<reqwest::Client>();
-
-  let version_pack = make_modrinth_request::<ModrinthVersionPack, ()>(
-    &client,
-    &url,
-    OtherResourceRequestType::GetWithParams(&params),
-  )
-  .await?;
+  let version_pack =
+    make_modrinth_request_with_fallbacks::<ModrinthVersionPack, HashMap<String, String>>(
+      app,
+      OtherResourceApiEndpoint::FromLocal,
+      Some(&hash_string),
+      OtherResourceRequestType::GetWithParams(&params),
+    )
+    .await?;
 
   let file_info = version_pack
     .files
@@ -172,12 +166,13 @@ pub async fn fetch_remote_resource_by_id_modrinth(
   app: &AppHandle,
   resource_id: &str,
 ) -> USTBLResult<OtherResourceInfo> {
-  let url = get_modrinth_api(OtherResourceApiEndpoint::ById, Some(resource_id))?;
-  let client = app.state::<reqwest::Client>();
-
-  let results =
-    make_modrinth_request::<ModrinthProject, ()>(&client, &url, OtherResourceRequestType::Get)
-      .await?;
+  let results = make_modrinth_request_with_fallbacks::<ModrinthProject, ()>(
+    app,
+    OtherResourceApiEndpoint::ById,
+    Some(resource_id),
+    OtherResourceRequestType::Get,
+  )
+  .await?;
 
   let mut resource_info: OtherResourceInfo = results.into();
   let _ = apply_other_resource_enhancements(app, &mut resource_info).await;

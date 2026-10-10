@@ -163,6 +163,31 @@ const DownloadSettingsPage = () => {
             />
           ),
         },
+        {
+          title: t(
+            "DownloadSettingPage.source.settings.resourceStrategy.title"
+          ),
+          description: t(
+            "DownloadSettingPage.source.settings.resourceStrategy.description"
+          ),
+          children: (
+            <MenuSelector
+              options={sourceStrategyTypes.map((type) => ({
+                value: type,
+                label: t(
+                  `DownloadSettingPage.source.settings.resourceStrategy.${type}`
+                ),
+              }))}
+              value={downloadConfigs.resource.strategy}
+              onSelect={(value) =>
+                update("download.resource.strategy", value as string)
+              }
+              placeholder={t(
+                `DownloadSettingPage.source.settings.resourceStrategy.${downloadConfigs.resource.strategy}`
+              )}
+            />
+          ),
+        },
       ],
     },
     {

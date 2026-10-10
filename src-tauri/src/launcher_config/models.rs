@@ -229,6 +229,13 @@ structstruck::strike! {
         #[default = "auto"]
         pub strategy: String,
       },
+      // Mods, shader packs and other browsable resources are served by
+      // Modrinth / CurseForge, which are mirrored by MCIM instead of BMCLAPI,
+      // so they get their own strategy switch.
+      pub resource: struct ResourceSourceConfig {
+        #[default = "auto"]
+        pub strategy: String,
+      },
       pub transmission: struct {
         #[default = true]
         pub auto_concurrent: bool,

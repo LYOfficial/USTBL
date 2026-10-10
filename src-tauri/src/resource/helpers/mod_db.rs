@@ -132,10 +132,22 @@ struct SearchEntry {
 pub struct MCModRecord {
   pub mcmod_id: u32,
   pub modrinth_slug: Option<String>,
+  pub curseforge_slug: Option<String>,
   pub name: String,
   pub subname: Option<String>,
   #[allow(dead_code)]
   pub abbr: Option<String>,
+}
+
+impl MCModRecord {
+  /// The identifier this record is keyed by for a given download source.
+  pub fn slug_of(&self, source: &OtherResourceSource) -> Option<&String> {
+    match source {
+      OtherResourceSource::Modrinth => self.modrinth_slug.as_ref(),
+      OtherResourceSource::CurseForge => self.curseforge_slug.as_ref(),
+      _ => None,
+    }
+  }
 }
 
 impl MCModRecord {
@@ -170,6 +182,7 @@ pub struct ModDataBase {
   initialized: bool,
   mods: Vec<MCModRecord>,
   modrinth_to_mod: HashMap<String, u32>,
+  curseforge_to_mod: HashMap<String, u32>,
 }
 
 impl ModDataBase {
@@ -178,6 +191,7 @@ impl ModDataBase {
       initialized: false,
       mods: Vec::new(),
       modrinth_to_mod: HashMap::new(),
+      curseforge_to_mod: HashMap::new(),
     }
   }
 
@@ -200,6 +214,10 @@ impl ModDataBase {
     match source {
       OtherResourceSource::Modrinth => self
         .modrinth_to_mod
+        .get(resource_slug)
+        .and_then(|&mcmod_id| self.get_mod_record_by_mcmod_id(mcmod_id)),
+      OtherResourceSource::CurseForge => self
+        .curseforge_to_mod
         .get(resource_slug)
         .and_then(|&mcmod_id| self.get_mod_record_by_mcmod_id(mcmod_id)),
       _ => None,
@@ -312,6 +330,7 @@ pub async fn initialize_mod_db(app: &AppHandle) -> USTBLResult<()> {
 
   let mcmod_id_index = headers.iter().position(|h| h == "mcmod_id").unwrap();
   let modrinth_slug_index = headers.iter().position(|h| h == "modrinth_slug").unwrap();
+  let curseforge_slug_index = headers.iter().position(|h| h == "curseforge_slug");
   let name_index = headers.iter().position(|h| h == "name").unwrap();
   let subname_index = headers.iter().position(|h| h == "subname").unwrap();
   let abbr_index = headers.iter().position(|h| h == "abbr").unwrap();
@@ -328,12 +347,14 @@ pub async fn initialize_mod_db(app: &AppHandle) -> USTBLResult<()> {
     let name = record.get(name_index).unwrap().trim().to_string();
 
     let modrinth_slug = record.get(modrinth_slug_index);
+    let curseforge_slug = curseforge_slug_index.and_then(|index| record.get(index));
     let subname = record.get(subname_index);
     let abbr = record.get(abbr_index);
 
     let mod_record = MCModRecord {
       mcmod_id,
       modrinth_slug: modrinth_slug.map(str::to_owned),
+      curseforge_slug: curseforge_slug.map(str::to_owned),
       name,
       subname: subname.map(str::to_owned),
       abbr: abbr.map(str::to_owned),
@@ -346,13 +367,24 @@ pub async fn initialize_mod_db(app: &AppHandle) -> USTBLResult<()> {
         .modrinth_to_mod
         .insert(modrinth_slug.to_string(), mcmod_id);
     }
+    if let Some(curseforge_slug) = curseforge_slug {
+      cache
+        .curseforge_to_mod
+        .insert(curseforge_slug.to_string(), mcmod_id);
+    }
   }
 
   cache.initialized = true;
   Ok(())
 }
 
-pub async fn handle_search_query(app: &AppHandle, query: &str) -> USTBLResult<String> {
+/// Rewrite a Chinese search query into the identifier vocabulary of the given
+/// download source, using the local MCMod database to bridge the two.
+pub async fn handle_search_query(
+  app: &AppHandle,
+  query: &str,
+  source: &OtherResourceSource,
+) -> USTBLResult<String> {
   let query = query.split_whitespace().collect::<Vec<_>>().join(" ");
 
   // Only process Chinese queries
@@ -373,7 +405,7 @@ pub async fn handle_search_query(app: &AppHandle, query: &str) -> USTBLResult<St
   // Short-circuit: if exists a very confident match, search by its name directly
   let mut best_match: Option<(&MCModRecord, f64, bool)> = None;
   for mod_record in &search_results {
-    if mod_record.subname.is_none() && mod_record.modrinth_slug.is_none() {
+    if mod_record.subname.is_none() && mod_record.slug_of(source).is_none() {
       continue;
     }
 
@@ -390,11 +422,7 @@ pub async fn handle_search_query(app: &AppHandle, query: &str) -> USTBLResult<St
 
   if let Some((mod_record, similarity, absolute)) = best_match {
     if absolute || similarity >= 0.9 {
-      if let Some(exact_name) = mod_record
-        .subname
-        .as_ref()
-        .or(mod_record.modrinth_slug.as_ref())
-      {
+      if let Some(exact_name) = mod_record.subname.as_ref().or(mod_record.slug_of(source)) {
         return Ok(exact_name.chars().take(24).collect());
       }
     }
@@ -407,8 +435,8 @@ pub async fn handle_search_query(app: &AppHandle, query: &str) -> USTBLResult<St
   for mod_record in &search_results {
     let mut mod_keywords = HashSet::new();
 
-    if let Some(modrinth_slug) = &mod_record.modrinth_slug {
-      for keyword in extract_keywords_from_slug(modrinth_slug) {
+    if let Some(slug) = mod_record.slug_of(source) {
+      for keyword in extract_keywords_from_slug(slug) {
         mod_keywords.insert(keyword);
       }
     }

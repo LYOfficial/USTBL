@@ -14,14 +14,82 @@ use zip::ZipArchive;
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::modpack::misc::{ModpackManifest, ModpackMetaInfo};
 use crate::instance::models::misc::{InstanceError, ModLoader, ModLoaderType};
+use crate::launcher_config::models::LauncherConfig;
+use crate::resource::helpers::curseforge::misc::has_official_api_key;
+use crate::resource::helpers::mcim::{
+  curseforge_api_base, get_content_source_priority_list, ContentSource,
+};
 use crate::resource::models::OtherResourceSource;
 use crate::tasks::download::DownloadParam;
 use crate::tasks::PTaskParam;
+use std::sync::Mutex;
 
 lazy_static! {
-  static ref CURSEFORGE_API_KEY: String = {
-    env::var("USTBL_CURSEFORGE_API_KEY").unwrap_or_default()
-  };
+  static ref CURSEFORGE_API_KEY: String = env::var("USTBL_CURSEFORGE_API_KEY").unwrap_or_default();
+}
+
+/// Source order for CurseForge metadata lookups, following the resource download
+/// strategy.
+///
+/// Without an API key the official host only answers `403`, so the MCIM mirror is
+/// the source that actually keeps CurseForge modpacks installable.
+fn curseforge_content_sources(app: &AppHandle) -> Vec<ContentSource> {
+  app
+    .state::<Mutex<LauncherConfig>>()
+    .lock()
+    .map(|config| get_content_source_priority_list(&config))
+    .unwrap_or_else(|_| vec![ContentSource::Mcim, ContentSource::Official])
+}
+
+/// Fetch a CurseForge API document, trying the configured sources in order.
+async fn fetch_curseforge<T>(
+  client: &reqwest::Client,
+  priority: &[ContentSource],
+  endpoint: &str,
+) -> USTBLResult<T>
+where
+  T: serde::de::DeserializeOwned,
+{
+  let mut last_error: Option<USTBLError> = None;
+
+  for source in priority {
+    // The key is only meaningful on the official host, and is never sent to the
+    // mirror.
+    if *source == ContentSource::Official && !has_official_api_key() {
+      continue;
+    }
+
+    let url = format!("{}{}", curseforge_api_base(*source), endpoint);
+    let request = client.get(&url).header("accept", "application/json");
+    let request = match source {
+      ContentSource::Official => request.header("x-api-key", CURSEFORGE_API_KEY.as_str()),
+      ContentSource::Mcim => request,
+    };
+
+    match request.send().await {
+      Ok(response) if response.status().is_success() => match response.json::<T>().await {
+        Ok(value) => return Ok(value),
+        Err(error) => {
+          eprintln!("{:?}", error);
+          last_error = Some(USTBLError(format!("{:?}", error)));
+        }
+      },
+      Ok(response) => {
+        log::warn!(
+          "CurseForge request to {} failed with status {}",
+          url,
+          response.status()
+        );
+        last_error = Some(InstanceError::NetworkError.into());
+      }
+      Err(error) => {
+        log::warn!("CurseForge request to {} failed: {:?}", url, error);
+        last_error = Some(InstanceError::NetworkError.into());
+      }
+    }
+  }
+
+  Err(last_error.unwrap_or_else(|| InstanceError::NetworkError.into()))
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -157,48 +225,29 @@ impl ModpackManifest for CurseForgeManifest {
   ) -> USTBLResult<Vec<PTaskParam>> {
     let client = app.state::<reqwest::Client>();
     let instance_path = instance_path.to_path_buf();
+    // Resolved once so each file lookup does not have to re-read the config.
+    let priority = curseforge_content_sources(app);
 
     let tasks = self.files.iter().map(|file| {
       let client = client.clone();
       let instance_path = instance_path.clone();
+      let priority = priority.clone();
       let file_id = file.file_id;
       let project_id = file.project_id;
 
       async move {
         let class_id = {
-          let project_resp = client
-            .get(format!("https://api.curseforge.com/v1/mods/{project_id}"))
-            .header("x-api-key", CURSEFORGE_API_KEY.as_str())
-            .header("accept", "application/json")
-            .send()
-            .await
-            .map_err(|_| InstanceError::NetworkError)?;
-          if !project_resp.status().is_success() {
-            return Err(InstanceError::NetworkError.into());
-          }
-          let project: CurseForgeProjectRes = project_resp.json().await?;
+          let project: CurseForgeProjectRes =
+            fetch_curseforge(&client, &priority, &format!("/mods/{project_id}")).await?;
           project.data.class_id
         };
 
-        let file_manifest: CurseForgeFileManifest = {
-          let file_resp = client
-            .get(format!(
-              "https://api.curseforge.com/v1/mods/{project_id}/files/{file_id}"
-            ))
-            .header("x-api-key", CURSEFORGE_API_KEY.as_str())
-            .header("accept", "application/json")
-            .send()
-            .await
-            .map_err(|_| InstanceError::NetworkError)?;
-
-          if !file_resp.status().is_success() {
-            return Err(InstanceError::NetworkError.into());
-          }
-          file_resp.json().await.map_err(|e| {
-            eprintln!("{:?}", e);
-            USTBLError(format!("{:?}", e))
-          })?
-        };
+        let file_manifest: CurseForgeFileManifest = fetch_curseforge(
+          &client,
+          &priority,
+          &format!("/mods/{project_id}/files/{file_id}"),
+        )
+        .await?;
 
         let download_url = file_manifest.data.download_url.clone().unwrap_or_else(|| {
           format!(

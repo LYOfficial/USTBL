@@ -1,5 +1,8 @@
 use crate::error::{USTBLError, USTBLResult};
 use crate::launcher_config::commands::retrieve_launcher_config;
+use crate::resource::helpers::mcim::{
+  content_file_source_candidates, get_content_source_priority_list, ContentSource,
+};
 use crate::tasks::streams::desc::{PDesc, PStatus};
 use crate::tasks::streams::reporter::Reporter;
 use crate::tasks::streams::ProgressStream;
@@ -21,6 +24,13 @@ use tauri_plugin_http::reqwest::header::RANGE;
 use tokio::io::AsyncSeekExt;
 use tokio_util::bytes;
 use tokio_util::compat::FuturesAsyncReadCompatExt;
+
+/// Ordered download sources plus whether the list was widened by a mirror
+/// alternative, which changes how the retry loop should behave.
+struct DownloadSources {
+  urls: Vec<Url>,
+  has_content_alternatives: bool,
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -182,7 +192,7 @@ impl DownloadTask {
     }
   }
 
-  fn sources(param: &DownloadParam) -> Vec<Url> {
+  fn base_sources(param: &DownloadParam) -> Vec<Url> {
     let mut sources = Vec::with_capacity(2 + param.transfer_options.fallback_sources.len() * 2);
     for source in std::iter::once(&param.src).chain(&param.transfer_options.fallback_sources) {
       if let Some(proxy) = github_proxy_url(source) {
@@ -195,6 +205,34 @@ impl DownloadTask {
       }
     }
     sources
+  }
+
+  /// Expand every source with its MCIM mirror counterpart, ordered by the
+  /// configured content source strategy.
+  ///
+  /// This is what makes the mirror a fallback (or the preferred source) for mods,
+  /// shader packs and every other file MCIM mirrors, including downloads that are
+  /// scheduled by the backend rather than by the resource browser.
+  fn sources(param: &DownloadParam, priority: &[ContentSource]) -> DownloadSources {
+    let mut urls: Vec<Url> = Vec::new();
+    let mut has_content_alternatives = false;
+
+    for source in Self::base_sources(param) {
+      let candidates = content_file_source_candidates(&source, priority);
+      if candidates.len() > 1 {
+        has_content_alternatives = true;
+      }
+      for candidate in candidates {
+        if !urls.contains(&candidate) {
+          urls.push(candidate);
+        }
+      }
+    }
+
+    DownloadSources {
+      urls,
+      has_content_alternatives,
+    }
   }
 
   async fn send_request(
@@ -380,19 +418,25 @@ impl DownloadTask {
     let dest_path = self.dest_path.clone();
     Ok((
       async move {
-        let sources = Self::sources(&param);
+        let sources = Self::sources(&param, &content_source_priority(&app_handle));
         let mut attempts = param.transfer_options.retry_policy.max_attempts();
-        if sources.iter().any(is_github_proxy_source) {
-          attempts = attempts.max(sources.len());
+        // More than one source only helps if the loop is allowed to visit each
+        // of them at least once.
+        if sources.urls.len() > 1 {
+          attempts = attempts.max(sources.urls.len());
         }
+        // Content sources are mirror/official pairs of the same file. Blind
+        // middleware retries against the first one can stall for up to an hour
+        // before the alternative is ever tried, so let the loop rotate instead.
         let use_request_retry = param
           .transfer_options
           .retry_policy
-          .uses_request_middleware();
+          .uses_request_middleware()
+          && !sources.has_content_alternatives;
         let mut last_error = None;
 
         for attempt in 0..attempts {
-          let source = &sources[attempt % sources.len()];
+          let source = &sources.urls[attempt % sources.urls.len()];
           match Self::download_once(
             &app_handle,
             limiter.clone(),
@@ -438,22 +482,38 @@ impl DownloadTask {
   }
 }
 
-fn is_github_proxy_source(source: &Url) -> bool {
-  source.host_str() == Some("www.ustb.world")
-    && source.path() == "/api/resource-acceleration/github/proxy"
+/// Content source order for the current configuration.
+///
+/// The MCIM mirror is the only content source that works without extra
+/// credentials, so it leads the fallback order when the configuration cannot be
+/// read.
+fn content_source_priority(app_handle: &AppHandle) -> Vec<ContentSource> {
+  retrieve_launcher_config(app_handle.clone())
+    .map(|config| get_content_source_priority_list(&config))
+    .unwrap_or_else(|_| vec![ContentSource::Mcim, ContentSource::Official])
 }
 
 fn github_proxy_url(source: &Url) -> Option<Url> {
   const PROXY_BASE: &str = "https://www.ustb.world/api/resource-acceleration/github/proxy";
   const HOSTS: [&str; 18] = [
-    "github.com", "api.github.com", "codeload.github.com", "raw.githubusercontent.com",
-    "github.githubassets.com", "avatars.githubusercontent.com", "objects.githubusercontent.com",
-    "cloud.githubusercontent.com", "camo.githubusercontent.com", "desktop.githubusercontent.com",
-    "favicons.githubusercontent.com", "github-production-release-asset-2e65be.s3.amazonaws.com",
+    "github.com",
+    "api.github.com",
+    "codeload.github.com",
+    "raw.githubusercontent.com",
+    "github.githubassets.com",
+    "avatars.githubusercontent.com",
+    "objects.githubusercontent.com",
+    "cloud.githubusercontent.com",
+    "camo.githubusercontent.com",
+    "desktop.githubusercontent.com",
+    "favicons.githubusercontent.com",
+    "github-production-release-asset-2e65be.s3.amazonaws.com",
     "github-production-repository-file-5c1aeb.s3.amazonaws.com",
-    "github-production-user-asset-6210df.s3.amazonaws.com", "github-com.s3.amazonaws.com",
+    "github-production-user-asset-6210df.s3.amazonaws.com",
+    "github-com.s3.amazonaws.com",
     "github-cloud.s3.amazonaws.com",
-    "release-assets.githubusercontent.com", "github-releases.githubusercontent.com",
+    "release-assets.githubusercontent.com",
+    "github-releases.githubusercontent.com",
   ];
   if source.scheme() != "https" || !source.host_str().is_some_and(|host| HOSTS.contains(&host)) {
     return None;
@@ -465,10 +525,24 @@ fn github_proxy_url(source: &Url) -> Option<Url> {
 
 #[cfg(test)]
 mod tests {
-  use super::{github_proxy_url, DownloadParam, DownloadRetryPolicy, DownloadTask, DownloadTransferOptions};
+  use super::{
+    github_proxy_url, ContentSource, DownloadParam, DownloadRetryPolicy, DownloadTask,
+    DownloadTransferOptions,
+  };
   use serde_json::json;
   use std::path::PathBuf;
   use tauri::Url;
+
+  fn download_param(src: Url) -> DownloadParam {
+    DownloadParam {
+      src,
+      dest: PathBuf::from("file.jar"),
+      filename: None,
+      sha1: None,
+      custom_headers: None,
+      transfer_options: Default::default(),
+    }
+  }
 
   #[test]
   fn old_download_params_use_standard_transfer_defaults() {
@@ -499,7 +573,9 @@ mod tests {
       ),
     };
 
-    assert_eq!(DownloadTask::sources(&param), vec![primary, fallback]);
+    let sources = DownloadTask::sources(&param, &[ContentSource::Mcim, ContentSource::Official]);
+    assert_eq!(sources.urls, vec![primary, fallback]);
+    assert!(!sources.has_content_alternatives);
     assert_eq!(param.transfer_options.retry_policy.max_attempts(), 10);
     assert_eq!(
       param.transfer_options.retry_policy,
@@ -512,11 +588,50 @@ mod tests {
   }
 
   #[test]
+  fn content_mirror_is_ordered_by_the_configured_strategy() {
+    let official =
+      Url::parse("https://cdn.modrinth.com/data/AANobbMI/versions/RncWhTxD/sodium.jar").unwrap();
+    let mirror =
+      Url::parse("https://mod.mcimirror.top/data/AANobbMI/versions/RncWhTxD/sodium.jar").unwrap();
+    let param = download_param(official.clone());
+
+    let mirror_first =
+      DownloadTask::sources(&param, &[ContentSource::Mcim, ContentSource::Official]);
+    assert_eq!(mirror_first.urls, vec![mirror.clone(), official.clone()]);
+    assert!(mirror_first.has_content_alternatives);
+
+    let official_first =
+      DownloadTask::sources(&param, &[ContentSource::Official, ContentSource::Mcim]);
+    assert_eq!(official_first.urls, vec![official, mirror]);
+    assert!(official_first.has_content_alternatives);
+  }
+
+  #[test]
+  fn downloads_without_a_mirror_equivalent_keep_their_sources() {
+    let only = Url::parse("https://mediafilez.forgecdn.net/files/1/2/file.jar").unwrap();
+    let param = download_param(only.clone());
+
+    let sources = DownloadTask::sources(&param, &[ContentSource::Mcim, ContentSource::Official]);
+    assert_eq!(sources.urls, vec![only]);
+    assert!(!sources.has_content_alternatives);
+  }
+
+  #[test]
   fn github_download_sources_put_proxy_before_direct_source() {
-    let source = Url::parse("https://github.com/example/project/releases/download/v1/file.zip").unwrap();
+    let source =
+      Url::parse("https://github.com/example/project/releases/download/v1/file.zip").unwrap();
     let proxy = github_proxy_url(&source).expect("GitHub URL should be proxied");
     assert_eq!(proxy.host_str(), Some("www.ustb.world"));
     assert_eq!(proxy.path(), "/api/resource-acceleration/github/proxy");
-    assert_eq!(proxy.query_pairs().find(|(key, _)| key == "url").map(|(_, value)| value), Some(source.as_str().into()));
+    assert_eq!(
+      proxy
+        .query_pairs()
+        .find(|(key, _)| key == "url")
+        .map(|(_, value)| value),
+      Some(source.as_str().into())
+    );
+
+    let sources = DownloadTask::sources(&download_param(source.clone()), &[ContentSource::Mcim]);
+    assert_eq!(sources.urls, vec![proxy, source]);
   }
 }

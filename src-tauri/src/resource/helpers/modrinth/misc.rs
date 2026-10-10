@@ -1,4 +1,7 @@
 use crate::error::{USTBLError, USTBLResult};
+use crate::resource::helpers::mcim::{
+  get_content_source_priority_list, modrinth_api_base, ContentSource, MCIM_BASE,
+};
 use crate::resource::helpers::misc::version_pack_sort;
 use crate::resource::models::{
   OtherResourceApiEndpoint, OtherResourceDependency, OtherResourceFileInfo, OtherResourceInfo,
@@ -39,13 +42,73 @@ where
     .map_err(|_| ResourceError::ParseError.into())
 }
 
-pub fn get_modrinth_api(
+/// Effective content source order for the current configuration.
+///
+/// Falling back to the mirror keeps the launcher working when the configuration
+/// cannot be read.
+pub fn content_source_priority(app: &AppHandle) -> Vec<ContentSource> {
+  match app
+    .state::<std::sync::Mutex<crate::launcher_config::models::LauncherConfig>>()
+    .lock()
+  {
+    Ok(config) => get_content_source_priority_list(&config),
+    Err(_) => vec![ContentSource::Mcim, ContentSource::Official],
+  }
+}
+
+/// Run a Modrinth API request against every configured source in order. MCIM
+/// serves the same routes under `/modrinth/v2`, so a failing mirror falls back
+/// to the official API and vice versa.
+pub async fn make_modrinth_request_with_fallbacks<T, P>(
+  app: &AppHandle,
   endpoint: OtherResourceApiEndpoint,
   param: Option<&str>,
-) -> USTBLResult<String> {
-  let base_url = "https://api.modrinth.com/v2";
+  request_type: OtherResourceRequestType<'_, P>,
+) -> USTBLResult<T>
+where
+  T: serde::de::DeserializeOwned,
+  P: serde::Serialize,
+{
+  let client = app.state::<reqwest::Client>();
+  let mut last_error: Option<USTBLError> = None;
 
-  let url_str = match endpoint {
+  for source in content_source_priority(app) {
+    let Some(url) = get_modrinth_api(source, endpoint, param)? else {
+      continue;
+    };
+
+    // `request_type` cannot be cloned, so rebuild an equivalent borrow for the
+    // attempt instead.
+    let attempt = match &request_type {
+      OtherResourceRequestType::GetWithParams(params) => {
+        OtherResourceRequestType::GetWithParams(*params)
+      }
+      OtherResourceRequestType::Get => OtherResourceRequestType::Get,
+      OtherResourceRequestType::Post(payload) => OtherResourceRequestType::Post(*payload),
+    };
+
+    match make_modrinth_request::<T, P>(&client, &url, attempt).await {
+      Ok(value) => return Ok(value),
+      Err(error) => {
+        log::warn!("Modrinth request via {:?} failed: {:?}", source, error);
+        last_error = Some(error);
+      }
+    }
+  }
+
+  Err(last_error.unwrap_or_else(|| ResourceError::NoDownloadApi.into()))
+}
+
+/// Modrinth API URL for the given endpoint, or `None` when the endpoint is
+/// served by another host (translation goes through MCIM directly).
+pub fn get_modrinth_api(
+  source: ContentSource,
+  endpoint: OtherResourceApiEndpoint,
+  param: Option<&str>,
+) -> USTBLResult<Option<String>> {
+  let base_url = modrinth_api_base(source);
+
+  let url = match endpoint {
     OtherResourceApiEndpoint::Search => format!("{}/search", base_url),
     OtherResourceApiEndpoint::VersionPack => {
       let project_id = param.ok_or(ResourceError::ParseError)?;
@@ -59,16 +122,15 @@ pub fn get_modrinth_api(
       let project_id = param.ok_or(ResourceError::ParseError)?;
       format!("{}/project/{}", base_url, project_id)
     }
+    // Translation is an MCIM-only helper endpoint, not part of the official API.
     OtherResourceApiEndpoint::TranslateDesc => {
       let project_id = param.ok_or(ResourceError::ParseError)?;
-      format!(
-        "https://mod.mcimirror.top/translate/modrinth/{}",
-        project_id
-      )
+      format!("{}/translate/modrinth/{}", MCIM_BASE, project_id)
     }
+    OtherResourceApiEndpoint::Categories => return Ok(None),
   };
 
-  Ok(url_str)
+  Ok(Some(url))
 }
 
 // A unified struct for both search projects and get project by id responses
@@ -273,7 +335,12 @@ pub async fn translate_description_modrinth(
   resource_id: &str,
 ) -> USTBLResult<Option<String>> {
   let result = async {
-    let url = get_modrinth_api(OtherResourceApiEndpoint::TranslateDesc, Some(resource_id))?;
+    let url = get_modrinth_api(
+      ContentSource::Mcim,
+      OtherResourceApiEndpoint::TranslateDesc,
+      Some(resource_id),
+    )?
+    .ok_or(ResourceError::NoDownloadApi)?;
     let client = app.state::<reqwest::Client>();
 
     let translation_res = client

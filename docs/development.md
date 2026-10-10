@@ -119,6 +119,40 @@ npm run tauri build -- --target x86_64-pc-windows-msvc
 | `npm run locale diff zh-Hans`    | 检查简体中文翻译键与基准翻译的差异。        |
 | `npm run assets:installer`       | 在 Windows 上重新生成 NSIS 安装器图像资源。 |
 
+## 下载源与镜像
+
+启动器的下载分为两类，各由一个独立的策略开关控制（设置 → 下载 → 源），取值均为 `auto`、`official`、`mirror`：
+
+| 内容                                                     | 配置项                       | 候选源                 |
+| -------------------------------------------------------- | ---------------------------- | ---------------------- |
+| 游戏本体、依赖库、资源索引、Java 与加载器                | `download.source.strategy`   | Mojang 官方、BMCLAPI   |
+| 模组、光影、资源包、整合包等 Modrinth / CurseForge 资源  | `download.resource.strategy` | 官方源、MCIM 镜像站    |
+
+`auto` 与游戏文件一致，按 `basic_info.is_china_mainland_ip` 决定优先级。
+
+### MCIM 镜像
+
+[MCIM](https://www.mcimirror.top/guide/start/getting-started) 同时镜像 Modrinth 与 CurseForge 的元数据与文件，接口路径、参数与响应结构与官方完全一致，因此只需替换域名：
+
+| 原始地址                  | 镜像地址                       |
+| ------------------------- | ------------------------------ |
+| `api.modrinth.com`        | `mod.mcimirror.top/modrinth`   |
+| `cdn.modrinth.com`        | `mod.mcimirror.top`            |
+| `api.curseforge.com`      | `mod.mcimirror.top/curseforge` |
+| `edge.forgecdn.net`       | `mod.mcimirror.top`            |
+| `mediafilez.forgecdn.net` | 不替换，MCIM 不镜像该域名      |
+
+实现位于 `src-tauri/src/resource/helpers/mcim.rs`。`get_content_source_priority_list` 给出源顺序，`content_file_source_candidates` 把单个文件地址展开为「镜像 + 官方」候选，并由 `tasks/download.rs` 的 `DownloadTask` 统一消费，因此模组、光影、资源包、整合包文件、Fabric API 自动下载与模组更新都能回退到备选源，无需各调用点单独处理。使用 `Resumable` 重试策略时，`DownloadTask` 会改为轮换候选源，避免 `with_retry` 的指数退避在尝试镜像之前长时间阻塞。
+
+接入 MCIM 的约定：
+
+- 请求需携带形如 `USTBL/<version>` 的 User-Agent；`utils::web::build_ustbl_client` 已统一设置。
+- 不要对镜像做压力测试，也不要在镜像之外再套一层中转服务。
+- 镜像返回缓存数据，带有 `sync_at` / `checked_at`；时效性敏感的场景应回退官方源。
+- 官方 CurseForge API 需要 API Key，镜像不需要。未配置 `USTBL_CURSEFORGE_API_KEY` 时，启动器会跳过官方 CurseForge 直接使用镜像。
+
+如需将 USTBL 登记为 MCIM 的已知启动器，可在 [mcim-rust-api#12](https://github.com/mcmod-info-mirror/mcim-rust-api/issues/12) 按格式提交启动器名称与版本号。
+
 ## 功能开发约定
 
 ### 新增一个前后端能力
