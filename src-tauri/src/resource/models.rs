@@ -72,6 +72,7 @@ pub enum OtherResourceApiEndpoint {
   VersionPack,
   FromLocal,
   ById,
+  Categories,
   TranslateDesc,
 }
 

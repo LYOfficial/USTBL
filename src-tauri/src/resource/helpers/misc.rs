@@ -1,5 +1,6 @@
 use crate::error::USTBLResult;
 use crate::launcher_config::models::LauncherConfig;
+use crate::resource::helpers::curseforge::translate_description_curseforge;
 use crate::resource::helpers::mod_db::ModDataBase;
 use crate::resource::helpers::modrinth::misc::translate_description_modrinth;
 use crate::resource::models::{
@@ -237,6 +238,9 @@ pub async fn apply_other_resource_enhancements(
   // Get translated description
   let translated_desc = match resource_info.source {
     OtherResourceSource::Modrinth => translate_description_modrinth(app, &resource_info.id).await?,
+    OtherResourceSource::CurseForge => {
+      translate_description_curseforge(app, &resource_info.id).await?
+    }
     _ => None,
   };
 

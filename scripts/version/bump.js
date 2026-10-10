@@ -30,6 +30,25 @@ cargoToml = cargoToml.replace(
 );
 fs.writeFileSync(cargoTomlPath, cargoToml);
 
+// Update Cargo.lock, which records the workspace package version. Leaving it behind makes
+// `cargo test --locked` / `cargo build --locked` fail with "cannot update the lock file".
+// Cargo.lock is edited in place instead of running `cargo update`, so this works offline.
+const cargoLockPath = path.join(__dirname, "../../src-tauri/Cargo.lock");
+const cargoLock = fs.readFileSync(cargoLockPath, "utf8");
+const cargoLockPattern =
+  /(\[\[package\]\]\r?\nname = "USTBL"\r?\nversion = ")[^"]+(")/;
+if (!cargoLockPattern.test(cargoLock)) {
+  console.error("❌ Could not find the USTBL package entry in Cargo.lock");
+  process.exit(1);
+}
+const updatedCargoLock = cargoLock.replace(
+  cargoLockPattern,
+  `$1${newVersion}$2`
+);
+if (updatedCargoLock !== cargoLock) {
+  fs.writeFileSync(cargoLockPath, updatedCargoLock);
+}
+
 console.log(`✅ Updated all version numbers to ${newVersion}`);
 
 // Sync package-lock.json with package.json

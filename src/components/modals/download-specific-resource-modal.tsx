@@ -141,7 +141,12 @@ const DownloadSpecificResourceModal: React.FC<
   const versionLabelToParam = useCallback(
     (label: string) => {
       if (label === "All") return ["All"];
-      if (resource.source === OtherResourceSource.Modrinth)
+      // Both Modrinth and CurseForge match exact versions, so a major version
+      // label has to be expanded into the concrete versions it covers.
+      if (
+        resource.source === OtherResourceSource.Modrinth ||
+        resource.source === OtherResourceSource.CurseForge
+      )
         return gameVersionList.filter((version) => version.startsWith(label));
       return [label];
     },

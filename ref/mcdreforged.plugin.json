@@ -1,6 +1,6 @@
 {
   "id": "ustbl_message_sync",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "name": "USTBL Message Sync",
   "author": "USTBL Team",
   "description": "通过 vUSTB 同步服务器与 USTBL 纯文本消息",

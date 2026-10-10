@@ -583,6 +583,13 @@
           "auto": "Sélection automatique",
           "official": "Priorité à la source officielle",
           "mirror": "Priorité au miroir"
+        },
+        "resourceStrategy": {
+          "title": "Stratégie de source pour les ressources",
+          "description": "Mode de récupération des métadonnées et des fichiers Modrinth / CurseForge (mods, shaders, packs de ressources) ; le miroir MCIM peut être utilisé pour accélérer",
+          "auto": "Sélection automatique",
+          "official": "Priorité à la source officielle",
+          "mirror": "Priorité au miroir (MCIM)"
         }
       }
     },
@@ -1577,6 +1584,7 @@
       "offline": "Hors ligne",
       "bmclapi": "BMCLAPI",
       "curseforge": "CurseForge",
+      "mcim": "Miroir MCIM",
       "modrinth": "Modrinth",
       "mojang": "Mojang",
       "forge": "Forge",

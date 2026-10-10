@@ -95,6 +95,9 @@ export interface LauncherConfig {
     source: {
       strategy: string;
     };
+    resource: {
+      strategy: string;
+    };
     transmission: {
       autoConcurrent: boolean;
       concurrentCount: number;
@@ -259,6 +262,9 @@ export const defaultConfig: LauncherConfig = {
   },
   download: {
     source: {
+      strategy: "auto",
+    },
+    resource: {
       strategy: "auto",
     },
     transmission: {

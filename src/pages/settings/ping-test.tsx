@@ -29,6 +29,8 @@ const PingTestPage = () => {
         },
         {
           modrinth: "https://modrinth.com",
+          curseforge: "https://api.curseforge.com",
+          mcim: "https://mod.mcimirror.top",
         },
         {
           mojang: "https://api.mojang.com",

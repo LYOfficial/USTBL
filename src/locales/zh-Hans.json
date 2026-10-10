@@ -583,6 +583,13 @@
           "auto": "自动选择",
           "official": "官方源优先",
           "mirror": "镜像源优先"
+        },
+        "resourceStrategy": {
+          "title": "资源下载源选择策略",
+          "description": "模组、光影、资源包等 Modrinth / CurseForge 资源的信息与文件获取方式，可选用 MCIM 镜像站加速",
+          "auto": "自动选择",
+          "official": "官方源优先",
+          "mirror": "镜像源优先（MCIM）"
         }
       }
     },
@@ -1577,6 +1584,7 @@
       "offline": "离线",
       "bmclapi": "BMCLAPI",
       "curseforge": "CurseForge",
+      "mcim": "MCIM 镜像站",
       "modrinth": "Modrinth",
       "mojang": "Mojang",
       "forge": "Forge",

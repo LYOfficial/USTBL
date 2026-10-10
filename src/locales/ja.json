@@ -583,6 +583,13 @@
           "auto": "スマート選択",
           "official": "公式ソース優先",
           "mirror": "ミラーソース優先"
+        },
+        "resourceStrategy": {
+          "title": "リソースのダウンロードソースポリシー",
+          "description": "Mod・シェーダー・リソースパックなどの Modrinth / CurseForge リソースのメタデータとファイルの取得方法。MCIM ミラーで高速化できます",
+          "auto": "スマート選択",
+          "official": "公式ソース優先",
+          "mirror": "ミラーソース優先（MCIM）"
         }
       }
     },
@@ -1577,6 +1584,7 @@
       "offline": "オフライン",
       "bmclapi": "BMCLAPI",
       "curseforge": "CurseForge",
+      "mcim": "MCIM ミラー",
       "modrinth": "Modrinth",
       "mojang": "Mojang",
       "forge": "Forge",
