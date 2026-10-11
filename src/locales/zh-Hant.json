@@ -2810,7 +2810,7 @@
     },
     "notice": {
       "title": "Note",
-      "description": "開啟後更新 Windows Hosts 到 CDN 位址；停止加速後會移除 USTBL 管理的 Hosts 條目。"
+      "description": "開啟後透過 vUSTB GitHub 代理存取網站；連線與驗證通過後才接管 Windows 代理，停止後恢復原設定。"
     },
     "toast": {
       "started": "Acceleration started",
@@ -2824,7 +2824,9 @@
       "title": "節點連線性",
       "test": "測試連線",
       "empty": "測試加速節點後顯示延遲。",
-      "failed": "無法存取"
+      "failed": "無法存取",
+      "proxy": "檢測路徑：目前加速代理",
+      "direct": "檢測路徑：直接連線，不經過加速代理"
     }
   },
   "MessagesPage": {

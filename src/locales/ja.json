@@ -2810,7 +2810,7 @@
     },
     "notice": {
       "title": "Note",
-      "description": "有効にすると Windows の Hosts を CDN アドレスに更新します。停止すると USTBL が管理するエントリを削除します。"
+      "description": "GitHub サイトへのアクセスに vUSTB プロキシを使用します。接続と認証の成功後に Windows のプロキシ設定を変更し、停止時に元の設定に戻します。"
     },
     "toast": {
       "started": "Acceleration started",
@@ -2824,7 +2824,9 @@
       "title": "ノード接続性",
       "test": "接続をテスト",
       "empty": "加速ノードをテストすると遅延が表示されます。",
-      "failed": "利用不可"
+      "failed": "利用不可",
+      "proxy": "テスト経路：現在の高速化プロキシ",
+      "direct": "テスト経路：高速化を使わない直接接続"
     }
   },
   "MessagesPage": {

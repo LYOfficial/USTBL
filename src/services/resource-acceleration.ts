@@ -15,6 +15,7 @@ export interface ResourceAccelerationLatency {
   host: string;
   latencyMs: number | null;
   available: boolean;
+  error: string | null;
 }
 
 export class ResourceAccelerationService {

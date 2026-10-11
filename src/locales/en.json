@@ -2810,7 +2810,7 @@
     },
     "notice": {
       "title": "Note",
-      "description": "USTBL updates Windows Hosts entries to CDN addresses. Stop acceleration to remove the entries managed by USTBL."
+      "description": "GitHub websites use the vUSTB proxy. Windows proxy settings change only after connection and authentication succeed; stopping restores your previous settings."
     },
     "toast": {
       "started": "Acceleration started",
@@ -2824,7 +2824,9 @@
       "title": "Node connectivity",
       "test": "Test connection",
       "empty": "Test the acceleration nodes to view latency.",
-      "failed": "Unavailable"
+      "failed": "Unavailable",
+      "proxy": "Test route: active acceleration proxy",
+      "direct": "Test route: direct connection without acceleration"
     }
   },
   "MessagesPage": {

@@ -6,6 +6,7 @@ import {
   Tag,
   TagLabel,
   Text,
+  Tooltip,
   VStack,
 } from "@chakra-ui/react";
 import { listen } from "@tauri-apps/api/event";
@@ -80,6 +81,7 @@ const ResourceAccelerationSettingsPage = () => {
 
   const handleStart = async () => {
     setLoading(true);
+    setLatencies([]);
     const response = await ResourceAccelerationService.start(githubEnabled);
     setLoading(false);
     if (response.status === "success") {
@@ -103,6 +105,7 @@ const ResourceAccelerationSettingsPage = () => {
     setLoading(false);
     if (response.status === "success") {
       setStatus(response.data);
+      setLatencies([]);
       setProgress({ completed: 0, total: 0, message: "" });
       toast({
         title: t("ResourceAccelerationSettingsPage.toast.stopped"),
@@ -170,7 +173,11 @@ const ResourceAccelerationSettingsPage = () => {
                 colorScheme={primaryColor}
                 isLoading={loading}
                 onClick={status.running ? handleStop : handleStart}
-                isDisabled={loading || (!status.running && !githubEnabled)}
+                isDisabled={
+                  loading ||
+                  latencyLoading ||
+                  (!status.running && !githubEnabled)
+                }
               >
                 {t(
                   status.running
@@ -220,6 +227,18 @@ const ResourceAccelerationSettingsPage = () => {
           title: t("ResourceAccelerationSettingsPage.latency.title"),
           description: (
             <VStack align="stretch" spacing={1} width="100%">
+              <Text fontSize="xs" className="secondary-text">
+                {t(
+                  status.running
+                    ? "ResourceAccelerationSettingsPage.latency.proxy"
+                    : "ResourceAccelerationSettingsPage.latency.direct"
+                )}
+              </Text>
+              {latencies.find((item) => item.error)?.error && (
+                <Text fontSize="xs" color="red.500" overflowWrap="anywhere">
+                  {latencies.find((item) => item.error)?.error}
+                </Text>
+              )}
               {latencies.length === 0 ? (
                 <Text fontSize="xs" className="secondary-text">
                   {t("ResourceAccelerationSettingsPage.latency.empty")}
@@ -228,26 +247,28 @@ const ResourceAccelerationSettingsPage = () => {
                 latencies.map((item) => (
                   <HStack key={item.host} justify="space-between" width="100%">
                     <Text fontSize="xs">{item.host}</Text>
-                    <Tag
-                      size="sm"
-                      colorScheme={
-                        !item.available
-                          ? "red"
-                          : (item.latencyMs ?? 0) < 200
-                            ? "green"
-                            : (item.latencyMs ?? 0) < 800
-                              ? "yellow"
-                              : "orange"
-                      }
-                    >
-                      <TagLabel>
-                        {item.available
-                          ? `${item.latencyMs} ms`
-                          : t(
-                              "ResourceAccelerationSettingsPage.latency.failed"
-                            )}
-                      </TagLabel>
-                    </Tag>
+                    <Tooltip label={item.error} isDisabled={!item.error}>
+                      <Tag
+                        size="sm"
+                        colorScheme={
+                          !item.available
+                            ? "red"
+                            : (item.latencyMs ?? 0) < 200
+                              ? "green"
+                              : (item.latencyMs ?? 0) < 800
+                                ? "yellow"
+                                : "orange"
+                        }
+                      >
+                        <TagLabel>
+                          {item.available
+                            ? `${item.latencyMs} ms`
+                            : t(
+                                "ResourceAccelerationSettingsPage.latency.failed"
+                              )}
+                        </TagLabel>
+                      </Tag>
+                    </Tooltip>
                   </HStack>
                 ))
               )}

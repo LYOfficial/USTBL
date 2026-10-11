@@ -2810,7 +2810,7 @@
     },
     "notice": {
       "title": "Note",
-      "description": "USTBL met à jour le fichier Hosts de Windows avec des adresses CDN. L’arrêt supprime les entrées gérées par USTBL."
+      "description": "Les sites GitHub utilisent le proxy vUSTB. Les paramètres proxy de Windows ne changent qu’après une connexion et une authentification réussies ; l’arrêt rétablit les paramètres précédents."
     },
     "toast": {
       "started": "Acceleration started",
@@ -2824,7 +2824,9 @@
       "title": "Connectivité des nœuds",
       "test": "Tester la connexion",
       "empty": "Testez les nœuds pour afficher la latence.",
-      "failed": "Indisponible"
+      "failed": "Indisponible",
+      "proxy": "Trajet du test : proxy d’accélération actif",
+      "direct": "Trajet du test : connexion directe sans accélération"
     }
   },
   "MessagesPage": {

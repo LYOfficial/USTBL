@@ -120,39 +120,61 @@ impl ResourceAccelerationService {
   }
 }
 
-pub async fn test_latency(github: bool) -> Vec<ResourceAccelerationLatency> {
+pub async fn test_latency(github: bool, running: bool) -> Vec<ResourceAccelerationLatency> {
   let mut hosts = Vec::new();
   if github {
     hosts.extend(GITHUB_PROGRESS_HOSTS);
   }
-  let client = reqwest::Client::builder()
-    .timeout(Duration::from_secs(8))
-    .build();
-  let Ok(client) = client else {
-    return hosts
-      .into_iter()
-      .map(|host| ResourceAccelerationLatency {
-        host: host.to_string(),
-        latency_ms: None,
-        available: false,
-      })
-      .collect();
+  // 检测明确使用当前加速通道，避免环境代理覆盖检测路径。
+  let mut builder = reqwest::Client::builder()
+    .no_proxy()
+    .timeout(Duration::from_secs(15));
+  if running {
+    builder = builder.proxy(
+      reqwest::Proxy::all(format!(
+        "http://{}:{}",
+        super::browser_proxy::LOCAL_PROXY_HOST,
+        super::browser_proxy::LOCAL_PROXY_PORT
+      ))
+      .unwrap(),
+    );
+  }
+  let client = match builder.build() {
+    Ok(client) => client,
+    Err(error) => {
+      return hosts
+        .into_iter()
+        .map(|host| ResourceAccelerationLatency {
+          host: host.to_string(),
+          latency_ms: None,
+          available: false,
+          error: Some(error.to_string()),
+        })
+        .collect();
+    }
   };
   let mut tasks = Vec::with_capacity(hosts.len());
   for host in hosts {
     let client = client.clone();
     tasks.push(tokio::spawn(async move {
       let started = std::time::Instant::now();
-      let available = client
-        .head(format!("https://{host}/"))
-        .send()
-        .await
-        .map(|_| true)
-        .unwrap_or(false);
+      let result = client.head(format!("https://{host}/")).send().await;
+      let available = result.is_ok();
+      let error = result.err().map(|error| {
+        use std::error::Error;
+        format!(
+          "{error}: {}",
+          error
+            .source()
+            .map(|source| source.to_string())
+            .unwrap_or_default()
+        )
+      });
       ResourceAccelerationLatency {
         host: host.to_string(),
         latency_ms: available.then(|| started.elapsed().as_millis() as u64),
         available,
+        error,
       }
     }));
   }
