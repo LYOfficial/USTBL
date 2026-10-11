@@ -34,4 +34,6 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml --lib real_core_accepts
 
 已验证真实 mihomo 配置加载、认证控制接口、节点查询/选择、停止清理，以及非管理员拒绝启动；本地代理测试覆盖 HTTP 请求体、CONNECT 非标准端口、隧道预读数据、认证失败和请求头上限。实际主窗口导航与正常退出已验证。
 
-测试环境没有公网 IPv6，且进程未以管理员运行，因此未完成校园网免流或真实 TUN 路由测试。当前 vUSTB 公网代理端口连接超时。GitHub 加速的桌面联网检查还触发了 Windows Defender 的 `Behavior:Win32/LummaStealer.CER!MTB` 检测，事件记录确认测试进程被终止；未改变防病毒设置，尚不能确定检测原因或声称全链路验证通过。应在发行前核查构建与第三方依赖，并通过安全软件厂商的正常分析流程核实检测。
+网络复核确认，本机使用 ULA IPv6 地址并经路由器地址转换访问 IPv6 外网。启动检查接受具有 IPv6 路由的公网或 ULA 源地址，随后仍需验证真实 WARP 通道，避免误拒绝 IPv6 地址转换网络。实际网络路由测试 `current_network_has_an_ipv6_route` 默认忽略，可显式运行；该测试不启用 TUN。
+
+进程未以管理员运行，因此未完成校园网免流或真实 TUN 路由测试。当前 vUSTB 公网代理端口连接超时。GitHub 加速的桌面联网检查还触发了 Windows Defender 的 `Behavior:Win32/LummaStealer.CER!MTB` 检测，事件记录确认测试进程被终止；未改变防病毒设置，尚不能确定检测原因或声称全链路验证通过。应在发行前核查构建与第三方依赖，并通过安全软件厂商的正常分析流程核实检测。

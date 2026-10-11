@@ -65,6 +65,27 @@ fn read_settings(root: &Path) -> USTBLResult<Ipv6Settings> {
   }
 }
 
+fn usable_ipv6_source(address: std::net::IpAddr) -> bool {
+  match address {
+    std::net::IpAddr::V6(address) => {
+      let prefix = address.segments()[0];
+      prefix & 0xe000 == 0x2000 || prefix & 0xfe00 == 0xfc00
+    }
+    _ => false,
+  }
+}
+
+async fn verify_ipv6_route() -> USTBLResult<()> {
+  let probe = tokio::net::UdpSocket::bind("[::]:0").await?;
+  probe.connect("[2606:4700:103::1]:443").await.map_err(|_| {
+    USTBLError("未检测到可用 IPv6 路由，请先认证校园网并连接 USTB-Student 或 USTB-V6".into())
+  })?;
+  if !usable_ipv6_source(probe.local_addr()?.ip()) {
+    return Err(USTBLError("未检测到可用 IPv6 地址".into()));
+  }
+  Ok(())
+}
+
 impl Ipv6Service {
   fn status(&mut self, root: &Path) -> USTBLResult<Ipv6Status> {
     if let Some(process) = &mut self.process {
@@ -160,18 +181,7 @@ impl Ipv6Service {
     }
     runtime::verify_binary(root).await?;
     let bypass = config::normalize_bypass(&settings.bypass)?;
-    let probe = tokio::net::UdpSocket::bind("[::]:0").await?;
-    probe.connect("[2606:4700:103::1]:443").await.map_err(|_| {
-      USTBLError("未检测到可用 IPv6 路由，请先认证校园网并连接 USTB-Student 或 USTB-V6".into())
-    })?;
-    let public_ipv6 = match probe.local_addr()?.ip() {
-      std::net::IpAddr::V6(address) => address.segments()[0] & 0xe000 == 0x2000,
-      _ => false,
-    };
-    if !public_ipv6 {
-      return Err(USTBLError("未检测到可用 IPv6 地址".into()));
-    }
-    drop(probe);
+    verify_ipv6_route().await?;
     let device_path = root.join("device.json");
     let device = match tokio::fs::read(&device_path).await {
       Ok(data) => serde_json::from_slice::<warp::WarpDevice>(&data)?,
@@ -407,6 +417,29 @@ pub async fn shutdown(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn ipv6_source_supports_global_and_translated_unique_local_addresses() {
+    for source in ["2001:db8::1", "fd12:3456:789a::1", "fc00::1"] {
+      assert!(usable_ipv6_source(source.parse().unwrap()));
+    }
+    for source in [
+      "::",
+      "::1",
+      "fe80::1",
+      "ff02::1",
+      "::ffff:192.0.2.1",
+      "192.0.2.1",
+    ] {
+      assert!(!usable_ipv6_source(source.parse().unwrap()));
+    }
+  }
+
+  #[tokio::test]
+  #[ignore = "requires a live IPv6 route; does not enable TUN"]
+  async fn current_network_has_an_ipv6_route() {
+    verify_ipv6_route().await.unwrap();
+  }
 
   #[tokio::test]
   async fn stop_is_idempotent_and_removes_sensitive_config() {
