@@ -12,6 +12,7 @@ import { useDragAndDrop, useTauriFileDrop } from "@/hooks/drag-and-drop";
 import useKeyboardShortcut from "@/hooks/keyboard-shortcut";
 import { AccountService } from "@/services/account";
 import { appendFriendMessage } from "@/services/friend-message-cache";
+import { buildUpdateNotificationMessage } from "@/utils/tray-notification";
 
 // Handle global keyboard shortcuts, DnD events, etc.
 const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
@@ -25,7 +26,9 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
   const isStandAlone =
     router.pathname.startsWith("/standalone") ||
     router.pathname === "/tray-popup";
-  const hasNotifiedNewVersion = useRef(false);
+  // version that has already been announced, so a repeated check does not
+  // notify twice, while a later release still notifies again.
+  const notifiedVersionRef = useRef<string | null>(null);
   const knownMessageIds = useRef<Set<number> | null>(null);
 
   const isMainWindowHidden = async () => {
@@ -43,6 +46,28 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
       mainWindow.isMinimized().catch(() => false),
     ]);
     return !visible || minimized;
+  };
+
+  // True when the main window is not the active window: minimized to the tray,
+  // hidden, or simply behind other windows. Used to decide whether a notice also
+  // needs the bottom-right popup, which focuses itself and would otherwise steal
+  // focus from a launcher the user is actively using.
+  const isMainWindowUnfocused = async () => {
+    let mainWindow;
+    try {
+      mainWindow = (await getAllWindows()).find(
+        (window) => window.label === "main"
+      );
+    } catch {
+      return false;
+    }
+    if (!mainWindow) return false;
+    const [visible, minimized, focused] = await Promise.all([
+      mainWindow.isVisible().catch(() => true),
+      mainWindow.isMinimized().catch(() => false),
+      mainWindow.isFocused().catch(() => true),
+    ]);
+    return !visible || minimized || !focused;
   };
 
   useEffect(() => {
@@ -106,14 +131,23 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
   }, [openSharedModal, selectedInstance, toast]);
 
   useEffect(() => {
-    if (
-      !isStandAlone &&
-      newerVersion.version &&
-      !hasNotifiedNewVersion.current
-    ) {
-      hasNotifiedNewVersion.current = true;
-      openSharedModal("notify-new-version", { newVersion: newerVersion });
-    }
+    const version = newerVersion.version;
+    if (isStandAlone || !version) return;
+    // The config context re-checks for updates periodically, so only announce a
+    // version that has not been announced yet.
+    if (notifiedVersionRef.current === version) return;
+    notifiedVersionRef.current = version;
+
+    openSharedModal("notify-new-version", { newVersion: newerVersion });
+
+    // The launcher may be minimized to the tray or behind other windows: mirror
+    // the notice to the bottom-right popup so the update is still noticed.
+    void isMainWindowUnfocused().then((unfocused) => {
+      if (!unfocused) return;
+      void invoke("show_message_notification", {
+        message: buildUpdateNotificationMessage(version),
+      });
+    });
   }, [isStandAlone, newerVersion, openSharedModal]);
 
   useEffect(() => {

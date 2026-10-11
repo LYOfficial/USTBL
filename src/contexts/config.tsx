@@ -5,6 +5,7 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
 } from "react";
 import { useToast } from "@/contexts/toast";
@@ -34,6 +35,12 @@ const LauncherConfigContext = createContext<
   LauncherConfigContextType | undefined
 >(undefined);
 
+// Poll for new launcher releases while the launcher stays open, so a release
+// published during a long-running session is announced without a restart.
+const UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1000;
+// Ignore extra checks fired in quick succession (focus + visibilitychange).
+const UPDATE_CHECK_MIN_GAP_MS = 60 * 1000;
+
 export const LauncherConfigContextProvider: React.FC<{
   children: React.ReactNode;
 }> = ({ children }) => {
@@ -47,6 +54,8 @@ export const LauncherConfigContextProvider: React.FC<{
   const [newerVersion, setNewerVersion] = useState<VersionMetaInfo>(
     defaultVersionMetaInfo
   );
+  // timestamp of the last update check, used to throttle focus-triggered checks.
+  const lastUpdateCheckAtRef = useRef(0);
 
   const handleRetrieveLauncherConfig = useCallback(() => {
     ConfigService.retrieveLauncherConfig().then((response) => {
@@ -143,6 +152,7 @@ export const LauncherConfigContextProvider: React.FC<{
   // check launcher update
   const handleCheckLauncherUpdate =
     useCallback(async (): Promise<VersionMetaInfo> => {
+      lastUpdateCheckAtRef.current = Date.now();
       const response = await ConfigService.checkLauncherUpdate();
       if (response.status === "success") {
         setNewerVersion(
@@ -155,8 +165,31 @@ export const LauncherConfigContextProvider: React.FC<{
       return defaultVersionMetaInfo;
     }, []);
 
+  // Check once on mount, then keep polling while the launcher stays open, so a
+  // release published mid-session is announced without restarting the launcher.
   useEffect(() => {
     handleCheckLauncherUpdate();
+    const timer = window.setInterval(
+      () => void handleCheckLauncherUpdate(),
+      UPDATE_CHECK_INTERVAL_MS
+    );
+    return () => window.clearInterval(timer);
+  }, [handleCheckLauncherUpdate]);
+
+  // Re-check when the window regains focus, throttled to avoid spamming the API.
+  useEffect(() => {
+    const checkIfStale = () => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastUpdateCheckAtRef.current < UPDATE_CHECK_MIN_GAP_MS)
+        return;
+      void handleCheckLauncherUpdate();
+    };
+    window.addEventListener("focus", checkIfStale);
+    document.addEventListener("visibilitychange", checkIfStale);
+    return () => {
+      window.removeEventListener("focus", checkIfStale);
+      document.removeEventListener("visibilitychange", checkIfStale);
+    };
   }, [handleCheckLauncherUpdate]);
 
   return (
