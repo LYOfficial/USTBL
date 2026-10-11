@@ -6,89 +6,27 @@ import {
   Textarea,
   VStack,
 } from "@chakra-ui/react";
-import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { OptionItemGroup } from "@/components/common/option-item";
 import { useLauncherConfig } from "@/contexts/config";
-import { useToast } from "@/contexts/toast";
-import { InvokeResponse } from "@/models/response";
-import {
-  Ipv6AccelerationService,
-  Ipv6Node,
-  Ipv6Status,
-} from "@/services/ipv6-acceleration";
+import { useIpv6Acceleration } from "@/hooks/ipv6-acceleration";
 
 export default function Ipv6AccelerationSettings() {
   const { t } = useTranslation();
-  const toast = useToast();
   const { config } = useLauncherConfig();
-  const [status, setStatus] = useState<Ipv6Status>();
-  const [busy, setBusy] = useState(false);
-  const [nodes, setNodes] = useState<Ipv6Node[]>([]);
-  const [bypass, setBypass] = useState("");
-  const [error, setError] = useState("");
-  const mounted = useRef(false);
-  const pending = useRef(false);
+  const {
+    status,
+    busy,
+    nodes,
+    bypass,
+    setBypass,
+    error,
+    toggle,
+    install,
+    refreshNodes,
+    selectNode,
+  } = useIpv6Acceleration();
   const key = "ResourceAccelerationSettingsPage.ipv6";
-
-  const refresh = useCallback(async () => {
-    if (pending.current) return;
-    const response = await Ipv6AccelerationService.status();
-    if (!mounted.current || pending.current) return;
-    if (response.status === "success") {
-      setStatus(response.data);
-      if (response.data.error) setError(response.data.error);
-    } else setError(response.details || response.message);
-  }, []);
-
-  useEffect(() => {
-    mounted.current = true;
-    Ipv6AccelerationService.status().then((response) => {
-      if (!mounted.current) return;
-      if (response.status === "success") {
-        setStatus(response.data);
-        setBypass(response.data.settings.bypass.join("\n"));
-        setError(response.data.error || "");
-      } else setError(response.details || response.message);
-    });
-    const timer = window.setInterval(refresh, 3000);
-    return () => {
-      mounted.current = false;
-      window.clearInterval(timer);
-    };
-  }, [refresh]);
-
-  const run = async <T,>(
-    action: () => Promise<InvokeResponse<T>>,
-    success: (data: T) => void
-  ) => {
-    if (pending.current) return;
-    pending.current = true;
-    setBusy(true);
-    setError("");
-    try {
-      const response = await action();
-      if (!mounted.current) return;
-      if (response.status === "success") success(response.data);
-      else {
-        setError(response.details || response.message);
-        toast({
-          title: response.message,
-          description: response.details,
-          status: "error",
-        });
-      }
-    } finally {
-      pending.current = false;
-      if (mounted.current) setBusy(false);
-    }
-  };
-
-  const acceptStatus = (data: Ipv6Status) => {
-    setStatus(data);
-    setNodes([]);
-    setError(data.error || "");
-  };
   const selected = nodes.find((node) => node.selected)?.name || "Auto";
   return (
     <OptionItemGroup
@@ -127,9 +65,7 @@ export default function Ipv6AccelerationSettings() {
                   size="xs"
                   isLoading={busy}
                   isDisabled={!status.supported || busy}
-                  onClick={() =>
-                    run(Ipv6AccelerationService.install, acceptStatus)
-                  }
+                  onClick={install}
                 >
                   {t(`${key}.install`)}
                 </Button>
@@ -144,19 +80,7 @@ export default function Ipv6AccelerationSettings() {
                   busy ||
                   (!status.running && (!status.installed || !status.elevated))
                 }
-                onClick={() =>
-                  run(
-                    () =>
-                      status?.running
-                        ? Ipv6AccelerationService.stop()
-                        : Ipv6AccelerationService.start({
-                            bypass: bypass
-                              .split(/\r?\n/)
-                              .filter((line) => line.trim()),
-                          }),
-                    acceptStatus
-                  )
-                }
+                onClick={toggle}
               >
                 {t(`${key}.${status?.running ? "stop" : "start"}`)}
               </Button>
@@ -191,18 +115,7 @@ export default function Ipv6AccelerationSettings() {
                 value={selected}
                 aria-label={t(`${key}.nodes`)}
                 isDisabled={!status?.running || busy}
-                onChange={(event) =>
-                  run(
-                    () => Ipv6AccelerationService.select(event.target.value),
-                    () =>
-                      setNodes((items) =>
-                        items.map((node) => ({
-                          ...node,
-                          selected: node.name === event.target.value,
-                        }))
-                      )
-                  )
-                }
+                onChange={(event) => selectNode(event.target.value)}
               >
                 {nodes.length === 0 && (
                   <option value="Auto">{t(`${key}.auto`)}</option>
@@ -219,9 +132,7 @@ export default function Ipv6AccelerationSettings() {
                   size="xs"
                   variant="outline"
                   isDisabled={!status?.running || busy}
-                  onClick={() =>
-                    run(() => Ipv6AccelerationService.nodes(), setNodes)
-                  }
+                  onClick={() => refreshNodes()}
                 >
                   {t(`${key}.refresh`)}
                 </Button>
@@ -229,9 +140,7 @@ export default function Ipv6AccelerationSettings() {
                   size="xs"
                   variant="outline"
                   isDisabled={!status?.running || busy}
-                  onClick={() =>
-                    run(() => Ipv6AccelerationService.nodes(true), setNodes)
-                  }
+                  onClick={() => refreshNodes(true)}
                 >
                   {t(`${key}.test`)}
                 </Button>
