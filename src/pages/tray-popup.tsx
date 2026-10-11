@@ -15,6 +15,7 @@ import { useCallback, useEffect, useState } from "react";
 import { VustbFriend } from "@/models/vustb";
 import { AccountService } from "@/services/account";
 import { ResourceAccelerationService } from "@/services/resource-acceleration";
+import { parseUpdateNotificationVersion } from "@/utils/tray-notification";
 
 type View = "menu" | "friends" | "notification";
 
@@ -136,7 +137,11 @@ export default function TrayPopup() {
           setMessage(event.payload.message || "");
           void resizePopup(event.payload.view);
           if (event.payload.view === "notification") {
-            window.setTimeout(() => void closePopup(), 4500);
+            // Give an update notice more time to be read than a chat message.
+            const isUpdate = Boolean(
+              parseUpdateNotificationVersion(event.payload.message || "")
+            );
+            window.setTimeout(() => void closePopup(), isUpdate ? 15000 : 4500);
           }
         }
       );
@@ -241,21 +246,38 @@ export default function TrayPopup() {
     </Box>
   );
 
-  const renderNotification = () => (
-    <Flex direction="column" h="100%">
-      <Box flex="1" px={4} py={5}>
-        <Text fontSize="16px" fontWeight="600" color={PANEL_TEXT} mb={2}>
-          {message.includes("失败") ? "加速启动失败" : "消息提醒"}
-        </Text>
-        <Text color={PANEL_MUTED_TEXT} fontSize="14px" lineHeight="1.5">
-          {message}
-        </Text>
-      </Box>
-      <Box borderTop="1px solid" borderColor={PANEL_SEPARATOR}>
-        <MenuItem onClick={() => changeView("menu")}>返回</MenuItem>
-      </Box>
-    </Flex>
-  );
+  const renderNotification = () => {
+    const updateVersion = parseUpdateNotificationVersion(message);
+    const title = updateVersion
+      ? "发现新版本"
+      : message.includes("失败")
+        ? "加速启动失败"
+        : "消息提醒";
+    const body = updateVersion
+      ? `USTBL ${updateVersion} 已发布，点击打开启动器查看更新日志。`
+      : message;
+    return (
+      <Flex direction="column" h="100%">
+        <Box flex="1" px={4} py={5}>
+          <Text fontSize="16px" fontWeight="600" color={PANEL_TEXT} mb={2}>
+            {title}
+          </Text>
+          <Text color={PANEL_MUTED_TEXT} fontSize="14px" lineHeight="1.5">
+            {body}
+          </Text>
+        </Box>
+        <Box borderTop="1px solid" borderColor={PANEL_SEPARATOR}>
+          {updateVersion ? (
+            <MenuItem onClick={() => void triggerMain("ustbl:tray-show-main")}>
+              打开 USTBL
+            </MenuItem>
+          ) : (
+            <MenuItem onClick={() => changeView("menu")}>返回</MenuItem>
+          )}
+        </Box>
+      </Flex>
+    );
+  };
 
   const renderFriends = () => (
     <Flex direction="column" h="100%" minH={0}>
