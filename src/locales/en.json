@@ -2639,6 +2639,50 @@
           "title": "Failed to delete file"
         }
       }
+    },
+    "ipv6 acceleration": {
+      "status": {
+        "success": "Operation completed",
+        "error": {
+          "title": "IPv6 operation failed",
+          "description": {}
+        }
+      },
+      "install": {
+        "success": "Operation completed",
+        "error": {
+          "title": "IPv6 operation failed",
+          "description": {}
+        }
+      },
+      "start": {
+        "success": "Operation completed",
+        "error": {
+          "title": "IPv6 operation failed",
+          "description": {}
+        }
+      },
+      "stop": {
+        "success": "Operation completed",
+        "error": {
+          "title": "IPv6 operation failed",
+          "description": {}
+        }
+      },
+      "nodes": {
+        "success": "Operation completed",
+        "error": {
+          "title": "IPv6 operation failed",
+          "description": {}
+        }
+      },
+      "select": {
+        "success": "Operation completed",
+        "error": {
+          "title": "IPv6 operation failed",
+          "description": {}
+        }
+      }
     }
   },
   "SettingsLayout": {
@@ -2827,6 +2871,28 @@
       "failed": "Unavailable",
       "proxy": "Test route: active acceleration proxy",
       "direct": "Test route: direct connection without acceleration"
+    },
+    "ipv6": {
+      "title": "IPv6 free traffic",
+      "current": "WARP over IPv6",
+      "description": "Connect to Cloudflare WARP via IPv6 and forward applications through TUN.",
+      "running": "Running",
+      "stopped": "Stopped",
+      "unsupported": "Requires Windows x64 or ARM64.",
+      "administrator": "TUN requires administrator permissions. Exit USTBL and run it as administrator.",
+      "working": "Working… Download and startup may take a moment.",
+      "install": "Download core",
+      "start": "Start IPv6",
+      "stop": "Stop IPv6",
+      "bypass": "Campus bypass",
+      "bypassDescription": "One domain or CIDR per line; saved on start. Changes apply after restarting IPv6.",
+      "nodes": "Access point",
+      "nodesDescription": "28 IPv6 endpoints; test latency after starting. An empty delay means no result or unreachable.",
+      "auto": "Automatic selection",
+      "refresh": "Refresh",
+      "test": "Test latency",
+      "notice": "Network requirements",
+      "noticeDescription": "Authenticate first on USTB-Student or USTB-V6; USTB_Wi-Fi does not support free IPv6. Requires usable public IPv6. Bypassed traffic follows normal billing. Stops TUN on exit; actual free traffic depends on campus policy."
     }
   },
   "MessagesPage": {

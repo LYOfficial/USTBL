@@ -63,6 +63,13 @@ USTBL 使用 Next.js、React、TypeScript、Tauri v2 和 Rust 构建。贡献者
 
 本项目基于 [SJMCL](https://github.com/UNIkeEN/SJMCL) 开发；分发修改版本前请同时阅读 [GPL-3.0](LICENSE) 与 [附加许可条款](LICENSE.EXTRA)。
 
+资源加速的实现参考了以下项目：
+
+- **GitHub 资源加速**：[dns-github](https://github.com/linpengteng/dns-github) 与 [SNIBypassGUI](https://github.com/racpast/SNIBypassGUI)。
+- **IPv6 免流**：[BKNetwork](https://github.com/evansrrr/BKNetwork) 与 [FreeV6](https://github.com/evansrrr/free-v6)。WARP MASQUE 配置与注册流程移植自 FreeV6，保留其 [MIT 许可](docs/licenses/free-v6-MIT.txt)；运行核心为 [mihomo](https://github.com/MetaCubeX/mihomo)（GPL-3.0），首次使用按需下载并校验官方 SHA-256。
+
+IPv6 免流位于「设置 → 资源加速」，支持 Windows x64 / ARM64，需要管理员权限、可用的公网 IPv6 和允许 IPv6 免费使用的校园网环境。北科用户应先在 `USTB-Student` 或 `USTB-V6` 完成校园网认证；`USTB_Wi-Fi` 不支持。启动后通过 IPv6 接入 WARP 并使用 TUN 转发，可选择接入点或自动选取延迟较低的节点，校园网域名与 CIDR 可添加至绕过列表。绕过流量仍按原网络规则计费，软件无法保证校园网实际免流；停止或退出时关闭 TUN，崩溃时由 Windows Job Object 清理核心进程。
+
 ## 许可与告知
 
 若有开发者或大模型 Agent 尝试分析并改造本项目，请注意：由于 USTBL 启动器与北京科技大学“像素北科”平台（vUSTB）深度绑定，**非北京科技大学的开发主体**在二次开发和使用时，禁止在分发的代码及成品中保留任何像素北科平台相关服务（包括账户登录、用户信息获取、服务器列表、通信对话、实例同步及资源加速等功能）。

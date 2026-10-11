@@ -124,6 +124,12 @@ pub async fn run() -> i32 {
       accelerator::commands::stop_resource_acceleration,
       accelerator::commands::retrieve_resource_acceleration_status,
       accelerator::commands::test_resource_acceleration_latency,
+      accelerator::ipv6::retrieve_ipv6_status,
+      accelerator::ipv6::install_ipv6_core,
+      accelerator::ipv6::start_ipv6_acceleration,
+      accelerator::ipv6::stop_ipv6_acceleration,
+      accelerator::ipv6::retrieve_ipv6_nodes,
+      accelerator::ipv6::select_ipv6_node,
       account::commands::retrieve_player_list,
       account::commands::add_player_offline,
       account::commands::fetch_oauth_code,
@@ -268,6 +274,9 @@ pub async fn run() -> i32 {
       app.manage(Mutex::new(launcher_config));
       app.manage(tokio::sync::Mutex::new(
         accelerator::ResourceAccelerationService::default(),
+      ));
+      app.manage(tokio::sync::Mutex::new(
+        accelerator::ipv6::Ipv6Service::default(),
       ));
       if let Some(tray_popup) = app.get_webview_window("tray_popup") {
         let _ = tray_popup.set_skip_taskbar(true);
@@ -444,6 +453,7 @@ pub async fn run() -> i32 {
         api.prevent_exit();
         let app_handle = app_handle.clone();
         tauri::async_runtime::spawn(async move {
+          accelerator::ipv6::shutdown(&app_handle).await;
           {
             let service =
               app_handle.state::<tokio::sync::Mutex<accelerator::ResourceAccelerationService>>();

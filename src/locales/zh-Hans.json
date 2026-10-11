@@ -2639,6 +2639,50 @@
           "title": "删除文件失败"
         }
       }
+    },
+    "ipv6 acceleration": {
+      "status": {
+        "success": "操作完成",
+        "error": {
+          "title": "IPv6 免流操作失败",
+          "description": {}
+        }
+      },
+      "install": {
+        "success": "操作完成",
+        "error": {
+          "title": "IPv6 免流操作失败",
+          "description": {}
+        }
+      },
+      "start": {
+        "success": "操作完成",
+        "error": {
+          "title": "IPv6 免流操作失败",
+          "description": {}
+        }
+      },
+      "stop": {
+        "success": "操作完成",
+        "error": {
+          "title": "IPv6 免流操作失败",
+          "description": {}
+        }
+      },
+      "nodes": {
+        "success": "操作完成",
+        "error": {
+          "title": "IPv6 免流操作失败",
+          "description": {}
+        }
+      },
+      "select": {
+        "success": "操作完成",
+        "error": {
+          "title": "IPv6 免流操作失败",
+          "description": {}
+        }
+      }
     }
   },
   "SettingsLayout": {
@@ -2827,6 +2871,28 @@
       "failed": "无法访问",
       "proxy": "检测路径：当前加速代理",
       "direct": "检测路径：直接连接，不经过加速代理"
+    },
+    "ipv6": {
+      "title": "IPv6 免流",
+      "current": "WARP IPv6 通道",
+      "description": "通过 IPv6 接入 Cloudflare WARP，以 TUN 转发应用流量。",
+      "running": "运行中",
+      "stopped": "已停止",
+      "unsupported": "需要 Windows x64 或 ARM64 系统。",
+      "administrator": "TUN 需要管理员权限，请退出 USTBL 后以管理员身份运行。",
+      "working": "正在处理，下载核心和建立通道可能需要一些时间。",
+      "install": "下载核心",
+      "start": "启动免流",
+      "stop": "停止免流",
+      "bypass": "绕过校园网",
+      "bypassDescription": "每行一个域名或 CIDR，启动时保存；修改后需要重启免流。",
+      "nodes": "接入点",
+      "nodesDescription": "共 28 个 IPv6 接入点，启动后可测试延迟；空白延迟表示尚无结果或不可达。",
+      "auto": "自动选择",
+      "refresh": "刷新节点",
+      "test": "测试延迟",
+      "notice": "使用条件",
+      "noticeDescription": "请先连接 USTB-Student 或 USTB-V6 并完成认证，USTB_Wi-Fi 不支持免流。需要可用公网 IPv6；绕过流量按原网络规则计费。退出时关闭 TUN，实际免流取决于校园网政策。"
     }
   },
   "MessagesPage": {

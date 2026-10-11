@@ -2639,6 +2639,50 @@
           "title": "Échec de la suppression du fichier"
         }
       }
+    },
+    "ipv6 acceleration": {
+      "status": {
+        "success": "Operation completed",
+        "error": {
+          "title": "IPv6 operation failed",
+          "description": {}
+        }
+      },
+      "install": {
+        "success": "Operation completed",
+        "error": {
+          "title": "IPv6 operation failed",
+          "description": {}
+        }
+      },
+      "start": {
+        "success": "Operation completed",
+        "error": {
+          "title": "IPv6 operation failed",
+          "description": {}
+        }
+      },
+      "stop": {
+        "success": "Operation completed",
+        "error": {
+          "title": "IPv6 operation failed",
+          "description": {}
+        }
+      },
+      "nodes": {
+        "success": "Operation completed",
+        "error": {
+          "title": "IPv6 operation failed",
+          "description": {}
+        }
+      },
+      "select": {
+        "success": "Operation completed",
+        "error": {
+          "title": "IPv6 operation failed",
+          "description": {}
+        }
+      }
     }
   },
   "SettingsLayout": {
@@ -2827,6 +2871,28 @@
       "failed": "Indisponible",
       "proxy": "Trajet du test : proxy d’accélération actif",
       "direct": "Trajet du test : connexion directe sans accélération"
+    },
+    "ipv6": {
+      "title": "Trafic gratuit IPv6",
+      "current": "WARP via IPv6",
+      "description": "Connexion à Cloudflare WARP via IPv6 et transfert du trafic des applications par TUN.",
+      "running": "En cours",
+      "stopped": "Arrêté",
+      "unsupported": "Windows x64 ou ARM64 requis.",
+      "administrator": "TUN nécessite les droits administrateur. Fermez USTBL puis lancez-le en tant qu’administrateur.",
+      "working": "Traitement en cours. Le téléchargement et la connexion peuvent prendre un moment.",
+      "install": "Télécharger le cœur",
+      "start": "Démarrer IPv6",
+      "stop": "Arrêter IPv6",
+      "bypass": "Exceptions du campus",
+      "bypassDescription": "Un domaine ou CIDR par ligne, enregistré au démarrage. Redémarrez IPv6 pour appliquer les changements.",
+      "nodes": "Point d’accès",
+      "nodesDescription": "28 points IPv6. Testez la latence après le démarrage. Une valeur vide indique aucun résultat ou une connexion impossible.",
+      "auto": "Sélection automatique",
+      "refresh": "Actualiser",
+      "test": "Tester la latence",
+      "notice": "Conditions réseau",
+      "noticeDescription": "Authentifiez-vous sur USTB-Student ou USTB-V6 ; USTB_Wi-Fi n’est pas compatible. Un IPv6 public utilisable est requis. Les exceptions restent soumises à la facturation normale. TUN s’arrête à la fermeture. La gratuité dépend du réseau du campus."
     }
   },
   "MessagesPage": {

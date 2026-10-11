@@ -16,6 +16,7 @@ import {
   OptionItemGroup,
   OptionItemGroupProps,
 } from "@/components/common/option-item";
+import Ipv6AccelerationSettings from "@/components/settings/ipv6-acceleration";
 import { useLauncherConfig } from "@/contexts/config";
 import { useToast } from "@/contexts/toast";
 import {
@@ -304,6 +305,7 @@ const ResourceAccelerationSettingsPage = () => {
       {groups.map((group, index) => (
         <OptionItemGroup {...group} key={index} />
       ))}
+      <Ipv6AccelerationSettings />
     </>
   );
 };

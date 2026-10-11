@@ -45,6 +45,7 @@ mc-server-status = "1.0.0"
 murmur2 = "0.1"
 native-dialog = "0.9.6"
 partial_derive = { path = "./libs/partial_derive" }
+p256 = { version = "0.13.2", features = ["pkcs8"] }
 pin-project = "1.1.8"
 quartz_nbt = { version = "0.2.9", features = ["serde"] }
 quick-xml = { version = "0.38.3", features = ["serialize"] }
@@ -57,6 +58,7 @@ rmcp = { version = "0.15.0", features = ["server", "transport-streamable-http-se
 rsa = "0.9.10"
 sanitize-filename = "0.6.0"
 schemars = "1.0.4"
+sec1 = { version = "0.7.3", features = ["der"] }
 semver = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -100,7 +102,7 @@ uuid = { version = "1.11.0", features = [
 zip = { version = "2.3", default-features = false, features = ["deflate", "deflate64", "time"] }
 
 [target."cfg(windows)".dependencies]
-winapi = { version = "0.3", features = ["processthreadsapi", "winnt", "handleapi", "winuser", "windef", "wininet"] }
+winapi = { version = "0.3", features = ["processthreadsapi", "winnt", "handleapi", "winuser", "windef", "wininet", "jobapi2", "winbase", "securitybaseapi"] }
 winreg = "0.55.0"
 
 [target."cfg(target_os = \"macos\")".dependencies]
