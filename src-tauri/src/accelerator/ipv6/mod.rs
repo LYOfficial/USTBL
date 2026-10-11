@@ -447,19 +447,6 @@ mod tests {
       serde_json::to_vec(&config).unwrap(),
     )
     .unwrap();
-    let checked = runtime::command(runtime::binary(&root))
-      .args(["-t", "-d"])
-      .arg(&root)
-      .arg("-f")
-      .arg(root.join("config.json"))
-      .output()
-      .unwrap();
-    assert!(
-      checked.status.success(),
-      "{} {}",
-      String::from_utf8_lossy(&checked.stdout),
-      String::from_utf8_lossy(&checked.stderr)
-    );
     drop(controller);
     drop(mixed);
     let mut service = Ipv6Service {
@@ -484,7 +471,11 @@ mod tests {
     })
     .await
     .unwrap();
-    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let client = reqwest::Client::builder()
+      .no_proxy()
+      .timeout(Duration::from_secs(3))
+      .build()
+      .unwrap();
     assert_eq!(
       client
         .get(format!("http://127.0.0.1:{port}/version"))

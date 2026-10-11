@@ -37,7 +37,7 @@ export default function Ipv6AccelerationSettings() {
     if (!mounted.current || pending.current) return;
     if (response.status === "success") {
       setStatus(response.data);
-      setError(response.data.error || "");
+      if (response.data.error) setError(response.data.error);
     } else setError(response.details || response.message);
   }, []);
 

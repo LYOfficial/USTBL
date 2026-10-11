@@ -8,6 +8,7 @@ import {
   TaskParam,
 } from "@/models/task";
 import { responseHandler } from "@/utils/response";
+import { subscribeAsync } from "@/utils/subscription";
 
 /**
  * Service class for managing tasks.
@@ -139,16 +140,14 @@ export class TaskService {
   static onProgressiveTaskUpdate(
     callback: (payload: PTaskEventPayload) => void
   ): () => void {
-    const unlisten = getCurrentWebview().listen<PTaskEventPayload>(
-      "task:progress-update",
-      (event) => {
-        callback(event.payload);
-      }
+    return subscribeAsync(
+      (handler) =>
+        getCurrentWebview().listen<PTaskEventPayload>(
+          "task:progress-update",
+          (event) => handler(event.payload)
+        ),
+      callback
     );
-
-    return () => {
-      unlisten.then((f) => f());
-    };
   }
 
   /**
@@ -159,14 +158,13 @@ export class TaskService {
   static onTaskGroupUpdate(
     callback: (payload: GTaskEventPayload) => void
   ): () => void {
-    const unlisten = getCurrentWebview().listen<GTaskEventPayload>(
-      "task:group-update",
-      (event) => {
-        callback(event.payload);
-      }
+    return subscribeAsync(
+      (handler) =>
+        getCurrentWebview().listen<GTaskEventPayload>(
+          "task:group-update",
+          (event) => handler(event.payload)
+        ),
+      callback
     );
-    return () => {
-      unlisten.then((f) => f());
-    };
   }
 }

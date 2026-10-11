@@ -3,7 +3,7 @@ use super::commands::{ResourceAccelerationLatency, ResourceAccelerationStatus};
 use super::system_proxy::{enable_local_proxy, restore_proxy, SystemProxySnapshot};
 use crate::error::{USTBLError, USTBLResult};
 use std::time::Duration;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tokio::sync::watch;
 
 const GITHUB_PROGRESS_HOSTS: [&str; 16] = [
@@ -32,6 +32,7 @@ pub struct ResourceAccelerationService {
   started_at: Option<u64>,
   browser_proxy: Option<LocalBrowserProxy>,
   system_proxy: Option<SystemProxySnapshot>,
+  recovery_path: Option<std::path::PathBuf>,
 }
 
 impl Default for ResourceAccelerationService {
@@ -43,6 +44,7 @@ impl Default for ResourceAccelerationService {
       started_at: None,
       browser_proxy: None,
       system_proxy: None,
+      recovery_path: None,
     }
   }
 }
@@ -61,7 +63,7 @@ impl ResourceAccelerationService {
 
   pub async fn start(
     &mut self,
-    _app: &AppHandle,
+    app: &AppHandle,
     github_enabled: bool,
   ) -> USTBLResult<ResourceAccelerationStatus> {
     if !github_enabled {
@@ -76,9 +78,14 @@ impl ResourceAccelerationService {
     let browser_proxy = LocalBrowserProxy::start()
       .await
       .map_err(|error| USTBLError(format!("启动本地浏览器代理失败: {error}")))?;
+    let recovery_path = app
+      .path()
+      .app_local_data_dir()?
+      .join("acceleration-proxy.json");
     let system_proxy = match enable_local_proxy(
       super::browser_proxy::LOCAL_PROXY_HOST,
       super::browser_proxy::LOCAL_PROXY_PORT,
+      &recovery_path,
     ) {
       Ok(snapshot) => snapshot,
       Err(error) => {
@@ -94,6 +101,7 @@ impl ResourceAccelerationService {
     }));
     self.browser_proxy = Some(browser_proxy);
     self.system_proxy = Some(system_proxy);
+    self.recovery_path = Some(recovery_path);
     self.github_enabled = github_enabled;
     self.started_at = Some(unix_millis());
     log::info!("Resource acceleration started in browser proxy mode");
@@ -101,11 +109,15 @@ impl ResourceAccelerationService {
   }
 
   pub async fn stop(&mut self) -> USTBLResult<ResourceAccelerationStatus> {
+    if let Some(snapshot) = self.system_proxy.as_ref() {
+      restore_proxy(snapshot).map_err(|error| USTBLError(error.to_string()))?;
+      self.system_proxy = None;
+      if let Some(path) = self.recovery_path.take() {
+        let _ = std::fs::remove_file(path);
+      }
+    }
     if let Some(proxy) = self.browser_proxy.take() {
       proxy.stop().await;
-    }
-    if let Some(snapshot) = self.system_proxy.take() {
-      restore_proxy(snapshot).map_err(|error| USTBLError(error.to_string()))?;
     }
     if let Some(stop) = self.stop.take() {
       let _ = stop.send(true);

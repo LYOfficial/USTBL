@@ -39,16 +39,15 @@ export default function App({ Component, pageProps }: AppProps) {
   useEffect(() => {
     // setup global logger
     setupLogger();
+    const handleContextMenu = (event: MouseEvent) => event.preventDefault();
 
     // forbid right mouse menu of webview
     if (isProd) {
-      document.addEventListener("contextmenu", (event) => {
-        event.preventDefault();
-      });
+      document.addEventListener("contextmenu", handleContextMenu);
     }
 
     // forbid keyboard shortcut in webview: https://github.com/USTB-SkyCode/USTBL/issues/163
-    document.addEventListener("keydown", (event) => {
+    const handleKeyDown = (event: KeyboardEvent) => {
       const disabledShortcuts =
         ["F3", "F5", "F7"].includes(event.key) ||
         (event.shiftKey && event.key === "Escape") || // forbid Edge task manager
@@ -57,7 +56,12 @@ export default function App({ Component, pageProps }: AppProps) {
         ((event.ctrlKey || event.metaKey) &&
           ["F", "G", "J", "P", "R", "U"].includes(event.key.toUpperCase()));
       disabledShortcuts && event.preventDefault();
-    });
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("contextmenu", handleContextMenu);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
   }, []);
 
   const layoutKeyMappings: {

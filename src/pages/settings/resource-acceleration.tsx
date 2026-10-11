@@ -51,19 +51,30 @@ const ResourceAccelerationSettingsPage = () => {
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
+    let disposed = false;
     listen<{ completed: number; total: number; message: string }>(
       "resource-acceleration-progress",
       (event) => setProgress(event.payload)
-    ).then((cleanup) => {
-      unlisten = cleanup;
-    });
+    )
+      .then((cleanup) => {
+        if (disposed) cleanup();
+        else unlisten = cleanup;
+      })
+      .catch((error) => {
+        if (!disposed)
+          logger.error("Resource acceleration listener failed", error);
+      });
     ResourceAccelerationService.status().then((response) => {
-      if (response.status === "success") {
+      if (!disposed && response.status === "success") {
         setStatus(response.data);
-        setGithubEnabled(response.data.githubEnabled);
+        if (response.data.running)
+          setGithubEnabled(response.data.githubEnabled);
       }
     });
-    return () => unlisten?.();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, []);
 
   useEffect(() => {

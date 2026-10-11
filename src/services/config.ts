@@ -4,6 +4,7 @@ import { LauncherConfig, VersionMetaInfo } from "@/models/config";
 import { InvokeResponse } from "@/models/response";
 import { JavaInfo } from "@/models/system-info";
 import { responseHandler } from "@/utils/response";
+import { subscribeAsync } from "@/utils/subscription";
 
 /**
  * Service class for managing launcher configurations.
@@ -210,15 +211,13 @@ export class ConfigService {
   static onConfigPartialUpdate(
     callback: (payload: { path: string; value: any }) => void
   ) {
-    const unlisten = getCurrentWebview().listen<{ path: string; value: any }>(
-      "config:partial-update",
-      (event) => {
-        callback(event.payload);
-      }
+    return subscribeAsync(
+      (handler) =>
+        getCurrentWebview().listen<{ path: string; value: any }>(
+          "config:partial-update",
+          (event) => handler(event.payload)
+        ),
+      callback
     );
-
-    return () => {
-      unlisten.then((f) => f());
-    };
   }
 }

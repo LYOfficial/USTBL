@@ -53,27 +53,39 @@ pub fn show_tray_popup(app: &tauri::AppHandle, view: &str, message: Option<Strin
     let _ = window.set_skip_taskbar(true);
     let _ = window.show();
     let _ = window.set_focus();
-    let _ = window.emit("tray-popup-open", serde_json::json!({ "view": view, "message": message }));
+    let _ = window.emit(
+      "tray-popup-open",
+      serde_json::json!({ "view": view, "message": message }),
+    );
   }
 }
 
-pub(crate) fn position_tray_popup(app: &tauri::AppHandle, window: &tauri::WebviewWindow, view: &str) {
-    if let Ok(Some(monitor)) = app.primary_monitor() {
-      let work_area = monitor.work_area();
-      let scale = monitor.scale_factor();
-      let popup_width = ((if view == "friends" { 360.0 } else { 268.0 }) * scale).ceil() as u32;
-      let popup_height_logical = match view {
-        "friends" => 560.0,
-        "notification" => 200.0,
-        _ => 300.0,
-      };
-      let requested_height = (popup_height_logical * scale).ceil() as u32;
-      let popup_height = requested_height.min(work_area.size.height.saturating_sub((24.0 * scale) as u32));
-      let x = work_area.position.x + work_area.size.width as i32 - popup_width as i32 - (12.0 * scale) as i32;
-      let y = work_area.position.y + work_area.size.height as i32 - popup_height as i32 - (12.0 * scale) as i32;
-      let _ = window.set_size(Size::Physical(PhysicalSize::new(popup_width, popup_height)));
-      let _ = window.set_position(Position::Physical(PhysicalPosition::new(x, y)));
-    }
+pub(crate) fn position_tray_popup(
+  app: &tauri::AppHandle,
+  window: &tauri::WebviewWindow,
+  view: &str,
+) {
+  if let Ok(Some(monitor)) = app.primary_monitor() {
+    let work_area = monitor.work_area();
+    let scale = monitor.scale_factor();
+    let popup_width = ((if view == "friends" { 360.0 } else { 268.0 }) * scale).ceil() as u32;
+    let popup_height_logical = match view {
+      "friends" => 560.0,
+      "notification" => 200.0,
+      _ => 300.0,
+    };
+    let requested_height = (popup_height_logical * scale).ceil() as u32;
+    let popup_height =
+      requested_height.min(work_area.size.height.saturating_sub((24.0 * scale) as u32));
+    let x = work_area.position.x + work_area.size.width as i32
+      - popup_width as i32
+      - (12.0 * scale) as i32;
+    let y = work_area.position.y + work_area.size.height as i32
+      - popup_height as i32
+      - (12.0 * scale) as i32;
+    let _ = window.set_size(Size::Physical(PhysicalSize::new(popup_width, popup_height)));
+    let _ = window.set_position(Position::Physical(PhysicalPosition::new(x, y)));
+  }
 }
 
 pub async fn run() -> i32 {
@@ -275,6 +287,7 @@ pub async fn run() -> i32 {
       app.manage(tokio::sync::Mutex::new(
         accelerator::ResourceAccelerationService::default(),
       ));
+      accelerator::recover_system_proxy(app.handle());
       app.manage(tokio::sync::Mutex::new(
         accelerator::ipv6::Ipv6Service::default(),
       ));
@@ -402,12 +415,20 @@ pub async fn run() -> i32 {
         }
         tray
           .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click { button: MouseButton::Left, .. } = event {
+            if let TrayIconEvent::Click {
+              button: MouseButton::Left,
+              ..
+            } = event
+            {
               if let Some(window) = tray.app_handle().get_webview_window("main") {
                 let _ = window.show();
                 let _ = window.set_focus();
               }
-            } else if let TrayIconEvent::Click { button: MouseButton::Right, .. } = event {
+            } else if let TrayIconEvent::Click {
+              button: MouseButton::Right,
+              ..
+            } = event
+            {
               show_tray_popup(tray.app_handle(), "menu", None);
             }
           })
@@ -448,12 +469,17 @@ pub async fn run() -> i32 {
     })
     .run_return(|app_handle, event| match event {
       tauri::RunEvent::ExitRequested { api, code, .. }
-        if code.is_none() && !EXITING_AFTER_PRESENCE_CLEAR.swap(true, Ordering::SeqCst) =>
+        if !EXITING_AFTER_PRESENCE_CLEAR.swap(true, Ordering::SeqCst) =>
       {
         api.prevent_exit();
+        log::info!("Launcher exit requested with code {code:?}; restoring network state");
         let app_handle = app_handle.clone();
         tauri::async_runtime::spawn(async move {
-          accelerator::ipv6::shutdown(&app_handle).await;
+          let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            accelerator::ipv6::shutdown(&app_handle),
+          )
+          .await;
           {
             let service =
               app_handle.state::<tokio::sync::Mutex<accelerator::ResourceAccelerationService>>();
