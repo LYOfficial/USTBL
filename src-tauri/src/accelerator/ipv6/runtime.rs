@@ -1,4 +1,5 @@
 use crate::error::{USTBLError, USTBLResult};
+use log::{info, warn};
 use sha2::{Digest, Sha256};
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
@@ -7,6 +8,12 @@ use std::time::Duration;
 
 pub const VERSION: &str = "v1.19.31";
 const MAX_DOWNLOAD: usize = 150 * 1024 * 1024;
+const MIRROR_BASES: [&str; 4] = [
+  "https://gh-proxy.com/",
+  "https://ghproxy.net/",
+  "https://ghfast.top/",
+  "https://gh-proxy.net/",
+];
 
 pub fn artifact() -> USTBLResult<(&'static str, &'static str)> {
   match std::env::consts::ARCH {
@@ -57,28 +64,43 @@ pub async fn install(root: &Path) -> USTBLResult<()> {
     .connect_timeout(Duration::from_secs(15))
     .timeout(Duration::from_secs(60))
     .build()?;
-  let url = format!("https://github.com/MetaCubeX/mihomo/releases/download/{VERSION}/{name}");
-  let mut response = match client
-    .get(&url)
-    .send()
-    .await
-    .and_then(reqwest::Response::error_for_status)
-  {
-    Ok(response) => response,
-    Err(_) => client
-      .get(format!("https://gh-proxy.com/{url}"))
-      .send()
-      .await?
-      .error_for_status()?,
-  };
-  let mut bytes = Vec::new();
-  while let Some(chunk) = response.chunk().await? {
-    if bytes.len() + chunk.len() > MAX_DOWNLOAD {
-      return Err(USTBLError("免流核心下载超过大小限制".into()));
+  let official_url =
+    format!("https://github.com/MetaCubeX/mihomo/releases/download/{VERSION}/{name}");
+  let mut candidates = Vec::with_capacity(MIRROR_BASES.len() + 1);
+  candidates.push(("GitHub 官方源".to_string(), official_url.clone()));
+  candidates.extend(
+    MIRROR_BASES
+      .iter()
+      .map(|base| ((*base).to_string(), format!("{base}{official_url}"))),
+  );
+  let mut failures = Vec::new();
+  let mut bytes = None;
+  for (label, url) in candidates {
+    info!("尝试下载 IPv6 免流核心: {label} ({url})");
+    match download_archive(&client, &url).await {
+      Ok(data) => match verify_archive(&data, expected) {
+        Ok(()) => {
+          info!("IPv6 免流核心下载成功: {label}");
+          bytes = Some(data);
+          break;
+        }
+        Err(error) => {
+          warn!("IPv6 免流核心校验失败: {label}: {}", error.0);
+          failures.push(format!("{label}: {}", error.0));
+        }
+      },
+      Err(error) => {
+        warn!("IPv6 免流核心下载失败: {label}: {}", error.0);
+        failures.push(format!("{label}: {}", error.0));
+      }
     }
-    bytes.extend_from_slice(&chunk);
   }
-  verify_archive(&bytes, expected)?;
+  let bytes = bytes.ok_or_else(|| {
+    USTBLError(format!(
+      "IPv6 免流核心下载失败，已尝试官方源和 gh-proxy 镜像: {}",
+      failures.join("；")
+    ))
+  })?;
   let mut archive = zip::ZipArchive::new(Cursor::new(bytes))?;
   let mut executable = None;
   for i in 0..archive.len() {
@@ -121,6 +143,28 @@ pub async fn install(root: &Path) -> USTBLResult<()> {
   )
   .await?;
   Ok(())
+}
+
+async fn download_archive(client: &reqwest::Client, url: &str) -> USTBLResult<Vec<u8>> {
+  let mut response = client
+    .get(url)
+    .send()
+    .await
+    .map_err(|error| USTBLError(format!("请求失败: {error}")))?
+    .error_for_status()
+    .map_err(|error| USTBLError(format!("HTTP 请求失败: {error}")))?;
+  let mut bytes = Vec::new();
+  while let Some(chunk) = response
+    .chunk()
+    .await
+    .map_err(|error| USTBLError(format!("读取响应失败: {error}")))?
+  {
+    if bytes.len() + chunk.len() > MAX_DOWNLOAD {
+      return Err(USTBLError("免流核心下载超过大小限制".into()));
+    }
+    bytes.extend_from_slice(&chunk);
+  }
+  Ok(bytes)
 }
 
 fn verify_archive(data: &[u8], expected: &str) -> USTBLResult<()> {
@@ -263,6 +307,20 @@ impl Drop for CoreProcess {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn mirror_candidates_keep_official_source_first() {
+    let official = "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.31/core.zip";
+    let mut candidates = vec![official.to_string()];
+    candidates.extend(MIRROR_BASES.iter().map(|base| format!("{base}{official}")));
+    assert_eq!(candidates[0], official);
+    assert!(candidates
+      .iter()
+      .any(|url| url.starts_with("https://ghproxy.net/")));
+    assert!(candidates
+      .iter()
+      .any(|url| url.starts_with("https://ghfast.top/")));
+  }
 
   #[test]
   fn checksum_rejects_modified_download() {
