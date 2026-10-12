@@ -1,8 +1,7 @@
 use crate::error::USTBLResult;
-use crate::instance::helpers::modpack::misc::{ModpackManifest, ModpackMetaInfo};
+use crate::instance::helpers::modpack::misc::{ModpackDownload, ModpackManifest, ModpackMetaInfo};
 use crate::instance::models::misc::{InstanceError, ModLoader, ModLoaderType};
 use crate::resource::models::OtherResourceSource;
-use crate::tasks::PTaskParam;
 use async_trait::async_trait;
 use config::Config;
 use serde::{Deserialize, Serialize};
@@ -162,13 +161,13 @@ impl ModpackManifest for MultiMcManifest {
     &self,
     _app: &AppHandle,
     _instance_path: &Path,
-  ) -> USTBLResult<Vec<PTaskParam>> {
+  ) -> USTBLResult<Vec<ModpackDownload>> {
     // MultiMC Manifests do not include download parameters
     Ok(Vec::new())
   }
 
-  fn get_overrides_path(&self) -> String {
-    format!("{}{}", self.base_path, self.game_dir)
+  fn get_overrides_paths(&self) -> Vec<String> {
+    vec![format!("{}{}", self.base_path, self.game_dir)]
   }
 }
 

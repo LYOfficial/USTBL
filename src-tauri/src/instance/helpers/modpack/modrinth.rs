@@ -9,11 +9,10 @@ use tauri::AppHandle;
 use zip::ZipArchive;
 
 use crate::error::USTBLResult;
-use crate::instance::helpers::modpack::misc::{ModpackManifest, ModpackMetaInfo};
+use crate::instance::helpers::modpack::misc::{ModpackDownload, ModpackManifest, ModpackMetaInfo};
 use crate::instance::models::misc::{InstanceError, ModLoader, ModLoaderType};
 use crate::resource::models::OtherResourceSource;
 use crate::tasks::download::DownloadParam;
-use crate::tasks::PTaskParam;
 
 structstruck::strike! {
 #[strikethrough[derive(Deserialize, Serialize, Debug, Clone)]]
@@ -113,7 +112,7 @@ impl ModpackManifest for ModrinthManifest {
     &self,
     _app: &AppHandle,
     instance_path: &Path,
-  ) -> USTBLResult<Vec<PTaskParam>> {
+  ) -> USTBLResult<Vec<ModpackDownload>> {
     self
       .files
       .iter()
@@ -122,19 +121,24 @@ impl ModpackManifest for ModrinthManifest {
           .downloads
           .first()
           .ok_or(InstanceError::InvalidSourcePath)?;
-        Ok(PTaskParam::Download(DownloadParam {
-          src: url::Url::parse(download_url).map_err(|_| InstanceError::InvalidSourcePath)?,
-          sha1: Some(file.hashes.sha1.clone()),
-          dest: instance_path.join(&file.path),
-          filename: None,
-          custom_headers: None,
-          transfer_options: Default::default(),
-        }))
+        Ok(ModpackDownload {
+          param: DownloadParam {
+            src: url::Url::parse(download_url).map_err(|_| InstanceError::InvalidSourcePath)?,
+            sha1: Some(file.hashes.sha1.clone()),
+            dest: instance_path.join(&file.path),
+            filename: None,
+            custom_headers: None,
+            transfer_options: Default::default(),
+          },
+          size: Some(file.file_size),
+        })
       })
       .collect::<USTBLResult<Vec<_>>>()
   }
 
-  fn get_overrides_path(&self) -> String {
-    "overrides/".to_string()
+  fn get_overrides_paths(&self) -> Vec<String> {
+    // Format order: `overrides/` applies everywhere, `client-overrides/` is laid on
+    // top of it. `server-overrides/` never applies to a client.
+    vec!["overrides".to_string(), "client-overrides".to_string()]
   }
 }

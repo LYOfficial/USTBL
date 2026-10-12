@@ -58,6 +58,7 @@ import { ResourceService } from "@/services/resource";
 import { TaskService } from "@/services/task";
 import cardStyles from "@/styles/card.module.css";
 import { ISOToDate } from "@/utils/datetime";
+import { registerPendingModpackOrigin } from "@/utils/modpack-origin";
 import { translateTag } from "@/utils/resource";
 import { formatDisplayCount, sanitizeFileName } from "@/utils/string";
 
@@ -217,6 +218,22 @@ const DownloadSpecificResourceModal: React.FC<
       defaultPath: dir + "/" + fileName,
     });
     if (!savepath) return;
+    if (
+      resource.type === OtherResourceType.ModPack &&
+      item.resourceId &&
+      item.fileId &&
+      item.sha1
+    ) {
+      registerPendingModpackOrigin(savepath, {
+        platform:
+          resource.source === OtherResourceSource.CurseForge
+            ? "curseforge"
+            : "modrinth",
+        projectId: item.resourceId,
+        versionId: item.fileId,
+        expectedSha1: item.sha1,
+      });
+    }
     handleScheduleProgressiveTaskGroup(resource.type, [
       {
         src: item.downloadUrl,

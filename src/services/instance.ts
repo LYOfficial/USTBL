@@ -9,6 +9,7 @@ import {
   LocalModInfo,
   ModpackFileList,
   ModpackMetaInfo,
+  ModpackOriginInput,
   ResourcePackInfo,
   SchematicInfo,
   ScreenshotInfo,
@@ -62,6 +63,7 @@ export class InstanceService {
    * @param {string} [modpackPath] - Optional path to the modpack archive file.
    * @param {boolean} [isInstallFabricApi] - Optional flag to indicate whether to install Fabric API (only valid when modLoader is Fabric).
    * @param {string} [modpackVersion] - Optional modpack version to display with the instance.
+   * @param {ModpackOriginInput} [origin] - Optional platform origin of the modpack, verified by the backend.
    * @returns {Promise<InvokeResponse<null>>}
    */
   @responseHandler("instance")
@@ -75,7 +77,8 @@ export class InstanceService {
     optifine?: OptiFineResourceInfo,
     modpackPath?: string,
     isInstallFabricApi?: boolean,
-    modpackVersion?: string
+    modpackVersion?: string,
+    origin?: ModpackOriginInput
   ): Promise<InvokeResponse<null>> {
     return await invoke("create_instance", {
       directory,
@@ -88,6 +91,7 @@ export class InstanceService {
       modpackPath,
       isInstallFabricApi,
       modpackVersion,
+      origin,
     });
   }
 

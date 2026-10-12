@@ -110,6 +110,14 @@ async fn local_components_resolve_offline_and_round_trip_with_ordered_classpath(
       fs::read_to_string(instance.join("config/example.cfg")).unwrap(),
       "example=true"
     );
+    let profile: Value =
+      serde_json::from_slice(&fs::read(instance.join(MULTIMC_PROFILE_FILE_NAME)).unwrap()).unwrap();
+    assert_eq!(
+      profile["mmcPack"]["components"][1]["uid"],
+      "example.bootstrap"
+    );
+    assert_eq!(profile["instanceCfg"]["name"], "Synthetic Pack");
+    assert_eq!(profile["instanceCfg"]["OverrideJavaArgs"], "false");
     assert_eq!(
       resolved.client.main_class.as_deref(),
       Some("example.bootstrap.Main")

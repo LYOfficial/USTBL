@@ -172,6 +172,8 @@ structstruck::strike! {
 structstruck::strike! {
 #[strikethrough[derive(Deserialize, Debug)]]
   pub struct ModrinthVersionPack {
+    #[serde(default)]
+    pub id: String,
     pub project_id: String,
     pub dependencies: Vec<pub struct {
       pub project_id: Option<String>,
@@ -297,6 +299,7 @@ impl From<(&ModrinthVersionPack, &ModrinthFileInfo, Option<String>)> for OtherRe
   ) -> Self {
     Self {
       resource_id: version.project_id.clone(),
+      file_id: version.id.clone(),
       name: version.name.clone(),
       release_type: version.version_type.clone(),
       downloads: version.downloads,
@@ -356,4 +359,24 @@ pub async fn translate_description_modrinth(
 
   // Only return Ok(None) when translation fails, to avoid blocking major functionality
   Ok(result.ok())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn modrinth_file_info_carries_project_and_version_ids() {
+    let version: ModrinthVersionPack = serde_json::from_str(
+      r#"{"id":"ver1","project_id":"proj1","dependencies":[],"game_versions":["1.21.1"],"loaders":["neoforge"],
+        "name":"n","date_published":"d","downloads":1,"version_type":"release",
+        "files":[{"url":"https://example.invalid/a.mrpack","filename":"a.mrpack","hashes":{"sha1":"aa"}}]}"#,
+    )
+    .unwrap();
+    let info = OtherResourceFileInfo::from((&version, &version.files[0], None));
+    assert_eq!(
+      (info.resource_id.as_str(), info.file_id.as_str()),
+      ("proj1", "ver1")
+    );
+  }
 }
