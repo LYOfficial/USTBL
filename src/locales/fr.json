@@ -2609,7 +2609,11 @@
       },
       "exportModpack": {
         "error": {
-          "title": "Échec de l’exportation"
+          "title": "Échec de l’exportation",
+          "description": {
+            "MODPACK_EXPORT_COMPONENT_INSTANCE": "Une instance à profil de composants ne peut être exportée qu’au format MultiMC",
+            "MODPACK_EXPORT_PROFILE_MISSING": "Cette instance a été importée par une ancienne version et ne contient pas les données de composants nécessaires à l’exportation. Réimportez le pack de mods puis réessayez"
+          }
         }
       },
       "retrieveExportableFileList": {
@@ -2949,7 +2953,8 @@
     "tooltip": {
       "exportFormat": {
         "Modrinth": "Taille réduite ; les mods requis sont téléchargés depuis un manifeste lors de l’importation.",
-        "MultiMC": "Compatible avec les principaux lanceurs ; exporté comme une instance complète."
+        "MultiMC": "Compatible avec les principaux lanceurs ; exporté comme une instance complète.",
+        "MultiMCComponentOnly": "Cette instance provient d’un profil de composants MultiMC : elle ne peut être exportée qu’au format MultiMC, avec ses composants, correctifs et bibliothèques locales conservés."
       }
     }
   }

@@ -122,6 +122,7 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
           openSharedModal("export-modpack", {
             instanceId: summary.id,
             instanceName: summary.name,
+            isComponentProfile: summary.isComponentProfile,
           });
         }
       },
