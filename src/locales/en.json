@@ -2614,7 +2614,11 @@
       },
       "exportModpack": {
         "error": {
-          "title": "Export failed"
+          "title": "Export failed",
+          "description": {
+            "MODPACK_EXPORT_COMPONENT_INSTANCE": "Component-profile instances can only be exported as MultiMC",
+            "MODPACK_EXPORT_PROFILE_MISSING": "This instance was imported by an older version and lacks the component data needed for export. Re-import the modpack and try again"
+          }
         }
       }
     },
@@ -2949,7 +2953,8 @@
     "tooltip": {
       "exportFormat": {
         "Modrinth": "Smaller package size; required mods are downloaded from a manifest during import.",
-        "MultiMC": "Widely supported by major launchers; packaged as a complete instance."
+        "MultiMC": "Widely supported by major launchers; packaged as a complete instance.",
+        "MultiMCComponentOnly": "This instance was imported from a MultiMC component profile, so it can only be exported as MultiMC. Its components, patches and local libraries are kept as they were."
       }
     }
   }

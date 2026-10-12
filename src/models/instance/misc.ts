@@ -51,6 +51,7 @@ export interface InstanceSummary {
   useSpecGameConfig: boolean;
   isVersionIsolated: boolean;
   modpackVersion?: string;
+  isComponentProfile: boolean;
 }
 
 export interface ModpackMetaInfo {

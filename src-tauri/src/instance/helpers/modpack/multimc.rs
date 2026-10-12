@@ -13,6 +13,7 @@ use tauri::AppHandle;
 use zip::ZipArchive;
 
 pub mod profile;
+pub mod snapshot;
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]

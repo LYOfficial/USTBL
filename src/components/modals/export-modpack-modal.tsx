@@ -43,6 +43,7 @@ import { isFileNameSanitized, sanitizeFileName } from "@/utils/string";
 interface ExportModpackModalProps extends Omit<ModalProps, "children"> {
   instanceId: string;
   instanceName: string;
+  isComponentProfile?: boolean;
 }
 
 interface FileTreeData {
@@ -124,6 +125,7 @@ const ROOT_FILE_CATEGORY_LOCALE_KEYS: Partial<Record<string, string>> = {
 const ExportModpackModal: React.FC<ExportModpackModalProps> = ({
   instanceId,
   instanceName,
+  isComponentProfile = false,
   ...modalProps
 }) => {
   const { t, i18n } = useTranslation();
@@ -131,8 +133,11 @@ const ExportModpackModal: React.FC<ExportModpackModalProps> = ({
   const toast = useToast();
   const primaryColor = config.appearance.theme.primaryColor;
 
+  // A component profile cannot be expressed as a Modrinth manifest.
   const [exportFormat, setExportFormat] = useState<ExportModpackFormat>(
-    ExportModpackFormat.Modrinth
+    isComponentProfile
+      ? ExportModpackFormat.MultiMC
+      : ExportModpackFormat.Modrinth
   );
   const [modpackName, setModpackName] = useState(instanceName);
   const [modpackVersion, setModpackVersion] = useState("1.0.0");
@@ -330,9 +335,16 @@ const ExportModpackModal: React.FC<ExportModpackModalProps> = ({
                 setExportFormat(val as ExportModpackFormat)
               }
               size="xs"
-              items={(["Modrinth", "MultiMC"] as const).map((format) => ({
+              items={(isComponentProfile
+                ? (["MultiMC"] as const)
+                : (["Modrinth", "MultiMC"] as const)
+              ).map((format) => ({
                 value: format,
-                tooltip: t(`ExportModpackModal.tooltip.exportFormat.${format}`),
+                tooltip: t(
+                  `ExportModpackModal.tooltip.exportFormat.${
+                    isComponentProfile ? "MultiMCComponentOnly" : format
+                  }`
+                ),
                 label: (
                   <HStack spacing={2}>
                     <Icon

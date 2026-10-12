@@ -1,5 +1,6 @@
 use crate::instance::constants::INSTANCE_CFG_FILE_NAME;
 use crate::instance::helpers::game_version::{compare_game_versions, get_major_game_version};
+use crate::instance::helpers::modpack::multimc::snapshot::is_component_instance;
 use crate::launcher_config::models::GameConfig;
 use crate::storage::{load_json_async, save_json_async};
 use crate::utils::image::ImageWrapper;
@@ -187,6 +188,9 @@ pub struct InstanceSummary {
   pub use_spec_game_config: bool,
   pub is_version_isolated: bool,
   pub modpack_version: Option<String>,
+  /// Imported from a MultiMC component profile; such an instance can only be
+  /// exported as MultiMC.
+  pub is_component_profile: bool,
 }
 
 impl InstanceSummary {
@@ -216,6 +220,7 @@ impl InstanceSummary {
       use_spec_game_config: instance.use_spec_game_config,
       is_version_isolated,
       modpack_version: instance.modpack_version.clone(),
+      is_component_profile: is_component_instance(&instance.version_path),
     }
   }
 }
@@ -323,6 +328,8 @@ pub enum InstanceError {
   ProcessorExecutionFailed,
   SemaphoreAcquireFailed,
   LoaderInstallerNotFound,
+  ModpackExportComponentInstance,
+  ModpackExportProfileMissing,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize, Default)]

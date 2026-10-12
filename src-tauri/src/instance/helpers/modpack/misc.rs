@@ -95,7 +95,7 @@ pub struct ModpackMetaInfo {
 pub(crate) fn is_launcher_metadata_path(relative: &str, instance_name: &str) -> bool {
   relative.eq_ignore_ascii_case("ustblcfg.json")
     || relative.eq_ignore_ascii_case("ustbl-multimc-components.json")
-    || relative.eq_ignore_ascii_case(super::multimc::profile::MULTIMC_PROFILE_FILE_NAME)
+    || relative.eq_ignore_ascii_case(super::multimc::snapshot::SNAPSHOT_FILE_NAME)
     || relative.eq_ignore_ascii_case(super::baseline::BASELINE_FILE_NAME)
     || relative.eq_ignore_ascii_case(&format!("{instance_name}.json"))
     || relative.eq_ignore_ascii_case(&format!("{instance_name}.jar"))

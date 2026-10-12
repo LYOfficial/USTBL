@@ -111,7 +111,7 @@ async fn local_components_resolve_offline_and_round_trip_with_ordered_classpath(
       "example=true"
     );
     let profile: Value =
-      serde_json::from_slice(&fs::read(instance.join(MULTIMC_PROFILE_FILE_NAME)).unwrap()).unwrap();
+      serde_json::from_slice(&fs::read(instance.join(SNAPSHOT_FILE_NAME)).unwrap()).unwrap();
     assert_eq!(
       profile["mmcPack"]["components"][1]["uid"],
       "example.bootstrap"
@@ -185,9 +185,11 @@ fn last_matching_library_rule_wins() {
   let file = archive(&temp, ".minecraft");
   let mut zip = ZipArchive::new(&file).unwrap();
   let raw = serde_json::json!({"name":"test:excluded:1", "rules":[{"action":"allow"},{"action":"disallow","os":{"name":host_os()}}]});
-  assert!(normalize_library(&raw, &mut zip, "pack/", &temp.0)
-    .unwrap()
-    .is_none());
+  assert!(
+    normalize_library(&raw, &mut zip, "pack/", &temp.0, &mut Vec::new())
+      .unwrap()
+      .is_none()
+  );
 }
 
 #[tokio::test]
@@ -273,7 +275,7 @@ fn declared_download_path_and_absolute_url_are_preserved() {
   let file = archive(&temp, ".minecraft");
   let mut zip = ZipArchive::new(&file).unwrap();
   let raw = serde_json::json!({"name":"test:dependency:1", "MMC-absoluteUrl":"https://example.invalid/custom.jar", "downloads":{"artifact":{"path":"custom/dependency.jar"}}});
-  let lib = normalize_library(&raw, &mut zip, "pack/", &temp.0)
+  let lib = normalize_library(&raw, &mut zip, "pack/", &temp.0, &mut Vec::new())
     .unwrap()
     .unwrap();
   let artifact = lib.downloads.unwrap().artifact.unwrap();
