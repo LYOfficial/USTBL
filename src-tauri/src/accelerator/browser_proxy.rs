@@ -7,6 +7,8 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
 
 const PROXY_STATUS_URL: &str = "https://www.ustb.world/api/resource-acceleration/github/status";
+const DEPLOYED_PROXY_HOST: &str = "208.68.182.185";
+const SITE_GATEWAY_HOST: &str = "www.ustb.world";
 pub const LOCAL_PROXY_HOST: &str = "127.0.0.1";
 pub const LOCAL_PROXY_PORT: u16 = 17880;
 
@@ -66,7 +68,15 @@ async fn remote_proxy_address() -> io::Result<String> {
       "vUSTB 未启用 GitHub 中转或未配置浏览器代理密钥",
     ));
   }
-  status.browser_proxy.address()
+  let mut endpoint = status.browser_proxy;
+  if endpoint.host.eq_ignore_ascii_case(SITE_GATEWAY_HOST) {
+    log::warn!(
+      "GitHub 代理状态仍返回站点网关，使用已验证代理地址 {}",
+      DEPLOYED_PROXY_HOST
+    );
+    endpoint.host = DEPLOYED_PROXY_HOST.to_string();
+  }
+  endpoint.address()
 }
 
 pub struct LocalBrowserProxy {
@@ -483,6 +493,13 @@ mod tests {
       configured: true,
     };
     assert_eq!(ipv6.address().unwrap(), "[2001:db8::1]:18080");
+  }
+
+  #[test]
+  fn deployed_proxy_fallback_is_a_public_host_without_port() {
+    assert_eq!(DEPLOYED_PROXY_HOST, "208.68.182.185");
+    assert!(!DEPLOYED_PROXY_HOST.contains(':'));
+    assert_eq!(SITE_GATEWAY_HOST, "www.ustb.world");
   }
 
   async fn mock_proxy(response: &'static [u8]) -> (String, tokio::task::JoinHandle<()>) {
