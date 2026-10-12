@@ -24,6 +24,7 @@ import { useLauncherConfig } from "@/contexts/config";
 import { useTaskContext } from "@/contexts/task";
 import { useToast } from "@/contexts/toast";
 import { TaskTypeEnums } from "@/models/task";
+import { registerPendingModpackOrigin } from "@/utils/modpack-origin";
 import { sanitizeFileName } from "@/utils/string";
 
 // ─── XPlus (Original Modpack) ──────────────────────────────────────────────
@@ -41,8 +42,8 @@ type XPlusVersion = {
 
 const XPLUS_PROJECT_URL =
   "https://modrinth.com/modpack/xplus-2.0-modpack-global/versions";
-const XPLUS_VERSION_API =
-  "https://api.modrinth.com/v2/project/UCpApD3P/version";
+const XPLUS_PROJECT_ID = "UCpApD3P";
+const XPLUS_VERSION_API = `https://api.modrinth.com/v2/project/${XPLUS_PROJECT_ID}/version`;
 const RECOMMENDED_VERSION = "1.21.11";
 const MODPACK_ICON_URL =
   "https://cdn.modrinth.com/data/UCpApD3P/eb989b0763ca1ad11ee37e879ff2024294db410f_96.webp";
@@ -256,6 +257,15 @@ const XPlusModpackSection = () => {
       );
       const savePath = `${baseDir}/${fileName}`;
 
+      // Only a published SHA-1 lets the backend prove the archive is this version.
+      if (version.sha1) {
+        registerPendingModpackOrigin(savePath, {
+          platform: "modrinth",
+          projectId: XPLUS_PROJECT_ID,
+          versionId: version.id,
+          expectedSha1: version.sha1,
+        });
+      }
       handleScheduleProgressiveTaskGroup("modpack", [
         {
           src: version.downloadUrl,

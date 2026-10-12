@@ -22,6 +22,19 @@ export interface OptiFine {
   status: ModLoaderStatus;
 }
 
+export type OriginPlatform = "modrinth" | "curseforge" | "campus";
+
+/**
+ * Origin claimed by the entry that downloaded a modpack. The backend only
+ * accepts it when the archive matches `expectedSha1`.
+ */
+export interface ModpackOriginInput {
+  platform: OriginPlatform;
+  projectId: string;
+  versionId: string;
+  expectedSha1: string;
+}
+
 export interface InstanceSummary {
   id: string;
   iconSrc: string;
