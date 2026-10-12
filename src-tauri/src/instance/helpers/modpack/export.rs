@@ -138,6 +138,8 @@ static BLACKLIST: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     // 启动器自有元数据由导入流程重新生成。
     "ustblcfg.json",
     "ustbl-multimc-components.json",
+    "ustbl-multimc-profile.json",
+    "ustbl-modpack-baseline.json",
     // Fabric/OptiFine
     ".fabric",
     ".mixin.out",

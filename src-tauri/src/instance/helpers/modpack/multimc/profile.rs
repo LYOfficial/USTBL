@@ -21,6 +21,8 @@ use tauri_plugin_http::reqwest;
 use url::Url;
 use zip::ZipArchive;
 
+/// Raw `mmc-pack.json` and `instance.cfg` of an imported component profile.
+pub const MULTIMC_PROFILE_FILE_NAME: &str = "ustbl-multimc-profile.json";
 const META_BASE: &str = "https://meta.prismlauncher.org/v1/";
 const MAX_COMPONENTS: usize = 128;
 
@@ -217,6 +219,9 @@ pub struct ResolvedMultiMc {
   patches: Vec<Patch>,
   base: String,
   cfg: HashMap<String, String>,
+  /// `mmc-pack.json` exactly as shipped, so component flags the typed manifest
+  /// does not model (`important`, `dependencyOnly`, ...) are not lost.
+  mmc_pack: Value,
 }
 
 impl ResolvedMultiMc {
@@ -302,11 +307,17 @@ impl ResolvedMultiMc {
       index += 1;
     }
     let patches = order_patches(patches)?;
+    let mmc_pack: Value = serde_json::from_slice(&read_entry(
+      &mut archive,
+      &format!("{}mmc-pack.json", manifest.base_path),
+      4 * 1024 * 1024,
+    )?)?;
     let mut result = Self {
       client: McClientInfo::default(),
       patches,
       base: manifest.base_path,
       cfg: manifest.cfg,
+      mmc_pack,
     };
     result.client = result.compose()?;
     Ok(Some(result))
@@ -489,6 +500,18 @@ impl ResolvedMultiMc {
     fs::write(
       instance.join("ustbl-multimc-components.json"),
       serde_json::to_vec_pretty(&self.patches)?,
+    )?;
+    // What the pack declared besides the resolved patches: the raw component list
+    // and `instance.cfg`. Neither is applied again on launch; they are kept so an
+    // export or a later update can reproduce the pack faithfully.
+    let instance_cfg: std::collections::BTreeMap<&String, &String> = self.cfg.iter().collect();
+    fs::write(
+      instance.join(MULTIMC_PROFILE_FILE_NAME),
+      serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": 1,
+        "mmcPack": self.mmc_pack,
+        "instanceCfg": instance_cfg,
+      }))?,
     )?;
     Ok(())
   }
