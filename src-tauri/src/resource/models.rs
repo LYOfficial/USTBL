@@ -130,6 +130,9 @@ pub struct OtherResourceVersionPackQuery {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct OtherResourceFileInfo {
   pub resource_id: String,
+  /// Platform id of this file: Modrinth version id / CurseForge file id.
+  #[serde(default)]
+  pub file_id: String,
   pub name: String,
   pub release_type: String,
   pub downloads: u64,
