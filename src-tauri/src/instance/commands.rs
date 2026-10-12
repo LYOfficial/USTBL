@@ -16,7 +16,7 @@ use crate::instance::helpers::modpack::baseline::{
   hash_existing_files, hash_file, BaselineFile, BaselineLoader, ModpackBaseline,
 };
 use crate::instance::helpers::modpack::export::{
-  collect_modrinth_files, create_modpack_zip, generate_modrinth_manifest,
+  build_component_export, collect_modrinth_files, create_modpack_zip, generate_modrinth_manifest,
   generate_multimc_instance_cfg, generate_multimc_manifest, list_files, validate_export_options,
   ExportFormat, ExportModpackOptions,
 };
@@ -24,6 +24,9 @@ use crate::instance::helpers::modpack::misc::{
   extract_overrides, get_download_params, ModpackMetaInfo,
 };
 use crate::instance::helpers::modpack::multimc::profile::ResolvedMultiMc;
+use crate::instance::helpers::modpack::multimc::snapshot::{
+  is_component_instance, ComponentSnapshot,
+};
 use crate::instance::helpers::mods::common::{
   compress_icon, get_mod_info_from_dir, get_mod_info_from_jar,
 };
@@ -1658,6 +1661,7 @@ pub async fn export_modpack(
   if selected_files.is_empty() {
     return Err(InstanceError::ModpackManifestParseError.into());
   }
+  let mut raw_files = Vec::new();
   let (prefix, overrides, extras) = match options.format {
     ExportFormat::Modrinth => {
       let mut manifest = generate_modrinth_manifest(&instance, &options)?;
@@ -1677,6 +1681,20 @@ pub async fn export_modpack(
         vec![("modrinth.index.json".to_string(), json)],
       )
     }
+    ExportFormat::MultiMC if is_component_instance(&instance.version_path) => {
+      // An imported component profile is written back from what it declared.
+      let snapshot = ComponentSnapshot::load(&instance.version_path)
+        .await
+        .map_err(|_| InstanceError::ModpackExportProfileMissing)?
+        .ok_or(InstanceError::ModpackExportProfileMissing)?;
+      let libraries_dir =
+        get_instance_subdir_paths(&app, &instance, &[&InstanceSubdirType::Libraries])
+          .ok_or(InstanceError::InstanceNotFoundByID)?
+          .remove(0);
+      let export = build_component_export(&snapshot, &options, &libraries_dir)?;
+      raw_files = export.libraries;
+      (".minecraft".to_string(), selected_files, export.entries)
+    }
     ExportFormat::MultiMC => {
       let manifest = generate_multimc_manifest(&instance, &options)?;
       let json = serde_json::to_string_pretty(&manifest)
@@ -1695,7 +1713,7 @@ pub async fn export_modpack(
       )
     }
   };
-  create_modpack_zip(&save_path, &prefix, overrides, extras).await?;
+  create_modpack_zip(&save_path, &prefix, overrides, extras, raw_files).await?;
   Ok(())
 }
 
