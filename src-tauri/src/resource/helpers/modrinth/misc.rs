@@ -1,6 +1,7 @@
 use crate::error::{USTBLError, USTBLResult};
 use crate::resource::helpers::mcim::{
-  get_content_source_priority_list, modrinth_api_base, ContentSource, MCIM_BASE,
+  acquire_mcim_api_permit_for, get_content_source_priority_list, modrinth_api_base, ContentSource,
+  MCIM_BASE,
 };
 use crate::resource::helpers::misc::version_pack_sort;
 use crate::resource::models::{
@@ -26,6 +27,10 @@ where
     OtherResourceRequestType::Get => client.get(url),
     OtherResourceRequestType::Post(payload) => client.post(url).json(payload),
   };
+
+  // Wait for a mirror slot before sending. The permit is held until the body has
+  // been read, so a request in flight keeps counting against the budget.
+  let _permit = acquire_mcim_api_permit_for(url).await;
 
   let response = request_builder
     .send()
@@ -342,6 +347,10 @@ pub async fn translate_description_modrinth(
     )?
     .ok_or(ResourceError::NoDownloadApi)?;
     let client = app.state::<reqwest::Client>();
+
+    // Translation is requested once per installed mod, so it shares the mirror
+    // budget instead of fanning out one request per mod at once.
+    let _permit = acquire_mcim_api_permit_for(&url).await;
 
     let translation_res = client
       .get(&url)

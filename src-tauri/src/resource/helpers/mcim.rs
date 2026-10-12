@@ -20,6 +20,8 @@
 //! See <https://www.mcimirror.top/guide/start/getting-started>.
 
 use crate::launcher_config::models::LauncherConfig;
+use std::sync::LazyLock;
+use tokio::sync::{Semaphore, SemaphorePermit};
 use url::Url;
 
 /// Base URL of the MCIM mirror.
@@ -37,6 +39,8 @@ pub const CURSEFORGE_MCIM_API_BASE: &str = "https://mod.mcimirror.top/curseforge
 const MODRINTH_CDN_HOST: &str = "cdn.modrinth.com";
 const FORGE_CDN_HOST: &str = "edge.forgecdn.net";
 const MCIM_HOST: &str = "mod.mcimirror.top";
+/// Registrable domain of the mirror, so that every mirror host is recognized.
+const MCIM_DOMAIN: &str = "mcimirror.top";
 
 /// Where a resource (mod, shader pack, ...) API request or file download should
 /// be resolved from.
@@ -76,6 +80,70 @@ pub fn curseforge_api_base(source: ContentSource) -> &'static str {
     ContentSource::Official => CURSEFORGE_OFFICIAL_API_BASE,
     ContentSource::Mcim => CURSEFORGE_MCIM_API_BASE,
   }
+}
+
+/// Maximum number of metadata/API requests kept in flight against the mirror.
+///
+/// MCIM asks integrations to「合理设置并发与重试，不要对镜像发起压力测试」and may
+/// treat an aggressive client as a network attack. Metadata is where the launcher
+/// fans out hardest — a version pack expands into up to sixteen paginated
+/// requests, and installed mods are translated one by one — so those calls share
+/// one budget.
+///
+/// Reference: <https://www.mcimirror.top/guide/rules/register>.
+pub const MCIM_MAX_CONCURRENT_API_REQUESTS: usize = 4;
+
+/// Maximum number of file downloads kept in flight against the mirror.
+///
+/// Tracked separately from the metadata budget so that a long transfer cannot
+/// starve an interactive request, which would leave the resource browser waiting
+/// on a download slot.
+pub const MCIM_MAX_CONCURRENT_DOWNLOADS: usize = 4;
+
+/// Process-wide mirror budgets, so the caps hold across every task the launcher
+/// starts rather than per call site.
+static MCIM_API_CONCURRENCY: LazyLock<Semaphore> =
+  LazyLock::new(|| Semaphore::new(MCIM_MAX_CONCURRENT_API_REQUESTS));
+static MCIM_DOWNLOAD_CONCURRENCY: LazyLock<Semaphore> =
+  LazyLock::new(|| Semaphore::new(MCIM_MAX_CONCURRENT_DOWNLOADS));
+
+/// Whether a URL is served by the mirror, and therefore subject to the budgets.
+///
+/// Matches the registrable domain and its subdomains; a host that merely embeds
+/// the mirror name (`mod.mcimirror.top.example.com`) does not count.
+pub fn is_mcim_url(url: &str) -> bool {
+  let Ok(parsed) = Url::parse(url) else {
+    return false;
+  };
+  parsed.host_str().is_some_and(|host| {
+    host == MCIM_DOMAIN
+      || host
+        .strip_suffix(MCIM_DOMAIN)
+        .is_some_and(|prefix| prefix.ends_with('.'))
+  })
+}
+
+/// Acquire a metadata slot for a request to `url`.
+///
+/// `None` means the request is not mirror-bound and needs no permit, which keeps
+/// the official sources and the GitHub proxy unthrottled. Hold the permit until
+/// the response body has been read.
+pub async fn acquire_mcim_api_permit_for(url: &str) -> Option<SemaphorePermit<'static>> {
+  if !is_mcim_url(url) {
+    return None;
+  }
+  MCIM_API_CONCURRENCY.acquire().await.ok()
+}
+
+/// Acquire a download slot for a file transfer from `url`.
+///
+/// Hold the permit for the whole transfer: an open mirror connection is exactly
+/// what the budget is meant to limit.
+pub async fn acquire_mcim_download_permit_for(url: &str) -> Option<SemaphorePermit<'static>> {
+  if !is_mcim_url(url) {
+    return None;
+  }
+  MCIM_DOWNLOAD_CONCURRENCY.acquire().await.ok()
 }
 
 fn with_host(url: &Url, host: &str) -> Option<Url> {
@@ -158,13 +226,74 @@ pub fn content_file_source_candidates(url: &Url, priority: &[ContentSource]) -> 
 #[cfg(test)]
 mod tests {
   use super::{
-    content_file_source_candidates, content_file_url, ContentSource, CURSEFORGE_MCIM_API_BASE,
-    CURSEFORGE_OFFICIAL_API_BASE, MODRINTH_MCIM_API_BASE, MODRINTH_OFFICIAL_API_BASE,
+    acquire_mcim_api_permit_for, content_file_source_candidates, content_file_url, is_mcim_url,
+    ContentSource, CURSEFORGE_MCIM_API_BASE, CURSEFORGE_OFFICIAL_API_BASE,
+    MCIM_MAX_CONCURRENT_API_REQUESTS, MODRINTH_MCIM_API_BASE, MODRINTH_OFFICIAL_API_BASE,
   };
   use url::Url;
 
   fn url(input: &str) -> Url {
     Url::parse(input).unwrap()
+  }
+
+  #[test]
+  fn only_mirror_hosts_are_recognized_as_mcim() {
+    assert!(is_mcim_url("https://mod.mcimirror.top/curseforge/v1/mods"));
+    assert!(is_mcim_url("https://mcimirror.top/data/x.jar"));
+    assert!(is_mcim_url("https://a.b.mcimirror.top/data/x.jar"));
+    // Lookalikes and the official hosts must stay unthrottled.
+    assert!(!is_mcim_url("https://mod.mcimirror.top.example.com/x.jar"));
+    assert!(!is_mcim_url("https://notmcimirror.top/x.jar"));
+    assert!(!is_mcim_url("https://cdn.modrinth.com/data/x.jar"));
+    assert!(!is_mcim_url("https://api.curseforge.com/v1/mods"));
+    assert!(!is_mcim_url("not a url"));
+  }
+
+  #[tokio::test]
+  async fn non_mirror_urls_reserve_no_budget() {
+    // A permit would otherwise be held for the whole request, so a `None` here
+    // is what keeps official sources from being throttled.
+    assert!(
+      acquire_mcim_api_permit_for("https://cdn.modrinth.com/x.jar")
+        .await
+        .is_none()
+    );
+    assert!(
+      acquire_mcim_api_permit_for("https://api.curseforge.com/v1/mods")
+        .await
+        .is_none()
+    );
+  }
+
+  #[tokio::test]
+  async fn mirror_requests_are_capped_and_released() {
+    let url = "https://mod.mcimirror.top/curseforge/v1/mods";
+    let mut permits = Vec::new();
+    for _ in 0..MCIM_MAX_CONCURRENT_API_REQUESTS {
+      permits.push(
+        acquire_mcim_api_permit_for(url)
+          .await
+          .expect("the configured budget is at least one"),
+      );
+    }
+
+    // The budget is exhausted, so one more request has to wait rather than
+    // adding to the load on the mirror.
+    assert!(tokio::time::timeout(
+      std::time::Duration::from_millis(50),
+      acquire_mcim_api_permit_for(url)
+    )
+    .await
+    .is_err());
+
+    // Dropping one permit hands its slot to the waiting request.
+    permits.pop();
+    assert!(tokio::time::timeout(
+      std::time::Duration::from_secs(1),
+      acquire_mcim_api_permit_for(url)
+    )
+    .await
+    .is_ok());
   }
 
   #[test]

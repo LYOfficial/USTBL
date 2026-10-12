@@ -9,7 +9,9 @@ pub mod misc;
 
 use crate::error::USTBLResult;
 use crate::launcher_config::models::LauncherConfig;
-use crate::resource::helpers::mcim::{get_content_source_priority_list, ContentSource, MCIM_BASE};
+use crate::resource::helpers::mcim::{
+  acquire_mcim_api_permit_for, get_content_source_priority_list, ContentSource, MCIM_BASE,
+};
 use crate::resource::helpers::misc::{apply_other_resource_enhancements, version_pack_sort};
 use crate::resource::helpers::mod_db::handle_search_query;
 use crate::resource::models::{
@@ -395,6 +397,10 @@ pub async fn translate_description_curseforge(
     MCIM_BASE,
     urlencoding::encode(resource_id)
   );
+
+  // Translation is requested once per browsed project, so it shares the mirror
+  // budget instead of fanning out freely.
+  let _permit = acquire_mcim_api_permit_for(&url).await;
 
   let result = client
     .get(&url)

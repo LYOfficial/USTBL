@@ -17,7 +17,7 @@ use crate::instance::models::misc::{InstanceError, ModLoader, ModLoaderType};
 use crate::launcher_config::models::LauncherConfig;
 use crate::resource::helpers::curseforge::misc::has_official_api_key;
 use crate::resource::helpers::mcim::{
-  curseforge_api_base, get_content_source_priority_list, ContentSource,
+  acquire_mcim_api_permit_for, curseforge_api_base, get_content_source_priority_list, ContentSource,
 };
 use crate::resource::models::OtherResourceSource;
 use crate::tasks::download::DownloadParam;
@@ -65,6 +65,10 @@ where
       ContentSource::Official => request.header("x-api-key", CURSEFORGE_API_KEY.as_str()),
       ContentSource::Mcim => request,
     };
+
+    // Mirror metadata shares the global budget so that installing a modpack does
+    // not flood the mirror with parallel file lookups.
+    let _permit = acquire_mcim_api_permit_for(&url).await;
 
     match request.send().await {
       Ok(response) if response.status().is_success() => match response.json::<T>().await {

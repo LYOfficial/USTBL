@@ -1,7 +1,8 @@
 use crate::error::{USTBLError, USTBLResult};
 use crate::launcher_config::commands::retrieve_launcher_config;
 use crate::resource::helpers::mcim::{
-  content_file_source_candidates, get_content_source_priority_list, ContentSource,
+  acquire_mcim_download_permit_for, content_file_source_candidates,
+  get_content_source_priority_list, ContentSource,
 };
 use crate::tasks::streams::desc::{PDesc, PStatus};
 use crate::tasks::streams::reporter::Reporter;
@@ -344,6 +345,11 @@ impl DownloadTask {
     source: &Url,
     use_request_retry: bool,
   ) -> USTBLResult<()> {
+    // Hold a mirror slot for the whole transfer. Installing a modpack queues
+    // hundreds of files at once, and the mirror asks clients not to open more
+    // parallel connections than necessary.
+    let _permit = acquire_mcim_download_permit_for(source.as_str()).await;
+
     let current = task_handle.read().unwrap().desc.current;
     let (resp, total_progress, download_start) =
       Self::create_resp_stream(app_handle, current, param, source, use_request_retry).await?;

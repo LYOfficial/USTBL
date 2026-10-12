@@ -9,7 +9,9 @@
 //! Reference: <https://docs.curseforge.com/rest-api/>
 
 use crate::error::{USTBLError, USTBLResult};
-use crate::resource::helpers::mcim::{curseforge_api_base, ContentSource};
+use crate::resource::helpers::mcim::{
+  acquire_mcim_api_permit_for, curseforge_api_base, ContentSource,
+};
 use crate::resource::models::{
   OtherResourceApiEndpoint, OtherResourceDependency, OtherResourceFileInfo, OtherResourceInfo,
   OtherResourceRequestType, OtherResourceSource, ResourceError,
@@ -404,6 +406,10 @@ where
       authenticated(client.post(url), source).json(payload)
     }
   };
+
+  // Wait for a mirror slot before sending. The permit is held until the body has
+  // been read, so a request in flight keeps counting against the budget.
+  let _permit = acquire_mcim_api_permit_for(url).await;
 
   let response = request
     .send()
