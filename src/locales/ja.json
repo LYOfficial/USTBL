@@ -3200,12 +3200,33 @@
       "downloadStarted": "{{version}} のダウンロードを開始しました",
       "downloadDescription": "ダウンロード完了後、モッドパックのインストールが自動で始まります。"
     },
-    "followed": {
-      "title": "フォロー中のインスタンス",
+    "ledger": {
+      "title": "モッドパックのインスタンス",
       "checkAll": "すべて確認",
-      "available": "更新あり",
-      "notChecked": "未確認",
-      "open": "更新を表示"
+      "badge": {
+        "upToDate": "最新",
+        "available": "更新あり",
+        "localChanges": "ローカル変更あり",
+        "unlinked": "未関連付け",
+        "paused": "一時停止中",
+        "needsRepair": "要修復",
+        "waitingLoader": "ローダー待ち",
+        "unknown": "確認に失敗",
+        "notChecked": "未確認"
+      },
+      "action": {
+        "update": "更新",
+        "publish": "公開",
+        "details": "詳細"
+      },
+      "updateTo": "{{latest}} に更新できます",
+      "changes": "{{count}} 件のファイルをローカルで変更",
+      "unlinkedHint": "取得元が記録されていないため、更新を確認できません",
+      "platform": {
+        "campus": "校内"
+      },
+      "installed": "インストール済み",
+      "installedHint": "この端末に該当するインスタンスが {{count}} 件あります。クリックで表示"
     }
   }
 }

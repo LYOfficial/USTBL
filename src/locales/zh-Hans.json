@@ -3200,12 +3200,33 @@
       "downloadStarted": "已开始下载 {{version}}",
       "downloadDescription": "下载完成后会自动进入整合包安装流程。"
     },
-    "followed": {
+    "ledger": {
       "title": "我的整合包实例",
       "checkAll": "全部检查",
-      "available": "有新版本",
-      "notChecked": "尚未检查",
-      "open": "查看更新"
+      "badge": {
+        "upToDate": "最新",
+        "available": "有更新",
+        "localChanges": "有本地改动",
+        "unlinked": "未关联",
+        "paused": "已暂停",
+        "needsRepair": "需修复",
+        "waitingLoader": "等待加载器",
+        "unknown": "检查失败",
+        "notChecked": "未检查"
+      },
+      "action": {
+        "update": "更新",
+        "publish": "发布",
+        "details": "详情"
+      },
+      "updateTo": "可更新到 {{latest}}",
+      "changes": "{{count}} 个文件有本地改动",
+      "unlinkedHint": "来源未记录，无法检查更新",
+      "platform": {
+        "campus": "校内"
+      },
+      "installed": "已安装",
+      "installedHint": "本地已有 {{count}} 个对应实例，点击查看"
     }
   }
 }

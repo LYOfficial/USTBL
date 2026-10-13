@@ -3200,12 +3200,33 @@
       "downloadStarted": "Started downloading {{version}}",
       "downloadDescription": "The modpack installation starts once the download finishes."
     },
-    "followed": {
+    "ledger": {
       "title": "My modpack instances",
       "checkAll": "Check all",
-      "available": "Update available",
-      "notChecked": "Not checked yet",
-      "open": "View updates"
+      "badge": {
+        "upToDate": "Up to date",
+        "available": "Update available",
+        "localChanges": "Local changes",
+        "unlinked": "Not linked",
+        "paused": "Paused",
+        "needsRepair": "Needs repair",
+        "waitingLoader": "Waiting for loader",
+        "unknown": "Check failed",
+        "notChecked": "Not checked"
+      },
+      "action": {
+        "update": "Update",
+        "publish": "Publish",
+        "details": "Details"
+      },
+      "updateTo": "Update to {{latest}}",
+      "changes": "{{count}} file(s) changed locally",
+      "unlinkedHint": "Source not recorded, so updates cannot be checked",
+      "platform": {
+        "campus": "Campus"
+      },
+      "installed": "Installed",
+      "installedHint": "{{count}} matching instance(s) on this device, click to view"
     }
   }
 }

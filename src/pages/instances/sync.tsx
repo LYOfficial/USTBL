@@ -8,7 +8,7 @@ import {
 } from "@chakra-ui/react";
 import { downloadDir } from "@tauri-apps/api/path";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BeatLoader } from "react-spinners";
 import { CommonIconButton } from "@/components/common/common-icon-button";
@@ -16,9 +16,9 @@ import Empty from "@/components/common/empty";
 import { OptionItemGroup } from "@/components/common/option-item";
 import { Section } from "@/components/common/section";
 import InstallCampusModpackModal from "@/components/modals/install-campus-modpack-modal";
+import { InstanceLedger, ledgerRowId } from "@/components/sync/instance-ledger";
 import { useLauncherConfig } from "@/contexts/config";
 import { useGlobalData } from "@/contexts/global-data";
-import { useSharedModals } from "@/contexts/shared-modal";
 import { useTaskContext } from "@/contexts/task";
 import { useToast } from "@/contexts/toast";
 import {
@@ -26,8 +26,10 @@ import {
   CampusModpackProject,
   CampusModpackRecommendation,
 } from "@/models/campus-modpack";
+import { InstanceSummary } from "@/models/instance/misc";
 import { TaskTypeEnums } from "@/models/task";
 import { CampusModpackService } from "@/services/campus-modpack";
+import { campusProjectRefs, findInstancesOfLine } from "@/utils/modpack-ledger";
 import { registerPendingModpackOrigin } from "@/utils/modpack-origin";
 import { sanitizeFileName } from "@/utils/string";
 
@@ -38,101 +40,28 @@ type CampusSelection = {
   line: CampusModpackLine;
 };
 
-// ─── Followed instances ────────────────────────────────────────────────────
-
-/** The instances that follow a modpack, with where each one stands. */
-const FollowedInstancesSection = () => {
-  const { t } = useTranslation();
-  const { openSharedModal } = useSharedModals();
-  const { getInstanceList, modpackChecks, checkModpackUpdate } =
-    useGlobalData();
-  const [checking, setChecking] = useState(false);
-
-  const followed = (getInstanceList() ?? []).filter(
-    (instance) => instance.origin
-  );
-
-  const handleCheckAll = useCallback(async () => {
-    setChecking(true);
-    for (const instance of followed) {
-      await checkModpackUpdate(instance.id, true);
-    }
-    setChecking(false);
-  }, [followed, checkModpackUpdate]);
-
-  if (followed.length === 0) return null;
-
-  return (
-    <VStack align="stretch" spacing={3}>
-      <HStack spacing={2} px={1} justify="space-between" w="100%">
-        <Text fontSize="sm" fontWeight="bold">
-          {t("InstanceSyncPage.followed.title")}
-        </Text>
-        <CommonIconButton
-          icon="refresh"
-          label={t("InstanceSyncPage.followed.checkAll")}
-          withTooltip
-          onClick={handleCheckAll}
-          isDisabled={checking}
-          size="xs"
-          h={21}
-        />
-      </HStack>
-      <OptionItemGroup
-        items={followed.map((instance) => {
-          const check = modpackChecks[instance.id];
-          return {
-            title: (
-              <HStack spacing={2}>
-                <Text>{instance.name}</Text>
-                {check?.status === "available" && (
-                  <Badge colorScheme="green">
-                    {t("InstanceSyncPage.followed.available")}
-                  </Badge>
-                )}
-              </HStack>
-            ),
-            description: (
-              <Text fontSize="xs" className="secondary-text">
-                {[
-                  instance.modpackVersion,
-                  check
-                    ? t(`UpdateModpackModal.status.${check.status}`, {
-                        latest: check.latestLabel,
-                        count: check.localChanges ?? 0,
-                      })
-                    : t("InstanceSyncPage.followed.notChecked"),
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </Text>
-            ),
-            children: (
-              <CommonIconButton
-                icon="update"
-                label={t("InstanceSyncPage.followed.open")}
-                withTooltip
-                size="xs"
-                h={18}
-                onClick={() =>
-                  openSharedModal("update-modpack", {
-                    instanceId: instance.id,
-                    instanceName: instance.name,
-                  })
-                }
-              />
-            ),
-          };
-        })}
-      />
-    </VStack>
-  );
-};
-
 /** The Modrinth project behind a recommend slot that lives off-campus. */
-type ExternalProject = { title: string };
+type ExternalProject = { title: string; id?: string; slug?: string };
 
-const CampusPlatformSection = () => {
+interface CampusPlatformSectionProps {
+  projects: CampusModpackProject[];
+  recommendation: CampusModpackRecommendation | null;
+  loading: boolean;
+  onRefresh: () => void;
+  /** Local instances, to mark what is already installed. */
+  instances: InstanceSummary[];
+  /** Jumps to the ledger row of an instance. */
+  onFocusInstance: (instanceId: string) => void;
+}
+
+const CampusPlatformSection: React.FC<CampusPlatformSectionProps> = ({
+  projects,
+  recommendation,
+  loading,
+  onRefresh,
+  instances,
+  onFocusInstance,
+}) => {
   const { t } = useTranslation();
   const toast = useToast();
   const { handleScheduleProgressiveTaskGroup } = useTaskContext();
@@ -140,40 +69,10 @@ const CampusPlatformSection = () => {
   const primaryColor = config.appearance.theme.primaryColor;
   const installModal = useDisclosure();
 
-  const [projects, setProjects] = useState<CampusModpackProject[]>([]);
-  const [recommendation, setRecommendation] =
-    useState<CampusModpackRecommendation | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
   const [selected, setSelected] = useState<CampusSelection | null>(null);
   const [externalProject, setExternalProject] =
     useState<ExternalProject | null>(null);
   const [downloadingExternal, setDownloadingExternal] = useState(false);
-
-  const fetchAll = useCallback(async () => {
-    setLoading(true);
-    const [listResp, recommendResp] = await Promise.all([
-      CampusModpackService.listCampusModpackProjects(),
-      CampusModpackService.fetchCampusModpackRecommendation("recommended"),
-    ]);
-    if (listResp.status === "success") {
-      setProjects(listResp.data.filter((project) => project.lines.length > 0));
-    } else {
-      setProjects([]);
-      toast({
-        title: listResp.message,
-        description: listResp.details,
-        status: "warning",
-      });
-    }
-    setRecommendation(
-      recommendResp.status === "success" ? recommendResp.data : null
-    );
-    setLoading(false);
-  }, [toast]);
-
-  useEffect(() => {
-    fetchAll();
-  }, [fetchAll]);
 
   // The slot only carries the project id; ask Modrinth what it is called.
   const externalRef =
@@ -188,7 +87,11 @@ const CampusPlatformSection = () => {
       .then((response) => (response.ok ? response.json() : null))
       .then((data) => {
         if (!cancelled && data?.title)
-          setExternalProject({ title: data.title });
+          setExternalProject({
+            title: data.title,
+            id: data.id,
+            slug: data.slug,
+          });
       })
       .catch(() => {});
     return () => {
@@ -311,19 +214,64 @@ const CampusPlatformSection = () => {
     installModal.onOpen();
   };
 
+  /** Marks a line that already has a local instance; click jumps to its row. */
+  const installedBadge = (matches: InstanceSummary[]) =>
+    matches.length > 0 && (
+      <Badge
+        as="button"
+        type="button"
+        colorScheme="green"
+        cursor="pointer"
+        title={t("InstanceSyncPage.ledger.installedHint", {
+          count: matches.length,
+        })}
+        onClick={() => onFocusInstance(matches[0].id)}
+      >
+        {t("InstanceSyncPage.ledger.installed")}
+      </Badge>
+    );
+
+  const installedOfCampusLine = (
+    project: CampusModpackProject,
+    line: CampusModpackLine
+  ) =>
+    findInstancesOfLine(instances, {
+      platform: "campus",
+      projectRefs: campusProjectRefs(project),
+      gameVersion: line.gameVersion,
+      loaderType: line.loaderType,
+    });
+
   const installButton = (
     project: CampusModpackProject,
     line: CampusModpackLine
   ) => (
-    <CommonIconButton
-      icon="download"
-      label={t("General.download")}
-      withTooltip
-      size="xs"
-      h={18}
-      onClick={() => handleSelect(project, line)}
-    />
+    <HStack spacing={1.5}>
+      {installedBadge(installedOfCampusLine(project, line))}
+      <CommonIconButton
+        icon="download"
+        label={t("General.download")}
+        withTooltip
+        size="xs"
+        h={18}
+        onClick={() => handleSelect(project, line)}
+      />
+    </HStack>
   );
+
+  const installedOfExternal = (rec: CampusModpackRecommendation) =>
+    rec.platform === "modrinth" || rec.platform === "curseforge"
+      ? findInstancesOfLine(instances, {
+          platform: rec.platform,
+          projectRefs: [
+            rec.projectRef,
+            externalProject?.id,
+            externalProject?.slug,
+          ].filter((ref): ref is string => !!ref),
+          gameVersion: rec.gameVersion,
+          loaderType: rec.loaderType,
+        })
+      : [];
 
   return (
     <VStack align="stretch" spacing={3}>
@@ -334,7 +282,7 @@ const CampusPlatformSection = () => {
           </Text>
           <CommonIconButton
             icon="refresh"
-            onClick={fetchAll}
+            onClick={onRefresh}
             isDisabled={loading}
             size="xs"
             h={21}
@@ -399,7 +347,8 @@ const CampusPlatformSection = () => {
                   ),
                   children:
                     recommendation.platform === "modrinth" ? (
-                      <HStack spacing={1}>
+                      <HStack spacing={1.5}>
+                        {installedBadge(installedOfExternal(recommendation))}
                         <CommonIconButton
                           icon="external"
                           label={t("InstanceSyncPage.platform.openOriginal")}
@@ -473,8 +422,60 @@ const CampusPlatformSection = () => {
 
 // ─── Page ───────────────────────────────────────────────────────────────────
 
+const HIGHLIGHT_MS = 1600;
+
 const InstanceSyncPage = () => {
   const { t } = useTranslation();
+  const toast = useToast();
+  const { getInstanceList } = useGlobalData();
+  const instances = useMemo(() => getInstanceList() ?? [], [getInstanceList]);
+
+  const [projects, setProjects] = useState<CampusModpackProject[]>([]);
+  const [recommendation, setRecommendation] =
+    useState<CampusModpackRecommendation | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const highlightTimer = useRef<ReturnType<typeof setTimeout>>();
+
+  const fetchAll = useCallback(async () => {
+    setLoading(true);
+    const [listResp, recommendResp] = await Promise.all([
+      CampusModpackService.listCampusModpackProjects(),
+      CampusModpackService.fetchCampusModpackRecommendation("recommended"),
+    ]);
+    if (listResp.status === "success") {
+      setProjects(listResp.data.filter((project) => project.lines.length > 0));
+    } else {
+      setProjects([]);
+      toast({
+        title: listResp.message,
+        description: listResp.details,
+        status: "warning",
+      });
+    }
+    setRecommendation(
+      recommendResp.status === "success" ? recommendResp.data : null
+    );
+    setLoading(false);
+  }, [toast]);
+
+  useEffect(() => {
+    fetchAll();
+  }, [fetchAll]);
+
+  useEffect(() => () => clearTimeout(highlightTimer.current), []);
+
+  const focusInstance = useCallback((instanceId: string) => {
+    document
+      .getElementById(ledgerRowId(instanceId))
+      ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightId(instanceId);
+    clearTimeout(highlightTimer.current);
+    highlightTimer.current = setTimeout(
+      () => setHighlightId(null),
+      HIGHLIGHT_MS
+    );
+  }, []);
 
   return (
     <Section
@@ -487,8 +488,19 @@ const InstanceSyncPage = () => {
     >
       <Box overflow="auto" flexGrow={1}>
         <VStack align="stretch" spacing={5}>
-          <FollowedInstancesSection />
-          <CampusPlatformSection />
+          <InstanceLedger
+            instances={instances}
+            projects={projects}
+            highlightId={highlightId}
+          />
+          <CampusPlatformSection
+            projects={projects}
+            recommendation={recommendation}
+            loading={loading}
+            onRefresh={fetchAll}
+            instances={instances}
+            onFocusInstance={focusInstance}
+          />
         </VStack>
       </Box>
     </Section>

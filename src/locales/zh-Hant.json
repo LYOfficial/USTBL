@@ -3200,12 +3200,33 @@
       "downloadStarted": "已開始下載 {{version}}",
       "downloadDescription": "下載完成後會自動進入整合包安裝流程。"
     },
-    "followed": {
+    "ledger": {
       "title": "我的整合包實例",
       "checkAll": "全部檢查",
-      "available": "有新版本",
-      "notChecked": "尚未檢查",
-      "open": "查看更新"
+      "badge": {
+        "upToDate": "最新",
+        "available": "有更新",
+        "localChanges": "有本地改動",
+        "unlinked": "未關聯",
+        "paused": "已暫停",
+        "needsRepair": "需修復",
+        "waitingLoader": "等待載入器",
+        "unknown": "檢查失敗",
+        "notChecked": "未檢查"
+      },
+      "action": {
+        "update": "更新",
+        "publish": "發布",
+        "details": "詳情"
+      },
+      "updateTo": "可更新到 {{latest}}",
+      "changes": "{{count}} 個檔案有本地改動",
+      "unlinkedHint": "來源未記錄，無法檢查更新",
+      "platform": {
+        "campus": "校內"
+      },
+      "installed": "已安裝",
+      "installedHint": "本地已有 {{count}} 個對應實例，點擊查看"
     }
   }
 }

@@ -3200,12 +3200,33 @@
       "downloadStarted": "Téléchargement de {{version}} lancé",
       "downloadDescription": "L'installation du pack démarre à la fin du téléchargement."
     },
-    "followed": {
+    "ledger": {
       "title": "Mes instances de packs",
       "checkAll": "Tout vérifier",
-      "available": "Mise à jour disponible",
-      "notChecked": "Pas encore vérifié",
-      "open": "Voir les mises à jour"
+      "badge": {
+        "upToDate": "À jour",
+        "available": "Mise à jour disponible",
+        "localChanges": "Modifications locales",
+        "unlinked": "Non lié",
+        "paused": "En pause",
+        "needsRepair": "À réparer",
+        "waitingLoader": "En attente du chargeur",
+        "unknown": "Échec de la vérification",
+        "notChecked": "Non vérifié"
+      },
+      "action": {
+        "update": "Mettre à jour",
+        "publish": "Publier",
+        "details": "Détails"
+      },
+      "updateTo": "Mise à jour vers {{latest}}",
+      "changes": "{{count}} fichier(s) modifié(s) localement",
+      "unlinkedHint": "Source non enregistrée, mises à jour non vérifiables",
+      "platform": {
+        "campus": "Campus"
+      },
+      "installed": "Installé",
+      "installedHint": "{{count}} instance(s) correspondante(s) sur cet appareil, cliquez pour voir"
     }
   }
 }
