@@ -52,6 +52,7 @@ export enum InstanceError {
   ModpackUpdateLineMismatch = "MODPACK_UPDATE_LINE_MISMATCH",
   ModpackUpdateUnsupported = "MODPACK_UPDATE_UNSUPPORTED",
   ModpackUpdateRunning = "MODPACK_UPDATE_RUNNING",
+  ModpackPublishStale = "MODPACK_PUBLISH_STALE",
 }
 
 export enum ConfigServiceError {
