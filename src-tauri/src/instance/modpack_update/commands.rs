@@ -468,6 +468,29 @@ pub async fn apply_modpack_update(
   })
 }
 
+/// Install the files of a campus modpack into the empty instance created for it.
+///
+/// Installing is the degenerate update: the baseline is empty, so everything the
+/// version lists is an addition. Files the instance already holds (such as an
+/// options file written at creation) are replaced by the modpack's own, because
+/// a fresh install should reproduce the published content.
+#[tauri::command]
+pub async fn install_campus_modpack(
+  app: AppHandle,
+  instance_id: String,
+) -> USTBLResult<UpdateOutcome> {
+  let plan = prepare_modpack_update(app.clone(), instance_id.clone()).await?;
+  if plan.reinstall_required {
+    return Err(InstanceError::ModpackUpdateReinstallRequired.into());
+  }
+  let choices = plan
+    .conflicts
+    .iter()
+    .map(|conflict| (conflict.path.clone(), ConflictChoice::TakeRemote))
+    .collect();
+  apply_modpack_update(app, instance_id, plan.plan_hash, choices).await
+}
+
 /// Undo or finish an update that was interrupted. Returns whether anything
 /// had to be done.
 #[tauri::command]
