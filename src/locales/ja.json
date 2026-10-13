@@ -1288,7 +1288,8 @@
       "exportModPack": "モッドパックエクスポート",
       "star": "このインスタンスをスター",
       "unstar": "このインスタンスを非スター",
-      "publishModPack": "キャンパスModパックに公開"
+      "publishModPack": "キャンパスModパックに公開",
+      "updateModpack": "モッドパックを更新"
     },
     "instanceTabList": {
       "overview": "概要",
@@ -2673,6 +2674,60 @@
         "error": {
           "title": "おすすめ Modpack の読み込みに失敗しました"
         }
+      },
+      "prepareCampusComponentPack": {
+        "error": {
+          "title": "コンポーネント構成のモッドパックを準備できませんでした"
+        }
+      },
+      "checkModpackUpdate": {
+        "error": {
+          "title": "モッドパックの更新確認に失敗しました"
+        }
+      },
+      "prepareModpackUpdate": {
+        "error": {
+          "title": "新しいバージョンを比較できませんでした",
+          "description": {
+            "MODPACK_UPDATE_BUSY": "このModパックは更新中です",
+            "MODPACK_UPDATE_VERIFY_FAILED": "ダウンロードしたファイルの検証に失敗しました。インスタンスは変更されていません",
+            "MODPACK_UPDATE_STALE": "確認後にローカルファイルが変更されました。もう一度更新を確認してください",
+            "MODPACK_UPDATE_REMOTE_INVALID": "新しいバージョンのファイル一覧が無効なため、更新を拒否しました",
+            "MODPACK_UPDATE_LINE_MISMATCH": "新しいバージョンのゲームバージョンまたはModローダーがこのインスタンスと異なります",
+            "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスは自動更新できません",
+            "MODPACK_UPDATE_RUNNING": "ゲームが実行中です。Modパックを更新する前に閉じてください",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "新しいバージョンはコンポーネント構成を変更するため、そのまま更新できません。再インストールしてください",
+            "MODPACK_UPDATE_LINE_GONE": "プラットフォームにこのモッドパックのラインはもうありません"
+          }
+        }
+      },
+      "recoverModpackUpdate": {
+        "error": {
+          "title": "中断された更新の復旧に失敗しました"
+        }
+      },
+      "setModpackFollow": {
+        "success": "追従設定を更新しました",
+        "error": {
+          "title": "追従設定の更新に失敗しました"
+        }
+      },
+      "applyModpackUpdate": {
+        "success": "モッドパックを更新しました",
+        "error": {
+          "title": "モッドパックの更新に失敗しました",
+          "description": {
+            "MODPACK_UPDATE_BUSY": "このModパックは更新中です",
+            "MODPACK_UPDATE_VERIFY_FAILED": "ダウンロードしたファイルの検証に失敗しました。インスタンスは変更されていません",
+            "MODPACK_UPDATE_STALE": "確認後にローカルファイルが変更されました。もう一度更新を確認してください",
+            "MODPACK_UPDATE_REMOTE_INVALID": "新しいバージョンのファイル一覧が無効なため、更新を拒否しました",
+            "MODPACK_UPDATE_LINE_MISMATCH": "新しいバージョンのゲームバージョンまたはModローダーがこのインスタンスと異なります",
+            "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスは自動更新できません",
+            "MODPACK_UPDATE_RUNNING": "ゲームが実行中です。Modパックを更新する前に閉じてください",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "新しいバージョンはコンポーネント構成を変更するため、そのまま更新できません。再インストールしてください",
+            "MODPACK_UPDATE_LINE_GONE": "プラットフォームにこのモッドパックのラインはもうありません"
+          }
+        }
       }
     },
     "task": {
@@ -3091,6 +3146,60 @@
     },
     "error": {
       "loaderUnavailable": "Mod ローダー {{loader}} {{version}} が見つからないため、インストールできません"
+    }
+  },
+  "UpdateModpackModal": {
+    "header": {
+      "title": "モッドパックを更新：{{name}}"
+    },
+    "status": {
+      "checking": "更新を確認しています…",
+      "planning": "新しいバージョンとローカルファイルを比較しています…",
+      "applying": "モッドパックを更新しています。ランチャーを閉じないでください…",
+      "available": "新しいバージョンがあります：{{latest}}",
+      "upToDate": "最新です",
+      "paused": "このモッドパックの追従は一時停止中です",
+      "notFollowing": "このインスタンスは追従するモッドパックに関連付けられていません",
+      "needsRepair": "このインスタンスは修復するまで更新を比較できません",
+      "unknown": "更新情報を取得できませんでした。後でもう一度お試しください"
+    },
+    "label": {
+      "current": "現在のバージョン：{{current}}"
+    },
+    "plan": {
+      "summary": "{{latest}} に更新します",
+      "fastForward": "ローカルファイルは既に {{latest}} と一致しています。バージョン記録のみ同期します",
+      "add": "追加 {{count}}",
+      "update": "更新 {{count}}",
+      "delete": "削除 {{count}}",
+      "loaderChange": "MODローダーを {{from}} から {{to}} に切り替えます",
+      "conflicts": "{{count}} 個のファイルがローカルの変更と競合しています。処理を選択してください（既定はローカルを保持）",
+      "reinstallRequired": "{{latest}} はコンポーネント構成を変更するため、そのまま更新できません。モッドパックを再インストールしてください"
+    },
+    "conflictKind": {
+      "modifiedLocallyChangedRemotely": "あなたが編集し、新バージョンでも変更されています",
+      "modifiedLocallyRemovedRemotely": "あなたが編集し、新バージョンには含まれません",
+      "deletedLocallyChangedRemotely": "あなたが削除し、新バージョンで変更されています",
+      "unmanagedFileInTheWay": "モッドパック外の同名ファイルがあります",
+      "disabledLocally": "あなたが無効化し、新バージョンも関係しています"
+    },
+    "choice": {
+      "keepLocal": "ローカルを保持",
+      "takeRemote": "新バージョンを使用"
+    },
+    "button": {
+      "preview": "更新をプレビュー",
+      "apply": "更新する",
+      "sync": "バージョン記録を同期",
+      "resume": "追従を再開",
+      "retry": "再試行"
+    },
+    "toast": {
+      "loaderPending": "MODローダーの再インストールが必要です。ダウンロードページをご確認ください"
+    },
+    "reason": {
+      "MODPACK_UPDATE_LINE_GONE": "プラットフォームにこのモッドパックのラインはもうありません",
+      "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスには利用できるインストール記録がないか、バージョン分離が無効です"
     }
   }
 }

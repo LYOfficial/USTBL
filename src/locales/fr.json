@@ -1288,7 +1288,8 @@
       "exportModPack": "Exporter en tant que modpack",
       "star": "Mettre en favori cette instance",
       "unstar": "Retirer des favoris",
-      "publishModPack": "Publier dans les modpacks du campus"
+      "publishModPack": "Publier dans les modpacks du campus",
+      "updateModpack": "Mettre à jour le pack"
     },
     "instanceTabList": {
       "overview": "Aperçu",
@@ -2673,6 +2674,60 @@
         "error": {
           "title": "Échec du chargement du modpack recommandé"
         }
+      },
+      "prepareCampusComponentPack": {
+        "error": {
+          "title": "Échec de la préparation du pack à chaîne de composants"
+        }
+      },
+      "checkModpackUpdate": {
+        "error": {
+          "title": "Échec de la recherche de mises à jour du pack"
+        }
+      },
+      "prepareModpackUpdate": {
+        "error": {
+          "title": "Échec de la comparaison de la nouvelle version",
+          "description": {
+            "MODPACK_UPDATE_BUSY": "Ce pack de mods est déjà en cours de mise à jour",
+            "MODPACK_UPDATE_VERIFY_FAILED": "Un fichier téléchargé a échoué à la vérification ; l’instance n’a pas été modifiée",
+            "MODPACK_UPDATE_STALE": "Les fichiers locaux ont changé après la vérification ; vérifiez de nouveau les mises à jour",
+            "MODPACK_UPDATE_REMOTE_INVALID": "La liste de fichiers de la nouvelle version est invalide ; la mise à jour a été refusée",
+            "MODPACK_UPDATE_LINE_MISMATCH": "La nouvelle version cible une autre version du jeu ou un autre chargeur que cette instance",
+            "MODPACK_UPDATE_UNSUPPORTED": "Cette instance ne peut pas être mise à jour automatiquement",
+            "MODPACK_UPDATE_RUNNING": "Le jeu est en cours d’exécution ; fermez-le avant de mettre à jour le pack de mods",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "Cette version modifie la chaîne de composants du pack et ne peut pas être appliquée sur place ; réinstallez-la",
+            "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack"
+          }
+        }
+      },
+      "recoverModpackUpdate": {
+        "error": {
+          "title": "Échec de la reprise de la mise à jour interrompue"
+        }
+      },
+      "setModpackFollow": {
+        "success": "Réglage de suivi mis à jour",
+        "error": {
+          "title": "Échec de la mise à jour du réglage de suivi"
+        }
+      },
+      "applyModpackUpdate": {
+        "success": "Pack mis à jour",
+        "error": {
+          "title": "Échec de la mise à jour du pack",
+          "description": {
+            "MODPACK_UPDATE_BUSY": "Ce pack de mods est déjà en cours de mise à jour",
+            "MODPACK_UPDATE_VERIFY_FAILED": "Un fichier téléchargé a échoué à la vérification ; l’instance n’a pas été modifiée",
+            "MODPACK_UPDATE_STALE": "Les fichiers locaux ont changé après la vérification ; vérifiez de nouveau les mises à jour",
+            "MODPACK_UPDATE_REMOTE_INVALID": "La liste de fichiers de la nouvelle version est invalide ; la mise à jour a été refusée",
+            "MODPACK_UPDATE_LINE_MISMATCH": "La nouvelle version cible une autre version du jeu ou un autre chargeur que cette instance",
+            "MODPACK_UPDATE_UNSUPPORTED": "Cette instance ne peut pas être mise à jour automatiquement",
+            "MODPACK_UPDATE_RUNNING": "Le jeu est en cours d’exécution ; fermez-le avant de mettre à jour le pack de mods",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "Cette version modifie la chaîne de composants du pack et ne peut pas être appliquée sur place ; réinstallez-la",
+            "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack"
+          }
+        }
       }
     },
     "task": {
@@ -3091,6 +3146,60 @@
     },
     "error": {
       "loaderUnavailable": "Le chargeur {{loader}} {{version}} est introuvable, installation impossible"
+    }
+  },
+  "UpdateModpackModal": {
+    "header": {
+      "title": "Mettre à jour le pack : {{name}}"
+    },
+    "status": {
+      "checking": "Recherche de mises à jour…",
+      "planning": "Comparaison de la nouvelle version avec les fichiers locaux…",
+      "applying": "Mise à jour du pack. Ne fermez pas le lanceur…",
+      "available": "Nouvelle version disponible : {{latest}}",
+      "upToDate": "Déjà à jour",
+      "paused": "Le suivi de ce pack est en pause",
+      "notFollowing": "Cette instance ne suit aucun pack",
+      "needsRepair": "Cette instance ne peut pas être comparée tant qu'elle n'est pas réparée",
+      "unknown": "Impossible d'obtenir les informations de mise à jour. Réessayez plus tard"
+    },
+    "label": {
+      "current": "Version actuelle : {{current}}"
+    },
+    "plan": {
+      "summary": "Mise à jour vers {{latest}}",
+      "fastForward": "Les fichiers locaux correspondent déjà à {{latest}} ; seule la version enregistrée sera synchronisée",
+      "add": "{{count}} ajouté(s)",
+      "update": "{{count}} mis à jour",
+      "delete": "{{count}} supprimé(s)",
+      "loaderChange": "Le chargeur de mods passera de {{from}} à {{to}}",
+      "conflicts": "{{count}} fichiers entrent en conflit avec vos modifications. Choisissez (le local est conservé par défaut)",
+      "reinstallRequired": "{{latest}} modifie la chaîne de composants du pack et ne peut pas être appliquée sur place. Réinstallez le pack"
+    },
+    "conflictKind": {
+      "modifiedLocallyChangedRemotely": "Vous l'avez modifié et la nouvelle version aussi",
+      "modifiedLocallyRemovedRemotely": "Vous l'avez modifié et la nouvelle version ne l'inclut plus",
+      "deletedLocallyChangedRemotely": "Vous l'avez supprimé et la nouvelle version l'a modifié",
+      "unmanagedFileInTheWay": "Un fichier étranger au pack occupe l'emplacement",
+      "disabledLocally": "Vous l'avez désactivé et la nouvelle version le concerne"
+    },
+    "choice": {
+      "keepLocal": "Garder le local",
+      "takeRemote": "Utiliser la nouvelle version"
+    },
+    "button": {
+      "preview": "Aperçu de la mise à jour",
+      "apply": "Mettre à jour",
+      "sync": "Synchroniser la version",
+      "resume": "Reprendre le suivi",
+      "retry": "Réessayer"
+    },
+    "toast": {
+      "loaderPending": "Le chargeur de mods doit être réinstallé. Consultez la page des téléchargements"
+    },
+    "reason": {
+      "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack",
+      "MODPACK_UPDATE_UNSUPPORTED": "Cette instance n'a pas d'enregistrement d'installation utilisable ou l'isolation de version est désactivée"
     }
   }
 }

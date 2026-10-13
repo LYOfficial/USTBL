@@ -1288,7 +1288,8 @@
       "exportModPack": "匯出為模組包",
       "star": "星標此實例",
       "unstar": "取消星標",
-      "publishModPack": "發佈到校園整合包"
+      "publishModPack": "發佈到校園整合包",
+      "updateModpack": "更新整合包"
     },
     "instanceTabList": {
       "overview": "概覽",
@@ -2673,6 +2674,60 @@
         "error": {
           "title": "載入推薦整合包失敗"
         }
+      },
+      "prepareCampusComponentPack": {
+        "error": {
+          "title": "無法準備組件鏈整合包"
+        }
+      },
+      "checkModpackUpdate": {
+        "error": {
+          "title": "檢查整合包更新失敗"
+        }
+      },
+      "prepareModpackUpdate": {
+        "error": {
+          "title": "無法比對整合包新版本",
+          "description": {
+            "MODPACK_UPDATE_BUSY": "此整合包正在更新中",
+            "MODPACK_UPDATE_VERIFY_FAILED": "下載的檔案校驗失敗，未對實例做任何修改",
+            "MODPACK_UPDATE_STALE": "本機檔案在檢查後發生了變化，請重新檢查更新",
+            "MODPACK_UPDATE_REMOTE_INVALID": "新版本的檔案清單無效，已拒絕更新",
+            "MODPACK_UPDATE_LINE_MISMATCH": "新版本的遊戲版本或模組載入器與此實例不同",
+            "MODPACK_UPDATE_UNSUPPORTED": "此實例無法自動更新",
+            "MODPACK_UPDATE_RUNNING": "遊戲正在執行，請先關閉遊戲再更新整合包",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的組件鏈，無法就地更新，請重新安裝",
+            "MODPACK_UPDATE_LINE_GONE": "平台上已不存在該整合包的這條線"
+          }
+        }
+      },
+      "recoverModpackUpdate": {
+        "error": {
+          "title": "還原未完成的整合包更新失敗"
+        }
+      },
+      "setModpackFollow": {
+        "success": "已更新跟隨設定",
+        "error": {
+          "title": "更新跟隨設定失敗"
+        }
+      },
+      "applyModpackUpdate": {
+        "success": "整合包已更新",
+        "error": {
+          "title": "整合包更新失敗",
+          "description": {
+            "MODPACK_UPDATE_BUSY": "此整合包正在更新中",
+            "MODPACK_UPDATE_VERIFY_FAILED": "下載的檔案校驗失敗，未對實例做任何修改",
+            "MODPACK_UPDATE_STALE": "本機檔案在檢查後發生了變化，請重新檢查更新",
+            "MODPACK_UPDATE_REMOTE_INVALID": "新版本的檔案清單無效，已拒絕更新",
+            "MODPACK_UPDATE_LINE_MISMATCH": "新版本的遊戲版本或模組載入器與此實例不同",
+            "MODPACK_UPDATE_UNSUPPORTED": "此實例無法自動更新",
+            "MODPACK_UPDATE_RUNNING": "遊戲正在執行，請先關閉遊戲再更新整合包",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的組件鏈，無法就地更新，請重新安裝",
+            "MODPACK_UPDATE_LINE_GONE": "平台上已不存在該整合包的這條線"
+          }
+        }
       }
     },
     "task": {
@@ -3091,6 +3146,60 @@
     },
     "error": {
       "loaderUnavailable": "找不到載入器 {{loader}} {{version}}，無法安裝"
+    }
+  },
+  "UpdateModpackModal": {
+    "header": {
+      "title": "更新整合包：{{name}}"
+    },
+    "status": {
+      "checking": "正在檢查更新…",
+      "planning": "正在比對新版本與本機檔案…",
+      "applying": "正在更新整合包，請勿關閉啟動器…",
+      "available": "有新版本：{{latest}}",
+      "upToDate": "已是最新版本",
+      "paused": "已暫停跟隨該整合包的更新",
+      "notFollowing": "此實例未關聯可跟隨的整合包",
+      "needsRepair": "該實例暫時無法比對更新，需要先修復",
+      "unknown": "暫時無法取得更新資訊，請稍後重試"
+    },
+    "label": {
+      "current": "目前版本：{{current}}"
+    },
+    "plan": {
+      "summary": "將更新到 {{latest}}",
+      "fastForward": "本機檔案已與 {{latest}} 一致，只需同步版本記錄",
+      "add": "新增 {{count}}",
+      "update": "更新 {{count}}",
+      "delete": "刪除 {{count}}",
+      "loaderChange": "模組載入器將從 {{from}} 切換到 {{to}}",
+      "conflicts": "有 {{count}} 個檔案與本機修改衝突，請選擇處理方式（預設保留本機）",
+      "reinstallRequired": "{{latest}} 更改了整合包的組件鏈，無法就地更新，請重新安裝該整合包"
+    },
+    "conflictKind": {
+      "modifiedLocallyChangedRemotely": "你修改過，新版本也改了它",
+      "modifiedLocallyRemovedRemotely": "你修改過，新版本已不再包含它",
+      "deletedLocallyChangedRemotely": "你刪除了它，新版本更新了它",
+      "unmanagedFileInTheWay": "同名檔案不屬於整合包，新版本想要寫入",
+      "disabledLocally": "你已停用它，新版本也涉及它"
+    },
+    "choice": {
+      "keepLocal": "保留本機",
+      "takeRemote": "使用新版本"
+    },
+    "button": {
+      "preview": "預覽更新",
+      "apply": "開始更新",
+      "sync": "同步版本記錄",
+      "resume": "恢復跟隨",
+      "retry": "重試"
+    },
+    "toast": {
+      "loaderPending": "模組載入器需要重新安裝，請在下載頁查看進度"
+    },
+    "reason": {
+      "MODPACK_UPDATE_LINE_GONE": "平台上已不存在該整合包的這條線",
+      "MODPACK_UPDATE_UNSUPPORTED": "該實例缺少可用的安裝記錄或未開啟版本隔離"
     }
   }
 }

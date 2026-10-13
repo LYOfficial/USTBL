@@ -1288,7 +1288,8 @@
       "exportModPack": "导出为整合包",
       "star": "星标此实例",
       "unstar": "取消星标",
-      "publishModPack": "发布到校园整合包"
+      "publishModPack": "发布到校园整合包",
+      "updateModpack": "更新整合包"
     },
     "instanceTabList": {
       "overview": "概览",
@@ -2673,6 +2674,60 @@
         "error": {
           "title": "加载推荐整合包失败"
         }
+      },
+      "prepareCampusComponentPack": {
+        "error": {
+          "title": "无法准备组件链整合包"
+        }
+      },
+      "checkModpackUpdate": {
+        "error": {
+          "title": "检查整合包更新失败"
+        }
+      },
+      "prepareModpackUpdate": {
+        "error": {
+          "title": "无法对比整合包新版本",
+          "description": {
+            "MODPACK_UPDATE_BUSY": "该整合包正在更新中",
+            "MODPACK_UPDATE_VERIFY_FAILED": "下载的文件校验失败，未对实例做任何修改",
+            "MODPACK_UPDATE_STALE": "本地文件在检查后发生了变化，请重新检查更新",
+            "MODPACK_UPDATE_REMOTE_INVALID": "新版本的文件清单不合法，已拒绝更新",
+            "MODPACK_UPDATE_LINE_MISMATCH": "新版本的游戏版本或加载器与此实例不一致，无法更新",
+            "MODPACK_UPDATE_UNSUPPORTED": "此实例暂不支持自动更新",
+            "MODPACK_UPDATE_RUNNING": "游戏正在运行，请先关闭游戏再更新整合包",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的组件链，无法就地更新，请重新安装",
+            "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线"
+          }
+        }
+      },
+      "recoverModpackUpdate": {
+        "error": {
+          "title": "恢复未完成的整合包更新失败"
+        }
+      },
+      "setModpackFollow": {
+        "success": "已更新跟随设置",
+        "error": {
+          "title": "更新跟随设置失败"
+        }
+      },
+      "applyModpackUpdate": {
+        "success": "整合包已更新",
+        "error": {
+          "title": "整合包更新失败",
+          "description": {
+            "MODPACK_UPDATE_BUSY": "该整合包正在更新中",
+            "MODPACK_UPDATE_VERIFY_FAILED": "下载的文件校验失败，未对实例做任何修改",
+            "MODPACK_UPDATE_STALE": "本地文件在检查后发生了变化，请重新检查更新",
+            "MODPACK_UPDATE_REMOTE_INVALID": "新版本的文件清单不合法，已拒绝更新",
+            "MODPACK_UPDATE_LINE_MISMATCH": "新版本的游戏版本或加载器与此实例不一致，无法更新",
+            "MODPACK_UPDATE_UNSUPPORTED": "此实例暂不支持自动更新",
+            "MODPACK_UPDATE_RUNNING": "游戏正在运行，请先关闭游戏再更新整合包",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的组件链，无法就地更新，请重新安装",
+            "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线"
+          }
+        }
       }
     },
     "task": {
@@ -3091,6 +3146,60 @@
     },
     "error": {
       "loaderUnavailable": "找不到加载器 {{loader}} {{version}}，无法安装"
+    }
+  },
+  "UpdateModpackModal": {
+    "header": {
+      "title": "更新整合包：{{name}}"
+    },
+    "status": {
+      "checking": "正在检查更新…",
+      "planning": "正在对比新版本与本地文件…",
+      "applying": "正在更新整合包，请勿关闭启动器…",
+      "available": "有新版本：{{latest}}",
+      "upToDate": "已是最新版本",
+      "paused": "已暂停跟随该整合包的更新",
+      "notFollowing": "此实例未关联可跟随的整合包",
+      "needsRepair": "该实例暂时无法对比更新，需要先修复",
+      "unknown": "暂时无法获取更新信息，请稍后重试"
+    },
+    "label": {
+      "current": "当前版本：{{current}}"
+    },
+    "plan": {
+      "summary": "将更新到 {{latest}}",
+      "fastForward": "本地文件已与 {{latest}} 一致，只需同步版本记录",
+      "add": "新增 {{count}}",
+      "update": "更新 {{count}}",
+      "delete": "删除 {{count}}",
+      "loaderChange": "模组加载器将从 {{from}} 切换到 {{to}}",
+      "conflicts": "有 {{count}} 个文件与本地修改冲突，请选择处理方式（默认保留本地）",
+      "reinstallRequired": "{{latest}} 更改了整合包的组件链，无法就地更新，请重新安装该整合包"
+    },
+    "conflictKind": {
+      "modifiedLocallyChangedRemotely": "你修改过，新版本也改了它",
+      "modifiedLocallyRemovedRemotely": "你修改过，新版本已不再包含它",
+      "deletedLocallyChangedRemotely": "你删除了它，新版本更新了它",
+      "unmanagedFileInTheWay": "同名文件不属于整合包，新版本想要写入",
+      "disabledLocally": "你已禁用它，新版本也涉及它"
+    },
+    "choice": {
+      "keepLocal": "保留本地",
+      "takeRemote": "使用新版本"
+    },
+    "button": {
+      "preview": "预览更新",
+      "apply": "开始更新",
+      "sync": "同步版本记录",
+      "resume": "恢复跟随",
+      "retry": "重试"
+    },
+    "toast": {
+      "loaderPending": "模组加载器需要重新安装，请在下载页查看进度"
+    },
+    "reason": {
+      "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线",
+      "MODPACK_UPDATE_UNSUPPORTED": "该实例缺少可用的安装记录或未开启版本隔离"
     }
   }
 }

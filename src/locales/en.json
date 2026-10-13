@@ -1288,7 +1288,8 @@
       "exportModPack": "Export as Modpack",
       "star": "Star this instance",
       "unstar": "Unstar",
-      "publishModPack": "Publish to Campus Modpacks"
+      "publishModPack": "Publish to Campus Modpacks",
+      "updateModpack": "Update modpack"
     },
     "instanceTabList": {
       "overview": "Overview",
@@ -2673,6 +2674,60 @@
         "error": {
           "title": "Failed to load the recommended modpack"
         }
+      },
+      "prepareCampusComponentPack": {
+        "error": {
+          "title": "Failed to prepare the component-chain modpack"
+        }
+      },
+      "checkModpackUpdate": {
+        "error": {
+          "title": "Failed to check for modpack updates"
+        }
+      },
+      "prepareModpackUpdate": {
+        "error": {
+          "title": "Failed to compare the new modpack version",
+          "description": {
+            "MODPACK_UPDATE_BUSY": "This modpack is already being updated",
+            "MODPACK_UPDATE_VERIFY_FAILED": "A downloaded file failed verification; the instance was not changed",
+            "MODPACK_UPDATE_STALE": "Local files changed after the check; check for updates again",
+            "MODPACK_UPDATE_REMOTE_INVALID": "The new version file list is invalid; the update was refused",
+            "MODPACK_UPDATE_LINE_MISMATCH": "The new version is for a different game version or mod loader than this instance",
+            "MODPACK_UPDATE_UNSUPPORTED": "This instance cannot be updated automatically",
+            "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "This version changes the modpack's component chain and cannot be applied in place; install it again",
+            "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack"
+          }
+        }
+      },
+      "recoverModpackUpdate": {
+        "error": {
+          "title": "Failed to recover the interrupted modpack update"
+        }
+      },
+      "setModpackFollow": {
+        "success": "Follow setting updated",
+        "error": {
+          "title": "Failed to update the follow setting"
+        }
+      },
+      "applyModpackUpdate": {
+        "success": "Modpack updated",
+        "error": {
+          "title": "Modpack update failed",
+          "description": {
+            "MODPACK_UPDATE_BUSY": "This modpack is already being updated",
+            "MODPACK_UPDATE_VERIFY_FAILED": "A downloaded file failed verification; the instance was not changed",
+            "MODPACK_UPDATE_STALE": "Local files changed after the check; check for updates again",
+            "MODPACK_UPDATE_REMOTE_INVALID": "The new version file list is invalid; the update was refused",
+            "MODPACK_UPDATE_LINE_MISMATCH": "The new version is for a different game version or mod loader than this instance",
+            "MODPACK_UPDATE_UNSUPPORTED": "This instance cannot be updated automatically",
+            "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "This version changes the modpack's component chain and cannot be applied in place; install it again",
+            "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack"
+          }
+        }
       }
     },
     "task": {
@@ -3091,6 +3146,60 @@
     },
     "error": {
       "loaderUnavailable": "Mod loader {{loader}} {{version}} is unavailable, cannot install"
+    }
+  },
+  "UpdateModpackModal": {
+    "header": {
+      "title": "Update modpack: {{name}}"
+    },
+    "status": {
+      "checking": "Checking for updates…",
+      "planning": "Comparing the new version with local files…",
+      "applying": "Updating the modpack. Do not close the launcher…",
+      "available": "New version available: {{latest}}",
+      "upToDate": "Already up to date",
+      "paused": "Following this modpack is paused",
+      "notFollowing": "This instance does not follow a modpack",
+      "needsRepair": "This instance cannot be compared for updates until it is repaired",
+      "unknown": "Could not get update information. Try again later"
+    },
+    "label": {
+      "current": "Current version: {{current}}"
+    },
+    "plan": {
+      "summary": "Will update to {{latest}}",
+      "fastForward": "Local files already match {{latest}}; only the recorded version needs syncing",
+      "add": "{{count}} added",
+      "update": "{{count}} updated",
+      "delete": "{{count}} removed",
+      "loaderChange": "Mod loader will change from {{from}} to {{to}}",
+      "conflicts": "{{count}} files conflict with local changes. Choose what to do (local is kept by default)",
+      "reinstallRequired": "{{latest}} changes the modpack's component chain and cannot be applied in place. Install the modpack again"
+    },
+    "conflictKind": {
+      "modifiedLocallyChangedRemotely": "You edited it and the new version changed it",
+      "modifiedLocallyRemovedRemotely": "You edited it and the new version no longer ships it",
+      "deletedLocallyChangedRemotely": "You deleted it and the new version changed it",
+      "unmanagedFileInTheWay": "A file that is not part of the modpack is in the way",
+      "disabledLocally": "You disabled it and the new version touches it"
+    },
+    "choice": {
+      "keepLocal": "Keep local",
+      "takeRemote": "Use new version"
+    },
+    "button": {
+      "preview": "Preview update",
+      "apply": "Update",
+      "sync": "Sync version record",
+      "resume": "Resume following",
+      "retry": "Retry"
+    },
+    "toast": {
+      "loaderPending": "The mod loader needs to be installed again. See the downloads page"
+    },
+    "reason": {
+      "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack",
+      "MODPACK_UPDATE_UNSUPPORTED": "This instance has no usable install record or version isolation is off"
     }
   }
 }

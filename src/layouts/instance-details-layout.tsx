@@ -14,6 +14,7 @@ import {
   LuPackage,
   LuPackagePlus,
   LuPlay,
+  LuRefreshCw,
   LuSettings,
   LuSquareLibrary,
   LuSquarePlus,
@@ -138,6 +139,21 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
         }
       },
     },
+    ...(summary?.origin
+      ? [
+          {
+            icon: LuRefreshCw,
+            label: t("InstanceDetailsLayout.secMenu.updateModpack"),
+            danger: false,
+            onClick: () => {
+              openSharedModal("update-modpack", {
+                instanceId: summary.id,
+                instanceName: summary.name,
+              });
+            },
+          },
+        ]
+      : []),
     ...(isVustbManager(vustbAccount)
       ? [
           {
