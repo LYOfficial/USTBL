@@ -13,6 +13,7 @@ use crate::instance::helpers::modpack::baseline::{
   hash_file, BaselineLoader, ModpackBaseline, BASELINE_FILE_NAME,
 };
 use crate::instance::models::misc::{InstanceError, InstanceOrigin};
+use crate::tasks::download::DownloadParam;
 use async_trait::async_trait;
 use futures::stream::{self, StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
@@ -99,8 +100,8 @@ pub struct Progress {
 /// Everything the update needs from the outside world.
 #[async_trait]
 pub trait UpdateEnv: Send + Sync {
-  /// Download `url` to `dest`. The engine verifies the result itself.
-  async fn fetch_url(&self, url: &str, dest: &Path, key: &FileKey) -> USTBLResult<()>;
+  /// Download `param.src` to `param.dest`. The engine verifies the result itself.
+  async fn fetch(&self, param: DownloadParam) -> USTBLResult<()>;
   /// Switch the instance to another loader version. Runs after the journal is
   /// written, so the instance files it rewrites are restored on failure.
   async fn switch_loader(&self, loader: &BaselineLoader) -> USTBLResult<()>;
@@ -285,7 +286,12 @@ fn extract_entry(archive: &Path, entry: &str, dest: &Path) -> USTBLResult<()> {
 async fn stage_file(env: &dyn UpdateEnv, root: &Path, file: &RemoteFile) -> USTBLResult<()> {
   let dest = staging_dir(root).join(&file.path);
   match &file.source {
-    FileSource::Url(url) => env.fetch_url(url, &dest, &file.key).await?,
+    FileSource::Download(param) => {
+      let mut param = (**param).clone();
+      param.dest = dest.clone();
+      param.sha1 = Some(file.key.sha1.clone());
+      env.fetch(param).await?
+    }
     FileSource::ArchiveEntry { archive, entry } => {
       let (archive, entry, dest) = (archive.clone(), entry.clone(), dest.clone());
       tokio::task::spawn_blocking(move || extract_entry(&archive, &entry, &dest))
@@ -576,7 +582,8 @@ mod tests {
 
   #[async_trait]
   impl UpdateEnv for FakeEnv {
-    async fn fetch_url(&self, url: &str, dest: &Path, _key: &FileKey) -> USTBLResult<()> {
+    async fn fetch(&self, param: DownloadParam) -> USTBLResult<()> {
+      let (url, dest) = (param.src.as_str(), &param.dest);
       if self.fail_url.as_deref() == Some(url) {
         return Err(crate::error::USTBLError("network".into()));
       }
@@ -617,7 +624,14 @@ mod tests {
     RemoteFile {
       path: path.into(),
       key: sha1_of(content.as_bytes()),
-      source: FileSource::Url(url),
+      source: FileSource::Download(Box::new(DownloadParam {
+        src: url.parse().unwrap(),
+        dest: PathBuf::new(),
+        filename: None,
+        sha1: None,
+        custom_headers: None,
+        transfer_options: Default::default(),
+      })),
     }
   }
 

@@ -9,6 +9,7 @@ use crate::instance::helpers::modpack::baseline::{
 use crate::instance::helpers::modpack::misc::is_launcher_metadata_path;
 use crate::instance::helpers::modpack::multimc::profile::safe_relative;
 use crate::instance::models::misc::InstanceError;
+use crate::tasks::download::DownloadParam;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
@@ -16,15 +17,15 @@ use std::path::PathBuf;
 /// an update in progress. Nothing in it is ever managed by a modpack.
 pub const UPDATE_DIR: &str = ".ustbl-update";
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, Clone)]
 pub enum FileSource {
-  /// Fetched over the network.
-  Url(String),
+  /// Fetched over the network; `dest` is replaced by the staging path.
+  Download(Box<DownloadParam>),
   /// Taken out of an archive that was already downloaded.
   ArchiveEntry { archive: PathBuf, entry: String },
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, Clone)]
 pub struct RemoteFile {
   /// Relative to the instance directory, always with `/`.
   pub path: String,
@@ -112,7 +113,14 @@ mod tests {
             sha1: "aa".into(),
             size: 1,
           },
-          source: FileSource::Url("https://example.com/a".into()),
+          source: FileSource::Download(Box::new(DownloadParam {
+            src: "https://example.com/a".parse().unwrap(),
+            dest: PathBuf::new(),
+            filename: None,
+            sha1: None,
+            custom_headers: None,
+            transfer_options: Default::default(),
+          })),
         })
         .collect(),
     }
