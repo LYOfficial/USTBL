@@ -1,11 +1,21 @@
 //! Publishing an instance to the campus modpack platform.
 
+use super::components::plan_components;
 use super::manifest::{plan_files, LocalFile, PublishPlan};
 use crate::account::helpers::vustb;
 use crate::error::{USTBLError, USTBLResult};
-use crate::instance::helpers::modpack::baseline::hash_file;
+use crate::instance::helpers::misc::{get_instance_game_config, get_instance_subdir_paths};
+use crate::instance::helpers::modpack::baseline::{
+  components_of_mmc_pack, hash_file, BaselineFile, BaselineLoader, ModpackBaseline,
+};
 use crate::instance::helpers::modpack::multimc::profile::safe_relative;
-use crate::instance::models::misc::{Instance, InstanceError};
+use crate::instance::helpers::modpack::multimc::snapshot::{
+  is_component_instance, ComponentSnapshot,
+};
+use crate::instance::models::misc::{
+  Instance, InstanceError, InstanceOrigin, InstanceSubdirType, OriginPlatform,
+};
+use crate::instance::modpack_update::commands::store_instance;
 use crate::instance::modpack_update::diff::FileKey;
 use crate::instance::modpack_update::sources::{loader_slug, CAMPUS_API};
 use crate::instance::shared::ensure_minecraft_manager as ensure_manager;
@@ -48,6 +58,25 @@ pub struct PublishOutcome {
   pub version_id: i64,
   /// Paths left out on purpose (disabled mods, launcher files).
   pub skipped: Vec<String>,
+  /// What happened to the instance's own record of the modpack.
+  pub adoption: Adoption,
+}
+
+/// Whether the published version became the instance's own baseline. The
+/// instance only follows what it provably matches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Adoption {
+  /// The instance now follows the published version.
+  Followed,
+  /// The instance follows another modpack and is left that way.
+  KeptOther,
+  /// The instance shares its game directory, so it cannot own the files.
+  NotIsolated,
+  /// Files changed while publishing; the next check shows the difference.
+  LocalChanged,
+  /// The release went out but writing the instance's record failed.
+  RecordFailed,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -233,13 +262,21 @@ impl Drop for TempFile {
   }
 }
 
+struct TempDir(PathBuf);
+
+impl Drop for TempDir {
+  fn drop(&mut self) {
+    let _ = fs::remove_dir_all(&self.0);
+  }
+}
+
 async fn upload_missing_blobs(
   app: &AppHandle,
   instance_id: &str,
   root: &Path,
   plan: &PublishPlan,
 ) -> USTBLResult<()> {
-  let blobs = plan.blobs();
+  let blobs = plan.blob_sources(root);
   let hashes: Vec<&String> = blobs.keys().collect();
   let mut missing = Vec::new();
   for batch in hashes.chunks(MISSING_BATCH) {
@@ -268,7 +305,7 @@ async fn upload_missing_blobs(
     let file = blobs
       .get(sha1)
       .ok_or_else(|| USTBLError("平台请求了未知的文件".into()))?;
-    let response = put_file(app, &format!("/blobs/{sha1}"), &root.join(&file.path)).await?;
+    let response = put_file(app, &format!("/blobs/{sha1}"), file).await?;
     if !response.status().is_success() {
       return Err(failure(response).await);
     }
@@ -300,9 +337,28 @@ pub async fn publish_campus_modpack(
     .await
     .map_err(|e| USTBLError(e.to_string()))??;
   report(&app, &instance_id, Stage::Hashing, files.len(), files.len());
-  let plan = plan_files(hashed, &instance.name);
+  let mut plan = plan_files(hashed, &instance.name);
   if plan.files.is_empty() {
     return Err(USTBLError("没有可发布的文件".into()));
+  }
+  // Patches of a component profile are written here until they are uploaded.
+  let component_work =
+    TempDir(std::env::temp_dir().join(format!("ustbl-components-{}", uuid::Uuid::new_v4())));
+  if is_component_instance(&root) {
+    let snapshot = ComponentSnapshot::load(&root)
+      .await
+      .map_err(|_| InstanceError::ModpackExportProfileMissing)?
+      .ok_or(InstanceError::ModpackExportProfileMissing)?;
+    let libraries_dir =
+      get_instance_subdir_paths(&app, &instance, &[&InstanceSubdirType::Libraries])
+        .ok_or(InstanceError::InstanceNotFoundByID)?
+        .remove(0);
+    let work = component_work.0.clone();
+    plan.components = Some(
+      tokio::task::spawn_blocking(move || plan_components(&snapshot, &libraries_dir, &work))
+        .await
+        .map_err(|e| USTBLError(e.to_string()))??,
+    );
   }
 
   // The published version of this line the new one replaces.
@@ -353,10 +409,121 @@ pub async fn publish_campus_modpack(
     .await;
   }
   result?;
+  let adoption = adopt_published(
+    &app,
+    &instance,
+    &project,
+    version_id,
+    &version_number,
+    &plan,
+  )
+  .await;
   Ok(PublishOutcome {
     version_id,
     skipped: plan.skipped,
+    adoption,
   })
+}
+
+/// Fast-forward: after publishing, the instance holds exactly what the new
+/// version lists. When that still holds, record it as the instance's baseline,
+/// so the first check does not offer the publisher their own release.
+async fn adopt_published(
+  app: &AppHandle,
+  instance: &Instance,
+  project: &str,
+  version_id: i64,
+  version_number: &str,
+  plan: &PublishPlan,
+) -> Adoption {
+  match try_adopt(app, instance, project, version_id, version_number, plan).await {
+    Ok(adoption) => adoption,
+    Err(error) => {
+      // The release itself succeeded; a failed record only means the next
+      // check compares the instance with it the ordinary way.
+      log::warn!("Could not record the published version: {error:?}");
+      Adoption::RecordFailed
+    }
+  }
+}
+
+fn may_follow(
+  instance: &Instance,
+  project: &str,
+  loader_type: crate::instance::models::misc::ModLoaderType,
+) -> bool {
+  match &instance.origin {
+    None => true,
+    Some(origin) => {
+      origin.platform == OriginPlatform::Campus
+        && origin.project_id == project
+        && origin.game_version == instance.version
+        && origin.loader_type == loader_type
+    }
+  }
+}
+
+async fn try_adopt(
+  app: &AppHandle,
+  instance: &Instance,
+  project: &str,
+  version_id: i64,
+  version_number: &str,
+  plan: &PublishPlan,
+) -> USTBLResult<Adoption> {
+  let loader_type = instance.mod_loader.loader_type;
+  if !may_follow(instance, project, loader_type) {
+    return Ok(Adoption::KeptOther);
+  }
+  if !get_instance_game_config(app, instance).version_isolation {
+    return Ok(Adoption::NotIsolated);
+  }
+
+  // Rescan: the game may have rewritten a file while the upload ran.
+  let root = instance.version_path.clone();
+  let expected: Vec<LocalFile> = plan.files.iter().map(|(file, _)| file.clone()).collect();
+  let paths: Vec<String> = expected.iter().map(|file| file.path.clone()).collect();
+  let rescanned = tokio::task::spawn_blocking(move || hash_selection(&root, &paths))
+    .await
+    .map_err(|e| USTBLError(e.to_string()))?;
+  if !rescanned.is_ok_and(|now| now == expected) {
+    return Ok(Adoption::LocalChanged);
+  }
+
+  let origin = InstanceOrigin {
+    platform: OriginPlatform::Campus,
+    project_id: project.to_string(),
+    version_id: version_id.to_string(),
+    game_version: instance.version.clone(),
+    loader_type,
+    follow: instance.origin.as_ref().is_none_or(|origin| origin.follow),
+  };
+  let mut baseline = ModpackBaseline::build(
+    &origin,
+    BaselineLoader {
+      loader_type,
+      version: instance.mod_loader.version.clone(),
+    },
+    expected
+      .into_iter()
+      .map(|file| BaselineFile {
+        path: file.path,
+        sha1: file.key.sha1,
+        size: file.key.size,
+      })
+      .collect(),
+  );
+  if let Some(components) = &plan.components {
+    baseline = baseline.with_components(components_of_mmc_pack(&components.mmc_pack));
+  }
+  baseline.save(&instance.version_path).await?;
+  let label = version_number.to_string();
+  store_instance(app, &instance.id, move |stored| {
+    stored.origin = Some(origin);
+    stored.modpack_version = Some(label);
+  })
+  .await?;
+  Ok(Adoption::Followed)
 }
 
 async fn finish_draft(
@@ -458,5 +625,42 @@ mod tests {
     io::Read::read_to_string(&mut zip.by_name("options.txt").unwrap(), &mut content).unwrap();
     assert_eq!(content, "bbb");
     let _ = fs::remove_dir_all(root);
+  }
+
+  fn followed(platform: OriginPlatform, project: &str, version: &str) -> Instance {
+    Instance {
+      version: "1.7.10".into(),
+      origin: Some(InstanceOrigin {
+        platform,
+        project_id: project.into(),
+        version_id: "1".into(),
+        game_version: version.into(),
+        loader_type: crate::instance::models::misc::ModLoaderType::LegacyForge,
+        follow: true,
+      }),
+      ..Default::default()
+    }
+  }
+
+  #[test]
+  fn only_an_unidentified_or_same_line_instance_adopts_the_release() {
+    use crate::instance::models::misc::ModLoaderType::{Fabric, LegacyForge};
+    assert!(may_follow(&Instance::default(), "gtnh", LegacyForge));
+
+    let same = followed(OriginPlatform::Campus, "gtnh", "1.7.10");
+    assert!(may_follow(&same, "gtnh", LegacyForge));
+    assert!(!may_follow(&same, "other", LegacyForge));
+    assert!(!may_follow(&same, "gtnh", Fabric));
+    assert!(!may_follow(
+      &followed(OriginPlatform::Campus, "gtnh", "1.12.2"),
+      "gtnh",
+      LegacyForge
+    ));
+    // A pack that follows Modrinth keeps doing so.
+    assert!(!may_follow(
+      &followed(OriginPlatform::Modrinth, "gtnh", "1.7.10"),
+      "gtnh",
+      LegacyForge
+    ));
   }
 }
