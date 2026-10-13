@@ -3,6 +3,7 @@
 use super::components::plan_components;
 use super::manifest::{plan_files, LocalFile, PublishPlan};
 use crate::account::helpers::vustb;
+use crate::account::models::AccountInfo;
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::misc::{get_instance_game_config, get_instance_subdir_paths};
 use crate::instance::helpers::modpack::baseline::{
@@ -18,7 +19,6 @@ use crate::instance::models::misc::{
 use crate::instance::modpack_update::commands::store_instance;
 use crate::instance::modpack_update::diff::FileKey;
 use crate::instance::modpack_update::sources::{loader_slug, CAMPUS_API};
-use crate::instance::shared::ensure_minecraft_manager as ensure_manager;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -31,6 +31,26 @@ use tokio::io::AsyncReadExt;
 
 const PROGRESS_EVENT: &str = "modpack-publish:progress";
 const MISSING_BATCH: usize = 5000;
+
+/// The UI hides publishing from other accounts, but the role is checked here too;
+/// the platform authenticates the bearer token again.
+fn ensure_manager(app: &AppHandle) -> USTBLResult<()> {
+  let binding = app.state::<Mutex<AccountInfo>>();
+  let account_state = binding.lock()?;
+  let user_group = account_state
+    .vustb_account
+    .as_ref()
+    .map(|account| account.user_group.as_str())
+    .ok_or_else(|| USTBLError("请先登录像素北科账号".to_string()))?;
+  if matches!(
+    user_group,
+    "super_admin" | "admin" | "platform_manager" | "server_manager"
+  ) {
+    Ok(())
+  } else {
+    Err(USTBLError("当前像素北科账号没有整合包管理权限".to_string()))
+  }
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
