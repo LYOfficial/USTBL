@@ -2618,13 +2618,13 @@
           "description": {
             "MODPACK_EXPORT_COMPONENT_INSTANCE": "Component-profile instances can only be exported as MultiMC",
             "MODPACK_EXPORT_PROFILE_MISSING": "This instance was imported by an older version and lacks the component data needed for export. Re-import the modpack and try again",
-            "MODPACK_UPDATE_BUSY": "This modpack is already being updated",
-            "MODPACK_UPDATE_VERIFY_FAILED": "A downloaded file failed verification; the instance was not changed",
-            "MODPACK_UPDATE_STALE": "Local files changed after the check; check for updates again",
-            "MODPACK_UPDATE_REMOTE_INVALID": "The new version file list is invalid; the update was refused",
-            "MODPACK_UPDATE_LINE_MISMATCH": "The new version is for a different game version or mod loader than this instance",
-            "MODPACK_UPDATE_UNSUPPORTED": "This instance cannot be updated automatically",
-            "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack"
+            "MODPACK_UPDATE_BUSY": "此整合包正在更新中",
+            "MODPACK_UPDATE_VERIFY_FAILED": "下載的檔案校驗失敗，未對實例做任何修改",
+            "MODPACK_UPDATE_STALE": "本機檔案在檢查後發生了變化，請重新檢查更新",
+            "MODPACK_UPDATE_REMOTE_INVALID": "新版本的檔案清單無效，已拒絕更新",
+            "MODPACK_UPDATE_LINE_MISMATCH": "新版本的遊戲版本或模組載入器與此實例不同",
+            "MODPACK_UPDATE_UNSUPPORTED": "此實例無法自動更新",
+            "MODPACK_UPDATE_RUNNING": "遊戲正在執行，請先關閉遊戲再更新整合包"
           }
         }
       }

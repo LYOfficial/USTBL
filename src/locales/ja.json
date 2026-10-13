@@ -2618,13 +2618,13 @@
           "description": {
             "MODPACK_EXPORT_COMPONENT_INSTANCE": "Component-profile instances can only be exported as MultiMC",
             "MODPACK_EXPORT_PROFILE_MISSING": "This instance was imported by an older version and lacks the component data needed for export. Re-import the modpack and try again",
-            "MODPACK_UPDATE_BUSY": "This modpack is already being updated",
-            "MODPACK_UPDATE_VERIFY_FAILED": "A downloaded file failed verification; the instance was not changed",
-            "MODPACK_UPDATE_STALE": "Local files changed after the check; check for updates again",
-            "MODPACK_UPDATE_REMOTE_INVALID": "The new version file list is invalid; the update was refused",
-            "MODPACK_UPDATE_LINE_MISMATCH": "The new version is for a different game version or mod loader than this instance",
-            "MODPACK_UPDATE_UNSUPPORTED": "This instance cannot be updated automatically",
-            "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack"
+            "MODPACK_UPDATE_BUSY": "このModパックは更新中です",
+            "MODPACK_UPDATE_VERIFY_FAILED": "ダウンロードしたファイルの検証に失敗しました。インスタンスは変更されていません",
+            "MODPACK_UPDATE_STALE": "確認後にローカルファイルが変更されました。もう一度更新を確認してください",
+            "MODPACK_UPDATE_REMOTE_INVALID": "新しいバージョンのファイル一覧が無効なため、更新を拒否しました",
+            "MODPACK_UPDATE_LINE_MISMATCH": "新しいバージョンのゲームバージョンまたはModローダーがこのインスタンスと異なります",
+            "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスは自動更新できません",
+            "MODPACK_UPDATE_RUNNING": "ゲームが実行中です。Modパックを更新する前に閉じてください"
           }
         }
       }
