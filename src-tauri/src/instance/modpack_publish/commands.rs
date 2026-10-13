@@ -52,6 +52,16 @@ pub struct CampusProject {
   pub lines: Vec<CampusLine>,
 }
 
+/// The line a recommend slot currently points at.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct CampusRecommendation {
+  pub slot: String,
+  pub project: CampusProject,
+  #[serde(rename(serialize = "line"))]
+  pub version: CampusLine,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PublishOutcome {
@@ -203,6 +213,26 @@ pub async fn list_campus_modpack_projects(app: AppHandle) -> USTBLResult<Vec<Cam
     return Err(failure(response).await);
   }
   Ok(response.json().await?)
+}
+
+/// `None` when nothing is recommended in the slot (or the slot does not exist).
+#[tauri::command]
+pub async fn fetch_campus_modpack_recommendation(
+  app: AppHandle,
+  slot: String,
+) -> USTBLResult<Option<CampusRecommendation>> {
+  let client = app.state::<reqwest::Client>();
+  let response = client
+    .get(format!("{CAMPUS_API}/recommend/{slot}"))
+    .send()
+    .await?;
+  if response.status() == reqwest::StatusCode::NOT_FOUND {
+    return Ok(None);
+  }
+  if !response.status().is_success() {
+    return Err(failure(response).await);
+  }
+  Ok(Some(response.json().await?))
 }
 
 #[tauri::command]
@@ -705,5 +735,26 @@ mod tests {
       "gtnh",
       LegacyForge
     ));
+  }
+
+  #[test]
+  fn a_recommendation_keeps_the_project_and_the_recommended_line() {
+    let body = serde_json::json!({
+      "slot": "recommended",
+      "project": {
+        "id": 1, "slug": "gtnh", "name": "GTNH", "summary": "",
+        "lines": [{ "id": 7, "game_version": "1.7.10", "loader_type": "forge",
+                    "loader_version": "10.13.4.1614", "version_number": "2.8.0" }]
+      },
+      "version": { "id": 7, "project_id": 1, "game_version": "1.7.10", "loader_type": "forge",
+                   "loader_version": "10.13.4.1614", "version_number": "2.8.0",
+                   "bundle_size": 0, "changelog": "", "manifest": {} }
+    });
+    let parsed: CampusRecommendation = serde_json::from_value(body).unwrap();
+    let out = serde_json::to_value(&parsed).unwrap();
+    assert_eq!(out["slot"], "recommended");
+    assert_eq!(out["project"]["slug"], "gtnh");
+    assert_eq!(out["line"]["gameVersion"], "1.7.10");
+    assert_eq!(out["line"]["versionNumber"], "2.8.0");
   }
 }
