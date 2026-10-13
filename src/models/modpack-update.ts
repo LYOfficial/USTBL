@@ -4,7 +4,9 @@ export type ModpackCheckStatus =
   | "notFollowing"
   | "paused"
   | "needsRepair"
+  | "waitingLoader"
   | "upToDate"
+  | "localChanges"
   | "available"
   | "unknown";
 
@@ -16,6 +18,10 @@ export interface ModpackUpdateCheck {
   latestLabel?: string;
   /** Error code explaining `unknown` or `needsRepair`. */
   reason?: string;
+  /** The previous update left a backup that can still be rolled back. */
+  canRollBack: boolean;
+  /** Managed files that differ from the install; set by the local scan. */
+  localChanges?: number;
 }
 
 export interface ModpackFileKey {

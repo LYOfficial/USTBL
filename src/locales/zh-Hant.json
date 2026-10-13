@@ -2730,6 +2730,16 @@
             "MODPACK_UPDATE_LINE_GONE": "平台上已不存在該整合包的這條線"
           }
         }
+      },
+      "rollbackModpackUpdate": {
+        "success": "已撤銷上次更新",
+        "error": {
+          "title": "撤銷上次更新失敗",
+          "description": {
+            "MODPACK_UPDATE_RUNNING": "遊戲正在執行，請先關閉遊戲再更新整合包",
+            "MODPACK_UPDATE_UNSUPPORTED": "此實例無法自動更新"
+          }
+        }
       }
     },
     "task": {
@@ -3163,7 +3173,9 @@
       "paused": "已暫停跟隨該整合包的更新",
       "notFollowing": "此實例未關聯可跟隨的整合包",
       "needsRepair": "該實例暫時無法比對更新，需要先修復",
-      "unknown": "暫時無法取得更新資訊，請稍後重試"
+      "unknown": "暫時無法取得更新資訊，請稍後重試",
+      "waitingLoader": "正在等待模組載入器安裝完成，完成後再檢查更新",
+      "localChanges": "你修改過其中 {{count}} 個由整合包管理的檔案，更新時會逐項詢問"
     },
     "label": {
       "current": "目前版本：{{current}}"
@@ -3194,14 +3206,22 @@
       "apply": "開始更新",
       "sync": "同步版本記錄",
       "resume": "恢復跟隨",
-      "retry": "重試"
+      "retry": "重試",
+      "rollback": "撤銷上次更新",
+      "confirmRollback": "確認撤銷"
     },
     "toast": {
       "loaderPending": "模組載入器需要重新安裝，請在下載頁查看進度"
     },
     "reason": {
       "MODPACK_UPDATE_LINE_GONE": "平台上已不存在該整合包的這條線",
-      "MODPACK_UPDATE_UNSUPPORTED": "該實例缺少可用的安裝記錄或未開啟版本隔離"
+      "MODPACK_UPDATE_UNSUPPORTED": "該實例缺少可用的安裝記錄或未開啟版本隔離",
+      "MODPACK_UPDATE_NOT_ISOLATED": "該實例沒有開啟版本隔離，無法安全比對更新。請在實例設定中開啟後重試",
+      "MODPACK_UPDATE_BASELINE_MISSING": "該實例缺少整合包的安裝記錄或記錄已損壞，無法比對更新"
+    },
+    "rollback": {
+      "hint": "可以撤銷上一次整合包更新，把檔案和載入器恢復成更新前的樣子。",
+      "confirm": "撤銷會覆蓋更新之後你對這些檔案做的修改，且只能撤銷一次。"
     }
   }
 }

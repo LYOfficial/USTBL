@@ -11,13 +11,26 @@ import { responseHandler } from "@/utils/response";
 export class ModpackUpdateService {
   /**
    * Ask the platform whether the followed modpack has a newer version. Cheap:
-   * nothing is downloaded.
+   * nothing is downloaded. `scanLocal` also hashes the managed files to tell
+   * whether the player changed any (slower, so only on demand).
    */
   @responseHandler("instance")
   static async checkModpackUpdate(
-    instanceId: string
+    instanceId: string,
+    scanLocal = false
   ): Promise<InvokeResponse<ModpackUpdateCheck>> {
-    return await invoke("check_modpack_update", { instanceId });
+    return await invoke("check_modpack_update", { instanceId, scanLocal });
+  }
+
+  /**
+   * Put the instance back the way it was before the last update. Resolves to
+   * whether there was a backup to restore.
+   */
+  @responseHandler("instance")
+  static async rollbackModpackUpdate(
+    instanceId: string
+  ): Promise<InvokeResponse<boolean>> {
+    return await invoke("rollback_modpack_update", { instanceId });
   }
 
   /**

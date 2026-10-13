@@ -2730,6 +2730,16 @@
             "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack"
           }
         }
+      },
+      "rollbackModpackUpdate": {
+        "success": "Last update undone",
+        "error": {
+          "title": "Failed to undo the last update",
+          "description": {
+            "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack",
+            "MODPACK_UPDATE_UNSUPPORTED": "This instance cannot be updated automatically"
+          }
+        }
       }
     },
     "task": {
@@ -3163,7 +3173,9 @@
       "paused": "Following this modpack is paused",
       "notFollowing": "This instance does not follow a modpack",
       "needsRepair": "This instance cannot be compared for updates until it is repaired",
-      "unknown": "Could not get update information. Try again later"
+      "unknown": "Could not get update information. Try again later",
+      "waitingLoader": "Waiting for the mod loader to finish installing before checking for updates",
+      "localChanges": "You changed {{count}} file(s) managed by the modpack; the update will ask about each"
     },
     "label": {
       "current": "Current version: {{current}}"
@@ -3194,14 +3206,22 @@
       "apply": "Update",
       "sync": "Sync version record",
       "resume": "Resume following",
-      "retry": "Retry"
+      "retry": "Retry",
+      "rollback": "Undo last update",
+      "confirmRollback": "Confirm undo"
     },
     "toast": {
       "loaderPending": "The mod loader needs to be installed again. See the downloads page"
     },
     "reason": {
       "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack",
-      "MODPACK_UPDATE_UNSUPPORTED": "This instance has no usable install record or version isolation is off"
+      "MODPACK_UPDATE_UNSUPPORTED": "This instance has no usable install record or version isolation is off",
+      "MODPACK_UPDATE_NOT_ISOLATED": "Version isolation is off for this instance, so it cannot be compared safely. Turn it on in the instance settings and retry",
+      "MODPACK_UPDATE_BASELINE_MISSING": "This instance has no install record for the modpack, or the record is damaged, so it cannot be compared"
+    },
+    "rollback": {
+      "hint": "You can undo the last modpack update and restore files and loader as they were before it.",
+      "confirm": "Undoing overwrites changes you made to these files since the update, and works only once."
     }
   }
 }

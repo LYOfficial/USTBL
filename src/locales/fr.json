@@ -2730,6 +2730,16 @@
             "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack"
           }
         }
+      },
+      "rollbackModpackUpdate": {
+        "success": "Dernière mise à jour annulée",
+        "error": {
+          "title": "Échec de l'annulation de la dernière mise à jour",
+          "description": {
+            "MODPACK_UPDATE_RUNNING": "Le jeu est en cours d’exécution ; fermez-le avant de mettre à jour le pack de mods",
+            "MODPACK_UPDATE_UNSUPPORTED": "Cette instance ne peut pas être mise à jour automatiquement"
+          }
+        }
       }
     },
     "task": {
@@ -3163,7 +3173,9 @@
       "paused": "Le suivi de ce pack est en pause",
       "notFollowing": "Cette instance ne suit aucun pack",
       "needsRepair": "Cette instance ne peut pas être comparée tant qu'elle n'est pas réparée",
-      "unknown": "Impossible d'obtenir les informations de mise à jour. Réessayez plus tard"
+      "unknown": "Impossible d'obtenir les informations de mise à jour. Réessayez plus tard",
+      "waitingLoader": "En attente de la fin de l'installation du chargeur de mods avant de vérifier les mises à jour",
+      "localChanges": "Vous avez modifié {{count}} fichier(s) géré(s) par le pack ; la mise à jour demandera pour chacun"
     },
     "label": {
       "current": "Version actuelle : {{current}}"
@@ -3194,14 +3206,22 @@
       "apply": "Mettre à jour",
       "sync": "Synchroniser la version",
       "resume": "Reprendre le suivi",
-      "retry": "Réessayer"
+      "retry": "Réessayer",
+      "rollback": "Annuler la dernière mise à jour",
+      "confirmRollback": "Confirmer l'annulation"
     },
     "toast": {
       "loaderPending": "Le chargeur de mods doit être réinstallé. Consultez la page des téléchargements"
     },
     "reason": {
       "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack",
-      "MODPACK_UPDATE_UNSUPPORTED": "Cette instance n'a pas d'enregistrement d'installation utilisable ou l'isolation de version est désactivée"
+      "MODPACK_UPDATE_UNSUPPORTED": "Cette instance n'a pas d'enregistrement d'installation utilisable ou l'isolation de version est désactivée",
+      "MODPACK_UPDATE_NOT_ISOLATED": "L'isolation de version est désactivée pour cette instance, la comparaison n'est pas sûre. Activez-la dans les paramètres de l'instance puis réessayez",
+      "MODPACK_UPDATE_BASELINE_MISSING": "Cette instance n'a pas d'enregistrement d'installation du pack, ou il est endommagé ; comparaison impossible"
+    },
+    "rollback": {
+      "hint": "Vous pouvez annuler la dernière mise à jour du pack et rétablir fichiers et chargeur comme avant.",
+      "confirm": "L'annulation écrase les modifications faites sur ces fichiers depuis la mise à jour, et ne peut se faire qu'une fois."
     }
   }
 }
