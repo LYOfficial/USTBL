@@ -515,7 +515,8 @@
       "resourcepack": "リソースパック",
       "shader": "シェーダーパック",
       "datapack": "データパック",
-      "messages": "消息"
+      "messages": "消息",
+      "cloud-modpack": "クラウド Modpack"
     }
   },
   "InstallModpackPage": {
@@ -532,6 +533,12 @@
       "downloadStarted": "{{name}} のダウンロードを開始しました",
       "downloadDescription": "ダウンロード完了後、Modpack のインストールが自動的に開始されます。",
       "downloadFailed": "ダウンロードに失敗しました"
+    },
+    "platform": {
+      "title": "学内 Modpack",
+      "description": "学内の管理者が公開した Modpack です。インストール後は新しいバージョンに追従できます。",
+      "recommended": "おすすめ",
+      "vanilla": "バニラ"
     }
   },
   "DiscoverSourcesPage": {
@@ -2618,16 +2625,7 @@
           "title": "Export failed",
           "description": {
             "MODPACK_EXPORT_COMPONENT_INSTANCE": "Component-profile instances can only be exported as MultiMC",
-            "MODPACK_EXPORT_PROFILE_MISSING": "This instance was imported by an older version and lacks the component data needed for export. Re-import the modpack and try again",
-            "MODPACK_UPDATE_BUSY": "このModパックは更新中です",
-            "MODPACK_UPDATE_VERIFY_FAILED": "ダウンロードしたファイルの検証に失敗しました。インスタンスは変更されていません",
-            "MODPACK_UPDATE_STALE": "確認後にローカルファイルが変更されました。もう一度更新を確認してください",
-            "MODPACK_UPDATE_REMOTE_INVALID": "新しいバージョンのファイル一覧が無効なため、更新を拒否しました",
-            "MODPACK_UPDATE_LINE_MISMATCH": "新しいバージョンのゲームバージョンまたはModローダーがこのインスタンスと異なります",
-            "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスは自動更新できません",
-            "MODPACK_UPDATE_RUNNING": "ゲームが実行中です。Modパックを更新する前に閉じてください",
-            "MODPACK_UPDATE_REINSTALL_REQUIRED": "新しいバージョンはコンポーネント構成を変更するため、そのまま更新できません。再インストールしてください",
-            "MODPACK_UPDATE_LINE_GONE": "プラットフォームにこのモッドパックのラインはもうありません"
+            "MODPACK_EXPORT_PROFILE_MISSING": "This instance was imported by an older version and lacks the component data needed for export. Re-import the modpack and try again"
           }
         }
       },
@@ -2651,6 +2649,29 @@
             "MODPACK_PUBLISH_STALE": "公開中に他のユーザーがこのラインを更新しました。再読み込みしてからやり直してください",
             "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスには対応するModローダーがないため公開できません"
           }
+        }
+      },
+      "installCampusModpack": {
+        "success": "Modpack をインストールしました",
+        "error": {
+          "title": "Modpack のインストールに失敗しました",
+          "description": {
+            "MODPACK_UPDATE_BUSY": "このModパックは更新中です",
+            "MODPACK_UPDATE_VERIFY_FAILED": "ダウンロードしたファイルの検証に失敗しました。インスタンスは変更されていません",
+            "MODPACK_UPDATE_STALE": "確認後にローカルファイルが変更されました。もう一度更新を確認してください",
+            "MODPACK_UPDATE_REMOTE_INVALID": "新しいバージョンのファイル一覧が無効なため、更新を拒否しました",
+            "MODPACK_UPDATE_LINE_MISMATCH": "新しいバージョンのゲームバージョンまたはModローダーがこのインスタンスと異なります",
+            "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスは自動更新できません",
+            "MODPACK_UPDATE_RUNNING": "ゲームが実行中です。Modパックを更新する前に閉じてください",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "新しいバージョンはコンポーネント構成を変更するため、そのまま更新できません。再インストールしてください",
+            "MODPACK_UPDATE_LINE_GONE": "プラットフォームにこのモッドパックのラインはもうありません"
+          }
+        }
+      },
+      "fetchCampusModpackRecommendation": {
+        "success": "おすすめ Modpack を読み込みました",
+        "error": {
+          "title": "おすすめ Modpack の読み込みに失敗しました"
         }
       }
     },
@@ -2718,6 +2739,14 @@
           "title": "IPv6 operation failed",
           "description": {}
         }
+      }
+    },
+    "campusInstall": {
+      "installing": "{{name}} をインストール中",
+      "stage": {
+        "fetching": "ファイルをダウンロード中 {{done}}/{{total}}",
+        "applying": "ファイルを書き込み中 {{done}}/{{total}}",
+        "finalizing": "仕上げ中"
       }
     }
   },
@@ -3045,6 +3074,23 @@
       "notIsolated": "このインスタンスはバージョン分離が無効のため、このモッドパックには関連付けませんでした。",
       "localChanged": "アップロード中にローカルファイルが変更されたため、このバージョンには関連付けませんでした。",
       "recordFailed": "バージョンは公開されましたが、インスタンスとの関連付けを記録できませんでした。次回の確認では通常どおり比較します。"
+    }
+  },
+  "InstallCampusModpackModal": {
+    "header": {
+      "title": "学内 Modpack をインストール"
+    },
+    "label": {
+      "gameVersion": "ゲームバージョン",
+      "modLoader": "Mod ローダー",
+      "modpackVersion": "Modpack バージョン",
+      "modpackInfo": "Modpack 情報"
+    },
+    "button": {
+      "install": "インストール"
+    },
+    "error": {
+      "loaderUnavailable": "Mod ローダー {{loader}} {{version}} が見つからないため、インストールできません"
     }
   }
 }

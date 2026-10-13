@@ -515,7 +515,8 @@
       "resourcepack": "Resource Packs",
       "shader": "Shader Packs",
       "datapack": "Data Packs",
-      "messages": "消息"
+      "messages": "消息",
+      "cloud-modpack": "Cloud Modpack"
     }
   },
   "InstallModpackPage": {
@@ -532,6 +533,12 @@
       "downloadStarted": "Started downloading {{name}}",
       "downloadDescription": "Modpack installation will start automatically after download.",
       "downloadFailed": "Download failed"
+    },
+    "platform": {
+      "title": "Campus Modpacks",
+      "description": "Modpacks published by campus maintainers. Installed instances can follow new versions.",
+      "recommended": "Recommended",
+      "vanilla": "Vanilla"
     }
   },
   "DiscoverSourcesPage": {
@@ -2618,16 +2625,7 @@
           "title": "Export failed",
           "description": {
             "MODPACK_EXPORT_COMPONENT_INSTANCE": "Component-profile instances can only be exported as MultiMC",
-            "MODPACK_EXPORT_PROFILE_MISSING": "This instance was imported by an older version and lacks the component data needed for export. Re-import the modpack and try again",
-            "MODPACK_UPDATE_BUSY": "This modpack is already being updated",
-            "MODPACK_UPDATE_VERIFY_FAILED": "A downloaded file failed verification; the instance was not changed",
-            "MODPACK_UPDATE_STALE": "Local files changed after the check; check for updates again",
-            "MODPACK_UPDATE_REMOTE_INVALID": "The new version file list is invalid; the update was refused",
-            "MODPACK_UPDATE_LINE_MISMATCH": "The new version is for a different game version or mod loader than this instance",
-            "MODPACK_UPDATE_UNSUPPORTED": "This instance cannot be updated automatically",
-            "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack",
-            "MODPACK_UPDATE_REINSTALL_REQUIRED": "This version changes the modpack's component chain and cannot be applied in place; install it again",
-            "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack"
+            "MODPACK_EXPORT_PROFILE_MISSING": "This instance was imported by an older version and lacks the component data needed for export. Re-import the modpack and try again"
           }
         }
       },
@@ -2651,6 +2649,29 @@
             "MODPACK_PUBLISH_STALE": "This line was updated by someone else while you were publishing; reload and try again",
             "MODPACK_UPDATE_UNSUPPORTED": "This instance has no supported mod loader and cannot be published"
           }
+        }
+      },
+      "installCampusModpack": {
+        "success": "Modpack installed",
+        "error": {
+          "title": "Failed to install modpack",
+          "description": {
+            "MODPACK_UPDATE_BUSY": "This modpack is already being updated",
+            "MODPACK_UPDATE_VERIFY_FAILED": "A downloaded file failed verification; the instance was not changed",
+            "MODPACK_UPDATE_STALE": "Local files changed after the check; check for updates again",
+            "MODPACK_UPDATE_REMOTE_INVALID": "The new version file list is invalid; the update was refused",
+            "MODPACK_UPDATE_LINE_MISMATCH": "The new version is for a different game version or mod loader than this instance",
+            "MODPACK_UPDATE_UNSUPPORTED": "This instance cannot be updated automatically",
+            "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "This version changes the modpack's component chain and cannot be applied in place; install it again",
+            "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack"
+          }
+        }
+      },
+      "fetchCampusModpackRecommendation": {
+        "success": "Recommended modpack loaded",
+        "error": {
+          "title": "Failed to load the recommended modpack"
         }
       }
     },
@@ -2718,6 +2739,14 @@
           "title": "IPv6 operation failed",
           "description": {}
         }
+      }
+    },
+    "campusInstall": {
+      "installing": "Installing {{name}}",
+      "stage": {
+        "fetching": "Downloading files {{done}}/{{total}}",
+        "applying": "Writing files {{done}}/{{total}}",
+        "finalizing": "Finishing up"
       }
     }
   },
@@ -3045,6 +3074,23 @@
       "notIsolated": "Version isolation is off for this instance, so it was not linked to this modpack.",
       "localChanged": "Local files changed during upload, so the instance was not linked to this version.",
       "recordFailed": "The version was published, but the instance could not be linked to it. The next check compares as usual."
+    }
+  },
+  "InstallCampusModpackModal": {
+    "header": {
+      "title": "Install Campus Modpack"
+    },
+    "label": {
+      "gameVersion": "Game Version",
+      "modLoader": "Mod Loader",
+      "modpackVersion": "Modpack Version",
+      "modpackInfo": "Modpack Info"
+    },
+    "button": {
+      "install": "Install"
+    },
+    "error": {
+      "loaderUnavailable": "Mod loader {{loader}} {{version}} is unavailable, cannot install"
     }
   }
 }

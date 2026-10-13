@@ -515,7 +515,8 @@
       "resourcepack": "Packs de ressources",
       "shader": "Packs de shaders",
       "datapack": "Packs de données",
-      "messages": "消息"
+      "messages": "消息",
+      "cloud-modpack": "Modpack cloud"
     }
   },
   "InstallModpackPage": {
@@ -532,6 +533,12 @@
       "downloadStarted": "Téléchargement de {{name}} démarré",
       "downloadDescription": "L’installation du modpack démarrera automatiquement après le téléchargement.",
       "downloadFailed": "Échec du téléchargement"
+    },
+    "platform": {
+      "title": "Modpacks du campus",
+      "description": "Modpacks publiés par les responsables du campus. Les instances installées peuvent suivre les nouvelles versions.",
+      "recommended": "Recommandé",
+      "vanilla": "Vanilla"
     }
   },
   "DiscoverSourcesPage": {
@@ -2613,16 +2620,7 @@
           "title": "Échec de l’exportation",
           "description": {
             "MODPACK_EXPORT_COMPONENT_INSTANCE": "Une instance à profil de composants ne peut être exportée qu’au format MultiMC",
-            "MODPACK_EXPORT_PROFILE_MISSING": "Cette instance a été importée par une ancienne version et ne contient pas les données de composants nécessaires à l’exportation. Réimportez le pack de mods puis réessayez",
-            "MODPACK_UPDATE_BUSY": "Ce pack de mods est déjà en cours de mise à jour",
-            "MODPACK_UPDATE_VERIFY_FAILED": "Un fichier téléchargé a échoué à la vérification ; l’instance n’a pas été modifiée",
-            "MODPACK_UPDATE_STALE": "Les fichiers locaux ont changé après la vérification ; vérifiez de nouveau les mises à jour",
-            "MODPACK_UPDATE_REMOTE_INVALID": "La liste de fichiers de la nouvelle version est invalide ; la mise à jour a été refusée",
-            "MODPACK_UPDATE_LINE_MISMATCH": "La nouvelle version cible une autre version du jeu ou un autre chargeur que cette instance",
-            "MODPACK_UPDATE_UNSUPPORTED": "Cette instance ne peut pas être mise à jour automatiquement",
-            "MODPACK_UPDATE_RUNNING": "Le jeu est en cours d’exécution ; fermez-le avant de mettre à jour le pack de mods",
-            "MODPACK_UPDATE_REINSTALL_REQUIRED": "Cette version modifie la chaîne de composants du pack et ne peut pas être appliquée sur place ; réinstallez-la",
-            "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack"
+            "MODPACK_EXPORT_PROFILE_MISSING": "Cette instance a été importée par une ancienne version et ne contient pas les données de composants nécessaires à l’exportation. Réimportez le pack de mods puis réessayez"
           }
         }
       },
@@ -2651,6 +2649,29 @@
             "MODPACK_PUBLISH_STALE": "Cette ligne a été mise à jour par quelqu'un d'autre pendant la publication ; rechargez et réessayez",
             "MODPACK_UPDATE_UNSUPPORTED": "Cette instance n'a pas de chargeur de mods pris en charge et ne peut pas être publiée"
           }
+        }
+      },
+      "installCampusModpack": {
+        "success": "Modpack installé",
+        "error": {
+          "title": "Échec de l'installation du modpack",
+          "description": {
+            "MODPACK_UPDATE_BUSY": "Ce pack de mods est déjà en cours de mise à jour",
+            "MODPACK_UPDATE_VERIFY_FAILED": "Un fichier téléchargé a échoué à la vérification ; l’instance n’a pas été modifiée",
+            "MODPACK_UPDATE_STALE": "Les fichiers locaux ont changé après la vérification ; vérifiez de nouveau les mises à jour",
+            "MODPACK_UPDATE_REMOTE_INVALID": "La liste de fichiers de la nouvelle version est invalide ; la mise à jour a été refusée",
+            "MODPACK_UPDATE_LINE_MISMATCH": "La nouvelle version cible une autre version du jeu ou un autre chargeur que cette instance",
+            "MODPACK_UPDATE_UNSUPPORTED": "Cette instance ne peut pas être mise à jour automatiquement",
+            "MODPACK_UPDATE_RUNNING": "Le jeu est en cours d’exécution ; fermez-le avant de mettre à jour le pack de mods",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "Cette version modifie la chaîne de composants du pack et ne peut pas être appliquée sur place ; réinstallez-la",
+            "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack"
+          }
+        }
+      },
+      "fetchCampusModpackRecommendation": {
+        "success": "Modpack recommandé chargé",
+        "error": {
+          "title": "Échec du chargement du modpack recommandé"
         }
       }
     },
@@ -2718,6 +2739,14 @@
           "title": "IPv6 operation failed",
           "description": {}
         }
+      }
+    },
+    "campusInstall": {
+      "installing": "Installation de {{name}}",
+      "stage": {
+        "fetching": "Téléchargement des fichiers {{done}}/{{total}}",
+        "applying": "Écriture des fichiers {{done}}/{{total}}",
+        "finalizing": "Finalisation"
       }
     }
   },
@@ -3045,6 +3074,23 @@
       "notIsolated": "L'isolation de version est désactivée pour cette instance ; elle n'a pas été liée à ce pack.",
       "localChanged": "Des fichiers locaux ont changé pendant l'envoi ; l'instance n'a pas été liée à cette version.",
       "recordFailed": "La version est publiée, mais l'instance n'a pas pu y être liée. La prochaine vérification comparera normalement."
+    }
+  },
+  "InstallCampusModpackModal": {
+    "header": {
+      "title": "Installer un modpack du campus"
+    },
+    "label": {
+      "gameVersion": "Version du jeu",
+      "modLoader": "Chargeur de mods",
+      "modpackVersion": "Version du modpack",
+      "modpackInfo": "Infos du modpack"
+    },
+    "button": {
+      "install": "Installer"
+    },
+    "error": {
+      "loaderUnavailable": "Le chargeur {{loader}} {{version}} est introuvable, installation impossible"
     }
   }
 }

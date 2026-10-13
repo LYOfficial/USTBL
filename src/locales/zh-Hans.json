@@ -515,7 +515,8 @@
       "resourcepack": "资源包",
       "shader": "光影",
       "datapack": "数据包",
-      "messages": "消息"
+      "messages": "消息",
+      "cloud-modpack": "云盘整合包"
     }
   },
   "InstallModpackPage": {
@@ -532,6 +533,12 @@
       "downloadStarted": "已开始下载 {{name}}",
       "downloadDescription": "下载完成后会自动进入整合包安装流程。",
       "downloadFailed": "下载失败"
+    },
+    "platform": {
+      "title": "校内整合包",
+      "description": "由校内管理员发布的整合包，安装后可跟随新版本更新。",
+      "recommended": "推荐",
+      "vanilla": "原版"
     }
   },
   "DiscoverSourcesPage": {
@@ -2618,16 +2625,7 @@
           "title": "导出失败",
           "description": {
             "MODPACK_EXPORT_COMPONENT_INSTANCE": "组件式实例只能导出为 MultiMC 格式",
-            "MODPACK_EXPORT_PROFILE_MISSING": "该实例由旧版本导入，缺少导出所需的组件信息，请重新导入整合包后再导出",
-            "MODPACK_UPDATE_BUSY": "该整合包正在更新中",
-            "MODPACK_UPDATE_VERIFY_FAILED": "下载的文件校验失败，未对实例做任何修改",
-            "MODPACK_UPDATE_STALE": "本地文件在检查后发生了变化，请重新检查更新",
-            "MODPACK_UPDATE_REMOTE_INVALID": "新版本的文件清单不合法，已拒绝更新",
-            "MODPACK_UPDATE_LINE_MISMATCH": "新版本的游戏版本或加载器与此实例不一致，无法更新",
-            "MODPACK_UPDATE_UNSUPPORTED": "此实例暂不支持自动更新",
-            "MODPACK_UPDATE_RUNNING": "游戏正在运行，请先关闭游戏再更新整合包",
-            "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的组件链，无法就地更新，请重新安装",
-            "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线"
+            "MODPACK_EXPORT_PROFILE_MISSING": "该实例由旧版本导入，缺少导出所需的组件信息，请重新导入整合包后再导出"
           }
         }
       },
@@ -2651,6 +2649,29 @@
             "MODPACK_PUBLISH_STALE": "发布期间该线路已被其他人更新，请重新加载后再试",
             "MODPACK_UPDATE_UNSUPPORTED": "该实例没有受支持的模组加载器，无法发布"
           }
+        }
+      },
+      "installCampusModpack": {
+        "success": "整合包已安装",
+        "error": {
+          "title": "安装整合包失败",
+          "description": {
+            "MODPACK_UPDATE_BUSY": "该整合包正在更新中",
+            "MODPACK_UPDATE_VERIFY_FAILED": "下载的文件校验失败，未对实例做任何修改",
+            "MODPACK_UPDATE_STALE": "本地文件在检查后发生了变化，请重新检查更新",
+            "MODPACK_UPDATE_REMOTE_INVALID": "新版本的文件清单不合法，已拒绝更新",
+            "MODPACK_UPDATE_LINE_MISMATCH": "新版本的游戏版本或加载器与此实例不一致，无法更新",
+            "MODPACK_UPDATE_UNSUPPORTED": "此实例暂不支持自动更新",
+            "MODPACK_UPDATE_RUNNING": "游戏正在运行，请先关闭游戏再更新整合包",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的组件链，无法就地更新，请重新安装",
+            "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线"
+          }
+        }
+      },
+      "fetchCampusModpackRecommendation": {
+        "success": "已加载推荐整合包",
+        "error": {
+          "title": "加载推荐整合包失败"
         }
       }
     },
@@ -2718,6 +2739,14 @@
           "title": "IPv6 免流操作失败",
           "description": {}
         }
+      }
+    },
+    "campusInstall": {
+      "installing": "正在安装 {{name}}",
+      "stage": {
+        "fetching": "下载文件 {{done}}/{{total}}",
+        "applying": "写入文件 {{done}}/{{total}}",
+        "finalizing": "收尾中"
       }
     }
   },
@@ -3045,6 +3074,23 @@
       "notIsolated": "该实例未开启版本隔离，未将其关联到此整合包。",
       "localChanged": "上传期间本地文件发生了变化，未将该实例关联到此版本。",
       "recordFailed": "版本已发布，但未能记录该实例与此版本的关联，下次检查将按常规比较。"
+    }
+  },
+  "InstallCampusModpackModal": {
+    "header": {
+      "title": "安装校内整合包"
+    },
+    "label": {
+      "gameVersion": "游戏版本",
+      "modLoader": "模组加载器",
+      "modpackVersion": "整合包版本",
+      "modpackInfo": "整合包信息"
+    },
+    "button": {
+      "install": "安装"
+    },
+    "error": {
+      "loaderUnavailable": "找不到加载器 {{loader}} {{version}}，无法安装"
     }
   }
 }
