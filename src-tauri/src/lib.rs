@@ -187,6 +187,8 @@ pub async fn run() -> i32 {
       instance::modpack_publish::commands::list_campus_modpack_projects,
       instance::modpack_publish::commands::create_campus_modpack_project,
       instance::modpack_publish::commands::publish_campus_modpack,
+      instance::modpack_update::commands::set_modpack_follow,
+      instance::modpack_update::commands::rollback_modpack_update,
       instance::commands::update_instance_config,
       instance::commands::retrieve_instance_game_config,
       instance::commands::restore_instance_game_config,

@@ -54,6 +54,7 @@ export enum InstanceError {
   ModpackUpdateRunning = "MODPACK_UPDATE_RUNNING",
   ModpackUpdateReinstallRequired = "MODPACK_UPDATE_REINSTALL_REQUIRED",
   ModpackPublishStale = "MODPACK_PUBLISH_STALE",
+  ModpackUpdateLineGone = "MODPACK_UPDATE_LINE_GONE",
 }
 
 export enum ConfigServiceError {

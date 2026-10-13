@@ -339,6 +339,7 @@ pub enum InstanceError {
   ModpackUpdateRunning,
   ModpackUpdateReinstallRequired,
   ModpackPublishStale,
+  ModpackUpdateLineGone,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize, Default)]

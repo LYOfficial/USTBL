@@ -7,7 +7,7 @@ use super::diff::FileKey;
 use super::remote::{FileSource, RemoteFile, RemoteModpack, UPDATE_DIR};
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::modpack::baseline::{
-  canonical_components, hash_file, normalize_relative_path, BaselineLoader, ComponentRef,
+  components_of_mmc_pack, hash_file, normalize_relative_path, BaselineLoader,
 };
 use crate::instance::helpers::modpack::misc::{list_override_entries, parse_platform_manifest};
 use crate::instance::models::misc::{InstanceError, InstanceOrigin, ModLoaderType, OriginPlatform};
@@ -118,16 +118,38 @@ pub struct CampusVersion {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CampusManifest {
   pub files: Vec<CampusFile>,
-  /// Component chain of a component-profile pack.
+  /// Everything a component-profile pack needs to be rebuilt.
   #[serde(default)]
-  pub components: Option<Vec<CampusComponent>>,
+  pub components: Option<CampusComponents>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct CampusComponent {
-  pub uid: String,
+pub struct CampusComponents {
+  /// `mmc-pack.json` as published, component flags included.
+  #[serde(rename = "mmcPack")]
+  pub mmc_pack: serde_json::Value,
+  #[serde(rename = "instanceCfg", default)]
+  pub instance_cfg: BTreeMap<String, String>,
   #[serde(default)]
-  pub version: String,
+  pub patches: Vec<CampusComponentPatch>,
+  #[serde(default)]
+  pub libraries: Vec<CampusComponentLibrary>,
+}
+
+/// A patch file the pack ships itself, stored as a blob.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CampusComponentPatch {
+  pub uid: String,
+  pub blob: String,
+  pub size: u64,
+}
+
+/// A library the pack ships itself (`libraries/<name>`), stored as a blob.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CampusComponentLibrary {
+  pub path: String,
+  pub blob: String,
+  pub size: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -228,12 +250,11 @@ pub fn campus_remote(
       loader_type,
       version: version.loader_version.clone(),
     },
-    components: version.manifest.components.as_ref().map(|chain| {
-      canonical_components(chain.iter().map(|component| ComponentRef {
-        uid: component.uid.clone(),
-        version: component.version.clone(),
-      }))
-    }),
+    components: version
+      .manifest
+      .components
+      .as_ref()
+      .map(|components| components_of_mmc_pack(&components.mmc_pack)),
     files,
   })
 }
@@ -416,9 +437,10 @@ pub async fn latest_version(
         "/projects/{}/lines/{}/{slug}",
         origin.project_id, origin.game_version
       );
-      let Some(version) = campus_get::<CampusVersion>(app, &path).await? else {
-        return Ok(None);
-      };
+      // A line the platform no longer lists is not "up to date": say so.
+      let version = campus_get::<CampusVersion>(app, &path)
+        .await?
+        .ok_or(InstanceError::ModpackUpdateLineGone)?;
       if version.id.to_string() == origin.version_id {
         return Ok(None);
       }
@@ -645,11 +667,23 @@ mod tests {
       .components
       .is_none());
 
-    version.manifest.components = serde_json::from_value(serde_json::json!([
-      {"uid": "net.minecraftforge", "version": "10.13.4.1614", "cachedName": "Forge"},
-      {"uid": "net.minecraft", "version": "1.7.10"},
-    ]))
+    version.manifest.components = serde_json::from_value(serde_json::json!({
+      "mmcPack": {
+        "formatVersion": 1,
+        "components": [
+          {"uid": "net.minecraftforge", "version": "10.13.4.1614", "cachedName": "Forge"},
+          {"uid": "net.minecraft", "version": "1.7.10", "important": true},
+        ],
+      },
+      "instanceCfg": {"name": "GTNH"},
+      "patches": [{"uid": "com.example.loader", "blob": "a".repeat(40), "size": 5}],
+      "libraries": [{"path": "libraries/boot-1.jar", "blob": "b".repeat(40), "size": 3}],
+    }))
     .unwrap();
+    let published = version.manifest.components.as_ref().unwrap();
+    assert_eq!(published.patches[0].uid, "com.example.loader");
+    assert_eq!(published.libraries[0].path, "libraries/boot-1.jar");
+    assert_eq!(published.instance_cfg["name"], "GTNH");
     let chain = campus_remote(&version, None, "https://api.example")
       .unwrap()
       .components

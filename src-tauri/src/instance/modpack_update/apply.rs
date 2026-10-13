@@ -41,6 +41,8 @@ fn backup_dir(root: &Path) -> PathBuf {
 }
 
 /// The previous update's backup, kept until the next update replaces it.
+const LAST_JOURNAL_NAME: &str = "journal.json";
+
 fn last_backup_dir(root: &Path) -> PathBuf {
   update_dir(root).join("last-backup")
 }
@@ -205,7 +207,10 @@ fn disabled_path(path: &str) -> String {
 
 /// Undo a journal that never reached `Committed`. Safe to run repeatedly.
 fn roll_back(root: &Path, journal: &Journal) -> io::Result<()> {
-  let backup = backup_dir(root);
+  roll_back_from(root, &backup_dir(root), journal)
+}
+
+fn roll_back_from(root: &Path, backup: &Path, journal: &Journal) -> io::Result<()> {
   for op in journal.ops.iter().rev() {
     let target = root.join(&op.path);
     let saved = backup.join("files").join(&op.path);
@@ -244,10 +249,37 @@ fn finish_cleanup(root: &Path, keep_backup: bool) {
   if keep_backup && backup_dir(root).exists() {
     let _ = fs::remove_dir_all(last_backup_dir(root));
     let _ = fs::rename(backup_dir(root), last_backup_dir(root));
+    // The journal says what the backup holds, which rolling back needs.
+    let _ = fs::rename(
+      journal_path(root),
+      last_backup_dir(root).join(LAST_JOURNAL_NAME),
+    );
   } else {
     let _ = fs::remove_dir_all(backup_dir(root));
   }
   let _ = fs::remove_file(journal_path(root));
+}
+
+/// Whether the previous update can still be rolled back.
+pub fn can_roll_back_last(root: &Path) -> bool {
+  last_backup_dir(root).join(LAST_JOURNAL_NAME).is_file()
+}
+
+/// Put the instance back the way it was before the last update. Files the
+/// player changed since then are overwritten, so callers confirm first. The
+/// backup is spent afterwards; returns whether there was one.
+pub fn roll_back_last(root: &Path) -> USTBLResult<bool> {
+  let _guard = UpdateGuard::acquire(root)?;
+  recover_locked(root)?;
+  let backup = last_backup_dir(root);
+  let journal: Journal = match fs::read(backup.join(LAST_JOURNAL_NAME)) {
+    Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| io_error(e.into()))?,
+    Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+    Err(error) => return Err(io_error(error)),
+  };
+  roll_back_from(root, &backup, &journal).map_err(io_error)?;
+  fs::remove_dir_all(&backup).map_err(io_error)?;
+  Ok(true)
 }
 
 /// Finish or undo whatever an interrupted update left behind.
@@ -732,6 +764,19 @@ mod tests {
     assert!(!root.0.join(UPDATE_DIR).join("staging").exists());
     assert!(!journal_path(&root.0).exists());
     assert!(UpdateGuard::acquire(&root.0).is_ok());
+
+    // The previous update can be taken back once.
+    assert!(can_roll_back_last(&root.0));
+    assert!(roll_back_last(&root.0).unwrap());
+    assert_eq!(root.read("mods/new.jar"), None);
+    assert_eq!(root.read("mods/old.jar").as_deref(), Some("old"));
+    assert_eq!(root.read("mods/gone.jar").as_deref(), Some("gone"));
+    assert_eq!(
+      root.read("mods/old.jar.disabled").as_deref(),
+      Some("old-disabled")
+    );
+    assert!(!can_roll_back_last(&root.0));
+    assert!(!roll_back_last(&root.0).unwrap());
   }
 
   #[tokio::test]

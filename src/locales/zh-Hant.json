@@ -2626,7 +2626,8 @@
             "MODPACK_UPDATE_LINE_MISMATCH": "新版本的遊戲版本或模組載入器與此實例不同",
             "MODPACK_UPDATE_UNSUPPORTED": "此實例無法自動更新",
             "MODPACK_UPDATE_RUNNING": "遊戲正在執行，請先關閉遊戲再更新整合包",
-            "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的組件鏈，無法就地更新，請重新安裝"
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的組件鏈，無法就地更新，請重新安裝",
+            "MODPACK_UPDATE_LINE_GONE": "平台上已不存在該整合包的這條線"
           }
         }
       },
