@@ -330,6 +330,10 @@ pub enum InstanceError {
   LoaderInstallerNotFound,
   ModpackExportComponentInstance,
   ModpackExportProfileMissing,
+  ModpackUpdateBusy,
+  ModpackUpdateVerifyFailed,
+  ModpackUpdateStale,
+  ModpackUpdateRemoteInvalid,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize, Default)]

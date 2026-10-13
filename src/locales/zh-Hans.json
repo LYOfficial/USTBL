@@ -2617,7 +2617,11 @@
           "title": "导出失败",
           "description": {
             "MODPACK_EXPORT_COMPONENT_INSTANCE": "组件式实例只能导出为 MultiMC 格式",
-            "MODPACK_EXPORT_PROFILE_MISSING": "该实例由旧版本导入，缺少导出所需的组件信息，请重新导入整合包后再导出"
+            "MODPACK_EXPORT_PROFILE_MISSING": "该实例由旧版本导入，缺少导出所需的组件信息，请重新导入整合包后再导出",
+            "MODPACK_UPDATE_BUSY": "该整合包正在更新中",
+            "MODPACK_UPDATE_VERIFY_FAILED": "下载的文件校验失败，未对实例做任何修改",
+            "MODPACK_UPDATE_STALE": "本地文件在检查后发生了变化，请重新检查更新",
+            "MODPACK_UPDATE_REMOTE_INVALID": "新版本的文件清单不合法，已拒绝更新"
           }
         }
       }

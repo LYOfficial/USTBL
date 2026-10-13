@@ -45,6 +45,10 @@ export enum InstanceError {
   LoaderInstallerNotFound = "LOADER_INSTALLER_NOT_FOUND",
   ModpackExportComponentInstance = "MODPACK_EXPORT_COMPONENT_INSTANCE",
   ModpackExportProfileMissing = "MODPACK_EXPORT_PROFILE_MISSING",
+  ModpackUpdateBusy = "MODPACK_UPDATE_BUSY",
+  ModpackUpdateVerifyFailed = "MODPACK_UPDATE_VERIFY_FAILED",
+  ModpackUpdateStale = "MODPACK_UPDATE_STALE",
+  ModpackUpdateRemoteInvalid = "MODPACK_UPDATE_REMOTE_INVALID",
 }
 
 export enum ConfigServiceError {

@@ -1,3 +1,3 @@
-//! Updating an instance to a newer version of the modpack it was installed from.
-
+pub mod apply;
 pub mod diff;
+pub mod remote;
