@@ -1,0 +1,431 @@
+import {
+  Button,
+  HStack,
+  Modal,
+  ModalBody,
+  ModalCloseButton,
+  ModalContent,
+  ModalFooter,
+  ModalHeader,
+  ModalOverlay,
+  ModalProps,
+  Select,
+  Text,
+  VStack,
+} from "@chakra-ui/react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
+import Editable from "@/components/common/editable";
+import ModpackFileTree from "@/components/common/modpack-file-tree";
+import {
+  OptionItemGroup,
+  OptionItemGroupProps,
+} from "@/components/common/option-item";
+import { useLauncherConfig } from "@/contexts/config";
+import { useToast } from "@/contexts/toast";
+import {
+  CampusModpackProject,
+  CampusPublishProgress,
+} from "@/models/campus-modpack";
+import { ModpackFileList } from "@/models/instance/misc";
+import { CampusModpackService } from "@/services/campus-modpack";
+import { InstanceService } from "@/services/instance";
+
+interface PublishModpackModalProps extends Omit<ModalProps, "children"> {
+  instanceId: string;
+  instanceName: string;
+}
+
+const NEW_PROJECT = "__new__";
+const SLUG_PATTERN = /^[a-z][a-z0-9-]{1,63}$/;
+
+const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
+  instanceId,
+  instanceName,
+  ...modalProps
+}) => {
+  const { t } = useTranslation();
+  const { config } = useLauncherConfig();
+  const toast = useToast();
+  const primaryColor = config.appearance.theme.primaryColor;
+
+  const [projects, setProjects] = useState<CampusModpackProject[]>([]);
+  const [projectChoice, setProjectChoice] = useState(NEW_PROJECT);
+  const [slug, setSlug] = useState("");
+  const [projectName, setProjectName] = useState(instanceName);
+  const [summary, setSummary] = useState("");
+  const [versionNumber, setVersionNumber] = useState("");
+  const [changelog, setChangelog] = useState("");
+  const [fileList, setFileList] = useState<ModpackFileList | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [isFileListLoading, setIsFileListLoading] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [progress, setProgress] = useState<CampusPublishProgress | null>(null);
+
+  const isNewProject = projectChoice === NEW_PROJECT;
+
+  const checkSlugError = useCallback((value: string): number => {
+    if (!SLUG_PATTERN.test(value.trim().toLowerCase())) return 1;
+    return 0;
+  }, []);
+
+  const checkNameError = useCallback((value: string): number => {
+    const trimmed = value.trim();
+    if (trimmed === "") return 1;
+    if (trimmed.length > 128) return 2;
+    return 0;
+  }, []);
+
+  const checkSummaryError = useCallback((value: string): number => {
+    return value.length > 512 ? 1 : 0;
+  }, []);
+
+  const checkVersionError = useCallback((value: string): number => {
+    const trimmed = value.trim();
+    if (trimmed === "") return 1;
+    if (trimmed.length > 64) return 2;
+    return 0;
+  }, []);
+
+  const checkChangelogError = useCallback((value: string): number => {
+    return value.length > 20000 ? 1 : 0;
+  }, []);
+
+  useEffect(() => {
+    if (!modalProps.isOpen) return;
+    let isActive = true;
+
+    CampusModpackService.listCampusModpackProjects().then((response) => {
+      if (!isActive) return;
+      if (response.status === "success") {
+        setProjects(response.data);
+      } else {
+        toast({
+          title: response.message,
+          description: response.details,
+          status: "error",
+        });
+      }
+    });
+
+    setIsFileListLoading(true);
+    InstanceService.retrieveExportableFileList(instanceId)
+      .then((response) => {
+        if (!isActive) return;
+        if (response.status === "success") {
+          setFileList(response.data);
+          const nextSelected = new Set(response.data.all);
+          response.data.unchecked.forEach((path) => nextSelected.delete(path));
+          setSelectedFiles(nextSelected);
+        } else {
+          toast({
+            title: response.message,
+            description: response.details,
+            status: "error",
+          });
+        }
+      })
+      .finally(() => {
+        if (isActive) setIsFileListLoading(false);
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [instanceId, modalProps.isOpen, toast]);
+
+  useEffect(() => {
+    if (!modalProps.isOpen) return;
+    return CampusModpackService.onPublishProgress((payload) => {
+      if (payload.instanceId === instanceId) setProgress(payload);
+    });
+  }, [instanceId, modalProps.isOpen]);
+
+  const selectedFileList = useMemo(() => {
+    if (!fileList) return [];
+    return fileList.all.filter((path) => selectedFiles.has(path));
+  }, [fileList, selectedFiles]);
+
+  const handlePublish = useCallback(async () => {
+    if (checkVersionError(versionNumber) !== 0) {
+      toast({
+        title: t("PublishModpackModal.error.invalidVersion"),
+        status: "warning",
+      });
+      return;
+    }
+    if (selectedFileList.length === 0) {
+      toast({
+        title: t("PublishModpackModal.error.noFileSelected"),
+        status: "warning",
+      });
+      return;
+    }
+    if (
+      isNewProject &&
+      (checkSlugError(slug) !== 0 ||
+        checkNameError(projectName) !== 0 ||
+        checkSummaryError(summary) !== 0)
+    ) {
+      toast({
+        title: t("PublishModpackModal.error.invalidProject"),
+        status: "warning",
+      });
+      return;
+    }
+
+    setIsPublishing(true);
+    setProgress(null);
+    try {
+      let projectRef = projectChoice;
+      if (isNewProject) {
+        const created = await CampusModpackService.createCampusModpackProject(
+          slug.trim().toLowerCase(),
+          projectName.trim(),
+          summary.trim()
+        );
+        if (created.status !== "success") {
+          toast({
+            title: created.message,
+            description: created.details,
+            status: "error",
+          });
+          return;
+        }
+        projectRef = created.data.slug;
+        setProjects((prev) => [...prev, created.data]);
+        setProjectChoice(created.data.slug);
+      }
+
+      const response = await CampusModpackService.publishCampusModpack(
+        instanceId,
+        projectRef,
+        versionNumber.trim(),
+        changelog,
+        selectedFileList
+      );
+      if (response.status === "success") {
+        toast({
+          title: response.message,
+          description:
+            response.data.skipped.length > 0
+              ? t("PublishModpackModal.skipped", {
+                  count: response.data.skipped.length,
+                })
+              : undefined,
+          status: "success",
+        });
+        modalProps.onClose();
+      } else {
+        toast({
+          title: response.message,
+          description: response.details,
+          status: "error",
+        });
+      }
+    } finally {
+      setIsPublishing(false);
+      setProgress(null);
+    }
+  }, [
+    changelog,
+    checkNameError,
+    checkSlugError,
+    checkSummaryError,
+    checkVersionError,
+    instanceId,
+    isNewProject,
+    modalProps,
+    projectChoice,
+    projectName,
+    selectedFileList,
+    slug,
+    summary,
+    t,
+    toast,
+    versionNumber,
+  ]);
+
+  const editableProps = {
+    textProps: { className: "secondary-text", fontSize: "xs-sm" },
+    inputProps: { fontSize: "xs-sm" },
+    formErrMsgProps: { fontSize: "xs-sm" },
+  };
+
+  const optionGroups: OptionItemGroupProps[] = [
+    {
+      title: t("PublishModpackModal.label.project"),
+      items: [
+        {
+          title: t("PublishModpackModal.label.target"),
+          children: (
+            <Select
+              size="xs"
+              w="auto"
+              minW="48"
+              value={projectChoice}
+              aria-label={t("PublishModpackModal.label.target")}
+              isDisabled={isPublishing}
+              onChange={(event) => setProjectChoice(event.target.value)}
+            >
+              <option value={NEW_PROJECT}>
+                {t("PublishModpackModal.label.newProject")}
+              </option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.slug}>
+                  {project.name}
+                </option>
+              ))}
+            </Select>
+          ),
+        },
+        ...(isNewProject
+          ? [
+              {
+                title: t("PublishModpackModal.label.slug"),
+                children: (
+                  <Editable
+                    isTextArea={false}
+                    value={slug}
+                    onEditSubmit={setSlug}
+                    checkError={checkSlugError}
+                    localeKey="PublishModpackModal.errorMessage.slug"
+                    {...editableProps}
+                  />
+                ),
+              },
+              {
+                title: t("PublishModpackModal.label.projectName"),
+                children: (
+                  <Editable
+                    isTextArea={false}
+                    value={projectName}
+                    onEditSubmit={setProjectName}
+                    checkError={checkNameError}
+                    localeKey="PublishModpackModal.errorMessage.name"
+                    {...editableProps}
+                  />
+                ),
+              },
+              {
+                title: t("PublishModpackModal.label.summary"),
+                children: (
+                  <Editable
+                    isTextArea={true}
+                    value={summary}
+                    onEditSubmit={setSummary}
+                    checkError={checkSummaryError}
+                    localeKey="PublishModpackModal.errorMessage.summary"
+                    {...editableProps}
+                    inputProps={{
+                      fontSize: "xs-sm",
+                      placeholder: t("General.optional"),
+                    }}
+                  />
+                ),
+              },
+            ]
+          : []),
+      ],
+    },
+    {
+      title: t("PublishModpackModal.label.version"),
+      items: [
+        {
+          title: t("PublishModpackModal.label.versionNumber"),
+          children: (
+            <Editable
+              isTextArea={false}
+              value={versionNumber}
+              onEditSubmit={setVersionNumber}
+              checkError={checkVersionError}
+              localeKey="PublishModpackModal.errorMessage.version"
+              {...editableProps}
+            />
+          ),
+        },
+        {
+          title: t("PublishModpackModal.label.changelog"),
+          children: (
+            <Editable
+              isTextArea={true}
+              value={changelog}
+              onEditSubmit={setChangelog}
+              checkError={checkChangelogError}
+              localeKey="PublishModpackModal.errorMessage.changelog"
+              {...editableProps}
+              inputProps={{
+                fontSize: "xs-sm",
+                placeholder: t("General.optional"),
+              }}
+            />
+          ),
+        },
+      ],
+    },
+    {
+      title: t("PublishModpackModal.label.includedFiles"),
+      items: [
+        <ModpackFileTree
+          key="included-files-tree"
+          paths={fileList?.all ?? []}
+          isLoading={isFileListLoading}
+          selectedFiles={selectedFiles}
+          onSelectedFilesChange={setSelectedFiles}
+        />,
+      ],
+    },
+  ];
+
+  return (
+    <Modal
+      scrollBehavior="inside"
+      size={{ base: "2xl", lg: "3xl", xl: "4xl" }}
+      closeOnOverlayClick={!isPublishing}
+      {...modalProps}
+    >
+      <ModalOverlay />
+      <ModalContent maxH="calc(100vh - 7.5rem)">
+        <ModalHeader>
+          {t("PublishModpackModal.header.title", { param: instanceName })}
+        </ModalHeader>
+        <ModalCloseButton isDisabled={isPublishing} />
+        <ModalBody>
+          <VStack spacing={4} align="stretch">
+            {optionGroups.map((group, index) => (
+              <OptionItemGroup {...group} key={index} />
+            ))}
+          </VStack>
+        </ModalBody>
+        <ModalFooter>
+          <HStack spacing={2}>
+            {progress && (
+              <Text fontSize="xs" className="secondary-text">
+                {t(`PublishModpackModal.stage.${progress.stage}`, {
+                  done: progress.done,
+                  total: progress.total,
+                })}
+              </Text>
+            )}
+            <Button
+              variant="ghost"
+              onClick={modalProps.onClose}
+              isDisabled={isPublishing}
+            >
+              {t("General.cancel")}
+            </Button>
+            <Button
+              colorScheme={primaryColor}
+              onClick={handlePublish}
+              isLoading={isPublishing}
+            >
+              {t("PublishModpackModal.button.publish")}
+            </Button>
+          </HStack>
+        </ModalFooter>
+      </ModalContent>
+    </Modal>
+  );
+};
+
+export default PublishModpackModal;

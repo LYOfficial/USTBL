@@ -10,6 +10,7 @@ import GenericConfirmDialog from "@/components/modals/generic-confirm-dialog";
 import ImportModpackModal from "@/components/modals/import-modpack-modal";
 import LaunchProcessModal from "@/components/modals/launch-process-modal";
 import NotifyNewVersionModal from "@/components/modals/notify-new-version-modal";
+import PublishModpackModal from "@/components/modals/publish-modpack-modal";
 import ReLoginPlayerModal from "@/components/modals/relogin-player-modal";
 import SpotlightSearchModal from "@/components/modals/spotlight-search-modal";
 import VustbAnnouncementModal from "@/components/modals/vustb-announcement-modal";
@@ -45,6 +46,7 @@ const SharedModals: React.FC<{ children: React.ReactNode }> = ({
     "import-modpack": ImportModpackModal,
     launch: LaunchProcessModal,
     "notify-new-version": NotifyNewVersionModal,
+    "publish-modpack": PublishModpackModal,
     relogin: ReLoginPlayerModal,
     "spotlight-search": SpotlightSearchModal,
     "vustb-announcement": VustbAnnouncementModal,

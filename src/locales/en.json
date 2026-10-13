@@ -1280,7 +1280,8 @@
       "createShortcut": "Create Launch Shortcut",
       "exportModPack": "Export as Modpack",
       "star": "Star this instance",
-      "unstar": "Unstar"
+      "unstar": "Unstar",
+      "publishModPack": "Publish to Campus Modpacks"
     },
     "instanceTabList": {
       "overview": "Overview",
@@ -2624,8 +2625,29 @@
             "MODPACK_UPDATE_REMOTE_INVALID": "The new version file list is invalid; the update was refused",
             "MODPACK_UPDATE_LINE_MISMATCH": "The new version is for a different game version or mod loader than this instance",
             "MODPACK_UPDATE_UNSUPPORTED": "This instance cannot be updated automatically",
-            "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack",
-            "MODPACK_PUBLISH_STALE": "This line was updated by someone else while you were publishing; reload and try again"
+            "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack"
+          }
+        }
+      },
+      "listCampusModpackProjects": {
+        "success": "Loaded campus modpacks",
+        "error": {
+          "title": "Failed to load campus modpacks"
+        }
+      },
+      "createCampusModpackProject": {
+        "success": "Project created",
+        "error": {
+          "title": "Failed to create project"
+        }
+      },
+      "publishCampusModpack": {
+        "success": "Modpack published",
+        "error": {
+          "title": "Publish failed",
+          "description": {
+            "MODPACK_PUBLISH_STALE": "This line was updated by someone else while you were publishing; reload and try again",
+            "MODPACK_UPDATE_UNSUPPORTED": "This instance has no supported mod loader and cannot be published"
           }
         }
       }
@@ -2965,5 +2987,56 @@
         "MultiMCComponentOnly": "This instance was imported from a MultiMC component profile, so it can only be exported as MultiMC. Its components, patches and local libraries are kept as they were."
       }
     }
+  },
+  "PublishModpackModal": {
+    "header": {
+      "title": "Publish {{param}} to Campus Modpacks"
+    },
+    "label": {
+      "project": "Project",
+      "target": "Publish To",
+      "newProject": "New project",
+      "slug": "Project ID",
+      "projectName": "Project Name",
+      "summary": "Summary",
+      "version": "Version",
+      "versionNumber": "Version Number",
+      "changelog": "Changelog",
+      "includedFiles": "Included Files"
+    },
+    "button": {
+      "publish": "Publish"
+    },
+    "error": {
+      "invalidVersion": "Please enter a valid version number",
+      "noFileSelected": "Please select at least one file",
+      "invalidProject": "Please complete the project information"
+    },
+    "errorMessage": {
+      "slug": {
+        "error-1": "Use 2-64 lowercase letters, digits or hyphens, starting with a letter"
+      },
+      "name": {
+        "error-1": "Name cannot be empty",
+        "error-2": "Name is too long (max 128 characters)"
+      },
+      "summary": {
+        "error-1": "Summary is too long (max 512 characters)"
+      },
+      "version": {
+        "error-1": "Version number cannot be empty",
+        "error-2": "Version number is too long (max 64 characters)"
+      },
+      "changelog": {
+        "error-1": "Changelog is too long (max 20000 characters)"
+      }
+    },
+    "stage": {
+      "hashing": "Checking files ({{done}}/{{total}})",
+      "uploading": "Uploading files ({{done}}/{{total}})",
+      "bundling": "Uploading bundle",
+      "publishing": "Publishing"
+    },
+    "skipped": "{{count}} file(s) were left out (disabled mods or launcher files)"
   }
 }

@@ -1280,7 +1280,8 @@
       "createShortcut": "Créer un raccourci de lancement",
       "exportModPack": "Exporter en tant que modpack",
       "star": "Mettre en favori cette instance",
-      "unstar": "Retirer des favoris"
+      "unstar": "Retirer des favoris",
+      "publishModPack": "Publier dans les modpacks du campus"
     },
     "instanceTabList": {
       "overview": "Aperçu",
@@ -2619,14 +2620,35 @@
             "MODPACK_UPDATE_REMOTE_INVALID": "La liste de fichiers de la nouvelle version est invalide ; la mise à jour a été refusée",
             "MODPACK_UPDATE_LINE_MISMATCH": "La nouvelle version cible une autre version du jeu ou un autre chargeur que cette instance",
             "MODPACK_UPDATE_UNSUPPORTED": "Cette instance ne peut pas être mise à jour automatiquement",
-            "MODPACK_UPDATE_RUNNING": "Le jeu est en cours d’exécution ; fermez-le avant de mettre à jour le pack de mods",
-            "MODPACK_PUBLISH_STALE": "Cette lignée a été mise à jour par quelqu’un d’autre pendant la publication ; rechargez puis réessayez"
+            "MODPACK_UPDATE_RUNNING": "Le jeu est en cours d’exécution ; fermez-le avant de mettre à jour le pack de mods"
           }
         }
       },
       "retrieveExportableFileList": {
         "error": {
           "title": "Échec de la liste des fichiers"
+        }
+      },
+      "listCampusModpackProjects": {
+        "success": "Modpacks du campus chargés",
+        "error": {
+          "title": "Échec du chargement des modpacks du campus"
+        }
+      },
+      "createCampusModpackProject": {
+        "success": "Projet créé",
+        "error": {
+          "title": "Échec de la création du projet"
+        }
+      },
+      "publishCampusModpack": {
+        "success": "Modpack publié",
+        "error": {
+          "title": "Échec de la publication",
+          "description": {
+            "MODPACK_PUBLISH_STALE": "Cette ligne a été mise à jour par quelqu'un d'autre pendant la publication ; rechargez et réessayez",
+            "MODPACK_UPDATE_UNSUPPORTED": "Cette instance n'a pas de chargeur de mods pris en charge et ne peut pas être publiée"
+          }
         }
       }
     },
@@ -2965,5 +2987,56 @@
         "MultiMCComponentOnly": "Cette instance provient d’un profil de composants MultiMC : elle ne peut être exportée qu’au format MultiMC, avec ses composants, correctifs et bibliothèques locales conservés."
       }
     }
+  },
+  "PublishModpackModal": {
+    "header": {
+      "title": "Publier {{param}} dans les modpacks du campus"
+    },
+    "label": {
+      "project": "Projet",
+      "target": "Publier vers",
+      "newProject": "Nouveau projet",
+      "slug": "Identifiant du projet",
+      "projectName": "Nom du projet",
+      "summary": "Résumé",
+      "version": "Version",
+      "versionNumber": "Numéro de version",
+      "changelog": "Journal des modifications",
+      "includedFiles": "Fichiers inclus"
+    },
+    "button": {
+      "publish": "Publier"
+    },
+    "error": {
+      "invalidVersion": "Veuillez saisir un numéro de version valide",
+      "noFileSelected": "Veuillez sélectionner au moins un fichier",
+      "invalidProject": "Veuillez compléter les informations du projet"
+    },
+    "errorMessage": {
+      "slug": {
+        "error-1": "2 à 64 minuscules, chiffres ou tirets, en commençant par une lettre"
+      },
+      "name": {
+        "error-1": "Le nom ne peut pas être vide",
+        "error-2": "Le nom est trop long (128 caractères max)"
+      },
+      "summary": {
+        "error-1": "Le résumé est trop long (512 caractères max)"
+      },
+      "version": {
+        "error-1": "Le numéro de version ne peut pas être vide",
+        "error-2": "Le numéro de version est trop long (64 caractères max)"
+      },
+      "changelog": {
+        "error-1": "Le journal est trop long (20000 caractères max)"
+      }
+    },
+    "stage": {
+      "hashing": "Vérification des fichiers ({{done}}/{{total}})",
+      "uploading": "Envoi des fichiers ({{done}}/{{total}})",
+      "bundling": "Envoi du paquet",
+      "publishing": "Publication"
+    },
+    "skipped": "{{count}} fichier(s) exclu(s) (mods désactivés ou fichiers du lanceur)"
   }
 }

@@ -1280,7 +1280,8 @@
       "createShortcut": "起動ショートカットを作成",
       "exportModPack": "モッドパックエクスポート",
       "star": "このインスタンスをスター",
-      "unstar": "このインスタンスを非スター"
+      "unstar": "このインスタンスを非スター",
+      "publishModPack": "キャンパスModパックに公開"
     },
     "instanceTabList": {
       "overview": "概要",
@@ -2624,8 +2625,29 @@
             "MODPACK_UPDATE_REMOTE_INVALID": "The new version file list is invalid; the update was refused",
             "MODPACK_UPDATE_LINE_MISMATCH": "The new version is for a different game version or mod loader than this instance",
             "MODPACK_UPDATE_UNSUPPORTED": "This instance cannot be updated automatically",
-            "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack",
-            "MODPACK_PUBLISH_STALE": "This line was updated by someone else while you were publishing; reload and try again"
+            "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack"
+          }
+        }
+      },
+      "listCampusModpackProjects": {
+        "success": "キャンパスModパックを読み込みました",
+        "error": {
+          "title": "キャンパスModパックの読み込みに失敗しました"
+        }
+      },
+      "createCampusModpackProject": {
+        "success": "プロジェクトを作成しました",
+        "error": {
+          "title": "プロジェクトの作成に失敗しました"
+        }
+      },
+      "publishCampusModpack": {
+        "success": "Modパックを公開しました",
+        "error": {
+          "title": "公開に失敗しました",
+          "description": {
+            "MODPACK_PUBLISH_STALE": "公開中に他のユーザーがこのラインを更新しました。再読み込みしてからやり直してください",
+            "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスには対応するModローダーがないため公開できません"
           }
         }
       }
@@ -2965,5 +2987,56 @@
         "MultiMCComponentOnly": "This instance was imported from a MultiMC component profile, so it can only be exported as MultiMC. Its components, patches and local libraries are kept as they were."
       }
     }
+  },
+  "PublishModpackModal": {
+    "header": {
+      "title": "{{param}} をキャンパスModパックに公開"
+    },
+    "label": {
+      "project": "プロジェクト",
+      "target": "公開先",
+      "newProject": "新規プロジェクト",
+      "slug": "プロジェクトID",
+      "projectName": "プロジェクト名",
+      "summary": "概要",
+      "version": "バージョン",
+      "versionNumber": "バージョン番号",
+      "changelog": "更新履歴",
+      "includedFiles": "含めるファイル"
+    },
+    "button": {
+      "publish": "公開"
+    },
+    "error": {
+      "invalidVersion": "有効なバージョン番号を入力してください",
+      "noFileSelected": "ファイルを1つ以上選択してください",
+      "invalidProject": "プロジェクト情報を入力してください"
+    },
+    "errorMessage": {
+      "slug": {
+        "error-1": "英小文字で始まる2〜64文字の英小文字・数字・ハイフンにしてください"
+      },
+      "name": {
+        "error-1": "名前を入力してください",
+        "error-2": "名前が長すぎます（最大128文字）"
+      },
+      "summary": {
+        "error-1": "概要が長すぎます（最大512文字）"
+      },
+      "version": {
+        "error-1": "バージョン番号を入力してください",
+        "error-2": "バージョン番号が長すぎます（最大64文字）"
+      },
+      "changelog": {
+        "error-1": "更新履歴が長すぎます（最大20000文字）"
+      }
+    },
+    "stage": {
+      "hashing": "ファイルを確認中（{{done}}/{{total}}）",
+      "uploading": "ファイルをアップロード中（{{done}}/{{total}}）",
+      "bundling": "ファイルパックをアップロード中",
+      "publishing": "公開中"
+    },
+    "skipped": "{{count}} 個のファイルを除外しました（無効化されたModやランチャーのファイル）"
   }
 }

@@ -1280,7 +1280,8 @@
       "createShortcut": "建立啟動捷徑",
       "exportModPack": "匯出為模組包",
       "star": "星標此實例",
-      "unstar": "取消星標"
+      "unstar": "取消星標",
+      "publishModPack": "發佈到校園整合包"
     },
     "instanceTabList": {
       "overview": "概覽",
@@ -2624,8 +2625,29 @@
             "MODPACK_UPDATE_REMOTE_INVALID": "The new version file list is invalid; the update was refused",
             "MODPACK_UPDATE_LINE_MISMATCH": "The new version is for a different game version or mod loader than this instance",
             "MODPACK_UPDATE_UNSUPPORTED": "This instance cannot be updated automatically",
-            "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack",
-            "MODPACK_PUBLISH_STALE": "This line was updated by someone else while you were publishing; reload and try again"
+            "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack"
+          }
+        }
+      },
+      "listCampusModpackProjects": {
+        "success": "已載入校園整合包",
+        "error": {
+          "title": "載入校園整合包失敗"
+        }
+      },
+      "createCampusModpackProject": {
+        "success": "專案已建立",
+        "error": {
+          "title": "建立專案失敗"
+        }
+      },
+      "publishCampusModpack": {
+        "success": "整合包已發佈",
+        "error": {
+          "title": "發佈失敗",
+          "description": {
+            "MODPACK_PUBLISH_STALE": "發佈期間該線路已被其他人更新，請重新載入後再試",
+            "MODPACK_UPDATE_UNSUPPORTED": "此實例沒有受支援的模組載入器，無法發佈"
           }
         }
       }
@@ -2965,5 +2987,56 @@
         "MultiMCComponentOnly": "This instance was imported from a MultiMC component profile, so it can only be exported as MultiMC. Its components, patches and local libraries are kept as they were."
       }
     }
+  },
+  "PublishModpackModal": {
+    "header": {
+      "title": "將 {{param}} 發佈到校園整合包"
+    },
+    "label": {
+      "project": "專案",
+      "target": "發佈到",
+      "newProject": "新建專案",
+      "slug": "專案標識",
+      "projectName": "專案名稱",
+      "summary": "簡介",
+      "version": "版本",
+      "versionNumber": "版本號",
+      "changelog": "更新日誌",
+      "includedFiles": "包含的檔案"
+    },
+    "button": {
+      "publish": "發佈"
+    },
+    "error": {
+      "invalidVersion": "請輸入有效的版本號",
+      "noFileSelected": "請至少選擇一個檔案",
+      "invalidProject": "請補全專案資訊"
+    },
+    "errorMessage": {
+      "slug": {
+        "error-1": "需為 2 到 64 位小寫字母、數字或連字號，並以字母開頭"
+      },
+      "name": {
+        "error-1": "名稱不能為空",
+        "error-2": "名稱過長（最多 128 個字元）"
+      },
+      "summary": {
+        "error-1": "簡介過長（最多 512 個字元）"
+      },
+      "version": {
+        "error-1": "版本號不能為空",
+        "error-2": "版本號過長（最多 64 個字元）"
+      },
+      "changelog": {
+        "error-1": "更新日誌過長（最多 20000 個字元）"
+      }
+    },
+    "stage": {
+      "hashing": "正在檢查檔案（{{done}}/{{total}}）",
+      "uploading": "正在上傳檔案（{{done}}/{{total}}）",
+      "bundling": "正在上傳檔案包",
+      "publishing": "正在發佈"
+    },
+    "skipped": "有 {{count}} 個檔案被排除（已停用的模組或啟動器檔案）"
   }
 }
