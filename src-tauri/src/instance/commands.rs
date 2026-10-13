@@ -46,7 +46,7 @@ use crate::instance::helpers::world::{load_level_data_from_nbt, load_world_info_
 use crate::instance::models::misc::{
   Instance, InstanceError, InstanceOrigin, InstanceSubdirType, InstanceSummary, LocalModInfo,
   ModLoader, ModLoaderStatus, ModLoaderType, ModpackFileList, ModpackOriginInput, OptiFine,
-  ResourcePackInfo, SchematicInfo, ScreenshotInfo, ShaderPackInfo,
+  OriginPlatform, ResourcePackInfo, SchematicInfo, ScreenshotInfo, ShaderPackInfo,
 };
 use crate::instance::models::world::base::WorldInfo;
 use crate::instance::models::world::level::LevelData;
@@ -955,6 +955,10 @@ pub fn create_launch_desktop_shortcut(
 /// modpack file being imported: the archive must match the SHA-1 the platform
 /// published. The pack's internal structure does not matter, a component profile
 /// is followed like any other pack.
+///
+/// One exception: a campus install has no archive. It creates an empty instance
+/// whose origin points at the placeholder version `""`, and the update engine
+/// then installs the real version into it like any other update.
 async fn verify_origin(
   input: Option<ModpackOriginInput>,
   modpack_path: Option<&String>,
@@ -962,6 +966,19 @@ async fn verify_origin(
   loader_type: ModLoaderType,
 ) -> Option<InstanceOrigin> {
   let input = input?;
+  if modpack_path.is_none()
+    && input.platform == OriginPlatform::Campus
+    && input.expected_sha1.is_empty()
+  {
+    return Some(InstanceOrigin {
+      platform: input.platform,
+      project_id: input.project_id,
+      version_id: String::new(),
+      game_version: game_version.to_string(),
+      loader_type,
+      follow: true,
+    });
+  }
   let path = PathBuf::from(modpack_path?);
   let expected = input.expected_sha1.trim().to_lowercase();
   let actual = tokio::task::spawn_blocking(move || hash_file(&path))
@@ -1748,7 +1765,6 @@ pub async fn export_modpack(
 #[cfg(test)]
 mod origin_tests {
   use super::*;
-  use crate::instance::models::misc::OriginPlatform;
   use std::io::Write;
 
   fn input(sha1: &str) -> ModpackOriginInput {
@@ -1783,5 +1799,31 @@ mod origin_tests {
     assert!(verify(Some(input(""))).await.is_none());
     assert!(verify(None).await.is_none());
     let _ = fs::remove_file(path);
+  }
+
+  #[tokio::test]
+  async fn a_campus_install_without_an_archive_starts_from_the_placeholder_version() {
+    let campus = |sha1: &str| ModpackOriginInput {
+      platform: OriginPlatform::Campus,
+      project_id: "gtnh".into(),
+      version_id: "42".into(),
+      expected_sha1: sha1.into(),
+    };
+    let origin = verify_origin(Some(campus("")), None, "1.7.10", ModLoaderType::Forge)
+      .await
+      .unwrap();
+    assert_eq!(origin.version_id, "");
+    assert!(origin.follow);
+    // A hash or another platform still has to be proven by an archive.
+    assert!(
+      verify_origin(Some(campus("abc")), None, "1.7.10", ModLoaderType::Forge)
+        .await
+        .is_none()
+    );
+    assert!(
+      verify_origin(Some(input("")), None, "1.21.1", ModLoaderType::Fabric)
+        .await
+        .is_none()
+    );
   }
 }
