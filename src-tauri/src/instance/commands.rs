@@ -1478,6 +1478,25 @@ pub async fn change_mod_loader(
   new_mod_loader: ModLoaderResourceInfo,
   is_install_fabric_api: Option<bool>,
 ) -> USTBLResult<()> {
+  switch_mod_loader(
+    app,
+    instance_id,
+    new_mod_loader,
+    is_install_fabric_api,
+    false,
+  )
+  .await
+}
+
+/// keep_fabric_api leaves the Fabric API mods alone when leaving Fabric; a
+/// modpack update manages those files itself.
+pub(crate) async fn switch_mod_loader(
+  app: AppHandle,
+  instance_id: String,
+  new_mod_loader: ModLoaderResourceInfo,
+  is_install_fabric_api: Option<bool>,
+  keep_fabric_api: bool,
+) -> USTBLResult<()> {
   let mut instance = {
     let binding = app.state::<Mutex<HashMap<String, Instance>>>();
     let state = binding.lock()?;
@@ -1532,7 +1551,10 @@ pub async fn change_mod_loader(
     return Err(InstanceError::InstanceNotFoundByID.into());
   };
   // Remove Fabric API mods if switching from Fabric modloader
-  if instance.mod_loader.loader_type == ModLoaderType::Fabric && version_isolation {
+  if instance.mod_loader.loader_type == ModLoaderType::Fabric
+    && version_isolation
+    && !keep_fabric_api
+  {
     remove_fabric_api_mods(mods_dir).await?;
   }
   // construct new version info
