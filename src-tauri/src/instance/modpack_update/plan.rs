@@ -48,10 +48,17 @@ pub fn plan_hash(remote: &RemoteModpack, diff: &Diff) -> String {
 /// chain different from the one the instance was installed with, or declares one
 /// for an instance that has none, must be installed again. A new version
 /// without a chain never forces a reinstall.
-pub fn requires_reinstall(baseline: &ModpackBaseline, remote: &RemoteModpack) -> bool {
+///
+/// An instance that was created for the modpack and has not installed any
+/// version yet (`fresh`) is the exception: it has nothing to lose, and the
+/// engine restores the chain into it.
+pub fn requires_reinstall(baseline: &ModpackBaseline, remote: &RemoteModpack, fresh: bool) -> bool {
   let Some(wanted) = &remote.components else {
     return false;
   };
+  if fresh && remote.component_pack.is_some() {
+    return false;
+  }
   baseline.component_refs().as_ref() != Some(wanted)
 }
 
@@ -135,6 +142,7 @@ mod tests {
       game_version: "1.21.1".into(),
       loader: loader(),
       components: None,
+      component_pack: None,
       files: files
         .iter()
         .map(|(path, content)| RemoteFile {
@@ -267,7 +275,7 @@ mod tests {
     let mut remote = remote(&[("mods/a.jar", "a2")]);
 
     remote.components = chain_of(&gtnh_pack("10.13.4.1615"));
-    assert!(requires_reinstall(&installed, &remote));
+    assert!(requires_reinstall(&installed, &remote, false));
 
     let mut extra = gtnh_pack("10.13.4.1614");
     extra["components"]
@@ -275,7 +283,7 @@ mod tests {
       .unwrap()
       .push(serde_json::json!({"uid": "org.lwjgl3", "version": "3.3.1"}));
     remote.components = chain_of(&extra);
-    assert!(requires_reinstall(&installed, &remote));
+    assert!(requires_reinstall(&installed, &remote, false));
   }
 
   #[test]
@@ -290,18 +298,18 @@ mod tests {
         {"uid": "net.minecraft", "version": "1.7.10", "cachedName": "Minecraft"},
       ]
     }));
-    assert!(!requires_reinstall(&installed, &remote));
+    assert!(!requires_reinstall(&installed, &remote, false));
 
     remote.components = None;
-    assert!(!requires_reinstall(&installed, &remote));
+    assert!(!requires_reinstall(&installed, &remote, false));
   }
 
   #[test]
   fn a_chain_for_an_instance_without_one_requires_a_reinstall() {
     let plain = baseline(&[("mods/a.jar", "a1")]);
     let mut remote = remote(&[("mods/a.jar", "a2")]);
-    assert!(!requires_reinstall(&plain, &remote));
+    assert!(!requires_reinstall(&plain, &remote, false));
     remote.components = chain_of(&gtnh_pack("10.13.4.1614"));
-    assert!(requires_reinstall(&plain, &remote));
+    assert!(requires_reinstall(&plain, &remote, false));
   }
 }

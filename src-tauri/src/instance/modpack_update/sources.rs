@@ -4,7 +4,7 @@
 //! the campus platform publishes a manifest plus an optional bundle.
 
 use super::diff::FileKey;
-use super::remote::{FileSource, RemoteFile, RemoteModpack, UPDATE_DIR};
+use super::remote::{ComponentPack, FileSource, RemoteFile, RemoteModpack, UPDATE_DIR};
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::modpack::baseline::{
   components_of_mmc_pack, hash_file, normalize_relative_path, BaselineLoader,
@@ -205,6 +205,40 @@ fn plain_download(url: &str) -> USTBLResult<Box<DownloadParam>> {
   }))
 }
 
+fn blob_file(name: String, blob: &str, size: u64, api_base: &str) -> USTBLResult<RemoteFile> {
+  let sha1 = blob.to_lowercase();
+  Ok(RemoteFile {
+    path: name,
+    source: FileSource::Download(plain_download(&format!("{api_base}/blobs/{sha1}"))?),
+    key: FileKey { sha1, size },
+  })
+}
+
+fn component_pack(components: &CampusComponents, api_base: &str) -> USTBLResult<ComponentPack> {
+  let mut files = Vec::new();
+  for patch in &components.patches {
+    files.push(blob_file(
+      format!("patches/{}.json", patch.uid),
+      &patch.blob,
+      patch.size,
+      api_base,
+    )?);
+  }
+  for library in &components.libraries {
+    files.push(blob_file(
+      library.path.clone(),
+      &library.blob,
+      library.size,
+      api_base,
+    )?);
+  }
+  Ok(ComponentPack {
+    mmc_pack: components.mmc_pack.clone(),
+    instance_cfg: components.instance_cfg.clone(),
+    files,
+  })
+}
+
 /// Turn a campus version into the platform independent description. Files the
 /// client does not use are left out; bundle files are read from `bundle`.
 pub fn campus_remote(
@@ -255,6 +289,12 @@ pub fn campus_remote(
       .components
       .as_ref()
       .map(|components| components_of_mmc_pack(&components.mmc_pack)),
+    component_pack: version
+      .manifest
+      .components
+      .as_ref()
+      .map(|components| component_pack(components, api_base))
+      .transpose()?,
     files,
   })
 }
@@ -361,6 +401,7 @@ pub async fn remote_from_archive(
       version: loader_version,
     },
     components: None,
+    component_pack: None,
     files: merge_files(downloads, overrides),
   })
 }

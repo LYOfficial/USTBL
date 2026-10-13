@@ -3,4 +3,5 @@ pub mod commands;
 pub mod diff;
 pub mod plan;
 pub mod remote;
+pub mod restore;
 pub mod sources;

@@ -33,6 +33,17 @@ pub struct RemoteFile {
   pub source: FileSource,
 }
 
+/// What it takes to rebuild a component profile on an instance that has none:
+/// the declared chain and the files the pack ships itself.
+#[derive(Debug, Clone)]
+pub struct ComponentPack {
+  /// `mmc-pack.json` as published.
+  pub mmc_pack: serde_json::Value,
+  pub instance_cfg: BTreeMap<String, String>,
+  /// Named relative to the pack: `patches/<uid>.json`, `libraries/<file>`.
+  pub files: Vec<RemoteFile>,
+}
+
 #[derive(Debug, Clone)]
 pub struct RemoteModpack {
   pub version_id: String,
@@ -43,6 +54,8 @@ pub struct RemoteModpack {
   /// Component chain of a component-profile pack in canonical order, `None`
   /// when the pack has none.
   pub components: Option<Vec<ComponentRef>>,
+  /// Present exactly when `components` is.
+  pub component_pack: Option<ComponentPack>,
   pub files: Vec<RemoteFile>,
 }
 
@@ -50,6 +63,14 @@ impl RemoteModpack {
   /// Reject anything that could write outside the instance or over launcher
   /// owned files, and paths that collide on case-insensitive file systems.
   pub fn validate(&self, instance_name: &str) -> USTBLResult<()> {
+    if let Some(pack) = &self.component_pack {
+      for file in &pack.files {
+        safe_relative(&file.path)?;
+        if !file.path.starts_with("patches/") && !file.path.starts_with("libraries/") {
+          return Err(InstanceError::ModpackUpdateRemoteInvalid.into());
+        }
+      }
+    }
     let mut seen = BTreeSet::new();
     for file in &self.files {
       safe_relative(&file.path)?;
@@ -113,6 +134,7 @@ mod tests {
         version: "0.16.0".into(),
       },
       components: None,
+      component_pack: None,
       files: paths
         .iter()
         .map(|path| RemoteFile {

@@ -5,6 +5,8 @@ use super::apply::{
 };
 use super::diff::{resolve, Conflict, ConflictChoice, FileChange};
 use super::plan::{prepare, requires_reinstall};
+use super::remote::ComponentPack;
+use super::restore::restore_component_profile;
 use super::sources::{download_param, latest_version, resolve_remote, LatestVersion};
 use crate::error::USTBLResult;
 use crate::instance::commands::switch_mod_loader;
@@ -19,7 +21,7 @@ use crate::tasks::download::DownloadParam;
 use async_trait::async_trait;
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
@@ -173,6 +175,8 @@ struct AppEnv {
   app: AppHandle,
   instance_id: String,
   label: String,
+  /// The loader of the version being installed.
+  loader: BaselineLoader,
   loader_install_pending: AtomicBool,
 }
 
@@ -219,6 +223,22 @@ impl UpdateEnv for AppEnv {
       .loader_install_pending
       .store(needs_branch, Ordering::SeqCst);
     Ok(())
+  }
+
+  async fn restore_components(&self, pack: &ComponentPack, staged: &Path) -> USTBLResult<()> {
+    let instance = current_instance(&self.app, &self.instance_id)?;
+    restore_component_profile(&self.app, &instance, &self.loader, pack, staged).await?;
+    // The chain carries the loader, so the instance counts as installed.
+    let loader = self.loader.clone();
+    store_instance(&self.app, &self.instance_id, |instance| {
+      instance.mod_loader = ModLoader {
+        loader_type: loader.loader_type,
+        version: loader.version,
+        status: ModLoaderStatus::Installed,
+        branch: None,
+      };
+    })
+    .await
   }
 
   async fn commit_origin(&self, version_id: &str) -> USTBLResult<()> {
@@ -352,6 +372,11 @@ pub async fn prepare_modpack_update(
   plan_for(&app, &target, &baseline, &latest).await
 }
 
+/// An instance created for a modpack that has not installed a version yet.
+fn is_fresh(origin: &InstanceOrigin) -> bool {
+  origin.version_id.is_empty()
+}
+
 fn fast_forward(changes: usize, conflicts: usize, loader_change: bool) -> bool {
   changes == 0 && conflicts == 0 && !loader_change
 }
@@ -370,7 +395,7 @@ async fn plan_for(
     latest,
   )
   .await?;
-  if requires_reinstall(baseline, &remote) {
+  if requires_reinstall(baseline, &remote, is_fresh(&target.origin)) {
     return Ok(UpdatePlan {
       from_version_id: target.origin.version_id.clone(),
       to_version_id: remote.version_id.clone(),
@@ -429,9 +454,17 @@ pub async fn apply_modpack_update(
     &latest,
   )
   .await?;
-  if requires_reinstall(&baseline, &remote) {
+  let fresh = is_fresh(&target.origin);
+  if requires_reinstall(&baseline, &remote, fresh) {
     return Err(InstanceError::ModpackUpdateReinstallRequired.into());
   }
+  // A fresh instance has no chain yet; the engine restores the version's own.
+  let restore_components = fresh && remote.component_pack.is_some();
+  let components = if restore_components {
+    remote.components.clone()
+  } else {
+    baseline.component_refs()
+  };
   let prepared = prepare(&target.root, &baseline, &remote).await?;
   if prepared.plan_hash != plan_hash {
     return Err(InstanceError::ModpackUpdateStale.into());
@@ -441,6 +474,7 @@ pub async fn apply_modpack_update(
     app: app.clone(),
     instance_id: instance_id.clone(),
     label: remote.label.clone(),
+    loader: remote.loader.clone(),
     loader_install_pending: AtomicBool::new(false),
   };
   let version_id = remote.version_id.clone();
@@ -453,7 +487,8 @@ pub async fn apply_modpack_update(
       remote,
       origin: target.origin.clone(),
       previous_loader: baseline.loader.clone(),
-      components: baseline.component_refs(),
+      components,
+      restore_components,
     },
   )
   .await;
