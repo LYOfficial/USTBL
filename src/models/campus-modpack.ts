@@ -40,3 +40,23 @@ export interface CampusPublishProgress {
   done: number;
   total: number;
 }
+
+export interface CampusModpackRecommendation {
+  slot: string;
+  project: CampusModpackProject;
+  line: CampusModpackLine;
+}
+
+export type CampusInstallStage = "fetching" | "applying" | "finalizing";
+
+export interface CampusInstallProgress {
+  instanceId: string;
+  stage: CampusInstallStage;
+  done: number;
+  total: number;
+}
+
+export interface CampusInstallOutcome {
+  versionId: string;
+  loaderInstallPending: boolean;
+}

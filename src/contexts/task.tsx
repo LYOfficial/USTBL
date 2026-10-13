@@ -30,6 +30,10 @@ import {
 import { ConfigService } from "@/services/config";
 import { InstanceService } from "@/services/instance";
 import { TaskService } from "@/services/task";
+import {
+  runCampusInstall,
+  takePendingCampusInstall,
+} from "@/utils/campus-install";
 import { takePendingModpackOrigin } from "@/utils/modpack-origin";
 
 interface TaskContextType {
@@ -449,9 +453,20 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
           if (payload.event === GTaskEventStatusEnums.Completed) {
             switch (name) {
               case "game-client":
-              case "change-mod-loader":
+              case "change-mod-loader": {
                 getInstanceList(true);
+                // A campus modpack install waits for its client to be ready
+                const campusInstall =
+                  name === "game-client" && version
+                    ? takePendingCampusInstall(version)
+                    : undefined;
+                if (campusInstall) {
+                  runCampusInstall(campusInstall, toast, t, () =>
+                    getInstanceList(true)
+                  );
+                }
                 break;
+              }
               case "forge-libraries":
               case "neoforge-libraries":
               case "optifine-libraries":
