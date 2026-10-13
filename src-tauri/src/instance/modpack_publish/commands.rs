@@ -314,6 +314,49 @@ async fn upload_missing_blobs(
   Ok(())
 }
 
+/// Paths the line's current release already lists, so the publish dialog can
+/// keep them selected. Empty when the project has no release on this line.
+#[tauri::command]
+pub async fn fetch_campus_modpack_previous_paths(
+  app: AppHandle,
+  instance_id: String,
+  project: String,
+) -> USTBLResult<Vec<String>> {
+  let valid = !project.is_empty()
+    && project
+      .chars()
+      .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+  if !valid {
+    return Err(InstanceError::ModpackUpdateUnsupported.into());
+  }
+  let instance = instance_of(&app, &instance_id)?;
+  let loader_type =
+    loader_slug(instance.mod_loader.loader_type).ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let response = app
+    .state::<reqwest::Client>()
+    .get(format!(
+      "{CAMPUS_API}/projects/{project}/lines/{}/{loader_type}",
+      instance.version
+    ))
+    .send()
+    .await?;
+  if response.status() == reqwest::StatusCode::NOT_FOUND {
+    return Ok(Vec::new());
+  }
+  if !response.status().is_success() {
+    return Err(failure(response).await);
+  }
+  let body: Value = response.json().await?;
+  Ok(
+    body["manifest"]["files"]
+      .as_array()
+      .into_iter()
+      .flatten()
+      .filter_map(|file| file["path"].as_str().map(str::to_string))
+      .collect(),
+  )
+}
+
 /// Publish the selected files of an instance as the new version of its line.
 #[tauri::command]
 pub async fn publish_campus_modpack(
