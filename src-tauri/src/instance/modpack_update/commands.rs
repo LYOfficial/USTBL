@@ -1,6 +1,8 @@
 //! Tauri commands for following a modpack: check, plan, apply, recover.
 
-use super::apply::{apply, recover, Progress, Recovery, UpdateEnv, UpdateRequest};
+use super::apply::{
+  apply, can_roll_back_last, recover, roll_back_last, Progress, Recovery, UpdateEnv, UpdateRequest,
+};
 use super::diff::{resolve, Conflict, ConflictChoice, FileChange};
 use super::plan::{prepare, requires_reinstall};
 use super::sources::{download_param, latest_version, resolve_remote, LatestVersion};
@@ -51,6 +53,8 @@ pub struct UpdateCheck {
   pub latest_label: Option<String>,
   /// Error code explaining `Unknown` or `NeedsRepair`.
   pub reason: Option<String>,
+  /// The previous update left a backup that can still be rolled back.
+  pub can_roll_back: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -247,6 +251,7 @@ fn check_of(status: CheckStatus, target: &Target) -> UpdateCheck {
     latest_version_id: None,
     latest_label: None,
     reason: None,
+    can_roll_back: can_roll_back_last(&target.root),
   }
 }
 
@@ -260,6 +265,7 @@ pub async fn check_modpack_update(app: AppHandle, instance_id: String) -> USTBLR
       latest_version_id: None,
       latest_label: None,
       reason: None,
+      can_roll_back: false,
     });
   };
   if !target.origin.follow {
@@ -295,6 +301,21 @@ pub async fn check_modpack_update(app: AppHandle, instance_id: String) -> USTBLR
       ..check_of(CheckStatus::Unknown, &target)
     }),
   }
+}
+
+/// Take back the previous update. Returns whether there was one to take back.
+#[tauri::command]
+pub async fn rollback_modpack_update(app: AppHandle, instance_id: String) -> USTBLResult<bool> {
+  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  ensure_not_running(&app, &instance_id)?;
+  let root = target.root.clone();
+  let done = tokio::task::spawn_blocking(move || roll_back_last(&root))
+    .await
+    .map_err(|e| crate::error::USTBLError(e.to_string()))??;
+  if done {
+    refresh_and_update_instances(&app, false).await;
+  }
+  Ok(done)
 }
 
 /// Pause or resume following. A paused instance is never checked; its identity

@@ -185,6 +185,7 @@ pub async fn run() -> i32 {
       instance::modpack_update::commands::apply_modpack_update,
       instance::modpack_update::commands::recover_modpack_update,
       instance::modpack_update::commands::set_modpack_follow,
+      instance::modpack_update::commands::rollback_modpack_update,
       instance::commands::update_instance_config,
       instance::commands::retrieve_instance_game_config,
       instance::commands::restore_instance_game_config,
