@@ -98,7 +98,7 @@
       },
       "campusModpack": {
         "title": "Install USTB Modpack",
-        "description": "Open Discover to install the Pixel USTB campus modpack"
+        "description": "Install USTB campus modpacks from Instance Sync & Updates"
       },
       "manageDirs": {
         "title": "Manage Game Directories",
@@ -263,17 +263,6 @@
     },
     "sortBy": "Sort by",
     "title": "All Instances"
-  },
-  "SharedInstanceStartupNotifier": {
-    "update": {
-      "title": "Shared instance {{name}} has updates",
-      "description": "Click to go to sync."
-    },
-    "bind": {
-      "title": "Shared instance {{name}} has not been synced",
-      "description": "Click to bind and sync it.",
-      "ignore": "Ignore"
-    }
   },
   "AppearanceSettingsPage": {
     "theme": {
@@ -506,44 +495,13 @@
       "home": "Home",
       "community-news": "Community",
       "minecraft-news": "Minecraft News",
-      "install-modpack": "Install Modpack",
-      "campus-modpack": "Campus Modpack",
       "modpack": "Modpacks",
       "mod": "Mods",
       "world": "Worlds",
       "resourcepack": "Resource Packs",
       "shader": "Shader Packs",
       "datapack": "Data Packs",
-      "messages": "消息",
-      "cloud-modpack": "Cloud Modpack"
-    }
-  },
-  "InstallModpackPage": {
-    "campus": {
-      "title": "Campus Modpack",
-      "description": "Campus modpack resources from USTB Anyshare cloud drive.",
-      "loadFailed": "Campus modpack list failed to load: {{error}}",
-      "downloadStarted": "Started downloading {{name}}",
-      "downloadDescription": "Modpack installation will start automatically after download.",
-      "downloadFailed": "Download failed"
-    },
-    "platform": {
-      "title": "Campus Modpacks",
-      "description": "Modpacks published by campus maintainers. Installed instances can follow new versions.",
-      "recommended": "Recommended",
-      "vanilla": "Vanilla",
-      "onOtherPlatform": "Hosted on {{platform}}",
-      "openOriginal": "View",
-      "noVersion": "This project has no modpack version for {{gameVersion}} ({{loader}})",
-      "downloadStarted": "Started downloading {{version}}",
-      "downloadDescription": "The modpack installation starts once the download finishes."
-    },
-    "followed": {
-      "title": "My modpack instances",
-      "checkAll": "Check all",
-      "available": "Update available",
-      "notChecked": "Not checked yet",
-      "open": "View updates"
+      "messages": "消息"
     }
   },
   "DiscoverSourcesPage": {
@@ -3226,6 +3184,28 @@
     "rollback": {
       "hint": "You can undo the last modpack update and restore files and loader as they were before it.",
       "confirm": "Undoing overwrites changes you made to these files since the update, and works only once."
+    }
+  },
+  "InstanceSyncPage": {
+    "title": "Instance Sync & Updates",
+    "description": "Instances that follow a modpack, plus campus modpacks and recommendations",
+    "platform": {
+      "title": "Campus Modpacks",
+      "description": "Modpacks published by campus maintainers. Installed instances can follow new versions.",
+      "recommended": "Recommended",
+      "vanilla": "Vanilla",
+      "onOtherPlatform": "Hosted on {{platform}}",
+      "openOriginal": "View",
+      "noVersion": "This project has no modpack version for {{gameVersion}} ({{loader}})",
+      "downloadStarted": "Started downloading {{version}}",
+      "downloadDescription": "The modpack installation starts once the download finishes."
+    },
+    "followed": {
+      "title": "My modpack instances",
+      "checkAll": "Check all",
+      "available": "Update available",
+      "notChecked": "Not checked yet",
+      "open": "View updates"
     }
   }
 }

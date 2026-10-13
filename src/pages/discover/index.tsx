@@ -15,8 +15,12 @@ export default function DiscoverIndexPage() {
         "discover/sources",
         "discover/community-news"
       );
-    if (lastRecord.includes("discover/resource")) {
-      lastRecord = "/discover/install-modpack";
+    // Routes that no longer exist fall back to the home page.
+    if (
+      lastRecord.includes("discover/resource") ||
+      lastRecord.includes("discover/install-modpack")
+    ) {
+      lastRecord = "/discover/home";
     }
     router.replace(lastRecord);
   }, [history, router]);

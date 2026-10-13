@@ -98,7 +98,7 @@
       },
       "campusModpack": {
         "title": "安装北科整合包",
-        "description": "前往发现页安装像素北科校内整合包"
+        "description": "前往「实例同步与更新」安装像素北科校内整合包"
       },
       "manageDirs": {
         "title": "管理游戏目录",
@@ -263,17 +263,6 @@
     },
     "sortBy": "排序方式",
     "title": "全部实例"
-  },
-  "SharedInstanceStartupNotifier": {
-    "update": {
-      "title": "共享实例 {{name}} 已有更新内容",
-      "description": "点击前往同步。"
-    },
-    "bind": {
-      "title": "有未同步的共享实例 {{name}}",
-      "description": "点击前往绑定并同步。",
-      "ignore": "忽略"
-    }
   },
   "AppearanceSettingsPage": {
     "theme": {
@@ -506,44 +495,13 @@
       "home": "主页",
       "community-news": "社团新闻",
       "minecraft-news": "Minecraft 新闻",
-      "install-modpack": "安装整合包",
-      "campus-modpack": "校内整合包",
       "modpack": "整合包",
       "mod": "模组",
       "world": "世界",
       "resourcepack": "资源包",
       "shader": "光影",
       "datapack": "数据包",
-      "messages": "消息",
-      "cloud-modpack": "云盘整合包"
-    }
-  },
-  "InstallModpackPage": {
-    "campus": {
-      "title": "校内整合包",
-      "description": "来自北科大 Anyshare 云盘的校内整合包资源。",
-      "loadFailed": "校内整合包列表加载失败：{{error}}",
-      "downloadStarted": "已开始下载 {{name}}",
-      "downloadDescription": "下载完成后会自动进入整合包安装流程。",
-      "downloadFailed": "下载失败"
-    },
-    "platform": {
-      "title": "校内整合包",
-      "description": "由校内管理员发布的整合包，安装后可跟随新版本更新。",
-      "recommended": "推荐",
-      "vanilla": "原版",
-      "onOtherPlatform": "不在校内平台上，前往 {{platform}} 获取",
-      "openOriginal": "查看",
-      "noVersion": "该项目没有适用于 {{gameVersion}}（{{loader}}）的整合包版本",
-      "downloadStarted": "已开始下载 {{version}}",
-      "downloadDescription": "下载完成后会自动进入整合包安装流程。"
-    },
-    "followed": {
-      "title": "我的整合包实例",
-      "checkAll": "全部检查",
-      "available": "有新版本",
-      "notChecked": "尚未检查",
-      "open": "查看更新"
+      "messages": "消息"
     }
   },
   "DiscoverSourcesPage": {
@@ -3226,6 +3184,28 @@
     "rollback": {
       "hint": "可以撤销上一次整合包更新，把文件和加载器恢复成更新前的样子。",
       "confirm": "撤销会覆盖更新之后你对这些文件做的修改，且只能撤销一次。"
+    }
+  },
+  "InstanceSyncPage": {
+    "title": "实例同步与更新",
+    "description": "跟随整合包的实例状态，以及校内整合包与推荐",
+    "platform": {
+      "title": "校内整合包",
+      "description": "由校内管理员发布的整合包，安装后可跟随新版本更新。",
+      "recommended": "推荐",
+      "vanilla": "原版",
+      "onOtherPlatform": "不在校内平台上，前往 {{platform}} 获取",
+      "openOriginal": "查看",
+      "noVersion": "该项目没有适用于 {{gameVersion}}（{{loader}}）的整合包版本",
+      "downloadStarted": "已开始下载 {{version}}",
+      "downloadDescription": "下载完成后会自动进入整合包安装流程。"
+    },
+    "followed": {
+      "title": "我的整合包实例",
+      "checkAll": "全部检查",
+      "available": "有新版本",
+      "notChecked": "尚未检查",
+      "open": "查看更新"
     }
   }
 }

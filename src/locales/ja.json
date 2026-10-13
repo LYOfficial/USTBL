@@ -98,7 +98,7 @@
       },
       "campusModpack": {
         "title": "北京科技大学モッドパックをインストール",
-        "description": "発見ページから Pixel USTB の学内モッドパックをインストール"
+        "description": "「インスタンスの同期と更新」から校内モッドパックをインストール"
       },
       "manageDirs": {
         "title": "ゲームディレクトリ管理",
@@ -263,17 +263,6 @@
     },
     "sortBy": "並べ替え方法",
     "title": "すべてのインスタンス"
-  },
-  "SharedInstanceStartupNotifier": {
-    "update": {
-      "title": "共有インスタンス {{name}} に更新があります",
-      "description": "クリックして同期します。"
-    },
-    "bind": {
-      "title": "未同期の共有インスタンス {{name}} があります",
-      "description": "クリックして紐付けて同期します。",
-      "ignore": "無視"
-    }
   },
   "AppearanceSettingsPage": {
     "theme": {
@@ -506,44 +495,13 @@
       "home": "ホーム",
       "community-news": "コミュニティ",
       "minecraft-news": "Minecraft ニュース",
-      "install-modpack": "Modpack をインストール",
-      "campus-modpack": "学内 Modpack",
       "modpack": "Modpack",
       "mod": "Mod",
       "world": "ワールド",
       "resourcepack": "リソースパック",
       "shader": "シェーダーパック",
       "datapack": "データパック",
-      "messages": "消息",
-      "cloud-modpack": "クラウド Modpack"
-    }
-  },
-  "InstallModpackPage": {
-    "campus": {
-      "title": "学内 Modpack",
-      "description": "北京科技大学 Anyshare クラウドの学内 Modpack リソースです。",
-      "loadFailed": "学内 Modpack 一覧を読み込めませんでした：{{error}}",
-      "downloadStarted": "{{name}} のダウンロードを開始しました",
-      "downloadDescription": "ダウンロード完了後、Modpack のインストールが自動的に開始されます。",
-      "downloadFailed": "ダウンロードに失敗しました"
-    },
-    "platform": {
-      "title": "学内 Modpack",
-      "description": "学内の管理者が公開した Modpack です。インストール後は新しいバージョンに追従できます。",
-      "recommended": "おすすめ",
-      "vanilla": "バニラ",
-      "onOtherPlatform": "{{platform}} で提供されています",
-      "openOriginal": "表示",
-      "noVersion": "このプロジェクトには {{gameVersion}}（{{loader}}）向けのモッドパックバージョンがありません",
-      "downloadStarted": "{{version}} のダウンロードを開始しました",
-      "downloadDescription": "ダウンロード完了後、モッドパックのインストールが自動で始まります。"
-    },
-    "followed": {
-      "title": "フォロー中のインスタンス",
-      "checkAll": "すべて確認",
-      "available": "更新あり",
-      "notChecked": "未確認",
-      "open": "更新を表示"
+      "messages": "消息"
     }
   },
   "DiscoverSourcesPage": {
@@ -3226,6 +3184,28 @@
     "rollback": {
       "hint": "前回のモッドパック更新を取り消し、ファイルとローダーを更新前の状態に戻せます。",
       "confirm": "取り消すと、更新後にこれらのファイルへ加えた変更は上書きされます。1 回だけ実行できます。"
+    }
+  },
+  "InstanceSyncPage": {
+    "title": "インスタンスの同期と更新",
+    "description": "モッドパックを追従するインスタンスの状態と、校内モッドパック・おすすめ",
+    "platform": {
+      "title": "学内 Modpack",
+      "description": "学内の管理者が公開した Modpack です。インストール後は新しいバージョンに追従できます。",
+      "recommended": "おすすめ",
+      "vanilla": "バニラ",
+      "onOtherPlatform": "{{platform}} で提供されています",
+      "openOriginal": "表示",
+      "noVersion": "このプロジェクトには {{gameVersion}}（{{loader}}）向けのモッドパックバージョンがありません",
+      "downloadStarted": "{{version}} のダウンロードを開始しました",
+      "downloadDescription": "ダウンロード完了後、モッドパックのインストールが自動で始まります。"
+    },
+    "followed": {
+      "title": "フォロー中のインスタンス",
+      "checkAll": "すべて確認",
+      "available": "更新あり",
+      "notChecked": "未確認",
+      "open": "更新を表示"
     }
   }
 }

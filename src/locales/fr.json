@@ -98,7 +98,7 @@
       },
       "campusModpack": {
         "title": "Installer le modpack USTB",
-        "description": "Ouvrir Découvrir pour installer le modpack du campus Pixel USTB"
+        "description": "Installez les packs du campus depuis « Synchronisation et mises à jour »"
       },
       "manageDirs": {
         "title": "Gérer les répertoires du jeu",
@@ -263,17 +263,6 @@
     },
     "sortBy": "Trier par",
     "title": "Toutes les instances"
-  },
-  "SharedInstanceStartupNotifier": {
-    "update": {
-      "title": "L'instance partagée {{name}} contient des mises à jour",
-      "description": "Cliquez pour synchroniser."
-    },
-    "bind": {
-      "title": "L'instance partagée {{name}} n'a pas été synchronisée",
-      "description": "Cliquez pour lier et synchroniser l'instance.",
-      "ignore": "Ignorer"
-    }
   },
   "AppearanceSettingsPage": {
     "theme": {
@@ -506,44 +495,13 @@
       "home": "Accueil",
       "community-news": "Communauté",
       "minecraft-news": "Actualités Minecraft",
-      "install-modpack": "Installer un modpack",
-      "campus-modpack": "Modpack du campus",
       "modpack": "Modpacks",
       "mod": "Mods",
       "world": "Mondes",
       "resourcepack": "Packs de ressources",
       "shader": "Packs de shaders",
       "datapack": "Packs de données",
-      "messages": "消息",
-      "cloud-modpack": "Modpack cloud"
-    }
-  },
-  "InstallModpackPage": {
-    "campus": {
-      "title": "Modpack du campus",
-      "description": "Ressources de modpacks du campus hébergées sur le cloud Anyshare de l’USTB.",
-      "loadFailed": "Impossible de charger la liste des modpacks du campus : {{error}}",
-      "downloadStarted": "Téléchargement de {{name}} démarré",
-      "downloadDescription": "L’installation du modpack démarrera automatiquement après le téléchargement.",
-      "downloadFailed": "Échec du téléchargement"
-    },
-    "platform": {
-      "title": "Modpacks du campus",
-      "description": "Modpacks publiés par les responsables du campus. Les instances installées peuvent suivre les nouvelles versions.",
-      "recommended": "Recommandé",
-      "vanilla": "Vanilla",
-      "onOtherPlatform": "Disponible sur {{platform}}",
-      "openOriginal": "Voir",
-      "noVersion": "Ce projet n'a pas de version de pack pour {{gameVersion}} ({{loader}})",
-      "downloadStarted": "Téléchargement de {{version}} lancé",
-      "downloadDescription": "L'installation du pack démarre à la fin du téléchargement."
-    },
-    "followed": {
-      "title": "Mes instances de packs",
-      "checkAll": "Tout vérifier",
-      "available": "Mise à jour disponible",
-      "notChecked": "Pas encore vérifié",
-      "open": "Voir les mises à jour"
+      "messages": "消息"
     }
   },
   "DiscoverSourcesPage": {
@@ -3226,6 +3184,28 @@
     "rollback": {
       "hint": "Vous pouvez annuler la dernière mise à jour du pack et rétablir fichiers et chargeur comme avant.",
       "confirm": "L'annulation écrase les modifications faites sur ces fichiers depuis la mise à jour, et ne peut se faire qu'une fois."
+    }
+  },
+  "InstanceSyncPage": {
+    "title": "Synchronisation et mises à jour",
+    "description": "Instances qui suivent un pack, packs du campus et recommandations",
+    "platform": {
+      "title": "Modpacks du campus",
+      "description": "Modpacks publiés par les responsables du campus. Les instances installées peuvent suivre les nouvelles versions.",
+      "recommended": "Recommandé",
+      "vanilla": "Vanilla",
+      "onOtherPlatform": "Disponible sur {{platform}}",
+      "openOriginal": "Voir",
+      "noVersion": "Ce projet n'a pas de version de pack pour {{gameVersion}} ({{loader}})",
+      "downloadStarted": "Téléchargement de {{version}} lancé",
+      "downloadDescription": "L'installation du pack démarre à la fin du téléchargement."
+    },
+    "followed": {
+      "title": "Mes instances de packs",
+      "checkAll": "Tout vérifier",
+      "available": "Mise à jour disponible",
+      "notChecked": "Pas encore vérifié",
+      "open": "Voir les mises à jour"
     }
   }
 }

@@ -12,7 +12,6 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import { IconType } from "react-icons";
 import {
-  LuBoxes,
   LuHouse,
   LuMessagesSquare,
   LuNewspaper,
@@ -60,13 +59,6 @@ const DiscoverLayout: React.FC<{ children: React.ReactNode }> = ({
         key: "community-news",
         icon: LuMessagesSquare,
         route: "/discover/community-news",
-      },
-    ],
-    [
-      {
-        key: "install-modpack",
-        icon: LuBoxes,
-        route: "/discover/install-modpack",
       },
     ],
   ];
