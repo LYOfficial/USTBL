@@ -507,7 +507,6 @@
       "community-news": "Communauté",
       "minecraft-news": "Actualités Minecraft",
       "install-modpack": "Installer un modpack",
-      "original-modpack": "Modpack original",
       "campus-modpack": "Modpack du campus",
       "modpack": "Modpacks",
       "mod": "Mods",
@@ -520,12 +519,6 @@
     }
   },
   "InstallModpackPage": {
-    "xplus": {
-      "description": "Seule la dernière version publiée pour chaque version du jeu est conservée. Minecraft {{version}} est recommandé par défaut.",
-      "loadFailed": "Impossible de charger les versions Modrinth, utilisation de la version recommandée.",
-      "downloadStarted": "Téléchargement de {{version}} démarré",
-      "downloadDescription": "L’installation du modpack démarrera automatiquement après le téléchargement."
-    },
     "campus": {
       "title": "Modpack du campus",
       "description": "Ressources de modpacks du campus hébergées sur le cloud Anyshare de l’USTB.",
@@ -540,7 +533,10 @@
       "recommended": "Recommandé",
       "vanilla": "Vanilla",
       "onOtherPlatform": "Disponible sur {{platform}}",
-      "openOriginal": "Voir"
+      "openOriginal": "Voir",
+      "noVersion": "Ce projet n'a pas de version de pack pour {{gameVersion}} ({{loader}})",
+      "downloadStarted": "Téléchargement de {{version}} lancé",
+      "downloadDescription": "L'installation du pack démarre à la fin du téléchargement."
     },
     "followed": {
       "title": "Mes instances de packs",

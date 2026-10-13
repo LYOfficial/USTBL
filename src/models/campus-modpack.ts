@@ -50,6 +50,9 @@ export interface CampusModpackRecommendation {
   line: CampusModpackLine | null;
   /** Set for a project on another platform. */
   projectRef: string | null;
+  /** Which line of that project to install. */
+  gameVersion: string | null;
+  loaderType: string | null;
 }
 
 export type CampusInstallStage = "fetching" | "applying" | "finalizing";

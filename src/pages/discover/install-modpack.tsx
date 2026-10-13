@@ -1,9 +1,7 @@
 import {
-  Avatar,
   Badge,
   Box,
   HStack,
-  Link,
   Text,
   VStack,
   useDisclosure,
@@ -14,7 +12,6 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useRouter } from "next/router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { LuExternalLink } from "react-icons/lu";
 import { BeatLoader } from "react-spinners";
 import { CommonIconButton } from "@/components/common/common-icon-button";
 import Empty from "@/components/common/empty";
@@ -36,98 +33,6 @@ import { TaskTypeEnums } from "@/models/task";
 import { CampusModpackService } from "@/services/campus-modpack";
 import { registerPendingModpackOrigin } from "@/utils/modpack-origin";
 import { sanitizeFileName } from "@/utils/string";
-
-// ─── XPlus (Original Modpack) ──────────────────────────────────────────────
-
-type XPlusVersion = {
-  id: string;
-  name: string;
-  versionNumber: string;
-  published: string;
-  gameVersions: string[];
-  downloadUrl: string;
-  sha1: string;
-  fileName: string;
-};
-
-const XPLUS_PROJECT_URL =
-  "https://modrinth.com/modpack/xplus-2.0-modpack-global/versions";
-const XPLUS_PROJECT_ID = "UCpApD3P";
-const XPLUS_VERSION_API = `https://api.modrinth.com/v2/project/${XPLUS_PROJECT_ID}/version`;
-const RECOMMENDED_VERSION = "1.21.11";
-const MODPACK_ICON_URL =
-  "https://cdn.modrinth.com/data/UCpApD3P/eb989b0763ca1ad11ee37e879ff2024294db410f_96.webp";
-const RECOMMENDED_DOWNLOAD_URL =
-  "https://cdn.modrinth.com/data/UCpApD3P/versions/hudo6QuU/XPlus%20PerioTable%20based%20on%20Minecraft%201.21.11%20%28Fabric%29.mrpack";
-
-const fallbackVersions: XPlusVersion[] = [
-  {
-    id: "hudo6QuU",
-    name: "XPlus PerioTable based on Minecraft 1.21.11 (Fabric)",
-    versionNumber: "1.21.11",
-    published: "",
-    gameVersions: ["1.21.11"],
-    downloadUrl: RECOMMENDED_DOWNLOAD_URL,
-    sha1: "",
-    fileName: "XPlus PerioTable based on Minecraft 1.21.11 (Fabric).mrpack",
-  },
-];
-
-const toXPlusVersionList = (rawList: any[]): XPlusVersion[] => {
-  const all = rawList
-    .map((item) => {
-      const primaryFile =
-        (item.files || []).find((f: any) => f.primary) ||
-        (item.files || []).find((f: any) => f.url?.endsWith(".mrpack"));
-      if (!primaryFile?.url) return null;
-
-      const encodedFileName =
-        primaryFile.filename || item.name || `${item.id}.mrpack`;
-      const decodedFileName = decodeURIComponent(encodedFileName);
-
-      return {
-        id: item.id,
-        name: item.name || item.version_number || item.id,
-        versionNumber: item.version_number || "",
-        published: item.date_published || "",
-        gameVersions: item.game_versions || [],
-        downloadUrl: primaryFile.url,
-        sha1: primaryFile.hashes?.sha1 || "",
-        fileName: decodedFileName,
-      } as XPlusVersion;
-    })
-    .filter((item): item is XPlusVersion => Boolean(item));
-
-  // Deduplicate: keep only the latest published version per game version
-  const latestByGameVersion = new Map<string, XPlusVersion>();
-  for (const ver of all) {
-    const primaryGameVer = ver.gameVersions[0] || ver.versionNumber;
-    const existing = latestByGameVersion.get(primaryGameVer);
-    if (
-      !existing ||
-      (ver.published &&
-        existing.published &&
-        ver.published > existing.published)
-    ) {
-      latestByGameVersion.set(primaryGameVer, ver);
-    }
-  }
-
-  const deduped = Array.from(latestByGameVersion.values());
-
-  // Sort: recommended version first, then by published date descending
-  deduped.sort((a, b) => {
-    const aRecommended = a.gameVersions.includes(RECOMMENDED_VERSION);
-    const bRecommended = b.gameVersions.includes(RECOMMENDED_VERSION);
-    if (aRecommended !== bRecommended) {
-      return aRecommended ? -1 : 1;
-    }
-    if (!a.published || !b.published) return 0;
-    return new Date(b.published).getTime() - new Date(a.published).getTime();
-  });
-
-  return deduped;
-};
 
 // ───── Campus modpack platform ─────
 
@@ -227,13 +132,13 @@ const FollowedInstancesSection = () => {
   );
 };
 
-const CampusPlatformSection = ({
-  onShowOriginal,
-}: {
-  onShowOriginal: () => void;
-}) => {
+/** The Modrinth project behind a recommend slot that lives off-campus. */
+type ExternalProject = { title: string };
+
+const CampusPlatformSection = () => {
   const { t } = useTranslation();
   const toast = useToast();
+  const { handleScheduleProgressiveTaskGroup } = useTaskContext();
   const { config } = useLauncherConfig();
   const primaryColor = config.appearance.theme.primaryColor;
   const installModal = useDisclosure();
@@ -243,6 +148,9 @@ const CampusPlatformSection = ({
     useState<CampusModpackRecommendation | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [selected, setSelected] = useState<CampusSelection | null>(null);
+  const [externalProject, setExternalProject] =
+    useState<ExternalProject | null>(null);
+  const [downloadingExternal, setDownloadingExternal] = useState(false);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -269,6 +177,122 @@ const CampusPlatformSection = ({
   useEffect(() => {
     fetchAll();
   }, [fetchAll]);
+
+  // The slot only carries the project id; ask Modrinth what it is called.
+  const externalRef =
+    recommendation?.platform === "modrinth" ? recommendation.projectRef : null;
+  useEffect(() => {
+    setExternalProject(null);
+    if (!externalRef) return;
+    let cancelled = false;
+    fetch(
+      `https://api.modrinth.com/v2/project/${encodeURIComponent(externalRef)}`
+    )
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.title)
+          setExternalProject({ title: data.title });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [externalRef]);
+
+  /**
+   * Installs the newest Modrinth version of the slot's project for the slot's
+   * game version and loader, through the same download-then-import flow as any
+   * other modpack download.
+   */
+  const handleInstallExternal = useCallback(
+    async (rec: CampusModpackRecommendation) => {
+      if (!rec.projectRef || !rec.gameVersion) return;
+      setDownloadingExternal(true);
+      try {
+        const query = new URLSearchParams({
+          game_versions: JSON.stringify([rec.gameVersion]),
+        });
+        if (rec.loaderType && rec.loaderType !== "vanilla")
+          query.set("loaders", JSON.stringify([rec.loaderType]));
+        let versions: any[] = [];
+        try {
+          const response = await fetch(
+            `https://api.modrinth.com/v2/project/${encodeURIComponent(rec.projectRef)}/version?${query}`
+          );
+          if (!response.ok) throw new Error(String(response.status));
+          const data = await response.json();
+          versions = Array.isArray(data) ? data : [];
+        } catch (error) {
+          toast({
+            title: t("General.networkError"),
+            description: String(error),
+            status: "warning",
+          });
+          return;
+        }
+
+        // Modrinth lists the newest first; prefer a release over a beta.
+        const withPack = versions
+          .map((version) => ({
+            version,
+            file:
+              (version.files || []).find((f: any) => f.primary) ||
+              (version.files || []).find((f: any) =>
+                String(f.filename || "").endsWith(".mrpack")
+              ),
+          }))
+          .filter((item) => item.file?.url);
+        const picked =
+          withPack.find((item) => item.version.version_type === "release") ||
+          withPack[0];
+        if (!picked) {
+          toast({
+            title: t("InstallModpackPage.platform.noVersion", {
+              gameVersion: rec.gameVersion,
+              loader: rec.loaderType || "-",
+            }),
+            status: "warning",
+          });
+          return;
+        }
+
+        const { version, file } = picked;
+        const baseDir = await downloadDir();
+        const fileName = sanitizeFileName(
+          file.filename || `${version.id}.mrpack`
+        );
+        const savePath = `${baseDir}/${fileName}`;
+        const sha1: string = file.hashes?.sha1 || "";
+        // Only a published SHA-1 lets the backend prove the archive is this version.
+        if (sha1) {
+          registerPendingModpackOrigin(savePath, {
+            platform: "modrinth",
+            projectId: rec.projectRef,
+            versionId: version.id,
+            expectedSha1: sha1,
+          });
+        }
+        handleScheduleProgressiveTaskGroup("modpack", [
+          {
+            src: file.url,
+            dest: savePath,
+            sha1,
+            taskType: TaskTypeEnums.Download,
+          },
+        ]);
+        toast({
+          title: t("InstallModpackPage.platform.downloadStarted", {
+            version: version.version_number || version.name,
+          }),
+          description: t("InstallModpackPage.platform.downloadDescription"),
+          status: "success",
+        });
+      } finally {
+        setDownloadingExternal(false);
+      }
+    },
+    [handleScheduleProgressiveTaskGroup, t, toast]
+  );
 
   const describeLine = useCallback(
     (line: CampusModpackLine) =>
@@ -363,9 +387,7 @@ const CampusPlatformSection = ({
                   title: (
                     <HStack spacing={2}>
                       <Text>
-                        {recommendation.projectRef === XPLUS_PROJECT_ID
-                          ? "XPlus"
-                          : recommendation.projectRef}
+                        {externalProject?.title || recommendation.projectRef}
                       </Text>
                       <Badge colorScheme={primaryColor}>
                         {t("InstallModpackPage.platform.recommended")}
@@ -379,23 +401,45 @@ const CampusPlatformSection = ({
                       })}
                     </Text>
                   ),
-                  children: (
-                    <CommonIconButton
-                      icon="external"
-                      label={t("InstallModpackPage.platform.openOriginal")}
-                      withTooltip
-                      size="xs"
-                      h={18}
-                      onClick={() =>
-                        recommendation.projectRef === XPLUS_PROJECT_ID
-                          ? onShowOriginal()
-                          : recommendation.platform === "modrinth" &&
+                  children:
+                    recommendation.platform === "modrinth" ? (
+                      <HStack spacing={1}>
+                        <CommonIconButton
+                          icon="external"
+                          label={t("InstallModpackPage.platform.openOriginal")}
+                          withTooltip
+                          size="xs"
+                          h={18}
+                          onClick={() =>
                             openUrl(
                               `https://modrinth.com/project/${recommendation.projectRef}`
                             )
-                      }
-                    />
-                  ),
+                          }
+                        />
+                        <CommonIconButton
+                          icon="download"
+                          label={t("General.download")}
+                          withTooltip
+                          size="xs"
+                          h={18}
+                          isDisabled={downloadingExternal}
+                          onClick={() => handleInstallExternal(recommendation)}
+                        />
+                      </HStack>
+                    ) : (
+                      <CommonIconButton
+                        icon="external"
+                        label={t("InstallModpackPage.platform.openOriginal")}
+                        withTooltip
+                        size="xs"
+                        h={18}
+                        onClick={() =>
+                          openUrl(
+                            `https://www.curseforge.com/projects/${recommendation.projectRef}`
+                          )
+                        }
+                      />
+                    ),
                 },
               ]}
             />
@@ -469,24 +513,16 @@ const InstallModpackPage = () => {
   const [activeTab, setActiveTab] = useState<string>(
     router.query.tab === "cloud" || router.query.tab === "campus"
       ? router.query.tab
-      : "xplus"
+      : "campus"
   );
 
   useEffect(() => {
-    if (
-      router.query.tab === "xplus" ||
-      router.query.tab === "campus" ||
-      router.query.tab === "cloud"
-    )
+    if (router.query.tab === "campus" || router.query.tab === "cloud")
       setActiveTab(router.query.tab);
   }, [router.query.tab]);
 
   const tabItems = useMemo(
     () => [
-      {
-        label: t("DiscoverLayout.discoverDomainList.original-modpack"),
-        value: "xplus",
-      },
       {
         label: t("DiscoverLayout.discoverDomainList.campus-modpack"),
         value: "campus",
@@ -518,10 +554,8 @@ const InstallModpackPage = () => {
           />
         </Box>
 
-        {activeTab === "xplus" ? (
-          <XPlusModpackSection />
-        ) : activeTab === "campus" ? (
-          <CampusPlatformSection onShowOriginal={() => setActiveTab("xplus")} />
+        {activeTab === "campus" ? (
+          <CampusPlatformSection />
         ) : (
           <CloudModpackSection />
         )}
@@ -590,11 +624,11 @@ const CloudModpackSection = () => {
         }
       );
 
-      // Step 2: Schedule a progressive download task (same system as XPlus)
+      // Step 2: Schedule a progressive download task (same system as other modpack downloads)
       // The task will appear in the download arrow UI and trigger auto-install
       // when completed (since the group name is "modpack").
       // Use an absolute dest path so the file is saved to the Downloads folder
-      // (same as XPlus) and the auto-install modal can find it.
+      // (same as any other modpack download) and the auto-install modal can find it.
       const baseDir = await downloadDir();
       const fileName = sanitizeFileName(file.name);
       const savePath = `${baseDir}/${fileName}`;
@@ -673,173 +707,6 @@ const CloudModpackSection = () => {
               />
             ),
           }))}
-        />
-      )}
-    </VStack>
-  );
-};
-
-// ─── XPlus Section ──────────────────────────────────────────────────────────
-
-const XPlusModpackSection = () => {
-  const { t } = useTranslation();
-  const toast = useToast();
-  const { config } = useLauncherConfig();
-  const { handleScheduleProgressiveTaskGroup } = useTaskContext();
-  const primaryColor = config.appearance.theme.primaryColor;
-
-  const [versions, setVersions] = useState<XPlusVersion[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [downloadingId, setDownloadingId] = useState<string>("");
-
-  const fetchVersions = useCallback(async () => {
-    setLoading(true);
-    try {
-      const response = await fetch(XPLUS_VERSION_API);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
-      const versionList = toXPlusVersionList(Array.isArray(data) ? data : []);
-      setVersions(versionList.length > 0 ? versionList : fallbackVersions);
-    } catch (_error) {
-      setVersions(fallbackVersions);
-      toast({
-        title: t("General.networkError"),
-        description: t("InstallModpackPage.xplus.loadFailed"),
-        status: "warning",
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [t, toast]);
-
-  useEffect(() => {
-    fetchVersions();
-  }, [fetchVersions]);
-
-  const recommendedVersionId = useMemo(() => {
-    return versions.find((item) =>
-      item.gameVersions.includes(RECOMMENDED_VERSION)
-    )?.id;
-  }, [versions]);
-
-  const handleInstall = async (version: XPlusVersion) => {
-    setDownloadingId(version.id);
-    try {
-      const baseDir = await downloadDir();
-      const fileName = sanitizeFileName(
-        version.fileName || `${version.name}.mrpack`
-      );
-      const savePath = `${baseDir}/${fileName}`;
-
-      // Only a published SHA-1 lets the backend prove the archive is this version.
-      if (version.sha1) {
-        registerPendingModpackOrigin(savePath, {
-          platform: "modrinth",
-          projectId: XPLUS_PROJECT_ID,
-          versionId: version.id,
-          expectedSha1: version.sha1,
-        });
-      }
-      handleScheduleProgressiveTaskGroup("modpack", [
-        {
-          src: version.downloadUrl,
-          dest: savePath,
-          sha1: version.sha1,
-          taskType: TaskTypeEnums.Download,
-        },
-      ]);
-
-      toast({
-        title: t("InstallModpackPage.xplus.downloadStarted", {
-          version: version.versionNumber || version.name,
-        }),
-        description: t("InstallModpackPage.xplus.downloadDescription"),
-        status: "success",
-      });
-    } finally {
-      setDownloadingId("");
-    }
-  };
-
-  return (
-    <VStack align="stretch" spacing={3}>
-      <Box px={1}>
-        <HStack spacing={2} mb={1} justify="space-between" w="100%">
-          <HStack spacing={2}>
-            <Text fontSize="sm" fontWeight="bold">
-              XPlus 2.0 Modpack (Global)
-            </Text>
-            <Link
-              fontSize="xs"
-              color={`${primaryColor}.500`}
-              onClick={() => openUrl(XPLUS_PROJECT_URL)}
-            >
-              <HStack spacing={1}>
-                <LuExternalLink />
-                <Text>Modrinth</Text>
-              </HStack>
-            </Link>
-          </HStack>
-          <CommonIconButton
-            icon="refresh"
-            onClick={fetchVersions}
-            isDisabled={loading}
-            size="xs"
-            h={21}
-          />
-        </HStack>
-        <Text fontSize="xs" className="secondary-text">
-          {t("InstallModpackPage.xplus.description", {
-            version: RECOMMENDED_VERSION,
-          })}
-        </Text>
-      </Box>
-
-      {loading ? (
-        <VStack my={8}>
-          <BeatLoader size={14} color="gray" />
-        </VStack>
-      ) : versions.length === 0 ? (
-        <Empty withIcon={false} size="sm" />
-      ) : (
-        <OptionItemGroup
-          items={versions.map((version) => {
-            const isRecommended = version.id === recommendedVersionId;
-            return {
-              title: (
-                <HStack spacing={2}>
-                  <Text>{version.versionNumber || version.name}</Text>
-                  {isRecommended && (
-                    <Badge colorScheme={primaryColor}>推荐</Badge>
-                  )}
-                </HStack>
-              ),
-              description: (
-                <Text fontSize="xs" className="secondary-text">
-                  {version.name}
-                </Text>
-              ),
-              prefixElement: (
-                <Avatar
-                  src={MODPACK_ICON_URL}
-                  name="XPlus"
-                  boxSize={8}
-                  borderRadius="md"
-                />
-              ),
-              children: (
-                <CommonIconButton
-                  icon="download"
-                  label={t("General.download")}
-                  withTooltip
-                  size="xs"
-                  h={18}
-                  isLoading={downloadingId === version.id}
-                  onClick={() => handleInstall(version)}
-                />
-              ),
-            };
-          })}
         />
       )}
     </VStack>

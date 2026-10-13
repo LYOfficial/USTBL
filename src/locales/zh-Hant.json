@@ -507,7 +507,6 @@
       "community-news": "社群",
       "minecraft-news": "Minecraft 新聞",
       "install-modpack": "安裝整合包",
-      "original-modpack": "原版整合包",
       "campus-modpack": "校內整合包",
       "modpack": "整合包",
       "mod": "模組",
@@ -520,12 +519,6 @@
     }
   },
   "InstallModpackPage": {
-    "xplus": {
-      "description": "各遊戲版本僅保留最新發布版本。預設推薦下載 Minecraft {{version}} 版本。",
-      "loadFailed": "Modrinth 版本清單載入失敗，已使用推薦版本。",
-      "downloadStarted": "已開始下載 {{version}}",
-      "downloadDescription": "下載完成後會自動進入整合包安裝流程。"
-    },
     "campus": {
       "title": "校內整合包",
       "description": "來自北京科技大學 Anyshare 雲端硬碟的校內整合包資源。",
@@ -540,7 +533,10 @@
       "recommended": "推薦",
       "vanilla": "原版",
       "onOtherPlatform": "不在校內平台上，前往 {{platform}} 取得",
-      "openOriginal": "查看"
+      "openOriginal": "查看",
+      "noVersion": "該專案沒有適用於 {{gameVersion}}（{{loader}}）的整合包版本",
+      "downloadStarted": "已開始下載 {{version}}",
+      "downloadDescription": "下載完成後會自動進入整合包安裝流程。"
     },
     "followed": {
       "title": "我的整合包實例",

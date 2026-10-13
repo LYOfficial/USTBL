@@ -70,6 +70,11 @@ pub struct CampusRecommendation {
   pub version: Option<CampusLine>,
   #[serde(default)]
   pub project_ref: Option<String>,
+  /// The line of that project the launcher installs.
+  #[serde(default)]
+  pub game_version: Option<String>,
+  #[serde(default)]
+  pub loader_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -773,12 +778,15 @@ mod tests {
   fn a_recommendation_can_point_at_another_platform() {
     let body = serde_json::json!({
       "slot": "recommended", "platform": "modrinth", "project_ref": "UCpApD3P",
+      "game_version": "1.21.11", "loader_type": "fabric",
       "project": null, "version": null
     });
     let parsed: CampusRecommendation = serde_json::from_value(body).unwrap();
     let out = serde_json::to_value(&parsed).unwrap();
     assert_eq!(out["platform"], "modrinth");
     assert_eq!(out["projectRef"], "UCpApD3P");
+    assert_eq!(out["gameVersion"], "1.21.11");
+    assert_eq!(out["loaderType"], "fabric");
     assert!(out["project"].is_null());
     assert!(out["line"].is_null());
   }

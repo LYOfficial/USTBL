@@ -507,7 +507,6 @@
       "community-news": "コミュニティ",
       "minecraft-news": "Minecraft ニュース",
       "install-modpack": "Modpack をインストール",
-      "original-modpack": "オリジナル Modpack",
       "campus-modpack": "学内 Modpack",
       "modpack": "Modpack",
       "mod": "Mod",
@@ -520,12 +519,6 @@
     }
   },
   "InstallModpackPage": {
-    "xplus": {
-      "description": "各ゲームバージョンでは最新の公開版のみを提供します。標準では Minecraft {{version}} を推奨します。",
-      "loadFailed": "Modrinth のバージョン一覧を読み込めなかったため、推奨バージョンを使用します。",
-      "downloadStarted": "{{version}} のダウンロードを開始しました",
-      "downloadDescription": "ダウンロード完了後、Modpack のインストールが自動的に開始されます。"
-    },
     "campus": {
       "title": "学内 Modpack",
       "description": "北京科技大学 Anyshare クラウドの学内 Modpack リソースです。",
@@ -540,7 +533,10 @@
       "recommended": "おすすめ",
       "vanilla": "バニラ",
       "onOtherPlatform": "{{platform}} で提供されています",
-      "openOriginal": "表示"
+      "openOriginal": "表示",
+      "noVersion": "このプロジェクトには {{gameVersion}}（{{loader}}）向けのモッドパックバージョンがありません",
+      "downloadStarted": "{{version}} のダウンロードを開始しました",
+      "downloadDescription": "ダウンロード完了後、モッドパックのインストールが自動で始まります。"
     },
     "followed": {
       "title": "フォロー中のインスタンス",
