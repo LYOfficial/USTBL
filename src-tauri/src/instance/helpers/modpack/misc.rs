@@ -40,9 +40,21 @@ pub struct ModpackDownload {
   pub size: Option<u64>,
 }
 
-type ManifestBox = Box<dyn ModpackManifest + Send + Sync>;
+pub(crate) type ManifestBox = Box<dyn ModpackManifest + Send + Sync>;
 type Parser = Box<dyn Fn(&File) -> USTBLResult<ManifestBox> + Send + Sync>;
 
+/// The manifest of a modpack published on Modrinth or CurseForge. MultiMC
+/// archives are deliberately not accepted: a component chain cannot be updated
+/// file by file.
+pub(crate) fn parse_platform_manifest(file: &File) -> USTBLResult<ManifestBox> {
+  if let Ok(manifest) = CurseForgeManifest::from_archive(file) {
+    return Ok(Box::new(manifest));
+  }
+  if let Ok(manifest) = ModrinthManifest::from_archive(file) {
+    return Ok(Box::new(manifest));
+  }
+  Err(InstanceError::ModpackManifestParseError.into())
+}
 fn get_parsers() -> Vec<Parser> {
   vec![
     Box::new(|f| {

@@ -2621,7 +2621,9 @@
             "MODPACK_UPDATE_BUSY": "该整合包正在更新中",
             "MODPACK_UPDATE_VERIFY_FAILED": "下载的文件校验失败，未对实例做任何修改",
             "MODPACK_UPDATE_STALE": "本地文件在检查后发生了变化，请重新检查更新",
-            "MODPACK_UPDATE_REMOTE_INVALID": "新版本的文件清单不合法，已拒绝更新"
+            "MODPACK_UPDATE_REMOTE_INVALID": "新版本的文件清单不合法，已拒绝更新",
+            "MODPACK_UPDATE_LINE_MISMATCH": "新版本的游戏版本或加载器与此实例不一致，无法更新",
+            "MODPACK_UPDATE_UNSUPPORTED": "此实例暂不支持自动更新"
           }
         }
       }

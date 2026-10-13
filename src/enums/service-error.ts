@@ -49,6 +49,8 @@ export enum InstanceError {
   ModpackUpdateVerifyFailed = "MODPACK_UPDATE_VERIFY_FAILED",
   ModpackUpdateStale = "MODPACK_UPDATE_STALE",
   ModpackUpdateRemoteInvalid = "MODPACK_UPDATE_REMOTE_INVALID",
+  ModpackUpdateLineMismatch = "MODPACK_UPDATE_LINE_MISMATCH",
+  ModpackUpdateUnsupported = "MODPACK_UPDATE_UNSUPPORTED",
 }
 
 export enum ConfigServiceError {
