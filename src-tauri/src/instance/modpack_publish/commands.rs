@@ -19,6 +19,7 @@ use crate::instance::modpack_update::commands::store_instance;
 use crate::instance::modpack_update::diff::FileKey;
 use crate::instance::modpack_update::sources::{loader_slug, CAMPUS_API};
 use crate::instance::shared::ensure_minecraft_manager as ensure_manager;
+use crate::utils::web::build_ustbl_upload_client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -166,10 +167,15 @@ fn bytes_from(buffer: Vec<u8>) -> tokio_util::bytes::Bytes {
   tokio_util::bytes::Bytes::from(buffer)
 }
 
-async fn put_file(app: &AppHandle, path: &str, file: &Path) -> USTBLResult<reqwest::Response> {
+async fn put_file(
+  app: &AppHandle,
+  uploader: &reqwest::Client,
+  path: &str,
+  file: &Path,
+) -> USTBLResult<reqwest::Response> {
   let url = format!("{CAMPUS_API}{path}");
   let size = tokio::fs::metadata(file).await?.len();
-  vustb::send_authenticated(app, |client, token| {
+  vustb::send_authenticated_with(app, uploader, |client, token| {
     let request = client
       .put(&url)
       .bearer_auth(token)
@@ -220,10 +226,52 @@ pub async fn create_campus_modpack_project(
     Some(json!({ "slug": slug, "name": name, "summary": summary })),
   )
   .await?;
+  if response.status() == reqwest::StatusCode::CONFLICT {
+    // A first publish that failed leaves its project behind, unlisted because it
+    // has no release. Picking the project up again lets the retry go through.
+    let conflict = failure(response).await;
+    return reuse_unreleased_project(&app, &slug, &name, &summary)
+      .await?
+      .ok_or(conflict);
+  }
   if !response.status().is_success() {
     return Err(failure(response).await);
   }
   Ok(response.json().await?)
+}
+
+/// The existing project with this slug when it has no published line yet,
+/// updated to the name and summary of the new attempt.
+async fn reuse_unreleased_project(
+  app: &AppHandle,
+  slug: &str,
+  name: &str,
+  summary: &str,
+) -> USTBLResult<Option<CampusProject>> {
+  let client = app.state::<reqwest::Client>();
+  let response = client
+    .get(format!("{CAMPUS_API}/projects/{slug}"))
+    .send()
+    .await?;
+  if !response.status().is_success() {
+    return Ok(None);
+  }
+  let existing: CampusProject = response.json().await?;
+  if !existing.lines.is_empty() {
+    return Ok(None);
+  }
+  let updated = authed_json(
+    app,
+    reqwest::Method::PATCH,
+    &format!("/projects/{slug}"),
+    Some(json!({ "name": name, "summary": summary })),
+  )
+  .await?;
+  if updated.status().is_success() {
+    Ok(Some(updated.json().await?))
+  } else {
+    Ok(Some(existing))
+  }
 }
 
 fn hash_selection(root: &Path, selected: &[String]) -> USTBLResult<Vec<LocalFile>> {
@@ -272,6 +320,7 @@ impl Drop for TempDir {
 
 async fn upload_missing_blobs(
   app: &AppHandle,
+  uploader: &reqwest::Client,
   instance_id: &str,
   root: &Path,
   plan: &PublishPlan,
@@ -305,7 +354,7 @@ async fn upload_missing_blobs(
     let file = blobs
       .get(sha1)
       .ok_or_else(|| USTBLError("平台请求了未知的文件".into()))?;
-    let response = put_file(app, &format!("/blobs/{sha1}"), file).await?;
+    let response = put_file(app, uploader, &format!("/blobs/{sha1}"), file).await?;
     if !response.status().is_success() {
       return Err(failure(response).await);
     }
@@ -416,7 +465,9 @@ pub async fn publish_campus_modpack(
     _ => return Err(failure(current).await),
   };
 
-  upload_missing_blobs(&app, &instance_id, &root, &plan).await?;
+  // Big uploads outlast the shared client's read timeout.
+  let uploader = build_ustbl_upload_client(&app, true);
+  upload_missing_blobs(&app, &uploader, &instance_id, &root, &plan).await?;
 
   let created = authed_json(
     &app,
@@ -440,7 +491,7 @@ pub async fn publish_campus_modpack(
     .as_i64()
     .ok_or_else(|| USTBLError("平台返回了无法识别的版本".into()))?;
 
-  let result = finish_draft(&app, &instance_id, &root, &plan, version_id).await;
+  let result = finish_draft(&app, &uploader, &instance_id, &root, &plan, version_id).await;
   if result.is_err() {
     // A draft that never published only takes up space on the server.
     let _ = authed_json(
@@ -571,6 +622,7 @@ async fn try_adopt(
 
 async fn finish_draft(
   app: &AppHandle,
+  uploader: &reqwest::Client,
   instance_id: &str,
   root: &Path,
   plan: &PublishPlan,
@@ -589,7 +641,13 @@ async fn finish_draft(
     })
     .await
     .map_err(|e| USTBLError(e.to_string()))??;
-    let response = put_file(app, &format!("/versions/{version_id}/bundle"), &temp.0).await?;
+    let response = put_file(
+      app,
+      uploader,
+      &format!("/versions/{version_id}/bundle"),
+      &temp.0,
+    )
+    .await?;
     if !response.status().is_success() {
       return Err(failure(response).await);
     }
