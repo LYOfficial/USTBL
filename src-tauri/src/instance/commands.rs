@@ -13,7 +13,8 @@ use crate::instance::helpers::misc::{
   refresh_and_update_instances, unify_instance_name,
 };
 use crate::instance::helpers::modpack::baseline::{
-  hash_existing_files, hash_file, BaselineFile, BaselineLoader, ModpackBaseline,
+  components_of_mmc_pack, hash_existing_files, hash_file, BaselineFile, BaselineLoader,
+  ModpackBaseline,
 };
 use crate::instance::helpers::modpack::export::{
   build_component_export, collect_modrinth_files, create_modpack_zip, generate_modrinth_manifest,
@@ -1330,17 +1331,27 @@ pub async fn create_instance(
     .await
     .map_err(|_| InstanceError::FileCreationFailed)?;
   if let Some(origin) = &instance.origin {
-    ModpackBaseline::build(
+    let mut baseline = ModpackBaseline::build(
       origin,
       BaselineLoader {
         loader_type: instance.mod_loader.loader_type,
         version: instance.mod_loader.version.clone(),
       },
       baseline_files,
-    )
-    .save(&version_path)
-    .await
-    .map_err(|_| InstanceError::FileCreationFailed)?;
+    );
+    // The chain of a component profile is taken from the snapshot the importer
+    // already wrote, so the baseline and the exported pack cannot disagree.
+    if component_import.is_some() {
+      let snapshot = ComponentSnapshot::load(&version_path)
+        .await
+        .map_err(|_| InstanceError::FileCreationFailed)?
+        .ok_or(InstanceError::FileCreationFailed)?;
+      baseline = baseline.with_components(components_of_mmc_pack(&snapshot.mmc_pack));
+    }
+    baseline
+      .save(&version_path)
+      .await
+      .map_err(|_| InstanceError::FileCreationFailed)?;
   }
 
   dir_guard.commit(); // disarm the cleanup guard on success
