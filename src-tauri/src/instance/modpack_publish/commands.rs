@@ -2,6 +2,7 @@
 
 use super::components::plan_components;
 use super::manifest::{plan_files, LocalFile, PublishPlan};
+use super::transfer::{ActiveFile, Concurrency, Tracker, Transfer};
 use crate::account::helpers::vustb;
 use crate::account::models::AccountInfo;
 use crate::error::{USTBLError, USTBLResult};
@@ -20,18 +21,24 @@ use crate::instance::modpack_update::commands::store_instance;
 use crate::instance::modpack_update::diff::FileKey;
 use crate::instance::modpack_update::sources::{loader_slug, CAMPUS_API};
 use crate::utils::web::build_ustbl_upload_client;
+use futures::stream::{FuturesUnordered, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::AsyncReadExt;
+use tokio::time::MissedTickBehavior;
 
 const PROGRESS_EVENT: &str = "modpack-publish:progress";
 const MISSING_BATCH: usize = 5000;
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
+/// How long one upload count is measured before trying a different one.
+const PROBE_EPOCH: Duration = Duration::from_secs(4);
 
 /// The UI hides publishing from other accounts, but the role is checked here too;
 /// the platform authenticates the bearer token again.
@@ -141,9 +148,23 @@ struct Progress {
   stage: Stage,
   done: usize,
   total: usize,
+  /// Byte-level detail of an upload in progress.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  transfer: Option<Transfer>,
 }
 
 fn report(app: &AppHandle, instance_id: &str, stage: Stage, done: usize, total: usize) {
+  emit_progress(app, instance_id, stage, done, total, None);
+}
+
+fn emit_progress(
+  app: &AppHandle,
+  instance_id: &str,
+  stage: Stage,
+  done: usize,
+  total: usize,
+  transfer: Option<Transfer>,
+) {
   let _ = app.emit_to(
     "main",
     PROGRESS_EVENT,
@@ -152,6 +173,7 @@ fn report(app: &AppHandle, instance_id: &str, stage: Stage, done: usize, total: 
       stage,
       done,
       total,
+      transfer,
     },
   );
 }
@@ -192,17 +214,23 @@ async fn authed_json(
   .await
 }
 
-fn file_body(path: &Path) -> io::Result<reqwest::Body> {
+fn file_body(path: &Path, progress: Option<Arc<ActiveFile>>) -> io::Result<reqwest::Body> {
   let file = tokio::fs::File::from_std(fs::File::open(path)?);
-  let stream = futures::stream::unfold(file, |mut file| async move {
+  if let Some(progress) = &progress {
+    progress.restart();
+  }
+  let stream = futures::stream::unfold((file, progress), |(mut file, progress)| async move {
     let mut buffer = vec![0u8; 256 * 1024];
     match file.read(&mut buffer).await {
       Ok(0) => None,
       Ok(read) => {
         buffer.truncate(read);
-        Some((Ok::<_, io::Error>(bytes_from(buffer)), file))
+        if let Some(progress) = &progress {
+          progress.add(read as u64);
+        }
+        Some((Ok::<_, io::Error>(bytes_from(buffer)), (file, progress)))
       }
-      Err(error) => Some((Err(error), file)),
+      Err(error) => Some((Err(error), (file, progress))),
     }
   });
   Ok(reqwest::Body::wrap_stream(stream))
@@ -217,6 +245,7 @@ async fn put_file(
   uploader: &reqwest::Client,
   path: &str,
   file: &Path,
+  progress: Option<&Arc<ActiveFile>>,
 ) -> USTBLResult<reqwest::Response> {
   let url = format!("{CAMPUS_API}{path}");
   let size = tokio::fs::metadata(file).await?.len();
@@ -226,7 +255,7 @@ async fn put_file(
       .bearer_auth(token)
       .header("Content-Type", "application/octet-stream")
       .header("Content-Length", size);
-    match file_body(file) {
+    match file_body(file, progress.cloned()) {
       Ok(body) => request.body(body),
       // An unreadable file surfaces as an empty body the server rejects.
       Err(_) => request,
@@ -413,19 +442,119 @@ async fn upload_missing_blobs(
         .filter_map(|item| item.as_str().map(str::to_string)),
     );
   }
-  let total = missing.len();
-  report(app, instance_id, Stage::Uploading, 0, total);
-  for (index, sha1) in missing.iter().enumerate() {
-    let file = blobs
-      .get(sha1)
-      .ok_or_else(|| USTBLError("平台请求了未知的文件".into()))?;
-    let response = put_file(app, uploader, &format!("/blobs/{sha1}"), file).await?;
-    if !response.status().is_success() {
-      return Err(failure(response).await);
-    }
-    report(app, instance_id, Stage::Uploading, index + 1, total);
+  let mut queue = VecDeque::new();
+  let mut bytes_total = 0;
+  for sha1 in missing {
+    let path = blobs
+      .get(&sha1)
+      .ok_or_else(|| USTBLError("平台请求了未知的文件".into()))?
+      .clone();
+    let size = tokio::fs::metadata(&path).await?.len();
+    bytes_total += size;
+    queue.push_back(UploadJob { sha1, path, size });
   }
+  let total = queue.len();
+  let tracker = Tracker::new(bytes_total);
+  let mut level = Concurrency::new();
+  let mut retried = HashSet::new();
+  let mut running = FuturesUnordered::new();
+  let mut stored = 0;
+  let mut tick = tokio::time::interval(PROGRESS_INTERVAL);
+  tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+  let mut epoch = (Instant::now(), 0u64);
+
+  report(app, instance_id, Stage::Uploading, 0, total);
+  loop {
+    while running.len() < level.level() {
+      let Some(job) = queue.pop_front() else { break };
+      running.push(upload_one(app, uploader, &tracker, job));
+    }
+    if running.is_empty() {
+      break;
+    }
+    tokio::select! {
+      finished = running.next() => {
+        let Some((job, result)) = finished else { continue };
+        match result {
+          Ok(()) => stored += 1,
+          // Several files at once may be what the platform or the cloud
+          // objects to: try this one again on its own before giving up.
+          Err(_) if level.level() > 1 && retried.insert(job.sha1.clone()) => {
+            level.back_off();
+            queue.push_front(job);
+          }
+          Err(error) => return Err(error),
+        }
+      }
+      _ = tick.tick() => {
+        emit_progress(
+          app,
+          instance_id,
+          Stage::Uploading,
+          stored,
+          total,
+          Some(tracker.snapshot(level.level())),
+        );
+        if epoch.0.elapsed() >= PROBE_EPOCH {
+          let now = tracker.bytes_done();
+          // Only a full set of files in flight says anything about the count.
+          if running.len() >= level.level() && !queue.is_empty() {
+            let seconds = epoch.0.elapsed().as_secs_f64();
+            level.observe(now.saturating_sub(epoch.1) as f64 / seconds);
+          }
+          epoch = (Instant::now(), now);
+        }
+      }
+    }
+  }
+  emit_progress(
+    app,
+    instance_id,
+    Stage::Uploading,
+    stored,
+    total,
+    Some(tracker.snapshot(level.level())),
+  );
   Ok(())
+}
+
+struct UploadJob {
+  sha1: String,
+  path: PathBuf,
+  size: u64,
+}
+
+async fn upload_one(
+  app: &AppHandle,
+  uploader: &reqwest::Client,
+  tracker: &Tracker,
+  job: UploadJob,
+) -> (UploadJob, USTBLResult<()>) {
+  let name = job
+    .path
+    .file_name()
+    .map(|name| name.to_string_lossy().into_owned())
+    .unwrap_or_else(|| job.sha1.clone());
+  let file = ActiveFile::new(name, job.size);
+  tracker.begin(&file);
+  let result = async {
+    let response = put_file(
+      app,
+      uploader,
+      &format!("/blobs/{}", job.sha1),
+      &job.path,
+      Some(&file),
+    )
+    .await?;
+    if response.status().is_success() {
+      Ok(())
+    } else {
+      Err(failure(response).await)
+    }
+  }
+  .await;
+  tracker.end(&file, result.is_ok());
+  (job, result)
 }
 
 /// Paths the line's current release already lists, so the publish dialog can
@@ -706,13 +835,28 @@ async fn finish_draft(
     })
     .await
     .map_err(|e| USTBLError(e.to_string()))??;
-    let response = put_file(
-      app,
-      uploader,
-      &format!("/versions/{version_id}/bundle"),
-      &temp.0,
-    )
-    .await?;
+    let size = tokio::fs::metadata(&temp.0).await?.len();
+    let tracker = Tracker::new(size);
+    let file = ActiveFile::new("bundle.zip".into(), size);
+    tracker.begin(&file);
+    let bundle_path = format!("/versions/{version_id}/bundle");
+    let upload = put_file(app, uploader, &bundle_path, &temp.0, Some(&file));
+    tokio::pin!(upload);
+    let mut tick = tokio::time::interval(PROGRESS_INTERVAL);
+    tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    let response = loop {
+      tokio::select! {
+        response = &mut upload => break response?,
+        _ = tick.tick() => emit_progress(
+          app,
+          instance_id,
+          Stage::Bundling,
+          0,
+          1,
+          Some(tracker.snapshot(1)),
+        ),
+      }
+    };
     if !response.status().is_success() {
       return Err(failure(response).await);
     }
