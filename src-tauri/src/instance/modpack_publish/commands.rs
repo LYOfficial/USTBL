@@ -52,14 +52,24 @@ pub struct CampusProject {
   pub lines: Vec<CampusLine>,
 }
 
-/// The line a recommend slot currently points at.
+fn campus_platform() -> String {
+  "campus".into()
+}
+
+/// What a recommend slot currently points at: a campus line, or a project on
+/// another platform (then only `project_ref` is set).
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
 pub struct CampusRecommendation {
   pub slot: String,
-  pub project: CampusProject,
-  #[serde(rename(serialize = "line"))]
-  pub version: CampusLine,
+  #[serde(default = "campus_platform")]
+  pub platform: String,
+  #[serde(default)]
+  pub project: Option<CampusProject>,
+  #[serde(default, rename(serialize = "line"))]
+  pub version: Option<CampusLine>,
+  #[serde(default)]
+  pub project_ref: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -753,8 +763,23 @@ mod tests {
     let parsed: CampusRecommendation = serde_json::from_value(body).unwrap();
     let out = serde_json::to_value(&parsed).unwrap();
     assert_eq!(out["slot"], "recommended");
+    assert_eq!(out["platform"], "campus");
     assert_eq!(out["project"]["slug"], "gtnh");
     assert_eq!(out["line"]["gameVersion"], "1.7.10");
     assert_eq!(out["line"]["versionNumber"], "2.8.0");
+  }
+
+  #[test]
+  fn a_recommendation_can_point_at_another_platform() {
+    let body = serde_json::json!({
+      "slot": "recommended", "platform": "modrinth", "project_ref": "UCpApD3P",
+      "project": null, "version": null
+    });
+    let parsed: CampusRecommendation = serde_json::from_value(body).unwrap();
+    let out = serde_json::to_value(&parsed).unwrap();
+    assert_eq!(out["platform"], "modrinth");
+    assert_eq!(out["projectRef"], "UCpApD3P");
+    assert!(out["project"].is_null());
+    assert!(out["line"].is_null());
   }
 }

@@ -538,7 +538,9 @@
       "title": "校内整合包",
       "description": "由校内管理员发布的整合包，安装后可跟随新版本更新。",
       "recommended": "推荐",
-      "vanilla": "原版"
+      "vanilla": "原版",
+      "onOtherPlatform": "不在校内平台上，前往 {{platform}} 获取",
+      "openOriginal": "查看"
     }
   },
   "DiscoverSourcesPage": {

@@ -43,8 +43,13 @@ export interface CampusPublishProgress {
 
 export interface CampusModpackRecommendation {
   slot: string;
-  project: CampusModpackProject;
-  line: CampusModpackLine;
+  /** `campus`, or the platform of the project the slot points at. */
+  platform: string;
+  /** Set for a campus line. */
+  project: CampusModpackProject | null;
+  line: CampusModpackLine | null;
+  /** Set for a project on another platform. */
+  projectRef: string | null;
 }
 
 export type CampusInstallStage = "fetching" | "applying" | "finalizing";

@@ -538,7 +538,9 @@
       "title": "Modpacks du campus",
       "description": "Modpacks publiés par les responsables du campus. Les instances installées peuvent suivre les nouvelles versions.",
       "recommended": "Recommandé",
-      "vanilla": "Vanilla"
+      "vanilla": "Vanilla",
+      "onOtherPlatform": "Disponible sur {{platform}}",
+      "openOriginal": "Voir"
     }
   },
   "DiscoverSourcesPage": {

@@ -538,7 +538,9 @@
       "title": "学内 Modpack",
       "description": "学内の管理者が公開した Modpack です。インストール後は新しいバージョンに追従できます。",
       "recommended": "おすすめ",
-      "vanilla": "バニラ"
+      "vanilla": "バニラ",
+      "onOtherPlatform": "{{platform}} で提供されています",
+      "openOriginal": "表示"
     }
   },
   "DiscoverSourcesPage": {
