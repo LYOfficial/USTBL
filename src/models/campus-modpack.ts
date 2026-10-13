@@ -34,9 +34,27 @@ export type CampusPublishStage =
   | "bundling"
   | "publishing";
 
+export interface CampusPublishFileTransfer {
+  name: string;
+  done: number;
+  total: number;
+}
+
+/** Byte-level detail while files are uploading. */
+export interface CampusPublishTransfer {
+  bytesDone: number;
+  bytesTotal: number;
+  /** Bytes per second. */
+  speed: number;
+  /** Files being sent at the same time. */
+  concurrency: number;
+  files: CampusPublishFileTransfer[];
+}
+
 export interface CampusPublishProgress {
   instanceId: string;
   stage: CampusPublishStage;
   done: number;
   total: number;
+  transfer?: CampusPublishTransfer;
 }
