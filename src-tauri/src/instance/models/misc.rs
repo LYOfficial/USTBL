@@ -191,6 +191,8 @@ pub struct InstanceSummary {
   /// Imported from a MultiMC component profile; such an instance can only be
   /// exported as MultiMC.
   pub is_component_profile: bool,
+  /// The modpack this instance follows, if any.
+  pub origin: Option<InstanceOrigin>,
 }
 
 impl InstanceSummary {
@@ -221,6 +223,7 @@ impl InstanceSummary {
       is_version_isolated,
       modpack_version: instance.modpack_version.clone(),
       is_component_profile: is_component_instance(&instance.version_path),
+      origin: instance.origin.clone(),
     }
   }
 }
