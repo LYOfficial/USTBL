@@ -24,6 +24,7 @@ import { CommonIconButton } from "@/components/common/common-icon-button";
 import NavMenu from "@/components/common/nav-menu";
 import { Section } from "@/components/common/section";
 import { useLauncherConfig } from "@/contexts/config";
+import { useGlobalData } from "@/contexts/global-data";
 import {
   InstanceContextProvider,
   useInstanceSharedData,
@@ -56,6 +57,7 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
   const instanceId = Array.isArray(id) ? id[0] : id;
 
   const { summary, handleUpdateInstanceConfig } = useInstanceSharedData();
+  const { modpackChecks, checkModpackUpdate } = useGlobalData();
   const { config } = useLauncherConfig();
   const primaryColor = config.appearance.theme.primaryColor;
   const navBarType = config.general.functionality.instancesNavType;
@@ -67,6 +69,13 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
       if (response.status === "success") setVustbAccount(response.data);
     });
   }, []);
+
+  // Opening the details of a followed instance is one of the moments to look
+  // for a new version of its modpack.
+  const followedId = summary?.origin ? summary.id : undefined;
+  useEffect(() => {
+    if (followedId) checkModpackUpdate(followedId);
+  }, [followedId, checkModpackUpdate]);
 
   const handleCreateLaunchDesktopShortcut = useCallback(
     (instanceId: string) => {
@@ -143,7 +152,11 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
       ? [
           {
             icon: LuRefreshCw,
-            label: t("InstanceDetailsLayout.secMenu.updateModpack"),
+            label: t(
+              modpackChecks[summary.id]?.status === "available"
+                ? "InstanceDetailsLayout.secMenu.updateModpackAvailable"
+                : "InstanceDetailsLayout.secMenu.updateModpack"
+            ),
             danger: false,
             onClick: () => {
               openSharedModal("update-modpack", {

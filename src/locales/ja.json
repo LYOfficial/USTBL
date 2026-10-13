@@ -541,6 +541,13 @@
       "vanilla": "バニラ",
       "onOtherPlatform": "{{platform}} で提供されています",
       "openOriginal": "表示"
+    },
+    "followed": {
+      "title": "フォロー中のインスタンス",
+      "checkAll": "すべて確認",
+      "available": "更新あり",
+      "notChecked": "未確認",
+      "open": "更新を表示"
     }
   },
   "DiscoverSourcesPage": {
@@ -1291,7 +1298,8 @@
       "star": "このインスタンスをスター",
       "unstar": "このインスタンスを非スター",
       "publishModPack": "キャンパスModパックに公開",
-      "updateModpack": "モッドパックを更新"
+      "updateModpack": "モッドパックを更新",
+      "updateModpackAvailable": "モッドパックを更新（新バージョンあり）"
     },
     "instanceTabList": {
       "overview": "概要",

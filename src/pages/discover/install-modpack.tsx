@@ -23,6 +23,8 @@ import { Section } from "@/components/common/section";
 import SegmentedControl from "@/components/common/segmented";
 import InstallCampusModpackModal from "@/components/modals/install-campus-modpack-modal";
 import { useLauncherConfig } from "@/contexts/config";
+import { useGlobalData } from "@/contexts/global-data";
+import { useSharedModals } from "@/contexts/shared-modal";
 import { useTaskContext } from "@/contexts/task";
 import { useToast } from "@/contexts/toast";
 import {
@@ -134,6 +136,97 @@ type CampusSelection = {
   line: CampusModpackLine;
 };
 
+// ─── Followed instances ────────────────────────────────────────────────────
+
+/** The instances that follow a modpack, with where each one stands. */
+const FollowedInstancesSection = () => {
+  const { t } = useTranslation();
+  const { openSharedModal } = useSharedModals();
+  const { getInstanceList, modpackChecks, checkModpackUpdate } =
+    useGlobalData();
+  const [checking, setChecking] = useState(false);
+
+  const followed = (getInstanceList() ?? []).filter(
+    (instance) => instance.origin
+  );
+
+  const handleCheckAll = useCallback(async () => {
+    setChecking(true);
+    for (const instance of followed) {
+      await checkModpackUpdate(instance.id, true);
+    }
+    setChecking(false);
+  }, [followed, checkModpackUpdate]);
+
+  if (followed.length === 0) return null;
+
+  return (
+    <VStack align="stretch" spacing={3}>
+      <HStack spacing={2} px={1} justify="space-between" w="100%">
+        <Text fontSize="sm" fontWeight="bold">
+          {t("InstallModpackPage.followed.title")}
+        </Text>
+        <CommonIconButton
+          icon="refresh"
+          label={t("InstallModpackPage.followed.checkAll")}
+          withTooltip
+          onClick={handleCheckAll}
+          isDisabled={checking}
+          size="xs"
+          h={21}
+        />
+      </HStack>
+      <OptionItemGroup
+        items={followed.map((instance) => {
+          const check = modpackChecks[instance.id];
+          return {
+            title: (
+              <HStack spacing={2}>
+                <Text>{instance.name}</Text>
+                {check?.status === "available" && (
+                  <Badge colorScheme="green">
+                    {t("InstallModpackPage.followed.available")}
+                  </Badge>
+                )}
+              </HStack>
+            ),
+            description: (
+              <Text fontSize="xs" className="secondary-text">
+                {[
+                  instance.modpackVersion,
+                  check
+                    ? t(`UpdateModpackModal.status.${check.status}`, {
+                        latest: check.latestLabel,
+                        count: check.localChanges ?? 0,
+                      })
+                    : t("InstallModpackPage.followed.notChecked"),
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </Text>
+            ),
+            children: (
+              <CommonIconButton
+                icon="update"
+                label={t("InstallModpackPage.followed.open")}
+                withTooltip
+                size="xs"
+                h={18}
+                onClick={() =>
+                  openSharedModal("update-modpack", {
+                    instanceId: instance.id,
+                    instanceName: instance.name,
+                  })
+                }
+              />
+            ),
+          };
+        })}
+      />
+    </VStack>
+  );
+};
+
 const CampusPlatformSection = ({
   onShowOriginal,
 }: {
@@ -213,6 +306,7 @@ const CampusPlatformSection = ({
 
   return (
     <VStack align="stretch" spacing={3}>
+      <FollowedInstancesSection />
       <Box px={1}>
         <HStack spacing={2} mb={1} justify="space-between" w="100%">
           <Text fontSize="sm" fontWeight="bold">

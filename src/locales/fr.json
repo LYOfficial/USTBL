@@ -541,6 +541,13 @@
       "vanilla": "Vanilla",
       "onOtherPlatform": "Disponible sur {{platform}}",
       "openOriginal": "Voir"
+    },
+    "followed": {
+      "title": "Mes instances de packs",
+      "checkAll": "Tout vérifier",
+      "available": "Mise à jour disponible",
+      "notChecked": "Pas encore vérifié",
+      "open": "Voir les mises à jour"
     }
   },
   "DiscoverSourcesPage": {
@@ -1291,7 +1298,8 @@
       "star": "Mettre en favori cette instance",
       "unstar": "Retirer des favoris",
       "publishModPack": "Publier dans les modpacks du campus",
-      "updateModpack": "Mettre à jour le pack"
+      "updateModpack": "Mettre à jour le pack",
+      "updateModpackAvailable": "Mettre à jour le pack (nouvelle version)"
     },
     "instanceTabList": {
       "overview": "Aperçu",

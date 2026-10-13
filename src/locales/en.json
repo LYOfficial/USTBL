@@ -541,6 +541,13 @@
       "vanilla": "Vanilla",
       "onOtherPlatform": "Hosted on {{platform}}",
       "openOriginal": "View"
+    },
+    "followed": {
+      "title": "My modpack instances",
+      "checkAll": "Check all",
+      "available": "Update available",
+      "notChecked": "Not checked yet",
+      "open": "View updates"
     }
   },
   "DiscoverSourcesPage": {
@@ -1291,7 +1298,8 @@
       "star": "Star this instance",
       "unstar": "Unstar",
       "publishModPack": "Publish to Campus Modpacks",
-      "updateModpack": "Update modpack"
+      "updateModpack": "Update modpack",
+      "updateModpackAvailable": "Update modpack (new version)"
     },
     "instanceTabList": {
       "overview": "Overview",

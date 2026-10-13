@@ -541,6 +541,13 @@
       "vanilla": "原版",
       "onOtherPlatform": "不在校內平台上，前往 {{platform}} 取得",
       "openOriginal": "查看"
+    },
+    "followed": {
+      "title": "我的整合包實例",
+      "checkAll": "全部檢查",
+      "available": "有新版本",
+      "notChecked": "尚未檢查",
+      "open": "查看更新"
     }
   },
   "DiscoverSourcesPage": {
@@ -1291,7 +1298,8 @@
       "star": "星標此實例",
       "unstar": "取消星標",
       "publishModPack": "發佈到校園整合包",
-      "updateModpack": "更新整合包"
+      "updateModpack": "更新整合包",
+      "updateModpackAvailable": "更新整合包（有新版本）"
     },
     "instanceTabList": {
       "overview": "概覽",
