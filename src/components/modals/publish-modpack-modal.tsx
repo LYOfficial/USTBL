@@ -22,6 +22,7 @@ import {
   OptionItemGroupProps,
 } from "@/components/common/option-item";
 import { useLauncherConfig } from "@/contexts/config";
+import { useGlobalData } from "@/contexts/global-data";
 import { useToast } from "@/contexts/toast";
 import {
   CampusModpackProject,
@@ -47,6 +48,7 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
   const { t } = useTranslation();
   const { config } = useLauncherConfig();
   const toast = useToast();
+  const { getInstanceList } = useGlobalData();
   const primaryColor = config.appearance.theme.primaryColor;
 
   const [projects, setProjects] = useState<CampusModpackProject[]>([]);
@@ -134,6 +136,30 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
     };
   }, [instanceId, modalProps.isOpen, toast]);
 
+  // Keep what the line's current release lists selected: the dialog opens with
+  // the exporter's defaults, which can leave such files out.
+  useEffect(() => {
+    if (!modalProps.isOpen || isNewProject || !fileList) return;
+    let isActive = true;
+    CampusModpackService.fetchCampusModpackPreviousPaths(
+      instanceId,
+      projectChoice
+    ).then((response) => {
+      if (!isActive || response.status !== "success") return;
+      const known = new Set(fileList.all);
+      setSelectedFiles((prev) => {
+        const next = new Set(prev);
+        response.data
+          .filter((path) => known.has(path))
+          .forEach((path) => next.add(path));
+        return next;
+      });
+    });
+    return () => {
+      isActive = false;
+    };
+  }, [fileList, instanceId, isNewProject, modalProps.isOpen, projectChoice]);
+
   useEffect(() => {
     if (!modalProps.isOpen) return;
     return CampusModpackService.onPublishProgress((payload) => {
@@ -205,14 +231,20 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
         selectedFileList
       );
       if (response.status === "success") {
+        if (response.data.adoption === "followed") getInstanceList(true);
+        const notes = [
+          response.data.skipped.length > 0
+            ? t("PublishModpackModal.skipped", {
+                count: response.data.skipped.length,
+              })
+            : undefined,
+          response.data.adoption === "followed"
+            ? undefined
+            : t(`PublishModpackModal.adoption.${response.data.adoption}`),
+        ].filter(Boolean);
         toast({
           title: response.message,
-          description:
-            response.data.skipped.length > 0
-              ? t("PublishModpackModal.skipped", {
-                  count: response.data.skipped.length,
-                })
-              : undefined,
+          description: notes.length > 0 ? notes.join(" ") : undefined,
           status: "success",
         });
         modalProps.onClose();
@@ -233,6 +265,7 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
     checkSlugError,
     checkSummaryError,
     checkVersionError,
+    getInstanceList,
     instanceId,
     isNewProject,
     modalProps,

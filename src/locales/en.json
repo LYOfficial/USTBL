@@ -3039,6 +3039,12 @@
       "bundling": "Uploading bundle",
       "publishing": "Publishing"
     },
-    "skipped": "{{count}} file(s) were left out (disabled mods or launcher files)"
+    "skipped": "{{count}} file(s) were left out (disabled mods or launcher files)",
+    "adoption": {
+      "keptOther": "The instance already follows another modpack or line, so its source record was left alone.",
+      "notIsolated": "Version isolation is off for this instance, so it was not linked to this modpack.",
+      "localChanged": "Local files changed during upload, so the instance was not linked to this version.",
+      "recordFailed": "The version was published, but the instance could not be linked to it. The next check compares as usual."
+    }
   }
 }

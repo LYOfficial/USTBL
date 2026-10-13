@@ -3039,6 +3039,12 @@
       "bundling": "Envoi du paquet",
       "publishing": "Publication"
     },
-    "skipped": "{{count}} fichier(s) exclu(s) (mods désactivés ou fichiers du lanceur)"
+    "skipped": "{{count}} fichier(s) exclu(s) (mods désactivés ou fichiers du lanceur)",
+    "adoption": {
+      "keptOther": "L'instance suit déjà un autre pack ou une autre ligne ; son enregistrement de source est inchangé.",
+      "notIsolated": "L'isolation de version est désactivée pour cette instance ; elle n'a pas été liée à ce pack.",
+      "localChanged": "Des fichiers locaux ont changé pendant l'envoi ; l'instance n'a pas été liée à cette version.",
+      "recordFailed": "La version est publiée, mais l'instance n'a pas pu y être liée. La prochaine vérification comparera normalement."
+    }
   }
 }

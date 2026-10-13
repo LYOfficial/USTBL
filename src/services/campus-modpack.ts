@@ -46,6 +46,20 @@ export class CampusModpackService {
     });
   }
 
+  /**
+   * Paths the line's current release already lists; empty when it has none.
+   */
+  @responseHandler("instance")
+  static async fetchCampusModpackPreviousPaths(
+    instanceId: string,
+    project: string
+  ): Promise<InvokeResponse<string[]>> {
+    return await invoke("fetch_campus_modpack_previous_paths", {
+      instanceId,
+      project,
+    });
+  }
+
   static onPublishProgress(
     callback: (payload: CampusPublishProgress) => void
   ): () => void {

@@ -17,7 +17,16 @@ export interface CampusModpackProject {
 export interface CampusPublishOutcome {
   versionId: number;
   skipped: string[];
+  /** What happened to the instance's own record of the modpack. */
+  adoption: CampusPublishAdoption;
 }
+
+export type CampusPublishAdoption =
+  | "followed"
+  | "keptOther"
+  | "notIsolated"
+  | "localChanged"
+  | "recordFailed";
 
 export type CampusPublishStage =
   | "hashing"
