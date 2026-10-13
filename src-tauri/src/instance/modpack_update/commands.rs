@@ -137,6 +137,22 @@ async fn load_baseline(target: &Target) -> USTBLResult<ModpackBaseline> {
   Ok(baseline)
 }
 
+/// Change an instance's saved config (identity, shown version) and keep the
+/// in-memory copy in step. Starts from the file on disk, because the loader
+/// switch and the importer write the instance file on their own.
+pub async fn store_instance(
+  app: &AppHandle,
+  instance_id: &str,
+  change: impl FnOnce(&mut Instance),
+) -> USTBLResult<()> {
+  let mut instance = current_instance(app, instance_id)?.load_json_cfg().await?;
+  change(&mut instance);
+  instance.save_json_cfg().await?;
+  let binding = app.state::<Mutex<HashMap<String, Instance>>>();
+  binding.lock()?.insert(instance_id.to_string(), instance);
+  Ok(())
+}
+
 struct AppEnv {
   app: AppHandle,
   instance_id: String,
@@ -190,18 +206,13 @@ impl UpdateEnv for AppEnv {
   }
 
   async fn commit_origin(&self, version_id: &str) -> USTBLResult<()> {
-    // The loader switch saved the instance file on its own; start from disk.
-    let mut instance = current_instance(&self.app, &self.instance_id)?
-      .load_json_cfg()
-      .await?;
-    if let Some(origin) = instance.origin.as_mut() {
-      origin.version_id = version_id.to_string();
-    }
-    instance.modpack_version = Some(self.label.clone());
-    instance.save_json_cfg().await?;
-    let binding = self.app.state::<Mutex<HashMap<String, Instance>>>();
-    binding.lock()?.insert(self.instance_id.clone(), instance);
-    Ok(())
+    store_instance(&self.app, &self.instance_id, |instance| {
+      if let Some(origin) = instance.origin.as_mut() {
+        origin.version_id = version_id.to_string();
+      }
+      instance.modpack_version = Some(self.label.clone());
+    })
+    .await
   }
 
   fn report(&self, progress: Progress) {
