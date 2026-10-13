@@ -203,8 +203,6 @@ impl ModpackBaseline {
   }
 
   /// The recorded component chain, `None` when the pack has none.
-  // Consumed by the update engine; only tests use it for now.
-  #[cfg_attr(not(test), allow(dead_code))]
   pub fn component_refs(&self) -> Option<Vec<ComponentRef>> {
     let value = self.components.clone()?;
     serde_json::from_value::<Vec<ComponentRef>>(value)

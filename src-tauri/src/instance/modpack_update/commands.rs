@@ -2,7 +2,7 @@
 
 use super::apply::{apply, recover, Progress, Recovery, UpdateEnv, UpdateRequest};
 use super::diff::{resolve, Conflict, ConflictChoice, FileChange};
-use super::plan::prepare;
+use super::plan::{prepare, requires_reinstall};
 use super::sources::{download_param, latest_version, resolve_remote, LatestVersion};
 use crate::error::USTBLResult;
 use crate::instance::commands::switch_mod_loader;
@@ -60,6 +60,9 @@ pub struct UpdatePlan {
   pub changes: Vec<FileChange>,
   pub conflicts: Vec<Conflict>,
   pub loader_change: Option<LoaderChange>,
+  /// The new version changes the component chain, so it has to be installed
+  /// again. No changes are planned and `apply_modpack_update` refuses.
+  pub reinstall_required: bool,
   pub plan_hash: String,
 }
 
@@ -269,6 +272,18 @@ async fn plan_for(
     latest,
   )
   .await?;
+  if requires_reinstall(baseline, &remote) {
+    return Ok(UpdatePlan {
+      from_version_id: target.origin.version_id.clone(),
+      to_version_id: remote.version_id.clone(),
+      to_label: remote.label.clone(),
+      changes: Vec::new(),
+      conflicts: Vec::new(),
+      loader_change: None,
+      reinstall_required: true,
+      plan_hash: String::new(),
+    });
+  }
   let prepared = prepare(&target.root, baseline, &remote).await?;
   Ok(UpdatePlan {
     from_version_id: target.origin.version_id.clone(),
@@ -280,6 +295,7 @@ async fn plan_for(
       from: baseline.loader.clone(),
       to: remote.loader.clone(),
     }),
+    reinstall_required: false,
     plan_hash: prepared.plan_hash,
   })
 }
@@ -308,6 +324,9 @@ pub async fn apply_modpack_update(
     &latest,
   )
   .await?;
+  if requires_reinstall(&baseline, &remote) {
+    return Err(InstanceError::ModpackUpdateReinstallRequired.into());
+  }
   let prepared = prepare(&target.root, &baseline, &remote).await?;
   if prepared.plan_hash != plan_hash {
     return Err(InstanceError::ModpackUpdateStale.into());
@@ -329,6 +348,7 @@ pub async fn apply_modpack_update(
       remote,
       origin: target.origin.clone(),
       previous_loader: baseline.loader.clone(),
+      components: baseline.component_refs(),
     },
   )
   .await;

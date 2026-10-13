@@ -41,6 +41,20 @@ pub fn plan_hash(remote: &RemoteModpack, diff: &Diff) -> String {
   hex::encode(hasher.finalize())
 }
 
+/// Whether the new version needs a clean install instead of an in-place update.
+///
+/// A component chain decides the libraries, loader patches and launch arguments
+/// of an instance, which files cannot express. A new version that declares a
+/// chain different from the one the instance was installed with, or declares one
+/// for an instance that has none, must be installed again. A new version
+/// without a chain never forces a reinstall.
+pub fn requires_reinstall(baseline: &ModpackBaseline, remote: &RemoteModpack) -> bool {
+  let Some(wanted) = &remote.components else {
+    return false;
+  };
+  baseline.component_refs().as_ref() != Some(wanted)
+}
+
 /// Hash the files both versions care about and compare the three states.
 pub async fn prepare(
   root: &Path,
@@ -68,7 +82,9 @@ pub async fn prepare(
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::instance::helpers::modpack::baseline::{BaselineFile, BaselineLoader};
+  use crate::instance::helpers::modpack::baseline::{
+    components_of_mmc_pack, BaselineFile, BaselineLoader, ComponentRef,
+  };
   use crate::instance::models::misc::{InstanceOrigin, ModLoaderType, OriginPlatform};
   use crate::instance::modpack_update::diff::{ChangeKind, ConflictKind};
   use crate::instance::modpack_update::remote::{FileSource, RemoteFile};
@@ -118,6 +134,7 @@ mod tests {
       label: "2".into(),
       game_version: "1.21.1".into(),
       loader: loader(),
+      components: None,
       files: files
         .iter()
         .map(|(path, content)| RemoteFile {
@@ -222,5 +239,69 @@ mod tests {
     .unwrap();
     assert!(prepared.diff.is_empty());
     let _ = fs::remove_dir_all(root);
+  }
+
+  /// A baseline built the way `create_instance` does for a component pack: the
+  /// chain comes from the `mmc-pack.json` kept in the profile snapshot.
+  fn component_baseline(snapshot_pack: &serde_json::Value) -> ModpackBaseline {
+    baseline(&[("mods/a.jar", "a1")]).with_components(components_of_mmc_pack(snapshot_pack))
+  }
+
+  fn chain_of(pack: &serde_json::Value) -> Option<Vec<ComponentRef>> {
+    Some(components_of_mmc_pack(pack))
+  }
+
+  fn gtnh_pack(forge: &str) -> serde_json::Value {
+    serde_json::json!({
+      "formatVersion": 1,
+      "components": [
+        {"uid": "net.minecraft", "version": "1.7.10", "important": true},
+        {"uid": "net.minecraftforge", "version": forge, "cachedName": "Forge"},
+      ]
+    })
+  }
+
+  #[test]
+  fn a_changed_component_chain_requires_a_reinstall() {
+    let installed = component_baseline(&gtnh_pack("10.13.4.1614"));
+    let mut remote = remote(&[("mods/a.jar", "a2")]);
+
+    remote.components = chain_of(&gtnh_pack("10.13.4.1615"));
+    assert!(requires_reinstall(&installed, &remote));
+
+    let mut extra = gtnh_pack("10.13.4.1614");
+    extra["components"]
+      .as_array_mut()
+      .unwrap()
+      .push(serde_json::json!({"uid": "org.lwjgl3", "version": "3.3.1"}));
+    remote.components = chain_of(&extra);
+    assert!(requires_reinstall(&installed, &remote));
+  }
+
+  #[test]
+  fn an_unchanged_chain_or_no_chain_updates_files_in_place() {
+    let installed = component_baseline(&gtnh_pack("10.13.4.1614"));
+    let mut remote = remote(&[("mods/a.jar", "a2")]);
+
+    // Same chain, listed in another order and with different labels.
+    remote.components = chain_of(&serde_json::json!({
+      "components": [
+        {"uid": "net.minecraftforge", "version": "10.13.4.1614"},
+        {"uid": "net.minecraft", "version": "1.7.10", "cachedName": "Minecraft"},
+      ]
+    }));
+    assert!(!requires_reinstall(&installed, &remote));
+
+    remote.components = None;
+    assert!(!requires_reinstall(&installed, &remote));
+  }
+
+  #[test]
+  fn a_chain_for_an_instance_without_one_requires_a_reinstall() {
+    let plain = baseline(&[("mods/a.jar", "a1")]);
+    let mut remote = remote(&[("mods/a.jar", "a2")]);
+    assert!(!requires_reinstall(&plain, &remote));
+    remote.components = chain_of(&gtnh_pack("10.13.4.1614"));
+    assert!(requires_reinstall(&plain, &remote));
   }
 }
