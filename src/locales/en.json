@@ -2625,7 +2625,8 @@
             "MODPACK_UPDATE_REMOTE_INVALID": "The new version file list is invalid; the update was refused",
             "MODPACK_UPDATE_LINE_MISMATCH": "The new version is for a different game version or mod loader than this instance",
             "MODPACK_UPDATE_UNSUPPORTED": "This instance cannot be updated automatically",
-            "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack"
+            "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "This version changes the modpack's component chain and cannot be applied in place; install it again"
           }
         }
       },

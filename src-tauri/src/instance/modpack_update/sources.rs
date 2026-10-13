@@ -7,7 +7,7 @@ use super::diff::FileKey;
 use super::remote::{FileSource, RemoteFile, RemoteModpack, UPDATE_DIR};
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::modpack::baseline::{
-  hash_file, normalize_relative_path, BaselineLoader,
+  canonical_components, hash_file, normalize_relative_path, BaselineLoader, ComponentRef,
 };
 use crate::instance::helpers::modpack::misc::{list_override_entries, parse_platform_manifest};
 use crate::instance::models::misc::{InstanceError, InstanceOrigin, ModLoaderType, OriginPlatform};
@@ -118,6 +118,16 @@ pub struct CampusVersion {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CampusManifest {
   pub files: Vec<CampusFile>,
+  /// Component chain of a component-profile pack.
+  #[serde(default)]
+  pub components: Option<Vec<CampusComponent>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CampusComponent {
+  pub uid: String,
+  #[serde(default)]
+  pub version: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -218,6 +228,12 @@ pub fn campus_remote(
       loader_type,
       version: version.loader_version.clone(),
     },
+    components: version.manifest.components.as_ref().map(|chain| {
+      canonical_components(chain.iter().map(|component| ComponentRef {
+        uid: component.uid.clone(),
+        version: component.version.clone(),
+      }))
+    }),
     files,
   })
 }
@@ -323,6 +339,7 @@ pub async fn remote_from_archive(
       loader_type,
       version: loader_version,
     },
+    components: None,
     files: merge_files(downloads, overrides),
   })
 }
@@ -618,6 +635,28 @@ mod tests {
       }
       other => panic!("{other:?}"),
     }
+  }
+
+  #[test]
+  fn campus_component_chain_is_read_in_canonical_order() {
+    let mut version = campus(serde_json::json!([]));
+    assert!(campus_remote(&version, None, "https://api.example")
+      .unwrap()
+      .components
+      .is_none());
+
+    version.manifest.components = serde_json::from_value(serde_json::json!([
+      {"uid": "net.minecraftforge", "version": "10.13.4.1614", "cachedName": "Forge"},
+      {"uid": "net.minecraft", "version": "1.7.10"},
+    ]))
+    .unwrap();
+    let chain = campus_remote(&version, None, "https://api.example")
+      .unwrap()
+      .components
+      .unwrap();
+    let uids: Vec<_> = chain.iter().map(|c| c.uid.as_str()).collect();
+    assert_eq!(uids, ["net.minecraft", "net.minecraftforge"]);
+    assert_eq!(chain[1].version, "10.13.4.1614");
   }
 
   #[test]

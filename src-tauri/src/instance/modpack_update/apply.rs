@@ -10,7 +10,7 @@ use super::diff::{Operation, DISABLED_SUFFIX};
 use super::remote::{FileSource, RemoteFile, RemoteModpack, UPDATE_DIR};
 use crate::error::USTBLResult;
 use crate::instance::helpers::modpack::baseline::{
-  hash_file, BaselineLoader, ModpackBaseline, BASELINE_FILE_NAME,
+  hash_file, BaselineLoader, ComponentRef, ModpackBaseline, BASELINE_FILE_NAME,
 };
 use crate::instance::models::misc::{InstanceError, InstanceOrigin};
 use crate::tasks::download::DownloadParam;
@@ -117,6 +117,8 @@ pub struct UpdateRequest {
   pub remote: RemoteModpack,
   pub origin: InstanceOrigin,
   pub previous_loader: BaselineLoader,
+  /// Component chain recorded in the new baseline.
+  pub components: Option<Vec<ComponentRef>>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -476,14 +478,15 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
     });
     let mut origin = request.origin.clone();
     origin.version_id = request.remote.version_id.clone();
-    ModpackBaseline::build(
+    let mut baseline = ModpackBaseline::build(
       &origin,
       request.remote.loader.clone(),
       request.remote.baseline_files(),
-    )
-    .save(root)
-    .await
-    .map_err(io_error)?;
+    );
+    if let Some(chain) = &request.components {
+      baseline = baseline.with_components(chain.clone());
+    }
+    baseline.save(root).await.map_err(io_error)?;
     env.commit_origin(&request.remote.version_id).await
   }
   .await;
@@ -658,10 +661,12 @@ mod tests {
         label: "2".into(),
         game_version: "1.21.1".into(),
         loader: loader(new_loader),
+        components: None,
         files,
       },
       origin: origin("1"),
       previous_loader: loader("0.15.0"),
+      components: None,
     }
   }
 
@@ -727,6 +732,28 @@ mod tests {
     assert!(!root.0.join(UPDATE_DIR).join("staging").exists());
     assert!(!journal_path(&root.0).exists());
     assert!(UpdateGuard::acquire(&root.0).is_ok());
+  }
+
+  #[tokio::test]
+  async fn the_component_chain_is_carried_into_the_new_baseline() {
+    let root = setup();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let new = url_file("mods/new.jar", "new", &mut env);
+    let operations = vec![write_op(&new)];
+    let mut update = request(&root, vec![new], operations, "0.16.0");
+    let chain = vec![ComponentRef {
+      uid: "net.minecraft".into(),
+      version: "1.7.10".into(),
+    }];
+    update.components = Some(chain.clone());
+
+    apply(&env, update).await.unwrap();
+
+    let baseline = ModpackBaseline::load(&root.0).await.unwrap();
+    assert_eq!(baseline.component_refs(), Some(chain));
   }
 
   #[tokio::test]

@@ -337,6 +337,7 @@ pub enum InstanceError {
   ModpackUpdateLineMismatch,
   ModpackUpdateUnsupported,
   ModpackUpdateRunning,
+  ModpackUpdateReinstallRequired,
   ModpackPublishStale,
 }
 

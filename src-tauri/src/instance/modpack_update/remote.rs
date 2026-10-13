@@ -4,7 +4,7 @@
 use super::diff::FileKey;
 use crate::error::USTBLResult;
 use crate::instance::helpers::modpack::baseline::{
-  compute_content_hash, BaselineFile, BaselineLoader,
+  compute_content_hash, BaselineFile, BaselineLoader, ComponentRef,
 };
 use crate::instance::helpers::modpack::misc::is_launcher_metadata_path;
 use crate::instance::helpers::modpack::multimc::profile::safe_relative;
@@ -40,6 +40,9 @@ pub struct RemoteModpack {
   pub label: String,
   pub game_version: String,
   pub loader: BaselineLoader,
+  /// Component chain of a component-profile pack in canonical order, `None`
+  /// when the pack has none.
+  pub components: Option<Vec<ComponentRef>>,
   pub files: Vec<RemoteFile>,
 }
 
@@ -87,7 +90,11 @@ impl RemoteModpack {
   }
 
   pub fn content_hash(&self) -> String {
-    compute_content_hash(&self.loader, None, &self.baseline_files())
+    let components = self
+      .components
+      .as_ref()
+      .map(|chain| serde_json::to_value(chain).expect("component refs serialize to JSON"));
+    compute_content_hash(&self.loader, components.as_ref(), &self.baseline_files())
   }
 }
 
@@ -105,6 +112,7 @@ mod tests {
         loader_type: ModLoaderType::Fabric,
         version: "0.16.0".into(),
       },
+      components: None,
       files: paths
         .iter()
         .map(|path| RemoteFile {
