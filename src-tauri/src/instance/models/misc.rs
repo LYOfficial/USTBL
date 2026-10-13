@@ -336,6 +336,7 @@ pub enum InstanceError {
   ModpackUpdateRemoteInvalid,
   ModpackUpdateLineMismatch,
   ModpackUpdateUnsupported,
+  ModpackUpdateRunning,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize, Default)]

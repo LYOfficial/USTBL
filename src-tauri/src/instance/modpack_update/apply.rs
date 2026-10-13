@@ -6,7 +6,7 @@
 //! folder instead of being deleted. If anything fails, or the launcher dies
 //! half way, the journal is enough to put every file back.
 
-use super::diff::{FileKey, Operation, DISABLED_SUFFIX};
+use super::diff::{Operation, DISABLED_SUFFIX};
 use super::remote::{FileSource, RemoteFile, RemoteModpack, UPDATE_DIR};
 use crate::error::USTBLResult;
 use crate::instance::helpers::modpack::baseline::{
@@ -15,7 +15,7 @@ use crate::instance::helpers::modpack::baseline::{
 use crate::instance::models::misc::{InstanceError, InstanceOrigin};
 use crate::tasks::download::DownloadParam;
 use async_trait::async_trait;
-use futures::stream::{self, StreamExt, TryStreamExt};
+use futures::stream::{FuturesUnordered, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
@@ -406,11 +406,19 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
     total,
   });
   let mut done = 0;
-  let mut fetches = stream::iter(to_fetch)
-    .map(|file| stage_file(env, root, file))
-    .buffer_unordered(FETCH_CONCURRENCY);
-  while let Some(result) = fetches.try_next().await? {
-    let () = result;
+  // Driven by hand rather than with `buffer_unordered`: the combinator's
+  // closure makes the future fail the `Send` check of the command handler.
+  let mut pending = to_fetch.into_iter();
+  let mut running = FuturesUnordered::new();
+  loop {
+    while running.len() < FETCH_CONCURRENCY {
+      let Some(file) = pending.next() else { break };
+      running.push(stage_file(env, root, file));
+    }
+    let Some(result) = running.next().await else {
+      break;
+    };
+    result?;
     done += 1;
     env.report(Progress {
       stage: Stage::Fetching,
@@ -418,7 +426,6 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
       total,
     });
   }
-  drop(fetches);
 
   // Phase 2: write the journal and save the files the update rewrites.
   env.report(Progress {
@@ -518,6 +525,7 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
 mod tests {
   use super::*;
   use crate::instance::models::misc::{ModLoaderType, OriginPlatform};
+  use crate::instance::modpack_update::diff::FileKey;
   use sha1::{Digest, Sha1};
   use std::io::Write;
 

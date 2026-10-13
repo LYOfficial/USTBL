@@ -87,6 +87,7 @@ pub struct Diff {
 }
 
 impl Diff {
+  #[cfg(test)]
   pub fn is_empty(&self) -> bool {
     self.changes.is_empty() && self.conflicts.is_empty()
   }

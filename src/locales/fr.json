@@ -2618,7 +2618,8 @@
             "MODPACK_UPDATE_STALE": "Les fichiers locaux ont changé après la vérification ; vérifiez de nouveau les mises à jour",
             "MODPACK_UPDATE_REMOTE_INVALID": "La liste de fichiers de la nouvelle version est invalide ; la mise à jour a été refusée",
             "MODPACK_UPDATE_LINE_MISMATCH": "La nouvelle version cible une autre version du jeu ou un autre chargeur que cette instance",
-            "MODPACK_UPDATE_UNSUPPORTED": "Cette instance ne peut pas être mise à jour automatiquement"
+            "MODPACK_UPDATE_UNSUPPORTED": "Cette instance ne peut pas être mise à jour automatiquement",
+            "MODPACK_UPDATE_RUNNING": "Le jeu est en cours d’exécution ; fermez-le avant de mettre à jour le pack de mods"
           }
         }
       },

@@ -1,4 +1,5 @@
 pub mod apply;
+pub mod commands;
 pub mod diff;
 pub mod plan;
 pub mod remote;

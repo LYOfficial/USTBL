@@ -1,0 +1,359 @@
+//! Tauri commands for following a modpack: check, plan, apply, recover.
+
+use super::apply::{apply, recover, Progress, Recovery, UpdateEnv, UpdateRequest};
+use super::diff::{resolve, Conflict, ConflictChoice, FileChange};
+use super::plan::prepare;
+use super::sources::{download_param, latest_version, resolve_remote, LatestVersion};
+use crate::error::USTBLResult;
+use crate::instance::commands::switch_mod_loader;
+use crate::instance::helpers::misc::refresh_and_update_instances;
+use crate::instance::helpers::modpack::baseline::{BaselineLoader, ModpackBaseline};
+use crate::instance::models::misc::{
+  Instance, InstanceError, InstanceOrigin, ModLoader, ModLoaderStatus, ModLoaderType,
+};
+use crate::launch::models::LaunchingState;
+use crate::resource::models::ModLoaderResourceInfo;
+use crate::tasks::download::DownloadParam;
+use async_trait::async_trait;
+use serde::Serialize;
+use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+use tauri::{AppHandle, Emitter, Manager};
+
+const PROGRESS_EVENT: &str = "modpack-update:progress";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CheckStatus {
+  /// The instance has no followable identity.
+  NotFollowing,
+  UpToDate,
+  Available,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCheck {
+  pub status: CheckStatus,
+  /// The player paused following; updates are shown but never forced.
+  pub follow: bool,
+  pub current_label: Option<String>,
+  pub latest_version_id: Option<String>,
+  pub latest_label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoaderChange {
+  pub from: BaselineLoader,
+  pub to: BaselineLoader,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdatePlan {
+  pub from_version_id: String,
+  pub to_version_id: String,
+  pub to_label: String,
+  pub changes: Vec<FileChange>,
+  pub conflicts: Vec<Conflict>,
+  pub loader_change: Option<LoaderChange>,
+  pub plan_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateOutcome {
+  pub version_id: String,
+  /// Forge-family loaders still need `finish_mod_loader_install` before the
+  /// instance can start.
+  pub loader_install_pending: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProgressEvent {
+  instance_id: String,
+  #[serde(flatten)]
+  progress: Progress,
+}
+
+struct Target {
+  instance: Instance,
+  origin: InstanceOrigin,
+  root: PathBuf,
+}
+
+fn current_instance(app: &AppHandle, instance_id: &str) -> USTBLResult<Instance> {
+  let binding = app.state::<Mutex<HashMap<String, Instance>>>();
+  let state = binding.lock()?;
+  Ok(
+    state
+      .get(instance_id)
+      .ok_or(InstanceError::InstanceNotFoundByID)?
+      .clone(),
+  )
+}
+
+fn target(app: &AppHandle, instance_id: &str) -> USTBLResult<Option<Target>> {
+  let instance = current_instance(app, instance_id)?;
+  let Some(origin) = instance.origin.clone() else {
+    return Ok(None);
+  };
+  let root = instance.version_path.clone();
+  Ok(Some(Target {
+    instance,
+    origin,
+    root,
+  }))
+}
+
+fn ensure_not_running(app: &AppHandle, instance_id: &str) -> USTBLResult<()> {
+  let binding = app.state::<Mutex<Vec<LaunchingState>>>();
+  let queue = binding.lock()?;
+  if queue
+    .iter()
+    .any(|launching| launching.selected_instance.id == instance_id)
+  {
+    return Err(InstanceError::ModpackUpdateRunning.into());
+  }
+  Ok(())
+}
+
+/// The baseline is the record of what the modpack installed. Without a
+/// matching one the instance cannot be compared safely.
+async fn load_baseline(target: &Target) -> USTBLResult<ModpackBaseline> {
+  let baseline = ModpackBaseline::load(&target.root)
+    .await
+    .map_err(|_| InstanceError::ModpackUpdateUnsupported)?;
+  if !baseline.is_consistent_with(&target.origin) {
+    return Err(InstanceError::ModpackUpdateUnsupported.into());
+  }
+  Ok(baseline)
+}
+
+struct AppEnv {
+  app: AppHandle,
+  instance_id: String,
+  label: String,
+  loader_install_pending: AtomicBool,
+}
+
+#[async_trait]
+impl UpdateEnv for AppEnv {
+  async fn fetch(&self, param: DownloadParam) -> USTBLResult<()> {
+    download_param(&self.app, param).await
+  }
+
+  async fn switch_loader(&self, loader: &BaselineLoader) -> USTBLResult<()> {
+    let instance = current_instance(&self.app, &self.instance_id)?;
+    let needs_branch = matches!(
+      loader.loader_type,
+      ModLoaderType::Forge | ModLoaderType::LegacyForge | ModLoaderType::NeoForge
+    );
+    let branch = if needs_branch {
+      ModLoader {
+        loader_type: loader.loader_type,
+        version: loader.version.clone(),
+        status: ModLoaderStatus::NotDownloaded,
+        branch: None,
+      }
+      .with_branch(&self.app, instance.version.clone())
+      .await?
+      .branch
+    } else {
+      None
+    };
+    switch_mod_loader(
+      self.app.clone(),
+      self.instance_id.clone(),
+      ModLoaderResourceInfo {
+        loader_type: loader.loader_type,
+        version: loader.version.clone(),
+        description: String::new(),
+        stable: true,
+        branch,
+      },
+      Some(false),
+      true,
+    )
+    .await?;
+    self
+      .loader_install_pending
+      .store(needs_branch, Ordering::SeqCst);
+    Ok(())
+  }
+
+  async fn commit_origin(&self, version_id: &str) -> USTBLResult<()> {
+    // The loader switch saved the instance file on its own; start from disk.
+    let mut instance = current_instance(&self.app, &self.instance_id)?
+      .load_json_cfg()
+      .await?;
+    if let Some(origin) = instance.origin.as_mut() {
+      origin.version_id = version_id.to_string();
+    }
+    instance.modpack_version = Some(self.label.clone());
+    instance.save_json_cfg().await?;
+    let binding = self.app.state::<Mutex<HashMap<String, Instance>>>();
+    binding.lock()?.insert(self.instance_id.clone(), instance);
+    Ok(())
+  }
+
+  fn report(&self, progress: Progress) {
+    let _ = self.app.emit_to(
+      "main",
+      PROGRESS_EVENT,
+      ProgressEvent {
+        instance_id: self.instance_id.clone(),
+        progress,
+      },
+    );
+  }
+}
+
+#[tauri::command]
+pub async fn check_modpack_update(app: AppHandle, instance_id: String) -> USTBLResult<UpdateCheck> {
+  let Some(target) = target(&app, &instance_id)? else {
+    return Ok(UpdateCheck {
+      status: CheckStatus::NotFollowing,
+      follow: false,
+      current_label: None,
+      latest_version_id: None,
+      latest_label: None,
+    });
+  };
+  let latest = latest_version(&app, &target.origin).await?;
+  Ok(UpdateCheck {
+    status: if latest.is_some() {
+      CheckStatus::Available
+    } else {
+      CheckStatus::UpToDate
+    },
+    follow: target.origin.follow,
+    current_label: target.instance.modpack_version.clone(),
+    latest_version_id: latest.as_ref().map(|v| v.version_id.clone()),
+    latest_label: latest.map(|v| v.label),
+  })
+}
+
+/// Fetch the new version and compare it with the instance. Changes nothing
+/// except downloading the modpack archive into the update folder.
+#[tauri::command]
+pub async fn prepare_modpack_update(
+  app: AppHandle,
+  instance_id: String,
+) -> USTBLResult<UpdatePlan> {
+  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  ensure_not_running(&app, &instance_id)?;
+  let baseline = load_baseline(&target).await?;
+  recover(&target.root)?;
+  let latest = latest_version(&app, &target.origin)
+    .await?
+    .ok_or(InstanceError::ModpackUpdateStale)?;
+  plan_for(&app, &target, &baseline, &latest).await
+}
+
+async fn plan_for(
+  app: &AppHandle,
+  target: &Target,
+  baseline: &ModpackBaseline,
+  latest: &LatestVersion,
+) -> USTBLResult<UpdatePlan> {
+  let remote = resolve_remote(
+    app,
+    &target.origin,
+    &target.root,
+    &target.instance.name,
+    latest,
+  )
+  .await?;
+  let prepared = prepare(&target.root, baseline, &remote).await?;
+  Ok(UpdatePlan {
+    from_version_id: target.origin.version_id.clone(),
+    to_version_id: remote.version_id.clone(),
+    to_label: remote.label.clone(),
+    changes: prepared.diff.changes,
+    conflicts: prepared.diff.conflicts,
+    loader_change: (remote.loader != baseline.loader).then(|| LoaderChange {
+      from: baseline.loader.clone(),
+      to: remote.loader.clone(),
+    }),
+    plan_hash: prepared.plan_hash,
+  })
+}
+
+/// Apply the plan the player confirmed. `choices` answers conflicts by path;
+/// anything unanswered keeps the local file.
+#[tauri::command]
+pub async fn apply_modpack_update(
+  app: AppHandle,
+  instance_id: String,
+  plan_hash: String,
+  choices: BTreeMap<String, ConflictChoice>,
+) -> USTBLResult<UpdateOutcome> {
+  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  ensure_not_running(&app, &instance_id)?;
+  let baseline = load_baseline(&target).await?;
+  recover(&target.root)?;
+  let latest = latest_version(&app, &target.origin)
+    .await?
+    .ok_or(InstanceError::ModpackUpdateStale)?;
+  let remote = resolve_remote(
+    &app,
+    &target.origin,
+    &target.root,
+    &target.instance.name,
+    &latest,
+  )
+  .await?;
+  let prepared = prepare(&target.root, &baseline, &remote).await?;
+  if prepared.plan_hash != plan_hash {
+    return Err(InstanceError::ModpackUpdateStale.into());
+  }
+
+  let env = AppEnv {
+    app: app.clone(),
+    instance_id: instance_id.clone(),
+    label: remote.label.clone(),
+    loader_install_pending: AtomicBool::new(false),
+  };
+  let version_id = remote.version_id.clone();
+  let result = apply(
+    &env,
+    UpdateRequest {
+      root: target.root.clone(),
+      instance_name: target.instance.name.clone(),
+      operations: resolve(&prepared.diff, &choices),
+      remote,
+      origin: target.origin.clone(),
+      previous_loader: baseline.loader.clone(),
+    },
+  )
+  .await;
+  if result.is_err() {
+    // A rolled back update restored the files on disk; drop stale memory.
+    refresh_and_update_instances(&app, false).await;
+  }
+  result?;
+  Ok(UpdateOutcome {
+    version_id,
+    loader_install_pending: env.loader_install_pending.load(Ordering::SeqCst),
+  })
+}
+
+/// Undo or finish an update that was interrupted. Returns whether anything
+/// had to be done.
+#[tauri::command]
+pub async fn recover_modpack_update(app: AppHandle, instance_id: String) -> USTBLResult<bool> {
+  let instance = current_instance(&app, &instance_id)?;
+  let root = instance.version_path.clone();
+  let outcome = tokio::task::spawn_blocking(move || recover(&root))
+    .await
+    .map_err(|e| crate::error::USTBLError(e.to_string()))??;
+  if outcome == Recovery::RolledBack {
+    refresh_and_update_instances(&app, false).await;
+  }
+  Ok(outcome != Recovery::Nothing)
+}
