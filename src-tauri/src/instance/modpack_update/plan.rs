@@ -1,6 +1,6 @@
 //! Comparing an instance with the version it is being updated to.
 
-use super::diff::{collect_local_states, three_way, Diff, FileKey};
+use super::diff::{collect_local_states, three_way, Diff, FileKey, LocalState};
 use super::remote::RemoteModpack;
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::modpack::baseline::ModpackBaseline;
@@ -60,6 +60,23 @@ pub fn requires_reinstall(baseline: &ModpackBaseline, remote: &RemoteModpack, fr
     return false;
   }
   baseline.component_refs().as_ref() != Some(wanted)
+}
+
+/// How many files the modpack manages differ from what it installed. A file the
+/// player switched off counts, since that is a deliberate local change.
+pub async fn count_local_changes(root: &Path, baseline: &ModpackBaseline) -> USTBLResult<usize> {
+  let keys = baseline_keys(baseline);
+  let paths: BTreeSet<String> = keys.keys().cloned().collect();
+  let root = root.to_path_buf();
+  let local = tokio::task::spawn_blocking(move || collect_local_states(&root, &paths))
+    .await
+    .map_err(|e| USTBLError(e.to_string()))??;
+  Ok(
+    keys
+      .iter()
+      .filter(|(path, key)| local.get(*path) != Some(&LocalState::Present((*key).clone())))
+      .count(),
+  )
 }
 
 /// Hash the files both versions care about and compare the three states.
@@ -311,5 +328,28 @@ mod tests {
     assert!(!requires_reinstall(&plain, &remote, false));
     remote.components = chain_of(&gtnh_pack("10.13.4.1614"));
     assert!(requires_reinstall(&plain, &remote, false));
+  }
+
+  #[tokio::test]
+  async fn only_managed_files_that_differ_count_as_local_changes() {
+    let root = std::env::temp_dir().join(format!("ustbl-plan-test-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(root.join("mods")).unwrap();
+    fs::write(root.join("mods/same.jar"), "same").unwrap();
+    fs::write(root.join("mods/edited.jar"), "edited-by-player").unwrap();
+    fs::write(root.join("mods/off.jar.disabled"), "off").unwrap();
+    // Not listed in the baseline, so not the modpack's business.
+    fs::write(root.join("mods/mine.jar"), "mine").unwrap();
+    let installed = baseline(&[
+      ("mods/same.jar", "same"),
+      ("mods/edited.jar", "original"),
+      ("mods/off.jar", "off"),
+      ("mods/gone.jar", "gone"),
+    ]);
+
+    // edited, switched off, deleted
+    assert_eq!(count_local_changes(&root, &installed).await.unwrap(), 3);
+    let clean = baseline(&[("mods/same.jar", "same")]);
+    assert_eq!(count_local_changes(&root, &clean).await.unwrap(), 0);
+    let _ = fs::remove_dir_all(root);
   }
 }

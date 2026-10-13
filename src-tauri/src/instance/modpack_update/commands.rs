@@ -4,7 +4,7 @@ use super::apply::{
   apply, can_roll_back_last, recover, roll_back_last, Progress, Recovery, UpdateEnv, UpdateRequest,
 };
 use super::diff::{resolve, Conflict, ConflictChoice, FileChange};
-use super::plan::{prepare, requires_reinstall};
+use super::plan::{count_local_changes, prepare, requires_reinstall};
 use super::remote::ComponentPack;
 use super::restore::restore_component_profile;
 use super::sources::{download_param, latest_version, resolve_remote, LatestVersion};
@@ -36,9 +36,15 @@ pub enum CheckStatus {
   /// The player paused following; nothing is checked.
   Paused,
   /// Version isolation is off or the baseline is unusable, so the instance
-  /// cannot be compared safely.
+  /// cannot be compared safely. `reason` says which.
   NeedsRepair,
+  /// The loader of the instance is not installed yet (a first install or an
+  /// update is still finishing it), so nothing is compared.
+  WaitingLoader,
   UpToDate,
+  /// Up to date, but managed files were changed here. Only reported when the
+  /// caller asked for the local scan.
+  LocalChanges,
   Available,
   /// The platform could not be asked; `reason` carries the error code.
   Unknown,
@@ -57,6 +63,8 @@ pub struct UpdateCheck {
   pub reason: Option<String>,
   /// The previous update left a backup that can still be rolled back.
   pub can_roll_back: bool,
+  /// How many managed files differ from the install; set by the local scan.
+  pub local_changes: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -148,9 +156,9 @@ fn ensure_not_running(app: &AppHandle, instance_id: &str) -> USTBLResult<()> {
 async fn load_baseline(target: &Target) -> USTBLResult<ModpackBaseline> {
   let baseline = ModpackBaseline::load(&target.root)
     .await
-    .map_err(|_| InstanceError::ModpackUpdateUnsupported)?;
+    .map_err(|_| InstanceError::ModpackUpdateBaselineMissing)?;
   if !baseline.is_consistent_with(&target.origin) {
-    return Err(InstanceError::ModpackUpdateUnsupported.into());
+    return Err(InstanceError::ModpackUpdateBaselineMissing.into());
   }
   Ok(baseline)
 }
@@ -272,11 +280,16 @@ fn check_of(status: CheckStatus, target: &Target) -> UpdateCheck {
     latest_label: None,
     reason: None,
     can_roll_back: can_roll_back_last(&target.root),
+    local_changes: None,
   }
 }
 
 #[tauri::command]
-pub async fn check_modpack_update(app: AppHandle, instance_id: String) -> USTBLResult<UpdateCheck> {
+pub async fn check_modpack_update(
+  app: AppHandle,
+  instance_id: String,
+  scan_local: Option<bool>,
+) -> USTBLResult<UpdateCheck> {
   let Some(target) = target(&app, &instance_id)? else {
     return Ok(UpdateCheck {
       status: CheckStatus::NotFollowing,
@@ -286,6 +299,7 @@ pub async fn check_modpack_update(app: AppHandle, instance_id: String) -> USTBLR
       latest_label: None,
       reason: None,
       can_roll_back: false,
+      local_changes: None,
     });
   };
   if !target.origin.follow {
@@ -293,29 +307,39 @@ pub async fn check_modpack_update(app: AppHandle, instance_id: String) -> USTBLR
   }
   if !get_instance_game_config(&app, &target.instance).version_isolation {
     return Ok(UpdateCheck {
-      reason: Some(InstanceError::ModpackUpdateUnsupported.to_string()),
+      reason: Some(InstanceError::ModpackUpdateNotIsolated.to_string()),
       ..check_of(CheckStatus::NeedsRepair, &target)
     });
   }
-  if let Err(err) = load_baseline(&target).await {
-    return Ok(UpdateCheck {
-      reason: Some(err.0),
-      ..check_of(CheckStatus::NeedsRepair, &target)
-    });
+  let baseline = match load_baseline(&target).await {
+    Ok(baseline) => baseline,
+    Err(err) => {
+      return Ok(UpdateCheck {
+        reason: Some(err.0),
+        ..check_of(CheckStatus::NeedsRepair, &target)
+      })
+    }
+  };
+  if target.instance.mod_loader.status != ModLoaderStatus::Installed {
+    return Ok(check_of(CheckStatus::WaitingLoader, &target));
   }
   match latest_version(&app, &target.origin).await {
-    Ok(latest) => Ok(UpdateCheck {
-      latest_version_id: latest.as_ref().map(|v| v.version_id.clone()),
-      latest_label: latest.as_ref().map(|v| v.label.clone()),
-      ..check_of(
-        if latest.is_some() {
-          CheckStatus::Available
-        } else {
-          CheckStatus::UpToDate
-        },
-        &target,
-      )
+    Ok(Some(latest)) => Ok(UpdateCheck {
+      latest_version_id: Some(latest.version_id),
+      latest_label: Some(latest.label),
+      ..check_of(CheckStatus::Available, &target)
     }),
+    Ok(None) => {
+      let mut check = check_of(CheckStatus::UpToDate, &target);
+      if scan_local == Some(true) {
+        let changed = count_local_changes(&target.root, &baseline).await?;
+        check.local_changes = Some(changed);
+        if changed > 0 {
+          check.status = CheckStatus::LocalChanges;
+        }
+      }
+      Ok(check)
+    }
     Err(err) => Ok(UpdateCheck {
       reason: Some(err.0),
       ..check_of(CheckStatus::Unknown, &target)
