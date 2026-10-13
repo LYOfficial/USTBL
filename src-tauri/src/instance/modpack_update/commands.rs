@@ -479,6 +479,8 @@ pub async fn install_campus_modpack(
   app: AppHandle,
   instance_id: String,
 ) -> USTBLResult<UpdateOutcome> {
+  // The instance was created moments ago; make sure the app knows it.
+  refresh_and_update_instances(&app, false).await;
   let plan = prepare_modpack_update(app.clone(), instance_id.clone()).await?;
   if plan.reinstall_required {
     return Err(InstanceError::ModpackUpdateReinstallRequired.into());
