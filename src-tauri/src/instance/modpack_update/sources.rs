@@ -437,9 +437,10 @@ pub async fn latest_version(
         "/projects/{}/lines/{}/{slug}",
         origin.project_id, origin.game_version
       );
-      let Some(version) = campus_get::<CampusVersion>(app, &path).await? else {
-        return Ok(None);
-      };
+      // A line the platform no longer lists is not "up to date": say so.
+      let version = campus_get::<CampusVersion>(app, &path)
+        .await?
+        .ok_or(InstanceError::ModpackUpdateLineGone)?;
       if version.id.to_string() == origin.version_id {
         return Ok(None);
       }

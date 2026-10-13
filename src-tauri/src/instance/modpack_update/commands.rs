@@ -6,7 +6,7 @@ use super::plan::{prepare, requires_reinstall};
 use super::sources::{download_param, latest_version, resolve_remote, LatestVersion};
 use crate::error::USTBLResult;
 use crate::instance::commands::switch_mod_loader;
-use crate::instance::helpers::misc::refresh_and_update_instances;
+use crate::instance::helpers::misc::{get_instance_game_config, refresh_and_update_instances};
 use crate::instance::helpers::modpack::baseline::{BaselineLoader, ModpackBaseline};
 use crate::instance::models::misc::{
   Instance, InstanceError, InstanceOrigin, ModLoader, ModLoaderStatus, ModLoaderType,
@@ -29,8 +29,15 @@ const PROGRESS_EVENT: &str = "modpack-update:progress";
 pub enum CheckStatus {
   /// The instance has no followable identity.
   NotFollowing,
+  /// The player paused following; nothing is checked.
+  Paused,
+  /// Version isolation is off or the baseline is unusable, so the instance
+  /// cannot be compared safely.
+  NeedsRepair,
   UpToDate,
   Available,
+  /// The platform could not be asked; `reason` carries the error code.
+  Unknown,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -42,6 +49,8 @@ pub struct UpdateCheck {
   pub current_label: Option<String>,
   pub latest_version_id: Option<String>,
   pub latest_label: Option<String>,
+  /// Error code explaining `Unknown` or `NeedsRepair`.
+  pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -63,6 +72,9 @@ pub struct UpdatePlan {
   /// The new version changes the component chain, so it has to be installed
   /// again. No changes are planned and `apply_modpack_update` refuses.
   pub reinstall_required: bool,
+  /// The instance already matches the new version: applying only moves the
+  /// recorded version forward, nothing is written to the files.
+  pub fast_forward: bool,
   pub plan_hash: String,
 }
 
@@ -227,6 +239,17 @@ impl UpdateEnv for AppEnv {
   }
 }
 
+fn check_of(status: CheckStatus, target: &Target) -> UpdateCheck {
+  UpdateCheck {
+    status,
+    follow: target.origin.follow,
+    current_label: target.instance.modpack_version.clone(),
+    latest_version_id: None,
+    latest_label: None,
+    reason: None,
+  }
+}
+
 #[tauri::command]
 pub async fn check_modpack_update(app: AppHandle, instance_id: String) -> USTBLResult<UpdateCheck> {
   let Some(target) = target(&app, &instance_id)? else {
@@ -236,20 +259,59 @@ pub async fn check_modpack_update(app: AppHandle, instance_id: String) -> USTBLR
       current_label: None,
       latest_version_id: None,
       latest_label: None,
+      reason: None,
     });
   };
-  let latest = latest_version(&app, &target.origin).await?;
-  Ok(UpdateCheck {
-    status: if latest.is_some() {
-      CheckStatus::Available
-    } else {
-      CheckStatus::UpToDate
-    },
-    follow: target.origin.follow,
-    current_label: target.instance.modpack_version.clone(),
-    latest_version_id: latest.as_ref().map(|v| v.version_id.clone()),
-    latest_label: latest.map(|v| v.label),
+  if !target.origin.follow {
+    return Ok(check_of(CheckStatus::Paused, &target));
+  }
+  if !get_instance_game_config(&app, &target.instance).version_isolation {
+    return Ok(UpdateCheck {
+      reason: Some(InstanceError::ModpackUpdateUnsupported.to_string()),
+      ..check_of(CheckStatus::NeedsRepair, &target)
+    });
+  }
+  if let Err(err) = load_baseline(&target).await {
+    return Ok(UpdateCheck {
+      reason: Some(err.0),
+      ..check_of(CheckStatus::NeedsRepair, &target)
+    });
+  }
+  match latest_version(&app, &target.origin).await {
+    Ok(latest) => Ok(UpdateCheck {
+      latest_version_id: latest.as_ref().map(|v| v.version_id.clone()),
+      latest_label: latest.as_ref().map(|v| v.label.clone()),
+      ..check_of(
+        if latest.is_some() {
+          CheckStatus::Available
+        } else {
+          CheckStatus::UpToDate
+        },
+        &target,
+      )
+    }),
+    Err(err) => Ok(UpdateCheck {
+      reason: Some(err.0),
+      ..check_of(CheckStatus::Unknown, &target)
+    }),
+  }
+}
+
+/// Pause or resume following. A paused instance is never checked; its identity
+/// and baseline stay, so resuming picks up where it left off.
+#[tauri::command]
+pub async fn set_modpack_follow(
+  app: AppHandle,
+  instance_id: String,
+  follow: bool,
+) -> USTBLResult<()> {
+  target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  store_instance(&app, &instance_id, |instance| {
+    if let Some(origin) = instance.origin.as_mut() {
+      origin.follow = follow;
+    }
   })
+  .await
 }
 
 /// Fetch the new version and compare it with the instance. Changes nothing
@@ -267,6 +329,10 @@ pub async fn prepare_modpack_update(
     .await?
     .ok_or(InstanceError::ModpackUpdateStale)?;
   plan_for(&app, &target, &baseline, &latest).await
+}
+
+fn fast_forward(changes: usize, conflicts: usize, loader_change: bool) -> bool {
+  changes == 0 && conflicts == 0 && !loader_change
 }
 
 async fn plan_for(
@@ -292,20 +358,27 @@ async fn plan_for(
       conflicts: Vec::new(),
       loader_change: None,
       reinstall_required: true,
+      fast_forward: false,
       plan_hash: String::new(),
     });
   }
   let prepared = prepare(&target.root, baseline, &remote).await?;
+  let loader_change = (remote.loader != baseline.loader).then(|| LoaderChange {
+    from: baseline.loader.clone(),
+    to: remote.loader.clone(),
+  });
   Ok(UpdatePlan {
     from_version_id: target.origin.version_id.clone(),
     to_version_id: remote.version_id.clone(),
     to_label: remote.label.clone(),
+    fast_forward: fast_forward(
+      prepared.diff.changes.len(),
+      prepared.diff.conflicts.len(),
+      loader_change.is_some(),
+    ),
     changes: prepared.diff.changes,
     conflicts: prepared.diff.conflicts,
-    loader_change: (remote.loader != baseline.loader).then(|| LoaderChange {
-      from: baseline.loader.clone(),
-      to: remote.loader.clone(),
-    }),
+    loader_change,
     reinstall_required: false,
     plan_hash: prepared.plan_hash,
   })
@@ -387,4 +460,17 @@ pub async fn recover_modpack_update(app: AppHandle, instance_id: String) -> USTB
     refresh_and_update_instances(&app, false).await;
   }
   Ok(outcome != Recovery::Nothing)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::fast_forward;
+
+  #[test]
+  fn only_a_plan_with_nothing_to_do_fast_forwards() {
+    assert!(fast_forward(0, 0, false));
+    assert!(!fast_forward(1, 0, false));
+    assert!(!fast_forward(0, 1, false));
+    assert!(!fast_forward(0, 0, true));
+  }
 }
