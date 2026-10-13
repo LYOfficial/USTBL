@@ -1,10 +1,12 @@
 //! Deciding how each file of an instance travels to the campus platform.
 
+use super::components::ComponentPlan;
 use crate::instance::helpers::modpack::misc::is_launcher_metadata_path;
 use crate::instance::modpack_update::diff::{FileKey, DISABLED_SUFFIX};
 use crate::instance::modpack_update::remote::UPDATE_DIR;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 /// Files above this size are stored once by hash and shared between versions;
 /// smaller ones ride along in the version's bundle archive.
@@ -29,6 +31,8 @@ pub struct PublishPlan {
   pub files: Vec<(LocalFile, Placement)>,
   /// Disabled mods and launcher metadata are never published.
   pub skipped: Vec<String>,
+  /// Set for an instance imported from a MultiMC profile.
+  pub components: Option<ComponentPlan>,
 }
 
 impl PublishPlan {
@@ -45,7 +49,25 @@ impl PublishPlan {
         })
       })
       .collect();
-    json!({ "format": "ustbl.modpack/1", "files": files })
+    let mut manifest = json!({ "format": "ustbl.modpack/1", "files": files });
+    if let Some(components) = &self.components {
+      manifest["components"] = components.manifest();
+    }
+    manifest
+  }
+
+  /// Where every blob to upload is on disk, keyed by hash: large files of the
+  /// instance and the profile's patches and libraries.
+  pub fn blob_sources(&self, root: &Path) -> BTreeMap<String, PathBuf> {
+    let mut sources: BTreeMap<String, PathBuf> = self
+      .blobs()
+      .into_iter()
+      .map(|(sha1, file)| (sha1, root.join(file.path)))
+      .collect();
+    if let Some(components) = &self.components {
+      sources.extend(components.blobs());
+    }
+    sources
   }
 
   /// Distinct blobs to upload, keyed by hash.
@@ -121,6 +143,7 @@ pub fn plan_files(files: Vec<LocalFile>, instance_name: &str) -> PublishPlan {
   PublishPlan {
     files: placed,
     skipped,
+    components: None,
   }
 }
 
@@ -193,6 +216,37 @@ mod tests {
 
     assert_eq!(plan.files.len(), 1);
     assert_eq!(plan.skipped.len(), 5);
+  }
+
+  #[test]
+  fn component_blobs_join_the_upload_and_the_manifest() {
+    use crate::instance::modpack_publish::components::{ComponentBlob, ComponentPlan};
+    let blob = |sha1: &str, source: &str| ComponentBlob {
+      key: FileKey {
+        sha1: sha1.into(),
+        size: 3,
+      },
+      source: PathBuf::from(source),
+    };
+    let mut plan = plan_files(
+      vec![file("mods/big.jar", "big", BLOB_THRESHOLD + 1)],
+      "pack",
+    );
+    assert!(plan.manifest().get("components").is_none());
+    plan.components = Some(ComponentPlan {
+      mmc_pack: json!({"formatVersion": 1, "components": []}),
+      instance_cfg: BTreeMap::new(),
+      patches: [("a.b".to_string(), blob("p", "/work/a.b.json"))].into(),
+      libraries: [("libraries/x.jar".to_string(), blob("l", "/libs/x.jar"))].into(),
+    });
+
+    let sources = plan.blob_sources(Path::new("/instance"));
+
+    assert_eq!(sources.len(), 3);
+    assert_eq!(sources["big"], Path::new("/instance/mods/big.jar"));
+    assert_eq!(sources["p"], Path::new("/work/a.b.json"));
+    assert_eq!(sources["l"], Path::new("/libs/x.jar"));
+    assert_eq!(plan.manifest()["components"]["patches"][0]["blob"], "p");
   }
 
   #[test]
