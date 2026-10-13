@@ -3103,6 +3103,9 @@
       "notIsolated": "該實例未開啟版本隔離，未將其關聯到此整合包。",
       "localChanged": "上傳期間本機檔案發生了變化，未將該實例關聯到此版本。",
       "recordFailed": "版本已發布，但未能記錄該實例與此版本的關聯，下次檢查將按常規比較。"
+    },
+    "transfer": {
+      "summary": "{{done}} / {{total}} · {{speed}}/s · 同時上傳 {{concurrency}} 個檔案"
     }
   },
   "InstallCampusModpackModal": {

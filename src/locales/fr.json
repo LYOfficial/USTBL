@@ -3103,6 +3103,9 @@
       "notIsolated": "L'isolation de version est désactivée pour cette instance ; elle n'a pas été liée à ce pack.",
       "localChanged": "Des fichiers locaux ont changé pendant l'envoi ; l'instance n'a pas été liée à cette version.",
       "recordFailed": "La version est publiée, mais l'instance n'a pas pu y être liée. La prochaine vérification comparera normalement."
+    },
+    "transfer": {
+      "summary": "{{done}} / {{total}} · {{speed}}/s · {{concurrency}} fichiers en parallèle"
     }
   },
   "InstallCampusModpackModal": {

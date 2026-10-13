@@ -3103,6 +3103,9 @@
       "notIsolated": "Version isolation is off for this instance, so it was not linked to this modpack.",
       "localChanged": "Local files changed during upload, so the instance was not linked to this version.",
       "recordFailed": "The version was published, but the instance could not be linked to it. The next check compares as usual."
+    },
+    "transfer": {
+      "summary": "{{done}} / {{total}} · {{speed}}/s · {{concurrency}} files at once"
     }
   },
   "InstallCampusModpackModal": {
