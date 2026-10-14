@@ -11,7 +11,7 @@ use crate::instance::helpers::client_json::McClientInfo;
 use crate::instance::helpers::loader::common::add_library_entry;
 use crate::instance::models::misc::ModLoader;
 use crate::launch::helpers::file_validator::convert_library_name_to_path;
-use crate::resource::helpers::misc::{convert_url_to_target_source, get_download_api};
+use crate::resource::helpers::misc::{download_with_source_fallbacks, get_download_api};
 use crate::resource::helpers::modrinth::get_latest_fabric_api_mod_download;
 use crate::resource::models::{ResourceType, SourceType};
 use crate::tasks::download::DownloadParam;
@@ -80,10 +80,12 @@ pub async fn install_fabric_loader(
 
   let mut push_task = |coord: &str, url_root: &str| -> USTBLResult<()> {
     let rel: String = convert_library_name_to_path(coord, None)?;
-    let src = convert_url_to_target_source(
+    // A mirror node that has not synced a fresh artifact answers 404; the
+    // other source keeps the install from depending on it.
+    let (src, transfer_options) = download_with_source_fallbacks(
       &Url::parse(url_root)?.join(&rel)?,
       &[ResourceType::FabricMaven, ResourceType::Libraries],
-      &priority[0],
+      priority,
     )?;
     task_params.push(PTaskParam::Download(DownloadParam {
       src,
@@ -91,7 +93,7 @@ pub async fn install_fabric_loader(
       filename: None,
       sha1: None,
       custom_headers: None,
-      transfer_options: Default::default(),
+      transfer_options,
     }));
     Ok(())
   };
