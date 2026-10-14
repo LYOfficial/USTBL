@@ -2628,7 +2628,8 @@
             "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスは自動更新できません",
             "MODPACK_UPDATE_RUNNING": "ゲームが実行中です。Modパックを更新する前に閉じてください",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "新しいバージョンはコンポーネント構成を変更するため、そのまま更新できません。再インストールしてください",
-            "MODPACK_UPDATE_LINE_GONE": "プラットフォームにこのモッドパックのラインはもうありません"
+            "MODPACK_UPDATE_LINE_GONE": "プラットフォームにこのモッドパックのラインはもうありません",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "このバージョンのファイルはプラットフォーム上で一時的に利用できません。しばらくしてからやり直してください"
           }
         }
       },
