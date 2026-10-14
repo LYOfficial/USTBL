@@ -657,6 +657,16 @@
   },
   "DownloadTasksPage": {
     "title": "下载任务",
+    "unfinishedPublish": {
+      "title": "未完成的发布",
+      "phase": {
+        "uploading": "上传中断，可继续",
+        "processing": "平台正在处理",
+        "failed": "发布失败"
+      },
+      "resume": "继续",
+      "discard": "放弃"
+    },
     "button": {
       "settings": "下载设置",
       "pause": "暂停",
@@ -686,7 +696,8 @@
       "neoforge-libraries": "NeoForge 运行库",
       "forge-libraries": "Forge 运行库",
       "launcher-update": "更新启动器",
-      "mojang-java": "Java {{param}} 运行时"
+      "mojang-java": "Java {{param}} 运行时",
+      "modpack-publish": "发布整合包 {{param}}"
     }
   },
   "Editable": {
@@ -1280,7 +1291,8 @@
       "createShortcut": "创建启动快捷方式",
       "exportModPack": "导出为整合包",
       "star": "星标此实例",
-      "unstar": "取消星标"
+      "unstar": "取消星标",
+      "publishModPack": "发布到校园整合包"
     },
     "instanceTabList": {
       "overview": "概览",
@@ -2617,7 +2629,39 @@
           "title": "导出失败",
           "description": {
             "MODPACK_EXPORT_COMPONENT_INSTANCE": "组件式实例只能导出为 MultiMC 格式",
-            "MODPACK_EXPORT_PROFILE_MISSING": "该实例由旧版本导入，缺少导出所需的组件信息，请重新导入整合包后再导出"
+            "MODPACK_EXPORT_PROFILE_MISSING": "该实例由旧版本导入，缺少导出所需的组件信息，请重新导入整合包后再导出",
+            "MODPACK_UPDATE_BUSY": "该整合包正在更新中",
+            "MODPACK_UPDATE_VERIFY_FAILED": "下载的文件校验失败，未对实例做任何修改",
+            "MODPACK_UPDATE_STALE": "本地文件在检查后发生了变化，请重新检查更新",
+            "MODPACK_UPDATE_REMOTE_INVALID": "新版本的文件清单不合法，已拒绝更新",
+            "MODPACK_UPDATE_LINE_MISMATCH": "新版本的游戏版本或加载器与此实例不一致，无法更新",
+            "MODPACK_UPDATE_UNSUPPORTED": "此实例暂不支持自动更新",
+            "MODPACK_UPDATE_RUNNING": "游戏正在运行，请先关闭游戏再更新整合包",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的组件链，无法就地更新，请重新安装",
+            "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试"
+          }
+        }
+      },
+      "listCampusModpackProjects": {
+        "success": "已加载校园整合包",
+        "error": {
+          "title": "加载校园整合包失败"
+        }
+      },
+      "createCampusModpackProject": {
+        "success": "项目已创建",
+        "error": {
+          "title": "创建项目失败"
+        }
+      },
+      "publishCampusModpack": {
+        "success": "整合包已发布",
+        "error": {
+          "title": "发布失败",
+          "description": {
+            "MODPACK_PUBLISH_STALE": "发布期间该线路已被其他人更新，请重新加载后再试",
+            "MODPACK_UPDATE_UNSUPPORTED": "该实例没有受支持的模组加载器，无法发布"
           }
         }
       }
@@ -2956,6 +3000,61 @@
         "MultiMC": "主流启动器广泛支持，打包完整实例",
         "MultiMCComponentOnly": "该实例由 MultiMC 组件配置导入，只能导出为 MultiMC 格式，并原样保留组件链、补丁与本地库"
       }
+    }
+  },
+  "PublishModpackModal": {
+    "header": {
+      "title": "将 {{param}} 发布到校园整合包"
+    },
+    "label": {
+      "project": "项目",
+      "target": "发布到",
+      "newProject": "新建项目",
+      "projectName": "项目名称",
+      "summary": "简介",
+      "version": "版本",
+      "versionNumber": "版本号",
+      "changelog": "更新日志",
+      "includedFiles": "包含的文件"
+    },
+    "button": {
+      "publish": "发布"
+    },
+    "error": {
+      "invalidVersion": "请输入有效的版本号",
+      "noFileSelected": "请至少选择一个文件",
+      "invalidProject": "请补全项目信息"
+    },
+    "errorMessage": {
+      "name": {
+        "error-1": "名称不能为空",
+        "error-2": "名称过长（最多 128 个字符）"
+      },
+      "summary": {
+        "error-1": "简介过长（最多 512 个字符）"
+      },
+      "version": {
+        "error-1": "版本号不能为空",
+        "error-2": "版本号过长（最多 64 个字符）"
+      },
+      "changelog": {
+        "error-1": "更新日志过长（最多 20000 个字符）"
+      }
+    },
+    "stage": {
+      "hashing": "正在检查文件（{{done}}/{{total}}）",
+      "packing": "正在打包新增内容"
+    },
+    "skipped": "有 {{count}} 个文件被排除（已禁用的模组或启动器文件）",
+    "adoption": {
+      "keptOther": "该实例已跟随其他整合包或其他线，未改动其来源记录。",
+      "notIsolated": "该实例未开启版本隔离，未将其关联到此整合包。",
+      "localChanged": "上传期间本地文件发生了变化，未将该实例关联到此版本。",
+      "recordFailed": "版本已发布，但未能记录该实例与此版本的关联，下次检查将按常规比较。"
+    },
+    "started": {
+      "title": "已开始上传整合包",
+      "description": "上传在后台进行，可在下载页查看进度。"
     }
   }
 }

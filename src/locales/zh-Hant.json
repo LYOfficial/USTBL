@@ -657,6 +657,16 @@
   },
   "DownloadTasksPage": {
     "title": "下載任務",
+    "unfinishedPublish": {
+      "title": "未完成的發佈",
+      "phase": {
+        "uploading": "上傳中斷，可繼續",
+        "processing": "平台正在處理",
+        "failed": "發佈失敗"
+      },
+      "resume": "繼續",
+      "discard": "放棄"
+    },
     "button": {
       "settings": "下載設定",
       "pause": "暫停",
@@ -686,7 +696,8 @@
       "neoforge-libraries": "NeoForge 執行庫",
       "forge-libraries": "Forge 執行庫",
       "launcher-update": "更新啟動器",
-      "mojang-java": "Java {{param}} 執行時"
+      "mojang-java": "Java {{param}} 執行時",
+      "modpack-publish": "發布整合包 {{param}}"
     }
   },
   "Editable": {
@@ -1280,7 +1291,8 @@
       "createShortcut": "建立啟動捷徑",
       "exportModPack": "匯出為模組包",
       "star": "星標此實例",
-      "unstar": "取消星標"
+      "unstar": "取消星標",
+      "publishModPack": "發佈到校園整合包"
     },
     "instanceTabList": {
       "overview": "概覽",
@@ -2617,7 +2629,39 @@
           "title": "Export failed",
           "description": {
             "MODPACK_EXPORT_COMPONENT_INSTANCE": "Component-profile instances can only be exported as MultiMC",
-            "MODPACK_EXPORT_PROFILE_MISSING": "This instance was imported by an older version and lacks the component data needed for export. Re-import the modpack and try again"
+            "MODPACK_EXPORT_PROFILE_MISSING": "This instance was imported by an older version and lacks the component data needed for export. Re-import the modpack and try again",
+            "MODPACK_UPDATE_BUSY": "此整合包正在更新中",
+            "MODPACK_UPDATE_VERIFY_FAILED": "下載的檔案校驗失敗，未對實例做任何修改",
+            "MODPACK_UPDATE_STALE": "本機檔案在檢查後發生了變化，請重新檢查更新",
+            "MODPACK_UPDATE_REMOTE_INVALID": "新版本的檔案清單無效，已拒絕更新",
+            "MODPACK_UPDATE_LINE_MISMATCH": "新版本的遊戲版本或模組載入器與此實例不同",
+            "MODPACK_UPDATE_UNSUPPORTED": "此實例無法自動更新",
+            "MODPACK_UPDATE_RUNNING": "遊戲正在執行，請先關閉遊戲再更新整合包",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的組件鏈，無法就地更新，請重新安裝",
+            "MODPACK_UPDATE_LINE_GONE": "平台上已不存在該整合包的這條線",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暫時取不到此版本所需的檔案，請稍後重試"
+          }
+        }
+      },
+      "listCampusModpackProjects": {
+        "success": "已載入校園整合包",
+        "error": {
+          "title": "載入校園整合包失敗"
+        }
+      },
+      "createCampusModpackProject": {
+        "success": "專案已建立",
+        "error": {
+          "title": "建立專案失敗"
+        }
+      },
+      "publishCampusModpack": {
+        "success": "整合包已發佈",
+        "error": {
+          "title": "發佈失敗",
+          "description": {
+            "MODPACK_PUBLISH_STALE": "發佈期間該線路已被其他人更新，請重新載入後再試",
+            "MODPACK_UPDATE_UNSUPPORTED": "此實例沒有受支援的模組載入器，無法發佈"
           }
         }
       }
@@ -2956,6 +3000,61 @@
         "MultiMC": "Widely supported by major launchers; packaged as a complete instance.",
         "MultiMCComponentOnly": "This instance was imported from a MultiMC component profile, so it can only be exported as MultiMC. Its components, patches and local libraries are kept as they were."
       }
+    }
+  },
+  "PublishModpackModal": {
+    "header": {
+      "title": "將 {{param}} 發佈到校園整合包"
+    },
+    "label": {
+      "project": "專案",
+      "target": "發佈到",
+      "newProject": "新建專案",
+      "projectName": "專案名稱",
+      "summary": "簡介",
+      "version": "版本",
+      "versionNumber": "版本號",
+      "changelog": "更新日誌",
+      "includedFiles": "包含的檔案"
+    },
+    "button": {
+      "publish": "發佈"
+    },
+    "error": {
+      "invalidVersion": "請輸入有效的版本號",
+      "noFileSelected": "請至少選擇一個檔案",
+      "invalidProject": "請補全專案資訊"
+    },
+    "errorMessage": {
+      "name": {
+        "error-1": "名稱不能為空",
+        "error-2": "名稱過長（最多 128 個字元）"
+      },
+      "summary": {
+        "error-1": "簡介過長（最多 512 個字元）"
+      },
+      "version": {
+        "error-1": "版本號不能為空",
+        "error-2": "版本號過長（最多 64 個字元）"
+      },
+      "changelog": {
+        "error-1": "更新日誌過長（最多 20000 個字元）"
+      }
+    },
+    "stage": {
+      "hashing": "正在檢查檔案（{{done}}/{{total}}）",
+      "packing": "正在打包新增內容"
+    },
+    "skipped": "有 {{count}} 個檔案被排除（已停用的模組或啟動器檔案）",
+    "adoption": {
+      "keptOther": "該實例已跟隨其他整合包或其他線，未改動其來源記錄。",
+      "notIsolated": "該實例未開啟版本隔離，未將其關聯到此整合包。",
+      "localChanged": "上傳期間本機檔案發生了變化，未將該實例關聯到此版本。",
+      "recordFailed": "版本已發布，但未能記錄該實例與此版本的關聯，下次檢查將按常規比較。"
+    },
+    "started": {
+      "title": "已開始上傳整合包",
+      "description": "上傳在背景進行，可在下載頁查看進度。"
     }
   }
 }

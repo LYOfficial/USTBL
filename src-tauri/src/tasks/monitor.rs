@@ -87,6 +87,8 @@ impl TaskMonitor {
             let task_id = desc.task_id;
             let task_group = desc.task_group.clone();
             match desc.payload {
+              // The job behind an upload died with the last session.
+              PTaskParam::Upload(_) => {}
               PTaskParam::Download(_) => {
                 let task = DownloadTask::from_descriptor(
                   self.app_handle.clone(),
@@ -232,6 +234,65 @@ impl TaskMonitor {
     }
   }
 
+  /// Puts tasks that a job drives itself on the task list as a group.
+  pub fn register_job_group(&self, task_group: &str, handles: &[Arc<RwLock<PTaskHandle>>]) {
+    let mut group = HashMap::new();
+    for handle in handles {
+      let desc = handle.read().unwrap().desc.clone();
+      self
+        .phs
+        .write()
+        .unwrap()
+        .insert(desc.task_id, handle.clone());
+      PEvent::emit_created(
+        &self.app_handle,
+        desc.task_id,
+        Some(task_group),
+        desc.clone(),
+      );
+      group.insert(desc.task_id, handle.clone());
+    }
+    self.group_map.write().unwrap().insert(
+      task_group.to_string(),
+      GroupMonitor {
+        phs: group,
+        status: GEventStatus::Started,
+      },
+    );
+    GEvent::emit_group_started(&self.app_handle, task_group);
+  }
+
+  /// Lets cancelling the group stop the job: the group's cancel aborts the
+  /// join handle registered under the id of any of its tasks.
+  pub fn bind_job(&self, task_id: u32, job: JoinHandle<()>) {
+    self.tasks.lock().unwrap().insert(task_id, job);
+  }
+
+  /// The job is over. Unlike a download group, the tasks stay on the list.
+  pub fn finish_job_group(&self, task_group: &str, task_id: u32, ok: bool) {
+    self.tasks.lock().unwrap().remove(&task_id);
+    let mut groups = self.group_map.write().unwrap();
+    // A cancelled group is already gone.
+    if let Some(group) = groups.get_mut(task_group) {
+      if ok {
+        group.status = GEventStatus::Completed;
+        GEvent::emit_group_completed(&self.app_handle, task_group);
+      } else {
+        group.status = GEventStatus::Failed;
+        GEvent::emit_group_failed(&self.app_handle, task_group);
+      }
+    }
+  }
+
+  pub fn is_group_stopped(&self, task_group: &str) -> bool {
+    self
+      .group_map
+      .read()
+      .unwrap()
+      .get(task_group)
+      .is_some_and(|group| group.status == GEventStatus::Stopped)
+  }
+
   pub async fn background_process(&self) {
     loop {
       let future = self.rx.recv_async().await.unwrap();
@@ -364,6 +425,8 @@ impl TaskMonitor {
         j_handle.abort();
       }
       match desc.payload {
+        // An upload starts over by publishing again.
+        PTaskParam::Upload(_) => {}
         PTaskParam::Download(_) => {
           let task = DownloadTask::from_descriptor(
             self.app_handle.clone(),

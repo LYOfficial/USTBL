@@ -47,16 +47,9 @@ import {
   SharedUpdateProgress,
   SharedUpdateResult,
 } from "@/models/shared-instance";
-import { VustbAccount } from "@/models/vustb";
+import { VustbAccount, isVustbManager } from "@/models/vustb";
 import { AccountService } from "@/services/account";
 import { SharedInstanceService } from "@/services/shared-instance";
-
-const managerGroups = new Set([
-  "super_admin",
-  "admin",
-  "platform_manager",
-  "server_manager",
-]);
 
 type BindingDialogMode = "select" | "confirm" | null;
 
@@ -119,7 +112,7 @@ const SharedInstancesPage = () => {
     () => getInstanceList() || [],
     [getInstanceList]
   );
-  const canManage = !!account && managerGroups.has(account.userGroup);
+  const canManage = isVustbManager(account);
 
   const showError = useCallback(
     (response: { message: string; details?: string }) => {

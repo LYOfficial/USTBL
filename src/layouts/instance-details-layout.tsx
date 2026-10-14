@@ -1,7 +1,7 @@
 import { Button, HStack, Icon, Text, VStack } from "@chakra-ui/react";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { useRouter } from "next/router";
-import React, { useCallback } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { IconType } from "react-icons";
 import { FaRegStar, FaStar } from "react-icons/fa6";
@@ -17,6 +17,7 @@ import {
   LuSettings,
   LuSquareLibrary,
   LuSquarePlus,
+  LuUpload,
 } from "react-icons/lu";
 import { CommonIconButton } from "@/components/common/common-icon-button";
 import NavMenu from "@/components/common/nav-menu";
@@ -28,6 +29,8 @@ import {
 } from "@/contexts/instance";
 import { useSharedModals } from "@/contexts/shared-modal";
 import { useToast } from "@/contexts/toast";
+import { VustbAccount, isVustbManager } from "@/models/vustb";
+import { AccountService } from "@/services/account";
 import { InstanceService } from "@/services/instance";
 
 const InstanceDetailsLayout: React.FC<{ children: React.ReactNode }> = ({
@@ -55,6 +58,14 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
   const { config } = useLauncherConfig();
   const primaryColor = config.appearance.theme.primaryColor;
   const navBarType = config.general.functionality.instancesNavType;
+
+  const [vustbAccount, setVustbAccount] = useState<VustbAccount | null>(null);
+
+  useEffect(() => {
+    AccountService.retrieveVustbAccount().then((response) => {
+      if (response.status === "success") setVustbAccount(response.data);
+    });
+  }, []);
 
   const handleCreateLaunchDesktopShortcut = useCallback(
     (instanceId: string) => {
@@ -127,6 +138,23 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
         }
       },
     },
+    ...(isVustbManager(vustbAccount)
+      ? [
+          {
+            icon: LuUpload,
+            label: t("InstanceDetailsLayout.secMenu.publishModPack"),
+            danger: false,
+            onClick: () => {
+              if (summary) {
+                openSharedModal("publish-modpack", {
+                  instanceId: summary.id,
+                  instanceName: summary.name,
+                });
+              }
+            },
+          },
+        ]
+      : []),
     {
       icon: "delete",
       label: t("InstanceMenu.label.delete"),

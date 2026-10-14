@@ -2,7 +2,7 @@ use crate::error::USTBLResult;
 use crate::tasks::download::DownloadTask;
 use crate::tasks::events::GEventStatus;
 use crate::tasks::monitor::TaskMonitor;
-use crate::tasks::{PTaskGroupDesc, PTaskParam, USTBLFutureDesc, THandle};
+use crate::tasks::{PTaskGroupDesc, PTaskParam, THandle, USTBLFutureDesc};
 use crate::utils::fs::extract_filename;
 use std::pin::Pin;
 use std::time::Duration;
@@ -30,6 +30,12 @@ pub async fn schedule_progressive_task_group(
   for param in params {
     let task_id = monitor.get_new_id();
     match param {
+      // Uploads are created by the code that runs them, never by the frontend.
+      PTaskParam::Upload(_) => {
+        return Err(crate::error::USTBLError(
+          "Upload tasks cannot be scheduled".into(),
+        ))
+      }
       PTaskParam::Download(mut param) => {
         if param.filename.is_none() {
           param.filename = Some(extract_filename(
