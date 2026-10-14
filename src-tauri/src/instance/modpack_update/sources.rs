@@ -1,9 +1,11 @@
 //! Where the next version of a followed modpack comes from.
 //!
 //! Modrinth and CurseForge publish an archive that is downloaded and read;
-//! the campus platform publishes a manifest plus an optional bundle.
+//! the campus platform publishes a manifest whose files are either remote or
+//! stored in the platform's packs.
 
 use super::diff::FileKey;
+use super::packs::{AppTransport, PackSession};
 use super::remote::{FileSource, RemoteFile, RemoteModpack, UPDATE_DIR};
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::modpack::baseline::{
@@ -22,6 +24,7 @@ use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 use url::Url;
 
@@ -136,7 +139,7 @@ pub struct CampusComponents {
   pub libraries: Vec<CampusComponentLibrary>,
 }
 
-/// A patch file the pack ships itself, stored as a blob.
+/// A patch file the pack ships itself, stored in the packs (`blob` is its sha1).
 #[derive(Debug, Clone, Deserialize)]
 pub struct CampusComponentPatch {
   pub uid: String,
@@ -144,7 +147,7 @@ pub struct CampusComponentPatch {
   pub size: u64,
 }
 
-/// A library the pack ships itself (`libraries/<name>`), stored as a blob.
+/// A library the pack ships itself (`libraries/<name>`), stored in the packs.
 #[derive(Debug, Clone, Deserialize)]
 pub struct CampusComponentLibrary {
   pub path: String,
@@ -184,16 +187,6 @@ pub struct CampusSource {
   pub url: Option<String>,
 }
 
-impl CampusVersion {
-  pub fn needs_bundle(&self) -> bool {
-    self
-      .manifest
-      .files
-      .iter()
-      .any(|file| file.source.kind == "bundle" && file.env.client != "unsupported")
-  }
-}
-
 fn plain_download(url: &str) -> USTBLResult<Box<DownloadParam>> {
   Ok(Box::new(DownloadParam {
     src: Url::parse(url).map_err(|_| InstanceError::ModpackUpdateRemoteInvalid)?,
@@ -205,12 +198,15 @@ fn plain_download(url: &str) -> USTBLResult<Box<DownloadParam>> {
   }))
 }
 
+fn is_sha1(value: &str) -> bool {
+  value.len() == 40 && value.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 /// Turn a campus version into the platform independent description. Files the
-/// client does not use are left out; bundle files are read from `bundle`.
+/// client does not use are left out; files in packs are read through `packs`.
 pub fn campus_remote(
   version: &CampusVersion,
-  bundle: Option<&Path>,
-  api_base: &str,
+  packs: &Arc<PackSession>,
 ) -> USTBLResult<RemoteModpack> {
   let loader_type =
     loader_from_slug(&version.loader_type).ok_or(InstanceError::ModpackUpdateRemoteInvalid)?;
@@ -221,16 +217,7 @@ pub fn campus_remote(
     }
     let source = match (file.source.kind.as_str(), &file.source.url) {
       ("remote", Some(url)) => FileSource::Download(plain_download(url)?),
-      ("blob", _) => FileSource::Download(plain_download(&format!(
-        "{api_base}/blobs/{}",
-        file.sha1.to_lowercase()
-      ))?),
-      ("bundle", _) => FileSource::ArchiveEntry {
-        archive: bundle
-          .ok_or(InstanceError::ModpackUpdateRemoteInvalid)?
-          .to_path_buf(),
-        entry: file.path.clone(),
-      },
+      ("pack", _) if is_sha1(&file.sha1) => FileSource::Pack(packs.clone()),
       _ => return Err(InstanceError::ModpackUpdateRemoteInvalid.into()),
     };
     files.push(RemoteFile {
@@ -512,20 +499,8 @@ pub async fn resolve_remote(
       remote_from_archive(app, &path, root, instance_name, origin, latest).await?
     }
     Payload::Campus(version) => {
-      let bundle = if version.needs_bundle() {
-        let path = dir.join(format!("bundle-{}.zip", version.id));
-        download_url(
-          app,
-          &format!("{CAMPUS_API}/versions/{}/bundle", version.id),
-          &path,
-          None,
-        )
-        .await?;
-        Some(path)
-      } else {
-        None
-      };
-      campus_remote(version, bundle.as_deref(), CAMPUS_API)?
+      let packs = PackSession::new(AppTransport::new(app.clone()), version.id, dir.clone());
+      campus_remote(version, &packs)?
     }
   };
   if remote.game_version != origin.game_version || remote.loader.loader_type != origin.loader_type {
@@ -607,9 +582,47 @@ mod tests {
       "game_version": "1.21.1",
       "loader_type": "neoforge",
       "loader_version": "21.1.5",
-      "manifest": { "format": "ustbl.modpack/1", "files": files },
+      "manifest": { "format": "ustbl.modpack/2", "files": files },
     }))
     .unwrap()
+  }
+
+  /// Packs are never touched by these tests; they only check the mapping.
+  struct NoTransport;
+
+  #[async_trait::async_trait]
+  impl crate::instance::modpack_update::packs::PackTransport for NoTransport {
+    async fn locate(
+      &self,
+      _: i64,
+      _: crate::instance::modpack_update::packs::LocateMode,
+      _: &[String],
+    ) -> Result<
+      crate::instance::modpack_update::packs::Located,
+      crate::instance::modpack_update::packs::TransportError,
+    > {
+      unreachable!()
+    }
+    async fn read_range(
+      &self,
+      _: &crate::instance::modpack_update::packs::PackLocation,
+      _: u64,
+      _: u64,
+      _: &Path,
+    ) -> Result<(), crate::instance::modpack_update::packs::TransportError> {
+      unreachable!()
+    }
+    async fn download(
+      &self,
+      _: &crate::instance::modpack_update::packs::PackLocation,
+      _: &Path,
+    ) -> Result<(), crate::instance::modpack_update::packs::TransportError> {
+      unreachable!()
+    }
+  }
+
+  fn session() -> Arc<PackSession> {
+    PackSession::new(Arc::new(NoTransport), 7, PathBuf::new())
   }
 
   #[test]
@@ -617,44 +630,26 @@ mod tests {
     let sha = "a".repeat(40);
     let version = campus(serde_json::json!([
       {"path": "mods/r.jar", "size": 1, "sha1": sha, "source": {"kind": "remote", "url": "https://cdn.example/r.jar"}},
-      {"path": "mods/b.jar", "size": 2, "sha1": sha.to_uppercase(), "source": {"kind": "blob"}},
-      {"path": "config/c.toml", "size": 3, "sha1": sha, "source": {"kind": "bundle"}},
-      {"path": "mods/server.jar", "size": 4, "sha1": sha, "env": {"client": "unsupported", "server": "required"}, "source": {"kind": "blob"}},
+      {"path": "mods/b.jar", "size": 2, "sha1": sha.to_uppercase(), "source": {"kind": "pack"}},
+      {"path": "mods/server.jar", "size": 4, "sha1": sha, "env": {"client": "unsupported", "server": "required"}, "source": {"kind": "pack"}},
     ]));
-    assert!(version.needs_bundle());
+    let packs = session();
 
-    let remote = campus_remote(
-      &version,
-      Some(Path::new("bundle.zip")),
-      "https://api.example",
-    )
-    .unwrap();
+    let remote = campus_remote(&version, &packs).unwrap();
 
     assert_eq!(remote.version_id, "7");
     assert_eq!(remote.label, "1.2.0");
     assert_eq!(remote.loader.loader_type, ModLoaderType::NeoForge);
     assert_eq!(remote.loader.version, "21.1.5");
     let paths: Vec<_> = remote.files.iter().map(|f| f.path.as_str()).collect();
-    assert_eq!(paths, ["mods/r.jar", "mods/b.jar", "config/c.toml"]);
+    assert_eq!(paths, ["mods/r.jar", "mods/b.jar"]);
     assert_eq!(remote.files[1].key.sha1, sha);
     match &remote.files[0].source {
       FileSource::Download(param) => assert_eq!(param.src.as_str(), "https://cdn.example/r.jar"),
       other => panic!("{other:?}"),
     }
     match &remote.files[1].source {
-      FileSource::Download(param) => {
-        assert_eq!(
-          param.src.as_str(),
-          &format!("https://api.example/blobs/{sha}")
-        )
-      }
-      other => panic!("{other:?}"),
-    }
-    match &remote.files[2].source {
-      FileSource::ArchiveEntry { archive, entry } => {
-        assert_eq!(archive, Path::new("bundle.zip"));
-        assert_eq!(entry, "config/c.toml");
-      }
+      FileSource::Pack(found) => assert!(Arc::ptr_eq(found, &packs)),
       other => panic!("{other:?}"),
     }
   }
@@ -662,7 +657,7 @@ mod tests {
   #[test]
   fn campus_component_chain_is_read_in_canonical_order() {
     let mut version = campus(serde_json::json!([]));
-    assert!(campus_remote(&version, None, "https://api.example")
+    assert!(campus_remote(&version, &session())
       .unwrap()
       .components
       .is_none());
@@ -684,7 +679,7 @@ mod tests {
     assert_eq!(published.patches[0].uid, "com.example.loader");
     assert_eq!(published.libraries[0].path, "libraries/boot-1.jar");
     assert_eq!(published.instance_cfg["name"], "GTNH");
-    let chain = campus_remote(&version, None, "https://api.example")
+    let chain = campus_remote(&version, &session())
       .unwrap()
       .components
       .unwrap();
@@ -694,16 +689,26 @@ mod tests {
   }
 
   #[test]
-  fn campus_bundle_files_without_a_bundle_and_unknown_loaders_are_invalid() {
+  fn retired_source_kinds_malformed_hashes_and_unknown_loaders_are_invalid() {
     let sha = "a".repeat(40);
-    let bundled = campus(serde_json::json!([
-      {"path": "a", "size": 1, "sha1": sha, "source": {"kind": "bundle"}},
+    for source in [
+      serde_json::json!({"kind": "bundle"}),
+      serde_json::json!({"kind": "blob"}),
+      serde_json::json!({"kind": "remote"}),
+    ] {
+      let version = campus(serde_json::json!([
+        {"path": "a", "size": 1, "sha1": sha, "source": source},
+      ]));
+      assert!(campus_remote(&version, &session()).is_err());
+    }
+    let short = campus(serde_json::json!([
+      {"path": "a", "size": 1, "sha1": "abc", "source": {"kind": "pack"}},
     ]));
-    assert!(campus_remote(&bundled, None, "https://api.example").is_err());
+    assert!(campus_remote(&short, &session()).is_err());
 
     let mut odd = campus(serde_json::json!([]));
     odd.loader_type = "quilt".into();
-    assert!(campus_remote(&odd, None, "https://api.example").is_err());
+    assert!(campus_remote(&odd, &session()).is_err());
   }
 
   #[test]
