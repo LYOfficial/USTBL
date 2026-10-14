@@ -627,6 +627,16 @@
   },
   "DownloadTasksPage": {
     "title": "Tâches de téléchargement en cours",
+    "unfinishedPublish": {
+      "title": "Publications inachevées",
+      "phase": {
+        "uploading": "Envoi interrompu, reprise possible",
+        "processing": "Traitement en cours sur la plateforme",
+        "failed": "Échec de la publication"
+      },
+      "resume": "Reprendre",
+      "discard": "Abandonner"
+    },
     "button": {
       "settings": "Paramètres de téléchargement",
       "pause": "Pause",
@@ -2630,7 +2640,8 @@
             "MODPACK_UPDATE_UNSUPPORTED": "Cette instance ne peut pas être mise à jour automatiquement",
             "MODPACK_UPDATE_RUNNING": "Le jeu est en cours d’exécution ; fermez-le avant de mettre à jour le pack de mods",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "Cette version modifie la chaîne de composants du pack et ne peut pas être appliquée sur place ; réinstallez-la",
-            "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack"
+            "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "Les fichiers de cette version sont momentanément indisponibles sur la plateforme. Réessayez plus tard"
           }
         }
       },
@@ -2662,7 +2673,8 @@
             "MODPACK_UPDATE_UNSUPPORTED": "Cette instance ne peut pas être mise à jour automatiquement",
             "MODPACK_UPDATE_RUNNING": "Le jeu est en cours d’exécution ; fermez-le avant de mettre à jour le pack de mods",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "Cette version modifie la chaîne de composants du pack et ne peut pas être appliquée sur place ; réinstallez-la",
-            "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack"
+            "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "Les fichiers de cette version sont momentanément indisponibles sur la plateforme. Réessayez plus tard"
           }
         }
       },
@@ -2690,7 +2702,8 @@
             "MODPACK_UPDATE_UNSUPPORTED": "Cette instance ne peut pas être mise à jour automatiquement",
             "MODPACK_UPDATE_RUNNING": "Le jeu est en cours d’exécution ; fermez-le avant de mettre à jour le pack de mods",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "Cette version modifie la chaîne de composants du pack et ne peut pas être appliquée sur place ; réinstallez-la",
-            "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack"
+            "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "Les fichiers de cette version sont momentanément indisponibles sur la plateforme. Réessayez plus tard"
           }
         }
       },
@@ -3057,7 +3070,6 @@
       "project": "Projet",
       "target": "Publier vers",
       "newProject": "Nouveau projet",
-      "slug": "Identifiant du projet",
       "projectName": "Nom du projet",
       "summary": "Résumé",
       "version": "Version",
@@ -3074,9 +3086,6 @@
       "invalidProject": "Veuillez compléter les informations du projet"
     },
     "errorMessage": {
-      "slug": {
-        "error-1": "2 à 64 minuscules, chiffres ou tirets, en commençant par une lettre"
-      },
       "name": {
         "error-1": "Le nom ne peut pas être vide",
         "error-2": "Le nom est trop long (128 caractères max)"
@@ -3093,7 +3102,8 @@
       }
     },
     "stage": {
-      "hashing": "Vérification des fichiers ({{done}}/{{total}})"
+      "hashing": "Vérification des fichiers ({{done}}/{{total}})",
+      "packing": "Création du paquet des nouveautés"
     },
     "skipped": "{{count}} fichier(s) exclu(s) (mods désactivés ou fichiers du lanceur)",
     "adoption": {
@@ -3181,7 +3191,8 @@
       "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack",
       "MODPACK_UPDATE_UNSUPPORTED": "Cette instance n'a pas d'enregistrement d'installation utilisable ou l'isolation de version est désactivée",
       "MODPACK_UPDATE_NOT_ISOLATED": "L'isolation de version est désactivée pour cette instance, la comparaison n'est pas sûre. Activez-la dans les paramètres de l'instance puis réessayez",
-      "MODPACK_UPDATE_BASELINE_MISSING": "Cette instance n'a pas d'enregistrement d'installation du pack, ou il est endommagé ; comparaison impossible"
+      "MODPACK_UPDATE_BASELINE_MISSING": "Cette instance n'a pas d'enregistrement d'installation du pack, ou il est endommagé ; comparaison impossible",
+      "MODPACK_UPDATE_PACK_UNAVAILABLE": "Les fichiers de cette version sont momentanément indisponibles sur la plateforme. Réessayez plus tard"
     },
     "rollback": {
       "hint": "Vous pouvez annuler la dernière mise à jour du pack et rétablir fichiers et chargeur comme avant.",

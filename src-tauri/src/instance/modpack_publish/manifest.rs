@@ -8,11 +8,13 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// Files above this size are stored once by hash and shared between versions;
-/// smaller ones ride along in the version's bundle archive.
-pub const BLOB_THRESHOLD: u64 = 4 * 1024 * 1024;
-/// The server caps a bundle at 512 MiB; stay clear of it after compression.
-pub const BUNDLE_BUDGET: u64 = 400 * 1024 * 1024;
+pub const MANIFEST_FORMAT: &str = "ustbl.modpack/2";
+
+/// Extensions of formats that are compressed already; deflating them again only
+/// costs time.
+const STORED_EXTENSIONS: [&str; 14] = [
+  "jar", "zip", "png", "jpg", "jpeg", "gif", "ogg", "mp3", "gz", "xz", "zst", "7z", "rar", "webp",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalFile {
@@ -20,19 +22,33 @@ pub struct LocalFile {
   pub key: FileKey,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Copy)]
-pub enum Placement {
-  Blob,
-  Bundle,
+/// One object of the delta pack: the content with this hash, and where it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackObject {
+  pub sha1: String,
+  pub path: PathBuf,
+  /// Stored as is rather than deflated.
+  pub stored: bool,
 }
 
 #[derive(Debug)]
 pub struct PublishPlan {
-  pub files: Vec<(LocalFile, Placement)>,
+  pub files: Vec<LocalFile>,
   /// Disabled mods and launcher metadata are never published.
   pub skipped: Vec<String>,
   /// Set for an instance imported from a MultiMC profile.
   pub components: Option<ComponentPlan>,
+}
+
+fn is_stored(path: &str) -> bool {
+  Path::new(path)
+    .extension()
+    .and_then(|extension| extension.to_str())
+    .is_some_and(|extension| {
+      STORED_EXTENSIONS
+        .iter()
+        .any(|stored| stored.eq_ignore_ascii_case(extension))
+    })
 }
 
 impl PublishPlan {
@@ -40,53 +56,46 @@ impl PublishPlan {
     let files: Vec<Value> = self
       .files
       .iter()
-      .map(|(file, placement)| {
+      .map(|file| {
         json!({
           "path": file.path,
           "size": file.key.size,
           "sha1": file.key.sha1,
-          "source": { "kind": match placement { Placement::Blob => "blob", Placement::Bundle => "bundle" } },
+          "source": { "kind": "pack" },
         })
       })
       .collect();
-    let mut manifest = json!({ "format": "ustbl.modpack/1", "files": files });
+    let mut manifest = json!({ "format": MANIFEST_FORMAT, "files": files });
     if let Some(components) = &self.components {
       manifest["components"] = components.manifest();
     }
     manifest
   }
 
-  /// Where every blob to upload is on disk, keyed by hash: large files of the
-  /// instance and the profile's patches and libraries.
-  pub fn blob_sources(&self, root: &Path) -> BTreeMap<String, PathBuf> {
-    let mut sources: BTreeMap<String, PathBuf> = self
-      .blobs()
-      .into_iter()
-      .map(|(sha1, file)| (sha1, root.join(file.path)))
-      .collect();
-    if let Some(components) = &self.components {
-      sources.extend(components.blobs());
+  /// Every distinct object the version refers to, keyed by hash: the files of
+  /// the instance and the profile's patches and libraries. Identical content
+  /// under several paths is one object.
+  pub fn objects(&self, root: &Path) -> BTreeMap<String, PackObject> {
+    let mut objects = BTreeMap::new();
+    for file in &self.files {
+      objects
+        .entry(file.key.sha1.clone())
+        .or_insert_with(|| PackObject {
+          sha1: file.key.sha1.clone(),
+          path: root.join(&file.path),
+          stored: is_stored(&file.path),
+        });
     }
-    sources
-  }
-
-  /// Distinct blobs to upload, keyed by hash.
-  pub fn blobs(&self) -> BTreeMap<String, LocalFile> {
-    self
-      .files
-      .iter()
-      .filter(|(_, placement)| *placement == Placement::Blob)
-      .map(|(file, _)| (file.key.sha1.clone(), file.clone()))
-      .collect()
-  }
-
-  pub fn bundle_files(&self) -> Vec<&LocalFile> {
-    self
-      .files
-      .iter()
-      .filter(|(_, placement)| *placement == Placement::Bundle)
-      .map(|(file, _)| file)
-      .collect()
+    if let Some(components) = &self.components {
+      for (sha1, (path, name)) in components.blobs() {
+        objects.entry(sha1.clone()).or_insert_with(|| PackObject {
+          sha1,
+          path,
+          stored: is_stored(&name),
+        });
+      }
+    }
+    objects
   }
 }
 
@@ -111,37 +120,8 @@ pub fn plan_files(files: Vec<LocalFile>, instance_name: &str) -> PublishPlan {
   kept.sort_by(|a, b| a.path.cmp(&b.path));
   kept.dedup_by(|a, b| a.path == b.path);
   skipped.sort();
-
-  let mut placed: Vec<(LocalFile, Placement)> = kept
-    .into_iter()
-    .map(|file| {
-      let placement = if file.key.size > BLOB_THRESHOLD {
-        Placement::Blob
-      } else {
-        Placement::Bundle
-      };
-      (file, placement)
-    })
-    .collect();
-
-  let mut bundle_total: u64 = placed
-    .iter()
-    .filter(|(_, p)| *p == Placement::Bundle)
-    .map(|(f, _)| f.key.size)
-    .sum();
-  while bundle_total > BUNDLE_BUDGET {
-    let largest = placed
-      .iter_mut()
-      .filter(|(_, p)| *p == Placement::Bundle)
-      .max_by_key(|(f, _)| f.key.size);
-    let Some((file, placement)) = largest else {
-      break;
-    };
-    bundle_total -= file.key.size;
-    *placement = Placement::Blob;
-  }
   PublishPlan {
-    files: placed,
+    files: kept,
     skipped,
     components: None,
   }
@@ -159,45 +139,6 @@ mod tests {
         size,
       },
     }
-  }
-
-  #[test]
-  fn large_files_become_blobs_and_small_ones_are_bundled() {
-    let plan = plan_files(
-      vec![
-        file("mods/big.jar", "b", BLOB_THRESHOLD + 1),
-        file("config/a.toml", "a", 10),
-        file("mods/edge.jar", "e", BLOB_THRESHOLD),
-        file("empty.txt", "z", 0),
-      ],
-      "pack",
-    );
-
-    let by_path: BTreeMap<_, _> = plan
-      .files
-      .iter()
-      .map(|(f, p)| (f.path.as_str(), *p))
-      .collect();
-    assert_eq!(by_path["mods/big.jar"], Placement::Blob);
-    assert_eq!(by_path["config/a.toml"], Placement::Bundle);
-    assert_eq!(by_path["mods/edge.jar"], Placement::Bundle);
-    assert_eq!(by_path["empty.txt"], Placement::Bundle);
-  }
-
-  #[test]
-  fn the_bundle_budget_pushes_the_largest_files_out() {
-    let chunk = BLOB_THRESHOLD;
-    let count = (BUNDLE_BUDGET / chunk) as usize + 3;
-    let files: Vec<LocalFile> = (0..count)
-      .map(|i| file(&format!("f{i:04}"), &format!("{i:040}"), chunk))
-      .collect();
-
-    let plan = plan_files(files, "pack");
-
-    let bundled: u64 = plan.bundle_files().iter().map(|f| f.key.size).sum();
-    assert!(bundled <= BUNDLE_BUDGET);
-    assert_eq!(plan.blobs().len() + plan.bundle_files().len(), count);
-    assert!(!plan.blobs().is_empty());
   }
 
   #[test]
@@ -219,7 +160,57 @@ mod tests {
   }
 
   #[test]
-  fn component_blobs_join_the_upload_and_the_manifest() {
+  fn every_file_is_listed_as_a_pack_file_in_path_order() {
+    let plan = plan_files(
+      vec![
+        file("options.txt", "b", 5),
+        file("mods/a.jar", "a", 99_000_000),
+        file("empty.txt", "z", 0),
+      ],
+      "pack",
+    );
+    let manifest = plan.manifest();
+    assert_eq!(manifest["format"], "ustbl.modpack/2");
+    let files = manifest["files"].as_array().unwrap();
+    let paths: Vec<_> = files.iter().map(|f| f["path"].as_str().unwrap()).collect();
+    assert_eq!(paths, ["empty.txt", "mods/a.jar", "options.txt"]);
+    assert!(files.iter().all(|f| f["source"]["kind"] == "pack"));
+  }
+
+  #[test]
+  fn identical_content_is_one_object_and_the_manifest_lists_every_path() {
+    let plan = plan_files(
+      vec![
+        file("mods/a.jar", "same", 10),
+        file("mods/copy.jar", "same", 10),
+      ],
+      "pack",
+    );
+
+    let objects = plan.objects(Path::new("/instance"));
+    assert_eq!(objects.len(), 1);
+    assert_eq!(objects["same"].path, Path::new("/instance/mods/a.jar"));
+    assert_eq!(plan.manifest()["files"].as_array().unwrap().len(), 2);
+  }
+
+  #[test]
+  fn compressed_formats_are_stored_and_the_rest_deflated() {
+    let plan = plan_files(
+      vec![
+        file("mods/a.JAR", "1", 1),
+        file("config/a.toml", "2", 1),
+        file("resourcepacks/p.zip", "3", 1),
+      ],
+      "pack",
+    );
+    let objects = plan.objects(Path::new("/i"));
+    assert!(objects["1"].stored);
+    assert!(!objects["2"].stored);
+    assert!(objects["3"].stored);
+  }
+
+  #[test]
+  fn component_blobs_join_the_objects_and_the_manifest() {
     use crate::instance::modpack_publish::components::{ComponentBlob, ComponentPlan};
     let blob = |sha1: &str, source: &str| ComponentBlob {
       key: FileKey {
@@ -228,10 +219,7 @@ mod tests {
       },
       source: PathBuf::from(source),
     };
-    let mut plan = plan_files(
-      vec![file("mods/big.jar", "big", BLOB_THRESHOLD + 1)],
-      "pack",
-    );
+    let mut plan = plan_files(vec![file("mods/big.jar", "big", 10)], "pack");
     assert!(plan.manifest().get("components").is_none());
     plan.components = Some(ComponentPlan {
       mmc_pack: json!({"formatVersion": 1, "components": []}),
@@ -240,32 +228,14 @@ mod tests {
       libraries: [("libraries/x.jar".to_string(), blob("l", "/libs/x.jar"))].into(),
     });
 
-    let sources = plan.blob_sources(Path::new("/instance"));
+    let objects = plan.objects(Path::new("/instance"));
 
-    assert_eq!(sources.len(), 3);
-    assert_eq!(sources["big"], Path::new("/instance/mods/big.jar"));
-    assert_eq!(sources["p"], Path::new("/work/a.b.json"));
-    assert_eq!(sources["l"], Path::new("/libs/x.jar"));
+    assert_eq!(objects.len(), 3);
+    assert_eq!(objects["big"].path, Path::new("/instance/mods/big.jar"));
+    assert_eq!(objects["p"].path, Path::new("/work/a.b.json"));
+    assert!(!objects["p"].stored);
+    assert_eq!(objects["l"].path, Path::new("/libs/x.jar"));
+    assert!(objects["l"].stored);
     assert_eq!(plan.manifest()["components"]["patches"][0]["blob"], "p");
-  }
-
-  #[test]
-  fn identical_content_is_uploaded_once_and_the_manifest_lists_every_path() {
-    let big = BLOB_THRESHOLD + 1;
-    let plan = plan_files(
-      vec![
-        file("mods/a.jar", "same", big),
-        file("mods/copy.jar", "same", big),
-      ],
-      "pack",
-    );
-
-    assert_eq!(plan.blobs().len(), 1);
-    let manifest = plan.manifest();
-    assert_eq!(manifest["format"], "ustbl.modpack/1");
-    let files = manifest["files"].as_array().unwrap();
-    assert_eq!(files.len(), 2);
-    assert_eq!(files[0]["source"]["kind"], "blob");
-    assert_eq!(files[0]["sha1"], "same");
   }
 }

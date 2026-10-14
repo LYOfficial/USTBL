@@ -627,6 +627,16 @@
   },
   "DownloadTasksPage": {
     "title": "ダウンロードタスク",
+    "unfinishedPublish": {
+      "title": "未完了の公開",
+      "phase": {
+        "uploading": "アップロードが中断されました。続行できます",
+        "processing": "プラットフォームで処理中です",
+        "failed": "公開に失敗しました"
+      },
+      "resume": "続行",
+      "discard": "破棄"
+    },
     "button": {
       "settings": "ダウンロード設定",
       "pause": "一時停止",
@@ -2630,7 +2640,8 @@
             "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスは自動更新できません",
             "MODPACK_UPDATE_RUNNING": "ゲームが実行中です。Modパックを更新する前に閉じてください",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "新しいバージョンはコンポーネント構成を変更するため、そのまま更新できません。再インストールしてください",
-            "MODPACK_UPDATE_LINE_GONE": "プラットフォームにこのモッドパックのラインはもうありません"
+            "MODPACK_UPDATE_LINE_GONE": "プラットフォームにこのモッドパックのラインはもうありません",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "このバージョンのファイルはプラットフォーム上で一時的に利用できません。しばらくしてからやり直してください"
           }
         }
       },
@@ -2662,7 +2673,8 @@
             "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスは自動更新できません",
             "MODPACK_UPDATE_RUNNING": "ゲームが実行中です。Modパックを更新する前に閉じてください",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "新しいバージョンはコンポーネント構成を変更するため、そのまま更新できません。再インストールしてください",
-            "MODPACK_UPDATE_LINE_GONE": "プラットフォームにこのモッドパックのラインはもうありません"
+            "MODPACK_UPDATE_LINE_GONE": "プラットフォームにこのモッドパックのラインはもうありません",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "このバージョンのファイルはプラットフォーム上で一時的に利用できません。しばらくしてからやり直してください"
           }
         }
       },
@@ -2690,7 +2702,8 @@
             "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスは自動更新できません",
             "MODPACK_UPDATE_RUNNING": "ゲームが実行中です。Modパックを更新する前に閉じてください",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "新しいバージョンはコンポーネント構成を変更するため、そのまま更新できません。再インストールしてください",
-            "MODPACK_UPDATE_LINE_GONE": "プラットフォームにこのモッドパックのラインはもうありません"
+            "MODPACK_UPDATE_LINE_GONE": "プラットフォームにこのモッドパックのラインはもうありません",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "このバージョンのファイルはプラットフォーム上で一時的に利用できません。しばらくしてからやり直してください"
           }
         }
       },
@@ -3057,7 +3070,6 @@
       "project": "プロジェクト",
       "target": "公開先",
       "newProject": "新規プロジェクト",
-      "slug": "プロジェクトID",
       "projectName": "プロジェクト名",
       "summary": "概要",
       "version": "バージョン",
@@ -3074,9 +3086,6 @@
       "invalidProject": "プロジェクト情報を入力してください"
     },
     "errorMessage": {
-      "slug": {
-        "error-1": "英小文字で始まる2〜64文字の英小文字・数字・ハイフンにしてください"
-      },
       "name": {
         "error-1": "名前を入力してください",
         "error-2": "名前が長すぎます（最大128文字）"
@@ -3093,7 +3102,8 @@
       }
     },
     "stage": {
-      "hashing": "ファイルを確認中（{{done}}/{{total}}）"
+      "hashing": "ファイルを確認中（{{done}}/{{total}}）",
+      "packing": "新しい内容をパック中"
     },
     "skipped": "{{count}} 個のファイルを除外しました（無効化されたModやランチャーのファイル）",
     "adoption": {
@@ -3181,7 +3191,8 @@
       "MODPACK_UPDATE_LINE_GONE": "プラットフォームにこのモッドパックのラインはもうありません",
       "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスには利用できるインストール記録がないか、バージョン分離が無効です",
       "MODPACK_UPDATE_NOT_ISOLATED": "このインスタンスはバージョン分離が無効のため、安全に比較できません。インスタンス設定で有効にして再試行してください",
-      "MODPACK_UPDATE_BASELINE_MISSING": "このインスタンスにはモッドパックのインストール記録がないか、記録が破損しているため比較できません"
+      "MODPACK_UPDATE_BASELINE_MISSING": "このインスタンスにはモッドパックのインストール記録がないか、記録が破損しているため比較できません",
+      "MODPACK_UPDATE_PACK_UNAVAILABLE": "このバージョンのファイルはプラットフォーム上で一時的に利用できません。しばらくしてからやり直してください"
     },
     "rollback": {
       "hint": "前回のモッドパック更新を取り消し、ファイルとローダーを更新前の状態に戻せます。",

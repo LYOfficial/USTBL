@@ -15,6 +15,7 @@ dependencies = [
  "config",
  "csv",
  "dotenvy",
+ "flate2",
  "flume",
  "font-loader",
  "futures",

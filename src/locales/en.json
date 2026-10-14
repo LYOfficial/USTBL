@@ -627,6 +627,16 @@
   },
   "DownloadTasksPage": {
     "title": "Download Tasks",
+    "unfinishedPublish": {
+      "title": "Unfinished publishes",
+      "phase": {
+        "uploading": "Upload interrupted, can be continued",
+        "processing": "The platform is processing it",
+        "failed": "Publish failed"
+      },
+      "resume": "Continue",
+      "discard": "Discard"
+    },
     "button": {
       "settings": "Download Settings",
       "pause": "Pause",
@@ -2630,7 +2640,8 @@
             "MODPACK_UPDATE_UNSUPPORTED": "This instance cannot be updated automatically",
             "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "This version changes the modpack's component chain and cannot be applied in place; install it again",
-            "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack"
+            "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "The files of this version are temporarily unavailable on the platform. Try again later"
           }
         }
       },
@@ -2662,7 +2673,8 @@
             "MODPACK_UPDATE_UNSUPPORTED": "This instance cannot be updated automatically",
             "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "This version changes the modpack's component chain and cannot be applied in place; install it again",
-            "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack"
+            "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "The files of this version are temporarily unavailable on the platform. Try again later"
           }
         }
       },
@@ -2690,7 +2702,8 @@
             "MODPACK_UPDATE_UNSUPPORTED": "This instance cannot be updated automatically",
             "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "This version changes the modpack's component chain and cannot be applied in place; install it again",
-            "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack"
+            "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "The files of this version are temporarily unavailable on the platform. Try again later"
           }
         }
       },
@@ -3057,7 +3070,6 @@
       "project": "Project",
       "target": "Publish To",
       "newProject": "New project",
-      "slug": "Project ID",
       "projectName": "Project Name",
       "summary": "Summary",
       "version": "Version",
@@ -3074,9 +3086,6 @@
       "invalidProject": "Please complete the project information"
     },
     "errorMessage": {
-      "slug": {
-        "error-1": "Use 2-64 lowercase letters, digits or hyphens, starting with a letter"
-      },
       "name": {
         "error-1": "Name cannot be empty",
         "error-2": "Name is too long (max 128 characters)"
@@ -3093,7 +3102,8 @@
       }
     },
     "stage": {
-      "hashing": "Checking files ({{done}}/{{total}})"
+      "hashing": "Checking files ({{done}}/{{total}})",
+      "packing": "Packing new content"
     },
     "skipped": "{{count}} file(s) were left out (disabled mods or launcher files)",
     "adoption": {
@@ -3181,7 +3191,8 @@
       "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack",
       "MODPACK_UPDATE_UNSUPPORTED": "This instance has no usable install record or version isolation is off",
       "MODPACK_UPDATE_NOT_ISOLATED": "Version isolation is off for this instance, so it cannot be compared safely. Turn it on in the instance settings and retry",
-      "MODPACK_UPDATE_BASELINE_MISSING": "This instance has no install record for the modpack, or the record is damaged, so it cannot be compared"
+      "MODPACK_UPDATE_BASELINE_MISSING": "This instance has no install record for the modpack, or the record is damaged, so it cannot be compared",
+      "MODPACK_UPDATE_PACK_UNAVAILABLE": "The files of this version are temporarily unavailable on the platform. Try again later"
     },
     "rollback": {
       "hint": "You can undo the last modpack update and restore files and loader as they were before it.",

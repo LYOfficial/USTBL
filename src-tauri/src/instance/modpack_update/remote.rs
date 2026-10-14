@@ -2,6 +2,7 @@
 //! which platform it came from.
 
 use super::diff::FileKey;
+use super::packs::PackSession;
 use crate::error::USTBLResult;
 use crate::instance::helpers::modpack::baseline::{
   compute_content_hash, BaselineFile, BaselineLoader, ComponentRef,
@@ -12,6 +13,7 @@ use crate::instance::models::misc::InstanceError;
 use crate::tasks::download::DownloadParam;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Directory inside an instance that holds the staging area and the journal of
 /// an update in progress. Nothing in it is ever managed by a modpack.
@@ -23,6 +25,9 @@ pub enum FileSource {
   Download(Box<DownloadParam>),
   /// Taken out of an archive that was already downloaded.
   ArchiveEntry { archive: PathBuf, entry: String },
+  /// Stored in the campus platform's packs, found by the file's sha1. The
+  /// session is told which files are wanted before any is fetched.
+  Pack(Arc<PackSession>),
 }
 
 #[derive(Debug, Clone)]

@@ -38,7 +38,6 @@ interface PublishModpackModalProps extends Omit<ModalProps, "children"> {
 }
 
 const NEW_PROJECT = "__new__";
-const SLUG_PATTERN = /^[a-z][a-z0-9-]{1,63}$/;
 
 const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
   instanceId,
@@ -53,7 +52,6 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
 
   const [projects, setProjects] = useState<CampusModpackProject[]>([]);
   const [projectChoice, setProjectChoice] = useState(NEW_PROJECT);
-  const [slug, setSlug] = useState("");
   const [projectName, setProjectName] = useState(instanceName);
   const [summary, setSummary] = useState("");
   const [versionNumber, setVersionNumber] = useState("");
@@ -65,11 +63,6 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
   const [progress, setProgress] = useState<CampusPublishProgress | null>(null);
 
   const isNewProject = projectChoice === NEW_PROJECT;
-
-  const checkSlugError = useCallback((value: string): number => {
-    if (!SLUG_PATTERN.test(value.trim().toLowerCase())) return 1;
-    return 0;
-  }, []);
 
   const checkNameError = useCallback((value: string): number => {
     const trimmed = value.trim();
@@ -189,9 +182,7 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
     }
     if (
       isNewProject &&
-      (checkSlugError(slug) !== 0 ||
-        checkNameError(projectName) !== 0 ||
-        checkSummaryError(summary) !== 0)
+      (checkNameError(projectName) !== 0 || checkSummaryError(summary) !== 0)
     ) {
       toast({
         title: t("PublishModpackModal.error.invalidProject"),
@@ -203,29 +194,13 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
     setIsPublishing(true);
     setProgress(null);
     try {
-      let projectRef = projectChoice;
-      if (isNewProject) {
-        const created = await CampusModpackService.createCampusModpackProject(
-          slug.trim().toLowerCase(),
-          projectName.trim(),
-          summary.trim()
-        );
-        if (created.status !== "success") {
-          toast({
-            title: created.message,
-            description: created.details,
-            status: "error",
-          });
-          return;
-        }
-        projectRef = created.data.slug;
-        setProjects((prev) => [...prev, created.data]);
-        setProjectChoice(created.data.slug);
-      }
-
+      // The platform names a new project itself and returns its identifier.
       const response = await CampusModpackService.publishCampusModpack(
         instanceId,
-        projectRef,
+        isNewProject ? null : projectChoice,
+        isNewProject
+          ? { name: projectName.trim(), summary: summary.trim() }
+          : null,
         versionNumber.trim(),
         changelog,
         selectedFileList
@@ -252,7 +227,6 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
   }, [
     changelog,
     checkNameError,
-    checkSlugError,
     checkSummaryError,
     checkVersionError,
     instanceId,
@@ -261,7 +235,6 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
     projectChoice,
     projectName,
     selectedFileList,
-    slug,
     summary,
     t,
     toast,
@@ -303,19 +276,6 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
         },
         ...(isNewProject
           ? [
-              {
-                title: t("PublishModpackModal.label.slug"),
-                children: (
-                  <Editable
-                    isTextArea={false}
-                    value={slug}
-                    onEditSubmit={setSlug}
-                    checkError={checkSlugError}
-                    localeKey="PublishModpackModal.errorMessage.slug"
-                    {...editableProps}
-                  />
-                ),
-              },
               {
                 title: t("PublishModpackModal.label.projectName"),
                 children: (

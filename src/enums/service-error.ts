@@ -57,6 +57,7 @@ export enum InstanceError {
   ModpackUpdateLineGone = "MODPACK_UPDATE_LINE_GONE",
   ModpackUpdateNotIsolated = "MODPACK_UPDATE_NOT_ISOLATED",
   ModpackUpdateBaselineMissing = "MODPACK_UPDATE_BASELINE_MISSING",
+  ModpackUpdatePackUnavailable = "MODPACK_UPDATE_PACK_UNAVAILABLE",
 }
 
 export enum ConfigServiceError {

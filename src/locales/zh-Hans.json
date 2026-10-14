@@ -627,6 +627,16 @@
   },
   "DownloadTasksPage": {
     "title": "下载任务",
+    "unfinishedPublish": {
+      "title": "未完成的发布",
+      "phase": {
+        "uploading": "上传中断，可继续",
+        "processing": "平台正在处理",
+        "failed": "发布失败"
+      },
+      "resume": "继续",
+      "discard": "放弃"
+    },
     "button": {
       "settings": "下载设置",
       "pause": "暂停",
@@ -2630,7 +2640,8 @@
             "MODPACK_UPDATE_UNSUPPORTED": "此实例暂不支持自动更新",
             "MODPACK_UPDATE_RUNNING": "游戏正在运行，请先关闭游戏再更新整合包",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的组件链，无法就地更新，请重新安装",
-            "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线"
+            "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试"
           }
         }
       },
@@ -2662,7 +2673,8 @@
             "MODPACK_UPDATE_UNSUPPORTED": "此实例暂不支持自动更新",
             "MODPACK_UPDATE_RUNNING": "游戏正在运行，请先关闭游戏再更新整合包",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的组件链，无法就地更新，请重新安装",
-            "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线"
+            "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试"
           }
         }
       },
@@ -2690,7 +2702,8 @@
             "MODPACK_UPDATE_UNSUPPORTED": "此实例暂不支持自动更新",
             "MODPACK_UPDATE_RUNNING": "游戏正在运行，请先关闭游戏再更新整合包",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的组件链，无法就地更新，请重新安装",
-            "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线"
+            "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试"
           }
         }
       },
@@ -3057,7 +3070,6 @@
       "project": "项目",
       "target": "发布到",
       "newProject": "新建项目",
-      "slug": "项目标识",
       "projectName": "项目名称",
       "summary": "简介",
       "version": "版本",
@@ -3074,9 +3086,6 @@
       "invalidProject": "请补全项目信息"
     },
     "errorMessage": {
-      "slug": {
-        "error-1": "需为 2 到 64 位小写字母、数字或连字符，并以字母开头"
-      },
       "name": {
         "error-1": "名称不能为空",
         "error-2": "名称过长（最多 128 个字符）"
@@ -3093,7 +3102,8 @@
       }
     },
     "stage": {
-      "hashing": "正在检查文件（{{done}}/{{total}}）"
+      "hashing": "正在检查文件（{{done}}/{{total}}）",
+      "packing": "正在打包新增内容"
     },
     "skipped": "有 {{count}} 个文件被排除（已禁用的模组或启动器文件）",
     "adoption": {
@@ -3181,7 +3191,8 @@
       "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线",
       "MODPACK_UPDATE_UNSUPPORTED": "该实例缺少可用的安装记录或未开启版本隔离",
       "MODPACK_UPDATE_NOT_ISOLATED": "该实例没有开启版本隔离，无法安全对比更新。请在实例设置中开启后重试",
-      "MODPACK_UPDATE_BASELINE_MISSING": "该实例缺少整合包的安装记录或记录已损坏，无法对比更新"
+      "MODPACK_UPDATE_BASELINE_MISSING": "该实例缺少整合包的安装记录或记录已损坏，无法对比更新",
+      "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试"
     },
     "rollback": {
       "hint": "可以撤销上一次整合包更新，把文件和加载器恢复成更新前的样子。",

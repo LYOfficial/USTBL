@@ -7,6 +7,7 @@
 //! half way, the journal is enough to put every file back.
 
 use super::diff::{Operation, DISABLED_SUFFIX};
+use super::packs::PackSession;
 use super::remote::{ComponentPack, FileSource, RemoteFile, RemoteModpack, UPDATE_DIR};
 use crate::error::USTBLResult;
 use crate::instance::helpers::modpack::baseline::{
@@ -24,7 +25,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 const JOURNAL_FILE: &str = "journal.json";
 const JOURNAL_SCHEMA: u32 = 1;
@@ -342,6 +343,28 @@ fn extract_entry(archive: &Path, entry: &str, dest: &Path) -> USTBLResult<()> {
   Ok(())
 }
 
+/// Tell every pack session which of its files are about to be fetched, so it
+/// can locate just those.
+async fn prepare_packs(files: &[&RemoteFile]) -> USTBLResult<()> {
+  let mut sessions: Vec<(Arc<PackSession>, Vec<String>)> = Vec::new();
+  for file in files {
+    let FileSource::Pack(session) = &file.source else {
+      continue;
+    };
+    match sessions
+      .iter_mut()
+      .find(|(known, _)| Arc::ptr_eq(known, session))
+    {
+      Some((_, wanted)) => wanted.push(file.key.sha1.clone()),
+      None => sessions.push((session.clone(), vec![file.key.sha1.clone()])),
+    }
+  }
+  for (session, wanted) in sessions {
+    session.prepare(&wanted).await?;
+  }
+  Ok(())
+}
+
 async fn stage_file(env: &dyn UpdateEnv, dest: PathBuf, file: &RemoteFile) -> USTBLResult<()> {
   match &file.source {
     FileSource::Download(param) => {
@@ -356,6 +379,7 @@ async fn stage_file(env: &dyn UpdateEnv, dest: PathBuf, file: &RemoteFile) -> US
         .await
         .map_err(|e| crate::error::USTBLError(e.to_string()))??;
     }
+    FileSource::Pack(session) => session.fetch(&file.key.sha1, &dest).await?,
   }
   let check = dest.clone();
   let actual = tokio::task::spawn_blocking(move || hash_file(&check))
@@ -481,6 +505,8 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
         .map(|file| (file, components_dir(root).join(&file.path))),
     );
   }
+  let wanted: Vec<&RemoteFile> = to_fetch.iter().map(|(file, _)| *file).collect();
+  prepare_packs(&wanted).await?;
   let total = to_fetch.len();
   env.report(Progress {
     stage: Stage::Fetching,
@@ -1134,6 +1160,91 @@ mod tests {
 
     assert_eq!(root.read("config/a.toml").as_deref(), Some("from-zip"));
     assert!(env.switched.lock().unwrap().is_empty());
+  }
+
+  /// A platform whose single delta pack holds one stored file at offset 0.
+  struct OneFilePack(Vec<u8>);
+
+  #[async_trait]
+  impl crate::instance::modpack_update::packs::PackTransport for OneFilePack {
+    async fn locate(
+      &self,
+      _: i64,
+      _: crate::instance::modpack_update::packs::LocateMode,
+      sha1s: &[String],
+    ) -> Result<
+      crate::instance::modpack_update::packs::Located,
+      crate::instance::modpack_update::packs::TransportError,
+    > {
+      use crate::instance::modpack_update::packs::{EntryLocation, Located, PackLocation, STORED};
+      let entry = EntryLocation {
+        pack: 1,
+        data_offset: 0,
+        compress_type: STORED,
+        compressed_size: self.0.len() as u64,
+        size: self.0.len() as u64,
+        crc32: {
+          let mut crc = flate2::Crc::new();
+          crc.update(&self.0);
+          crc.sum()
+        },
+      };
+      Ok(Located {
+        packs: vec![PackLocation {
+          id: 1,
+          sha1: "0".repeat(40),
+          url: "https://cloud.example/p".into(),
+          method: "GET".into(),
+          headers: Default::default(),
+        }],
+        entries: sha1s.iter().map(|sha1| (sha1.clone(), entry)).collect(),
+        full_size: None,
+      })
+    }
+    async fn read_range(
+      &self,
+      _: &crate::instance::modpack_update::packs::PackLocation,
+      _: u64,
+      _: u64,
+      dest: &Path,
+    ) -> Result<(), crate::instance::modpack_update::packs::TransportError> {
+      fs::create_dir_all(dest.parent().unwrap()).unwrap();
+      fs::write(dest, &self.0).unwrap();
+      Ok(())
+    }
+    async fn download(
+      &self,
+      _: &crate::instance::modpack_update::packs::PackLocation,
+      _: &Path,
+    ) -> Result<(), crate::instance::modpack_update::packs::TransportError> {
+      unreachable!()
+    }
+  }
+
+  #[tokio::test]
+  async fn files_can_come_from_the_platform_packs() {
+    let root = setup();
+    let env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let session = PackSession::new(
+      std::sync::Arc::new(OneFilePack(b"from-pack".to_vec())),
+      3,
+      root.0.join("work"),
+    );
+    let file = RemoteFile {
+      path: "config/p.toml".into(),
+      key: sha1_of(b"from-pack"),
+      source: FileSource::Pack(session),
+    };
+    let operations = vec![write_op(&file)];
+
+    apply(&env, request(&root, vec![file], operations, "0.15.0"))
+      .await
+      .unwrap();
+
+    assert_eq!(root.read("config/p.toml").as_deref(), Some("from-pack"));
   }
 
   #[tokio::test]
