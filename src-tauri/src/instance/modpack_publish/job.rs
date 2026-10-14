@@ -30,7 +30,7 @@ use std::path::Path;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::time::{interval, sleep, MissedTickBehavior};
@@ -159,11 +159,21 @@ fn retriable(status: reqwest::StatusCode) -> bool {
     || status == reqwest::StatusCode::REQUEST_TIMEOUT
 }
 
-fn counting_body(data: Bytes, sent: Arc<SentBytes>, counted: Arc<AtomicU64>) -> reqwest::Body {
+/// When the last slice of a request body was taken by the HTTP stack.
+type HandedOver = Arc<Mutex<Option<Instant>>>;
+
+fn counting_body(
+  data: Bytes,
+  sent: Arc<SentBytes>,
+  counted: Arc<AtomicU64>,
+  handed_over: HandedOver,
+) -> reqwest::Body {
   let stream = futures::stream::unfold(0usize, move |offset| {
     let (data, sent, counted) = (data.clone(), sent.clone(), counted.clone());
+    let handed_over = handed_over.clone();
     async move {
       if offset >= data.len() {
+        handed_over.lock().unwrap().get_or_insert_with(Instant::now);
         return None;
       }
       let end = (offset + SLICE).min(data.len());
@@ -514,8 +524,10 @@ impl PublishJob {
     length: u64,
     sent: &Arc<SentBytes>,
   ) -> USTBLResult<()> {
+    let prepared = Instant::now();
     let data = read_chunk(pack, n as u64 * upload.chunk_size, length).await?;
     let digest = hex::encode(Sha1::digest(&data));
+    let prepare_time = prepared.elapsed();
     let url = format!("{CAMPUS_API}/uploads/{}/chunks/{n}", upload.id);
 
     let mut last = USTBLError("上传失败".into());
@@ -524,6 +536,8 @@ impl PublishJob {
         sleep(Duration::from_secs(1 << (attempt - 1))).await;
       }
       let counted = Arc::new(AtomicU64::new(0));
+      let handed_over: HandedOver = Arc::new(Mutex::new(None));
+      let started = Instant::now();
       let response = vustb::send_authenticated_with(&self.app, &self.uploader, |client, token| {
         client
           .put(&url)
@@ -531,10 +545,33 @@ impl PublishJob {
           .header("Content-Type", "application/octet-stream")
           .header("Content-Length", length)
           .header("X-Chunk-SHA1", &digest)
-          .body(counting_body(data.clone(), sent.clone(), counted.clone()))
+          .body(counting_body(
+            data.clone(),
+            sent.clone(),
+            counted.clone(),
+            handed_over.clone(),
+          ))
       })
       .await;
       let sent_now = counted.load(Ordering::Relaxed);
+      // Where the time of a chunk goes: reading and hashing it, getting the
+      // body into the connection, and waiting for the platform's answer.
+      let body_time = handed_over
+        .lock()
+        .unwrap()
+        .map(|done| done.duration_since(started).as_secs_f64());
+      log::info!(
+        "Chunk {n}/{} (attempt {}): prepared in {:.2}s, body handed over after {}, answered after {:.2}s ({})",
+        upload.chunk_count,
+        attempt + 1,
+        prepare_time.as_secs_f64(),
+        body_time.map_or("never".to_string(), |time| format!("{time:.2}s")),
+        started.elapsed().as_secs_f64(),
+        match &response {
+          Ok(response) => format!("{:?} {}", response.version(), response.status()),
+          Err(error) => format!("error: {}", error.0),
+        }
+      );
       match response {
         Ok(response) if response.status().is_success() => {
           // Whatever the stream did not count (it is read once per request).
