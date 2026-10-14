@@ -5,8 +5,9 @@ import {
   CampusInstallProgress,
   CampusModpackProject,
   CampusModpackRecommendation,
-  CampusPublishOutcome,
+  CampusPublishFinished,
   CampusPublishProgress,
+  CampusPublishStarted,
 } from "@/models/campus-modpack";
 import { InvokeResponse } from "@/models/response";
 import { responseHandler } from "@/utils/response";
@@ -68,7 +69,7 @@ export class CampusModpackService {
     versionNumber: string,
     changelog: string,
     files: string[]
-  ): Promise<InvokeResponse<CampusPublishOutcome>> {
+  ): Promise<InvokeResponse<CampusPublishStarted>> {
     return await invoke("publish_campus_modpack", {
       instanceId,
       project,
@@ -90,6 +91,18 @@ export class CampusModpackService {
       instanceId,
       project,
     });
+  }
+
+  static onPublishFinished(
+    callback: (payload: CampusPublishFinished) => void
+  ): () => void {
+    const unlisten = getCurrentWebview().listen<CampusPublishFinished>(
+      "modpack-publish:finished",
+      (event) => callback(event.payload)
+    );
+    return () => {
+      unlisten.then((removeListener) => removeListener());
+    };
   }
 
   static onPublishProgress(

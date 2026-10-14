@@ -656,7 +656,8 @@
       "neoforge-libraries": "Bibliothèques d'exécution de NeoForge ",
       "forge-libraries": "Bibliothèques d'exécution de Forge",
       "launcher-update": "Mettre à jour le lanceur",
-      "mojang-java": "Java {{param}} fonctionne"
+      "mojang-java": "Java {{param}} fonctionne",
+      "modpack-publish": "Publication du modpack {{param}}"
     }
   },
   "Editable": {
@@ -3092,10 +3093,7 @@
       }
     },
     "stage": {
-      "hashing": "Vérification des fichiers ({{done}}/{{total}})",
-      "uploading": "Envoi des fichiers ({{done}}/{{total}})",
-      "bundling": "Envoi du paquet",
-      "publishing": "Publication"
+      "hashing": "Vérification des fichiers ({{done}}/{{total}})"
     },
     "skipped": "{{count}} fichier(s) exclu(s) (mods désactivés ou fichiers du lanceur)",
     "adoption": {
@@ -3104,8 +3102,9 @@
       "localChanged": "Des fichiers locaux ont changé pendant l'envoi ; l'instance n'a pas été liée à cette version.",
       "recordFailed": "La version est publiée, mais l'instance n'a pas pu y être liée. La prochaine vérification comparera normalement."
     },
-    "transfer": {
-      "summary": "{{done}} / {{total}} · {{speed}}/s · {{concurrency}} fichiers en parallèle"
+    "started": {
+      "title": "Envoi démarré",
+      "description": "L'envoi continue en arrière-plan. Suivez-le sur la page des téléchargements."
     }
   },
   "InstallCampusModpackModal": {

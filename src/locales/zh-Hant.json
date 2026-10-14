@@ -656,7 +656,8 @@
       "neoforge-libraries": "NeoForge 執行庫",
       "forge-libraries": "Forge 執行庫",
       "launcher-update": "更新啟動器",
-      "mojang-java": "Java {{param}} 執行時"
+      "mojang-java": "Java {{param}} 執行時",
+      "modpack-publish": "發布整合包 {{param}}"
     }
   },
   "Editable": {
@@ -3092,10 +3093,7 @@
       }
     },
     "stage": {
-      "hashing": "正在檢查檔案（{{done}}/{{total}}）",
-      "uploading": "正在上傳檔案（{{done}}/{{total}}）",
-      "bundling": "正在上傳檔案包",
-      "publishing": "正在發佈"
+      "hashing": "正在檢查檔案（{{done}}/{{total}}）"
     },
     "skipped": "有 {{count}} 個檔案被排除（已停用的模組或啟動器檔案）",
     "adoption": {
@@ -3104,8 +3102,9 @@
       "localChanged": "上傳期間本機檔案發生了變化，未將該實例關聯到此版本。",
       "recordFailed": "版本已發布，但未能記錄該實例與此版本的關聯，下次檢查將按常規比較。"
     },
-    "transfer": {
-      "summary": "{{done}} / {{total}} · {{speed}}/s · 同時上傳 {{concurrency}} 個檔案"
+    "started": {
+      "title": "已開始上傳整合包",
+      "description": "上傳在背景進行，可在下載頁查看進度。"
     }
   },
   "InstallCampusModpackModal": {

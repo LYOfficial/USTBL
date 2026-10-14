@@ -656,7 +656,8 @@
       "neoforge-libraries": "NeoForge ランタイムライブラリ",
       "forge-libraries": "Forge ランタイムライブラリ",
       "launcher-update": "ランチャーを更新",
-      "mojang-java": "Java {{param}} ランタイム"
+      "mojang-java": "Java {{param}} ランタイム",
+      "modpack-publish": "モッドパックを公開 {{param}}"
     }
   },
   "Editable": {
@@ -3092,10 +3093,7 @@
       }
     },
     "stage": {
-      "hashing": "ファイルを確認中（{{done}}/{{total}}）",
-      "uploading": "ファイルをアップロード中（{{done}}/{{total}}）",
-      "bundling": "ファイルパックをアップロード中",
-      "publishing": "公開中"
+      "hashing": "ファイルを確認中（{{done}}/{{total}}）"
     },
     "skipped": "{{count}} 個のファイルを除外しました（無効化されたModやランチャーのファイル）",
     "adoption": {
@@ -3104,8 +3102,9 @@
       "localChanged": "アップロード中にローカルファイルが変更されたため、このバージョンには関連付けませんでした。",
       "recordFailed": "バージョンは公開されましたが、インスタンスとの関連付けを記録できませんでした。次回の確認では通常どおり比較します。"
     },
-    "transfer": {
-      "summary": "{{done}} / {{total}} ・ {{speed}}/s ・ {{concurrency}} ファイル同時"
+    "started": {
+      "title": "アップロードを開始しました",
+      "description": "バックグラウンドで続行します。進行状況はダウンロードページで確認できます。"
     }
   },
   "InstallCampusModpackModal": {

@@ -28,35 +28,27 @@ export type CampusPublishAdoption =
   | "localChanged"
   | "recordFailed";
 
-export type CampusPublishStage =
-  | "hashing"
-  | "uploading"
-  | "bundling"
-  | "publishing";
-
-export interface CampusPublishFileTransfer {
-  name: string;
-  done: number;
-  total: number;
-}
-
-/** Byte-level detail while files are uploading. */
-export interface CampusPublishTransfer {
-  bytesDone: number;
-  bytesTotal: number;
-  /** Bytes per second. */
-  speed: number;
-  /** Files being sent at the same time. */
-  concurrency: number;
-  files: CampusPublishFileTransfer[];
-}
+/** What happens before the upload, while the publish dialog is still open. */
+export type CampusPublishStage = "hashing";
 
 export interface CampusPublishProgress {
   instanceId: string;
   stage: CampusPublishStage;
   done: number;
   total: number;
-  transfer?: CampusPublishTransfer;
+}
+
+/** The upload went to the background; its task group is on the task list. */
+export interface CampusPublishStarted {
+  group: string;
+}
+
+export interface CampusPublishFinished {
+  instanceId: string;
+  group: string;
+  outcome?: CampusPublishOutcome;
+  /** Error code or message when the publish failed. */
+  error?: string;
 }
 
 export interface CampusModpackRecommendation {
