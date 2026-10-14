@@ -9,7 +9,6 @@ import {
   ModalHeader,
   ModalOverlay,
   ModalProps,
-  Progress,
   Select,
   Text,
   VStack,
@@ -32,7 +31,6 @@ import {
 import { ModpackFileList } from "@/models/instance/misc";
 import { CampusModpackService } from "@/services/campus-modpack";
 import { InstanceService } from "@/services/instance";
-import { formatByteSize } from "@/utils/string";
 
 interface PublishModpackModalProps extends Omit<ModalProps, "children"> {
   instanceId: string;
@@ -233,21 +231,11 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
         selectedFileList
       );
       if (response.status === "success") {
-        if (response.data.adoption === "followed") getInstanceList(true);
-        const notes = [
-          response.data.skipped.length > 0
-            ? t("PublishModpackModal.skipped", {
-                count: response.data.skipped.length,
-              })
-            : undefined,
-          response.data.adoption === "followed"
-            ? undefined
-            : t(`PublishModpackModal.adoption.${response.data.adoption}`),
-        ].filter(Boolean);
+        // The upload goes on in the background; its result is told when done.
         toast({
-          title: response.message,
-          description: notes.length > 0 ? notes.join(" ") : undefined,
-          status: "success",
+          title: t("PublishModpackModal.started.title"),
+          description: t("PublishModpackModal.started.description"),
+          status: "info",
         });
         modalProps.onClose();
       } else {
@@ -267,7 +255,6 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
     checkSlugError,
     checkSummaryError,
     checkVersionError,
-    getInstanceList,
     instanceId,
     isNewProject,
     modalProps,
@@ -430,40 +417,6 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
             {optionGroups.map((group, index) => (
               <OptionItemGroup {...group} key={index} />
             ))}
-            {progress?.transfer && (
-              <VStack spacing={1} align="stretch">
-                <Text fontSize="xs" className="secondary-text">
-                  {t("PublishModpackModal.transfer.summary", {
-                    done: formatByteSize(progress.transfer.bytesDone),
-                    total: formatByteSize(progress.transfer.bytesTotal),
-                    speed: formatByteSize(progress.transfer.speed),
-                    concurrency: progress.transfer.concurrency,
-                  })}
-                </Text>
-                {progress.transfer.files.map((file, index) => (
-                  <HStack key={`${file.name}-${index}`} spacing={2}>
-                    <Text fontSize="xs" noOfLines={1} flex="1" minW={0}>
-                      {file.name}
-                    </Text>
-                    <Progress
-                      size="xs"
-                      w="96px"
-                      borderRadius="full"
-                      value={file.total ? (file.done / file.total) * 100 : 100}
-                    />
-                    <Text
-                      fontSize="xs"
-                      className="secondary-text"
-                      w="150px"
-                      textAlign="right"
-                      flexShrink={0}
-                    >
-                      {formatByteSize(file.done)} / {formatByteSize(file.total)}
-                    </Text>
-                  </HStack>
-                ))}
-              </VStack>
-            )}
           </VStack>
         </ModalBody>
         <ModalFooter>
