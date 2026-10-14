@@ -4,9 +4,12 @@ use crate::tasks::streams::desc::PStatus;
 use crate::tasks::PTaskHandle;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
 
-const START_LEVEL: usize = 2;
-const MAX_LEVEL: usize = 6;
+// Each file also waits for the platform to hand it on to cloud storage, so the
+// network sits idle part of the time and more files in flight pay off.
+const START_LEVEL: usize = 4;
+const MAX_LEVEL: usize = 8;
 /// Another file in flight must lift the total speed by this much to be kept.
 const GAIN_TO_KEEP: f64 = 1.15;
 
@@ -48,9 +51,26 @@ impl ByteCounter {
 pub struct ActiveFile {
   handle: Arc<RwLock<PTaskHandle>>,
   bytes: ByteCounter,
+  started: Instant,
+  /// When the last byte was handed over.
+  sent_at: Mutex<Option<Instant>>,
 }
 
 impl ActiveFile {
+  /// Called when the body has been read to its end.
+  pub fn mark_sent(&self) {
+    *self.sent_at.lock().unwrap() = Some(Instant::now());
+  }
+
+  /// How long sending took, and how long the platform took to answer after.
+  pub fn timings(&self) -> (Duration, Duration) {
+    let now = Instant::now();
+    match *self.sent_at.lock().unwrap() {
+      Some(sent) => (sent.duration_since(self.started), now.duration_since(sent)),
+      None => (now.duration_since(self.started), Duration::ZERO),
+    }
+  }
+
   pub fn restart(&self) {
     self.bytes.restart();
   }
@@ -88,6 +108,8 @@ impl Transfers {
     let file = Arc::new(ActiveFile {
       handle: handle.clone(),
       bytes: ByteCounter::new(total, self.all.clone()),
+      started: Instant::now(),
+      sent_at: Mutex::new(None),
     });
     self.active.lock().unwrap().push(file.clone());
     file
@@ -174,11 +196,11 @@ mod tests {
   #[test]
   fn adds_files_while_the_speed_keeps_rising() {
     let mut level = Concurrency::new();
-    assert_eq!(level.level(), 2);
+    assert_eq!(level.level(), START_LEVEL);
     level.observe(1_000_000.0);
-    assert_eq!(level.level(), 3);
+    assert_eq!(level.level(), START_LEVEL + 1);
     level.observe(1_600_000.0);
-    assert_eq!(level.level(), 4);
+    assert_eq!(level.level(), START_LEVEL + 2);
   }
 
   #[test]
@@ -186,12 +208,12 @@ mod tests {
     let mut level = Concurrency::new();
     level.observe(1_000_000.0);
     level.observe(1_800_000.0);
-    assert_eq!(level.level(), 4);
+    assert_eq!(level.level(), START_LEVEL + 2);
     level.observe(1_850_000.0);
-    assert_eq!(level.level(), 3);
+    assert_eq!(level.level(), START_LEVEL + 1);
     // Settled: later readings no longer move it.
     level.observe(9_000_000.0);
-    assert_eq!(level.level(), 3);
+    assert_eq!(level.level(), START_LEVEL + 1);
   }
 
   #[test]

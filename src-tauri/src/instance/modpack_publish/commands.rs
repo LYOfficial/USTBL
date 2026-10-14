@@ -218,7 +218,10 @@ fn file_body(path: &Path, progress: Arc<ActiveFile>) -> io::Result<reqwest::Body
     }
     let mut buffer = vec![0u8; 256 * 1024];
     match file.read(&mut buffer).await {
-      Ok(0) => None,
+      Ok(0) => {
+        progress.mark_sent();
+        None
+      }
       Ok(read) => {
         buffer.truncate(read);
         progress.add(read as u64);

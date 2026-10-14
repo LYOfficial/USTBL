@@ -451,6 +451,15 @@ impl PublishJob {
     }
     .await;
     transfers.end(&file);
+    let (sending, waiting) = file.timings();
+    log::info!(
+      "Uploaded {} ({} bytes): sent in {:.1}s, platform answered after {:.1}s ({})",
+      next.job.sha1,
+      next.job.size,
+      sending.as_secs_f64(),
+      waiting.as_secs_f64(),
+      if result.is_ok() { "ok" } else { "failed" }
+    );
     if result.is_ok() {
       complete(&next.handle);
     }
