@@ -30,7 +30,6 @@ const BADGE_COLORS: Record<LedgerBadge, string> = {
   upToDate: "green",
   available: "blue",
   localChanges: "orange",
-  unlinked: "gray",
   paused: "gray",
   needsRepair: "red",
   waitingLoader: "yellow",
@@ -50,8 +49,8 @@ interface InstanceLedgerProps {
 export const ledgerRowId = (instanceId: string) => `sync-row-${instanceId}`;
 
 /**
- * Every instance that came from a modpack, with where it stands against the
- * line it follows. Instances without a recorded origin are listed read-only.
+ * Every instance that follows a modpack line, with where it stands against
+ * that line. Instances without an origin are not listed.
  */
 export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
   instances,
@@ -79,10 +78,7 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
   const isManager = isVustbManager(vustbAccount);
 
   const rows = useMemo(() => ledgerInstances(instances), [instances]);
-  const followedKey = rows
-    .filter((instance) => instance.origin)
-    .map((instance) => instance.id)
-    .join("\n");
+  const followedKey = rows.map((instance) => instance.id).join("\n");
 
   // One at a time, so a slow platform does not pile up requests. This is the
   // scan that finds local edits, which the quick startup check skips.
@@ -116,12 +112,7 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
 
   const lineLabel = (instance: InstanceSummary): string => {
     const origin = instance.origin;
-    if (!origin) {
-      return [
-        instance.version,
-        describeLoader(instance.modLoader.loaderType),
-      ].join(" · ");
-    }
+    if (!origin) return instance.version;
     const project =
       origin.platform === "campus"
         ? projects.find((item) =>
@@ -191,14 +182,12 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
                   ? t(`UpdateModpackModal.reason.${check.reason}`, {
                       defaultValue: check.reason,
                     })
-                  : badge === "unlinked"
-                    ? t("InstanceSyncPage.ledger.unlinkedHint")
-                    : null;
+                  : null;
 
           const canPublish = badge === "localChanges" && isManager;
           // The update dialog is also where a paused, broken or failed line is
           // resumed, repaired or rolled back, so every followed row can reach it.
-          const actions = instance.origin ? (
+          const actions = (
             <HStack spacing={1}>
               {badge === "available" && (
                 <Button
@@ -225,7 +214,7 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
                 />
               )}
             </HStack>
-          ) : null;
+          );
 
           return {
             id: ledgerRowId(instance.id),

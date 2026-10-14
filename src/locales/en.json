@@ -3209,7 +3209,6 @@
         "upToDate": "Up to date",
         "available": "Update available",
         "localChanges": "Local changes",
-        "unlinked": "Not linked",
         "paused": "Paused",
         "needsRepair": "Needs repair",
         "waitingLoader": "Waiting for loader",
@@ -3223,7 +3222,6 @@
       },
       "updateTo": "Update to {{latest}}",
       "changes": "{{count}} file(s) changed locally",
-      "unlinkedHint": "Source not recorded, so updates cannot be checked",
       "platform": {
         "campus": "Campus"
       },

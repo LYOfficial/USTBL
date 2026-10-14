@@ -3209,7 +3209,6 @@
         "upToDate": "À jour",
         "available": "Mise à jour disponible",
         "localChanges": "Modifications locales",
-        "unlinked": "Non lié",
         "paused": "En pause",
         "needsRepair": "À réparer",
         "waitingLoader": "En attente du chargeur",
@@ -3223,7 +3222,6 @@
       },
       "updateTo": "Mise à jour vers {{latest}}",
       "changes": "{{count}} fichier(s) modifié(s) localement",
-      "unlinkedHint": "Source non enregistrée, mises à jour non vérifiables",
       "platform": {
         "campus": "Campus"
       },

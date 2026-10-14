@@ -3209,7 +3209,6 @@
         "upToDate": "最新",
         "available": "更新あり",
         "localChanges": "ローカル変更あり",
-        "unlinked": "未関連付け",
         "paused": "一時停止中",
         "needsRepair": "要修復",
         "waitingLoader": "ローダー待ち",
@@ -3223,7 +3222,6 @@
       },
       "updateTo": "{{latest}} に更新できます",
       "changes": "{{count}} 件のファイルをローカルで変更",
-      "unlinkedHint": "取得元が記録されていないため、更新を確認できません",
       "platform": {
         "campus": "校内"
       },

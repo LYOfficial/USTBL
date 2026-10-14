@@ -3209,7 +3209,6 @@
         "upToDate": "最新",
         "available": "有更新",
         "localChanges": "有本地改動",
-        "unlinked": "未關聯",
         "paused": "已暫停",
         "needsRepair": "需修復",
         "waitingLoader": "等待載入器",
@@ -3223,7 +3222,6 @@
       },
       "updateTo": "可更新到 {{latest}}",
       "changes": "{{count}} 個檔案有本地改動",
-      "unlinkedHint": "來源未記錄，無法檢查更新",
       "platform": {
         "campus": "校內"
       },

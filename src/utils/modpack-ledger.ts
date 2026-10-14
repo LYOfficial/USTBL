@@ -41,30 +41,23 @@ export const findInstancesOfLine = (
     return true;
   });
 
-/** What a ledger row shows: an engine status, or no link at all. */
+/** What a ledger row shows: an engine status, or not checked yet. */
 export type LedgerBadge =
   | Exclude<ModpackCheckStatus, "notFollowing">
-  | "unlinked"
   | "notChecked";
 
 export const ledgerBadge = (
   instance: InstanceSummary,
   check: ModpackUpdateCheck | undefined
 ): LedgerBadge => {
-  if (!instance.origin || check?.status === "notFollowing") return "unlinked";
-  if (!check) return "notChecked";
+  if (!check || check.status === "notFollowing") return "notChecked";
   return check.status;
 };
 
 /**
- * The ledger of modpack instances: those that follow a line first, then the
- * older ones that came from a modpack but never recorded where from.
+ * The ledger of modpack instances: only those with an origin. An instance
+ * without one carries no identity and is an ordinary instance.
  */
 export const ledgerInstances = (
   instances: InstanceSummary[]
-): InstanceSummary[] => [
-  ...instances.filter((instance) => instance.origin),
-  ...instances.filter(
-    (instance) => !instance.origin && instance.modpackVersion
-  ),
-];
+): InstanceSummary[] => instances.filter((instance) => instance.origin);
