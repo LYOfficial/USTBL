@@ -227,6 +227,7 @@ const WindowTitleBar = () => {
       <HStack
         justify="space-between"
         h="44px"
+        flexShrink={0}
         px={2}
         borderBottomWidth="1px"
         borderColor="gray.200"

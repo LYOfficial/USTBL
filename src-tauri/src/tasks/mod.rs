@@ -9,7 +9,6 @@ pub mod upload;
 use crate::error::USTBLResult;
 use download::DownloadParam;
 use events::TauriEventSink;
-use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::pin::Pin;
