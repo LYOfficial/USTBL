@@ -46,6 +46,10 @@ const SLICE: usize = 64 * 1024;
 /// Matches the reporting interval of the task list, which shows speed per tick.
 const TICK: Duration = Duration::from_secs(1);
 const POLL: Duration = Duration::from_secs(2);
+/// Consecutive status checks that may go unanswered while the platform is busy
+/// processing the pack before the job gives up (it stays resumable).
+const POLL_MISSES: u32 = 30;
+const COMMIT_ATTEMPTS: u32 = 3;
 
 type Handle = Arc<RwLock<PTaskHandle>>;
 
@@ -173,10 +177,12 @@ fn counting_body(
     let handed_over = handed_over.clone();
     async move {
       if offset >= data.len() {
-        handed_over.lock().unwrap().get_or_insert_with(Instant::now);
         return None;
       }
       let end = (offset + SLICE).min(data.len());
+      if end >= data.len() {
+        handed_over.lock().unwrap().get_or_insert_with(Instant::now);
+      }
       let part = data.slice(offset..end);
       sent.add(part.len() as u64);
       counted.fetch_add(part.len() as u64, Ordering::Relaxed);
@@ -307,6 +313,46 @@ impl PublishJob {
     Ok(response.json().await?)
   }
 
+  /// One status check while the platform processes the pack. `None` means the
+  /// platform did not answer (it is busy with the pack), which is no reason to
+  /// give the job up.
+  async fn poll_status(&self) -> USTBLResult<Option<Value>> {
+    let response = match authed_json(
+      &self.app,
+      reqwest::Method::GET,
+      &format!("/versions/{}/status", self.record.version_id),
+      None,
+    )
+    .await
+    {
+      Ok(response) => response,
+      Err(error) => {
+        log::warn!("Status check unanswered: {}", error.0);
+        return Ok(None);
+      }
+    };
+    let status = response.status();
+    if status == reqwest::StatusCode::NOT_FOUND {
+      return Err(USTBLError(
+        "平台上已找不到这个版本，请放弃这个任务后重新发布".into(),
+      ));
+    }
+    if retriable(status) {
+      log::warn!("Status check answered {status}");
+      return Ok(None);
+    }
+    if !status.is_success() {
+      return Err(failure(response).await);
+    }
+    match response.json().await {
+      Ok(state) => Ok(Some(state)),
+      Err(error) => {
+        log::warn!("Status check unreadable: {error}");
+        Ok(None)
+      }
+    }
+  }
+
   async fn execute(&mut self, tasks: &Tasks) -> USTBLResult<PublishOutcome> {
     let mut state = self.status().await?;
     let mut current = state["status"].as_str().unwrap_or_default().to_string();
@@ -334,8 +380,26 @@ impl PublishJob {
       tasks.finish.write().unwrap().mark_started();
     }
 
+    let mut misses = 0;
     while current != "published" {
-      state = self.status().await?;
+      match self.poll_status().await? {
+        Some(next) => {
+          misses = 0;
+          state = next;
+        }
+        None => {
+          misses += 1;
+          if misses >= POLL_MISSES {
+            let error = USTBLError(
+              "暂时连不上平台，无法确认处理进度。增量包已送达，稍后可在“未完成的发布”中继续".into(),
+            );
+            tasks.finish.write().unwrap().mark_failed(error.0.clone());
+            return Err(error);
+          }
+          sleep(POLL).await;
+          continue;
+        }
+      }
       current = state["status"].as_str().unwrap_or_default().to_string();
       if current == "failed" {
         let message = state["error"]
@@ -391,22 +455,47 @@ impl PublishJob {
     })
   }
 
+  /// A request that never got an answer may still have been queued, so each
+  /// retry first looks at what the platform says.
   async fn commit(&self) -> USTBLResult<()> {
-    let response = authed_json(
-      &self.app,
-      reqwest::Method::POST,
-      &format!("/versions/{}/commit", self.record.version_id),
-      None,
-    )
-    .await?;
-    if response.status().is_success() {
-      return Ok(());
+    let mut last = USTBLError("提交失败".into());
+    for attempt in 0..COMMIT_ATTEMPTS {
+      if attempt > 0 {
+        sleep(POLL * 2).await;
+        if let Ok(Some(state)) = self.poll_status().await {
+          if matches!(state["status"].as_str(), Some("processing" | "published")) {
+            return Ok(());
+          }
+        }
+      }
+      let response = match authed_json(
+        &self.app,
+        reqwest::Method::POST,
+        &format!("/versions/{}/commit", self.record.version_id),
+        None,
+      )
+      .await
+      {
+        Ok(response) => response,
+        Err(error) => {
+          last = error;
+          continue;
+        }
+      };
+      let status = response.status();
+      if status.is_success() {
+        return Ok(());
+      }
+      let (code, error) = failure_code(response).await;
+      if code.as_deref() == Some("PARENT_MISMATCH") {
+        return Err(InstanceError::ModpackPublishStale.into());
+      }
+      if !retriable(status) {
+        return Err(error);
+      }
+      last = error;
     }
-    let (code, error) = failure_code(response).await;
-    if code.as_deref() == Some("PARENT_MISMATCH") {
-      return Err(InstanceError::ModpackPublishStale.into());
-    }
-    Err(error)
+    Err(last)
   }
 
   /// The pack is built again from the recorded sources when it is gone, and has
