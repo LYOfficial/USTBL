@@ -4,7 +4,8 @@
 //! files alone. The platform therefore also stores what the importer kept in the
 //! instance snapshot: `mmc-pack.json` verbatim, the patches the pack shipped, the
 //! libraries it shipped and the launcher relevant part of `instance.cfg`.
-//! Patches and libraries are content-addressed blobs, like large files.
+//! Patches and libraries are content-addressed objects in the delta pack, like
+//! every other file.
 
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::modpack::baseline::hash_file;
@@ -148,13 +149,20 @@ impl ComponentPlan {
     })
   }
 
-  /// Distinct blobs to upload, keyed by hash.
-  pub fn blobs(&self) -> BTreeMap<String, PathBuf> {
-    self
+  /// Distinct objects to upload, keyed by hash, with where they are and the
+  /// name they have inside the pack (which decides how they are compressed).
+  pub fn blobs(&self) -> BTreeMap<String, (PathBuf, String)> {
+    let patches = self
       .patches
-      .values()
-      .chain(self.libraries.values())
-      .map(|blob| (blob.key.sha1.clone(), blob.source.clone()))
+      .iter()
+      .map(|(uid, blob)| (blob, format!("patches/{uid}.json")));
+    let libraries = self
+      .libraries
+      .iter()
+      .map(|(path, blob)| (blob, path.clone()));
+    patches
+      .chain(libraries)
+      .map(|(blob, name)| (blob.key.sha1.clone(), (blob.source.clone(), name)))
       .collect()
   }
 }
@@ -217,7 +225,7 @@ mod tests {
     assert_eq!(blobs.len(), 2);
     for item in ["patches", "libraries"] {
       let hash = manifest[item][0]["blob"].as_str().unwrap();
-      assert!(blobs[hash].is_file());
+      assert!(blobs[hash].0.is_file());
     }
     let _ = fs::remove_dir_all(libraries);
     let _ = fs::remove_dir_all(work);

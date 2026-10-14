@@ -1,9 +1,13 @@
 //! Publishing an instance to the campus modpack platform.
 
 use super::components::plan_components;
-use super::job::{find_missing, PublishJob};
-use super::manifest::{plan_files, LocalFile, PublishPlan};
-use super::transfer::ActiveFile;
+use super::job::{is_running, PublishJob};
+use super::manifest::{plan_files, LocalFile};
+use super::pack::build_pack;
+use super::record::{
+  jobs_dir, paths, JobRecord, Phase, RecordedFile, RecordedObject, RecordedPack, RecordedUpload,
+  RECORD_SCHEMA,
+};
 use crate::account::helpers::vustb;
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::misc::{get_instance_game_config, get_instance_subdir_paths};
@@ -21,18 +25,17 @@ use crate::instance::modpack_update::commands::store_instance;
 use crate::instance::modpack_update::diff::FileKey;
 use crate::instance::modpack_update::sources::{loader_slug, CAMPUS_API};
 use crate::instance::shared::ensure_minecraft_manager as ensure_manager;
-use crate::tasks::streams::desc::PStatus;
 use crate::utils::web::build_ustbl_upload_client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::path::Path;
+use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::io::AsyncReadExt;
+
+/// Hashes sent per request when asking which the platform lacks.
+const MISSING_BATCH: usize = 5000;
 
 const PROGRESS_EVENT: &str = "modpack-publish:progress";
 
@@ -61,6 +64,7 @@ pub struct CampusProject {
 #[serde(rename_all = "camelCase")]
 pub struct PublishStarted {
   pub group: String,
+  pub job_id: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -94,6 +98,7 @@ pub enum Adoption {
 #[serde(rename_all = "camelCase")]
 enum Stage {
   Hashing,
+  Packing,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -119,22 +124,31 @@ fn report(app: &AppHandle, instance_id: &str, stage: Stage, done: usize, total: 
 }
 
 /// The server explains refusals in `detail`; pass that on instead of a bare
-/// status code.
-pub(super) async fn failure(response: reqwest::Response) -> USTBLError {
+/// status code. Conflicts also carry a machine readable `code`.
+pub(super) async fn failure_code(response: reqwest::Response) -> (Option<String>, USTBLError) {
   let status = response.status();
-  let detail = response
-    .json::<Value>()
-    .await
-    .ok()
-    .and_then(|body| match body.get("detail") {
-      Some(Value::String(text)) => Some(text.clone()),
-      Some(other) => other
-        .get("message")
-        .and_then(Value::as_str)
-        .map(str::to_string),
-      None => None,
-    });
-  USTBLError(detail.unwrap_or_else(|| format!("HTTP {status}")))
+  let body = response.json::<Value>().await.ok();
+  let detail = body.as_ref().and_then(|body| body.get("detail"));
+  let code = detail
+    .and_then(|detail| detail.get("code"))
+    .and_then(Value::as_str)
+    .map(str::to_string);
+  let message = match detail {
+    Some(Value::String(text)) => Some(text.clone()),
+    Some(other) => other
+      .get("message")
+      .and_then(Value::as_str)
+      .map(str::to_string),
+    None => None,
+  };
+  (
+    code,
+    USTBLError(message.unwrap_or_else(|| format!("HTTP {status}"))),
+  )
+}
+
+pub(super) async fn failure(response: reqwest::Response) -> USTBLError {
+  failure_code(response).await.1
 }
 
 pub(super) async fn authed_json(
@@ -154,69 +168,7 @@ pub(super) async fn authed_json(
   .await
 }
 
-fn file_body(path: &Path, progress: Arc<ActiveFile>) -> io::Result<reqwest::Body> {
-  let file = tokio::fs::File::from_std(fs::File::open(path)?);
-  progress.restart();
-  let stream = futures::stream::unfold((file, progress), |(mut file, progress)| async move {
-    // Pausing the task holds back the bytes, not the connection.
-    loop {
-      match progress.status() {
-        PStatus::Stopped => tokio::time::sleep(Duration::from_millis(200)).await,
-        PStatus::Cancelled => {
-          return Some((
-            Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled")),
-            (file, progress),
-          ))
-        }
-        _ => break,
-      }
-    }
-    let mut buffer = vec![0u8; 256 * 1024];
-    match file.read(&mut buffer).await {
-      Ok(0) => {
-        progress.mark_sent();
-        None
-      }
-      Ok(read) => {
-        buffer.truncate(read);
-        progress.add(read as u64);
-        Some((Ok::<_, io::Error>(bytes_from(buffer)), (file, progress)))
-      }
-      Err(error) => Some((Err(error), (file, progress))),
-    }
-  });
-  Ok(reqwest::Body::wrap_stream(stream))
-}
-
-fn bytes_from(buffer: Vec<u8>) -> tokio_util::bytes::Bytes {
-  tokio_util::bytes::Bytes::from(buffer)
-}
-
-pub(super) async fn put_file(
-  app: &AppHandle,
-  uploader: &reqwest::Client,
-  path: &str,
-  file: &Path,
-  progress: &Arc<ActiveFile>,
-) -> USTBLResult<reqwest::Response> {
-  let url = format!("{CAMPUS_API}{path}");
-  let size = tokio::fs::metadata(file).await?.len();
-  vustb::send_authenticated_with(app, uploader, |client, token| {
-    let request = client
-      .put(&url)
-      .bearer_auth(token)
-      .header("Content-Type", "application/octet-stream")
-      .header("Content-Length", size);
-    match file_body(file, progress.clone()) {
-      Ok(body) => request.body(body),
-      // An unreadable file surfaces as an empty body the server rejects.
-      Err(_) => request,
-    }
-  })
-  .await
-}
-
-fn instance_of(app: &AppHandle, instance_id: &str) -> USTBLResult<Instance> {
+pub(super) fn instance_of(app: &AppHandle, instance_id: &str) -> USTBLResult<Instance> {
   let binding = app.state::<Mutex<HashMap<String, Instance>>>();
   let state = binding.lock()?;
   Ok(
@@ -237,69 +189,6 @@ pub async fn list_campus_modpack_projects(app: AppHandle) -> USTBLResult<Vec<Cam
   Ok(response.json().await?)
 }
 
-#[tauri::command]
-pub async fn create_campus_modpack_project(
-  app: AppHandle,
-  slug: String,
-  name: String,
-  summary: String,
-) -> USTBLResult<CampusProject> {
-  ensure_manager(&app)?;
-  let response = authed_json(
-    &app,
-    reqwest::Method::POST,
-    "/projects",
-    Some(json!({ "slug": slug, "name": name, "summary": summary })),
-  )
-  .await?;
-  if response.status() == reqwest::StatusCode::CONFLICT {
-    // A first publish that failed leaves its project behind, unlisted because it
-    // has no release. Picking the project up again lets the retry go through.
-    let conflict = failure(response).await;
-    return reuse_unreleased_project(&app, &slug, &name, &summary)
-      .await?
-      .ok_or(conflict);
-  }
-  if !response.status().is_success() {
-    return Err(failure(response).await);
-  }
-  Ok(response.json().await?)
-}
-
-/// The existing project with this slug when it has no published line yet,
-/// updated to the name and summary of the new attempt.
-async fn reuse_unreleased_project(
-  app: &AppHandle,
-  slug: &str,
-  name: &str,
-  summary: &str,
-) -> USTBLResult<Option<CampusProject>> {
-  let client = app.state::<reqwest::Client>();
-  let response = client
-    .get(format!("{CAMPUS_API}/projects/{slug}"))
-    .send()
-    .await?;
-  if !response.status().is_success() {
-    return Ok(None);
-  }
-  let existing: CampusProject = response.json().await?;
-  if !existing.lines.is_empty() {
-    return Ok(None);
-  }
-  let updated = authed_json(
-    app,
-    reqwest::Method::PATCH,
-    &format!("/projects/{slug}"),
-    Some(json!({ "name": name, "summary": summary })),
-  )
-  .await?;
-  if updated.status().is_success() {
-    Ok(Some(updated.json().await?))
-  } else {
-    Ok(Some(existing))
-  }
-}
-
 fn hash_selection(root: &Path, selected: &[String]) -> USTBLResult<Vec<LocalFile>> {
   selected
     .iter()
@@ -312,36 +201,6 @@ fn hash_selection(root: &Path, selected: &[String]) -> USTBLResult<Vec<LocalFile
       })
     })
     .collect()
-}
-
-/// Zip the files that ride along with the version.
-pub(super) fn write_bundle(root: &Path, files: &[&LocalFile], dest: &Path) -> USTBLResult<()> {
-  let mut zip = zip::ZipWriter::new(fs::File::create(dest)?);
-  let options =
-    zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-  for file in files {
-    zip.start_file(file.path.as_str(), options)?;
-    let mut source = fs::File::open(root.join(&file.path))?;
-    io::copy(&mut source, &mut zip)?;
-  }
-  zip.finish()?.flush()?;
-  Ok(())
-}
-
-pub(super) struct TempFile(pub(super) PathBuf);
-
-impl Drop for TempFile {
-  fn drop(&mut self) {
-    let _ = fs::remove_file(&self.0);
-  }
-}
-
-pub(super) struct TempDir(pub(super) PathBuf);
-
-impl Drop for TempDir {
-  fn drop(&mut self) {
-    let _ = fs::remove_dir_all(&self.0);
-  }
 }
 
 /// Paths the line's current release already lists, so the publish dialog can
@@ -387,46 +246,157 @@ pub async fn fetch_campus_modpack_previous_paths(
   )
 }
 
-/// Publish the selected files of an instance as the new version of its line.
+#[derive(Debug, Clone, Deserialize)]
+pub struct NewProject {
+  pub name: String,
+  #[serde(default)]
+  pub summary: String,
+}
+
+/// The hashes among `hashes` the platform holds no content for.
+async fn find_missing(app: &AppHandle, hashes: &[String]) -> USTBLResult<HashSet<String>> {
+  let mut missing = HashSet::new();
+  for batch in hashes.chunks(MISSING_BATCH) {
+    let response = authed_json(
+      app,
+      reqwest::Method::POST,
+      "/missing",
+      Some(json!({ "sha1s": batch })),
+    )
+    .await?;
+    if !response.status().is_success() {
+      return Err(failure(response).await);
+    }
+    let body: Value = response.json().await?;
+    missing.extend(
+      body["missing"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item.as_str().map(str::to_string)),
+    );
+  }
+  Ok(missing)
+}
+
+/// Publish the selected files of an instance as the new version of its line:
+/// either of an existing project or of a new one the platform names.
 #[tauri::command]
 pub async fn publish_campus_modpack(
   app: AppHandle,
   instance_id: String,
-  project: String,
+  project: Option<String>,
+  new_project: Option<NewProject>,
   version_number: String,
   changelog: String,
   files: Vec<String>,
 ) -> USTBLResult<PublishStarted> {
   ensure_manager(&app)?;
-  let instance = instance_of(&app, &instance_id)?;
+  if project.is_some() == new_project.is_some() {
+    return Err(InstanceError::ModpackUpdateUnsupported.into());
+  }
+  if let Some(project) = &project {
+    if !is_slug(project) {
+      return Err(InstanceError::ModpackUpdateUnsupported.into());
+    }
+  }
+  let job_id = uuid::Uuid::new_v4().simple().to_string();
+  let dir = jobs_dir();
+  let prepared = prepare(
+    &app,
+    &instance_id,
+    &job_id,
+    &dir,
+    project,
+    new_project,
+    version_number,
+    changelog,
+    files,
+  )
+  .await;
+  let record = match prepared {
+    Ok(record) => record,
+    Err(error) => {
+      JobRecord::remove(&dir, &job_id);
+      return Err(error);
+    }
+  };
+
+  // Big uploads outlast the shared client's read timeout.
+  let uploader = build_ustbl_upload_client(&app, true);
+  let version_id = record.version_id;
+  // From here on the upload runs in the background, on the task list.
+  let started = PublishJob {
+    app: app.clone(),
+    uploader,
+    record,
+  }
+  .start();
+  match started {
+    Ok(group) => Ok(PublishStarted { group, job_id }),
+    Err(error) => {
+      let _ = authed_json(
+        &app,
+        reqwest::Method::DELETE,
+        &format!("/versions/{version_id}"),
+        None,
+      )
+      .await;
+      JobRecord::remove(&dir, &job_id);
+      Err(error)
+    }
+  }
+}
+
+fn is_slug(value: &str) -> bool {
+  !value.is_empty()
+    && value
+      .chars()
+      .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// Everything before the background part: scan, ask what the platform lacks,
+/// build the delta pack and open the version. Leaves the record on disk.
+#[allow(clippy::too_many_arguments)]
+async fn prepare(
+  app: &AppHandle,
+  instance_id: &str,
+  job_id: &str,
+  dir: &Path,
+  project: Option<String>,
+  new_project: Option<NewProject>,
+  version_number: String,
+  changelog: String,
+  files: Vec<String>,
+) -> USTBLResult<JobRecord> {
+  let instance = instance_of(app, instance_id)?;
   let root = instance.version_path.clone();
   let loader_type =
     loader_slug(instance.mod_loader.loader_type).ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let job_paths = paths(dir, job_id)?;
 
-  report(&app, &instance_id, Stage::Hashing, 0, files.len());
+  report(app, instance_id, Stage::Hashing, 0, files.len());
   let selected = files.clone();
   let hash_root = root.clone();
   let hashed = tokio::task::spawn_blocking(move || hash_selection(&hash_root, &selected))
     .await
     .map_err(|e| USTBLError(e.to_string()))??;
-  report(&app, &instance_id, Stage::Hashing, files.len(), files.len());
+  report(app, instance_id, Stage::Hashing, files.len(), files.len());
   let mut plan = plan_files(hashed, &instance.name);
   if plan.files.is_empty() {
     return Err(USTBLError("没有可发布的文件".into()));
   }
-  // Patches of a component profile are written here until they are uploaded.
-  let component_work =
-    TempDir(std::env::temp_dir().join(format!("ustbl-components-{}", uuid::Uuid::new_v4())));
   if is_component_instance(&root) {
     let snapshot = ComponentSnapshot::load(&root)
       .await
       .map_err(|_| InstanceError::ModpackExportProfileMissing)?
       .ok_or(InstanceError::ModpackExportProfileMissing)?;
     let libraries_dir =
-      get_instance_subdir_paths(&app, &instance, &[&InstanceSubdirType::Libraries])
+      get_instance_subdir_paths(app, &instance, &[&InstanceSubdirType::Libraries])
         .ok_or(InstanceError::InstanceNotFoundByID)?
         .remove(0);
-    let work = component_work.0.clone();
+    // The patches are written here and stay until the job is over.
+    let work = job_paths.work.clone();
     plan.components = Some(
       tokio::task::spawn_blocking(move || plan_components(&snapshot, &libraries_dir, &work))
         .await
@@ -435,37 +405,222 @@ pub async fn publish_campus_modpack(
   }
 
   // The published version of this line the new one replaces.
-  let line_path = format!(
-    "{CAMPUS_API}/projects/{project}/lines/{}/{loader_type}",
-    instance.version
-  );
-  let current = app.state::<reqwest::Client>().get(line_path).send().await?;
-  let parent_version_id = match current.status() {
-    reqwest::StatusCode::NOT_FOUND => None,
-    status if status.is_success() => current.json::<Value>().await?["id"].as_i64(),
-    _ => return Err(failure(current).await),
+  let parent_version_id = match &project {
+    None => None,
+    Some(project) => {
+      let current = app
+        .state::<reqwest::Client>()
+        .get(format!(
+          "{CAMPUS_API}/projects/{project}/lines/{}/{loader_type}",
+          instance.version
+        ))
+        .send()
+        .await?;
+      match current.status() {
+        reqwest::StatusCode::NOT_FOUND => None,
+        status if status.is_success() => current.json::<Value>().await?["id"].as_i64(),
+        _ => return Err(failure(current).await),
+      }
+    }
   };
 
-  // Big uploads outlast the shared client's read timeout.
-  let uploader = build_ustbl_upload_client(&app, true);
-  let missing = find_missing(&app, &root, &plan).await?;
+  // Only what the platform does not hold goes into the pack.
+  let all_objects = plan.objects(&root);
+  let hashes: Vec<String> = all_objects.keys().cloned().collect();
+  let missing = find_missing(app, &hashes).await?;
+  let needed: Vec<_> = all_objects
+    .values()
+    .filter(|object| missing.contains(&object.sha1))
+    .cloned()
+    .collect();
+  let pack = if needed.is_empty() {
+    None
+  } else {
+    report(app, instance_id, Stage::Packing, 0, 1);
+    fs::create_dir_all(dir)?;
+    let (objects, target) = (needed.clone(), job_paths.pack.clone());
+    let built = tokio::task::spawn_blocking(move || build_pack(&objects, &target))
+      .await
+      .map_err(|e| USTBLError(e.to_string()))??;
+    report(app, instance_id, Stage::Packing, 1, 1);
+    Some(RecordedPack {
+      sha1: built.sha1,
+      size: built.size,
+    })
+  };
 
-  // From here on the upload runs in the background, on the task list.
-  let group = PublishJob {
-    app: app.clone(),
-    uploader,
-    instance,
-    project,
-    version_number,
-    changelog,
-    root,
-    plan,
-    parent_version_id,
-    loader_type: loader_type.to_string(),
-    _component_work: component_work,
+  let created = authed_json(
+    app,
+    reqwest::Method::POST,
+    "/versions",
+    Some(json!({
+      "project": project,
+      "new_project": new_project.as_ref().map(|new| json!({ "name": new.name, "summary": new.summary })),
+      "game_version": instance.version,
+      "loader_type": loader_type,
+      "loader_version": instance.mod_loader.version,
+      "version_number": version_number,
+      "changelog": changelog,
+      "parent_version_id": parent_version_id,
+      "manifest": plan.manifest(),
+      "pack": pack.as_ref().map(|pack| json!({ "sha1": pack.sha1, "size": pack.size })),
+    })),
+  )
+  .await?;
+  if !created.status().is_success() {
+    let (code, error) = failure_code(created).await;
+    return Err(if code.as_deref() == Some("PARENT_MISMATCH") {
+      InstanceError::ModpackPublishStale.into()
+    } else {
+      error
+    });
   }
-  .start(missing);
-  Ok(PublishStarted { group })
+  let body: Value = created.json().await?;
+  let version_id = body["id"]
+    .as_i64()
+    .ok_or_else(|| USTBLError("平台返回了无法识别的版本".into()))?;
+  let upload = body["upload"].as_object().and_then(|upload| {
+    Some(RecordedUpload {
+      id: upload.get("id")?.as_str()?.to_string(),
+      chunk_size: upload.get("chunk_size")?.as_u64()?,
+      chunk_count: u32::try_from(upload.get("chunk_count")?.as_u64()?).ok()?,
+    })
+  });
+  let slug = body["project_slug"]
+    .as_str()
+    .or(project.as_deref())
+    .unwrap_or_default()
+    .to_string();
+
+  let record = JobRecord {
+    schema: RECORD_SCHEMA,
+    id: job_id.to_string(),
+    phase: Phase::Uploading,
+    error: None,
+    created_at: chrono::Utc::now().timestamp_millis(),
+    instance_id: instance_id.to_string(),
+    instance_name: instance.name.clone(),
+    project_slug: slug,
+    version_id,
+    version_number,
+    files: plan
+      .files
+      .iter()
+      .map(|file| RecordedFile {
+        path: file.path.clone(),
+        sha1: file.key.sha1.clone(),
+        size: file.key.size,
+      })
+      .collect(),
+    mmc_pack: plan.components.as_ref().map(|c| c.mmc_pack.clone()),
+    skipped: plan.skipped.clone(),
+    objects: needed.iter().map(RecordedObject::from).collect(),
+    pack,
+    upload,
+  };
+  if pack_without_upload(&record) {
+    let _ = authed_json(
+      app,
+      reqwest::Method::DELETE,
+      &format!("/versions/{version_id}"),
+      None,
+    )
+    .await;
+    return Err(USTBLError("平台没有为增量包开启上传".into()));
+  }
+  if let Err(error) = record.save(dir) {
+    let _ = authed_json(
+      app,
+      reqwest::Method::DELETE,
+      &format!("/versions/{version_id}"),
+      None,
+    )
+    .await;
+    return Err(error);
+  }
+  Ok(record)
+}
+
+/// A pack was promised but the platform opened no session for it.
+fn pack_without_upload(record: &JobRecord) -> bool {
+  record.pack.is_some() && record.upload.is_none()
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnfinishedPublish {
+  pub job_id: String,
+  pub instance_id: String,
+  pub instance_name: String,
+  pub project_slug: String,
+  pub version_number: String,
+  pub phase: Phase,
+  pub error: Option<String>,
+  /// On the task list right now.
+  pub running: bool,
+  pub created_at: i64,
+}
+
+/// Publishes that were interrupted or failed, for the user to continue or give up.
+#[tauri::command]
+pub fn list_campus_modpack_publish_jobs() -> Vec<UnfinishedPublish> {
+  JobRecord::list(&jobs_dir())
+    .into_iter()
+    .map(|record| UnfinishedPublish {
+      running: is_running(&record.id),
+      job_id: record.id,
+      instance_id: record.instance_id,
+      instance_name: record.instance_name,
+      project_slug: record.project_slug,
+      version_number: record.version_number,
+      phase: record.phase,
+      error: record.error,
+      created_at: record.created_at,
+    })
+    .collect()
+}
+
+/// Continue an interrupted publish with what the platform already has.
+#[tauri::command]
+pub async fn resume_campus_modpack_publish(
+  app: AppHandle,
+  job_id: String,
+) -> USTBLResult<PublishStarted> {
+  ensure_manager(&app)?;
+  let record = JobRecord::load(&jobs_dir(), &job_id)?;
+  let uploader = build_ustbl_upload_client(&app, true);
+  let group = PublishJob {
+    app,
+    uploader,
+    record,
+  }
+  .start()?;
+  Ok(PublishStarted { group, job_id })
+}
+
+/// Give an unfinished publish up: the version is dropped on the platform and
+/// the local leftovers are removed.
+#[tauri::command]
+pub async fn discard_campus_modpack_publish(app: AppHandle, job_id: String) -> USTBLResult<()> {
+  ensure_manager(&app)?;
+  if is_running(&job_id) {
+    return Err(USTBLError("任务正在进行，请先在任务列表中取消".into()));
+  }
+  let dir = jobs_dir();
+  let record = JobRecord::load(&dir, &job_id)?;
+  let response = authed_json(
+    &app,
+    reqwest::Method::DELETE,
+    &format!("/versions/{}", record.version_id),
+    None,
+  )
+  .await?;
+  // Already gone counts as dropped; a version being processed cannot be.
+  if !response.status().is_success() && response.status() != reqwest::StatusCode::NOT_FOUND {
+    return Err(failure(response).await);
+  }
+  JobRecord::remove(&dir, &job_id);
+  Ok(())
 }
 
 /// Fast-forward: after publishing, the instance holds exactly what the new
@@ -477,9 +632,20 @@ pub(super) async fn adopt_published(
   project: &str,
   version_id: i64,
   version_number: &str,
-  plan: &PublishPlan,
+  files: &[LocalFile],
+  mmc_pack: Option<&Value>,
 ) -> Adoption {
-  match try_adopt(app, instance, project, version_id, version_number, plan).await {
+  match try_adopt(
+    app,
+    instance,
+    project,
+    version_id,
+    version_number,
+    files,
+    mmc_pack,
+  )
+  .await
+  {
     Ok(adoption) => adoption,
     Err(error) => {
       // The release itself succeeded; a failed record only means the next
@@ -512,7 +678,8 @@ async fn try_adopt(
   project: &str,
   version_id: i64,
   version_number: &str,
-  plan: &PublishPlan,
+  files: &[LocalFile],
+  mmc_pack: Option<&Value>,
 ) -> USTBLResult<Adoption> {
   let loader_type = instance.mod_loader.loader_type;
   if !may_follow(instance, project, loader_type) {
@@ -524,7 +691,7 @@ async fn try_adopt(
 
   // Rescan: the game may have rewritten a file while the upload ran.
   let root = instance.version_path.clone();
-  let expected: Vec<LocalFile> = plan.files.iter().map(|(file, _)| file.clone()).collect();
+  let expected: Vec<LocalFile> = files.to_vec();
   let paths: Vec<String> = expected.iter().map(|file| file.path.clone()).collect();
   let rescanned = tokio::task::spawn_blocking(move || hash_selection(&root, &paths))
     .await
@@ -556,8 +723,8 @@ async fn try_adopt(
       })
       .collect(),
   );
-  if let Some(components) = &plan.components {
-    baseline = baseline.with_components(components_of_mmc_pack(&components.mmc_pack));
+  if let Some(mmc_pack) = mmc_pack {
+    baseline = baseline.with_components(components_of_mmc_pack(mmc_pack));
   }
   baseline.save(&instance.version_path).await?;
   let label = version_number.to_string();
@@ -572,6 +739,7 @@ async fn try_adopt(
 #[cfg(test)]
 mod tests {
   use super::*;
+  use std::path::PathBuf;
 
   fn instance_dir(files: &[(&str, &str)]) -> PathBuf {
     let root = std::env::temp_dir().join(format!("ustbl-publish-test-{}", uuid::Uuid::new_v4()));
@@ -596,33 +764,6 @@ mod tests {
 
     assert!(hash_selection(&root, &["../outside".to_string()]).is_err());
     assert!(hash_selection(&root, &["missing.txt".to_string()]).is_err());
-    let _ = fs::remove_dir_all(root);
-  }
-
-  #[test]
-  fn bundle_holds_exactly_the_given_files_under_their_paths() {
-    let root = instance_dir(&[
-      ("config/a.toml", "aaa"),
-      ("options.txt", "bbb"),
-      ("skip.txt", "ccc"),
-    ]);
-    let files = hash_selection(
-      &root,
-      &["config/a.toml".to_string(), "options.txt".to_string()],
-    )
-    .unwrap();
-    let refs: Vec<&LocalFile> = files.iter().collect();
-    let dest = root.join("bundle.zip");
-
-    write_bundle(&root, &refs, &dest).unwrap();
-
-    let mut zip = zip::ZipArchive::new(fs::File::open(&dest).unwrap()).unwrap();
-    let mut names: Vec<String> = zip.file_names().map(str::to_string).collect();
-    names.sort();
-    assert_eq!(names, ["config/a.toml", "options.txt"]);
-    let mut content = String::new();
-    io::Read::read_to_string(&mut zip.by_name("options.txt").unwrap(), &mut content).unwrap();
-    assert_eq!(content, "bbb");
     let _ = fs::remove_dir_all(root);
   }
 

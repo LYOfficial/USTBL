@@ -657,6 +657,16 @@
   },
   "DownloadTasksPage": {
     "title": "ダウンロードタスク",
+    "unfinishedPublish": {
+      "title": "未完了の公開",
+      "phase": {
+        "uploading": "アップロードが中断されました。続行できます",
+        "processing": "プラットフォームで処理中です",
+        "failed": "公開に失敗しました"
+      },
+      "resume": "続行",
+      "discard": "破棄"
+    },
     "button": {
       "settings": "ダウンロード設定",
       "pause": "一時停止",
@@ -3000,7 +3010,6 @@
       "project": "プロジェクト",
       "target": "公開先",
       "newProject": "新規プロジェクト",
-      "slug": "プロジェクトID",
       "projectName": "プロジェクト名",
       "summary": "概要",
       "version": "バージョン",
@@ -3017,9 +3026,6 @@
       "invalidProject": "プロジェクト情報を入力してください"
     },
     "errorMessage": {
-      "slug": {
-        "error-1": "英小文字で始まる2〜64文字の英小文字・数字・ハイフンにしてください"
-      },
       "name": {
         "error-1": "名前を入力してください",
         "error-2": "名前が長すぎます（最大128文字）"
@@ -3036,7 +3042,8 @@
       }
     },
     "stage": {
-      "hashing": "ファイルを確認中（{{done}}/{{total}}）"
+      "hashing": "ファイルを確認中（{{done}}/{{total}}）",
+      "packing": "新しい内容をパック中"
     },
     "skipped": "{{count}} 個のファイルを除外しました（無効化されたModやランチャーのファイル）",
     "adoption": {

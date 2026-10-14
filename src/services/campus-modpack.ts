@@ -2,9 +2,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
   CampusModpackProject,
+  CampusNewProject,
   CampusPublishFinished,
   CampusPublishProgress,
   CampusPublishStarted,
+  CampusUnfinishedPublish,
 } from "@/models/campus-modpack";
 import { InvokeResponse } from "@/models/response";
 import { responseHandler } from "@/utils/response";
@@ -17,23 +19,15 @@ export class CampusModpackService {
     return await invoke("list_campus_modpack_projects");
   }
 
-  @responseHandler("instance")
-  static async createCampusModpackProject(
-    slug: string,
-    name: string,
-    summary: string
-  ): Promise<InvokeResponse<CampusModpackProject>> {
-    return await invoke("create_campus_modpack_project", {
-      slug,
-      name,
-      summary,
-    });
-  }
-
+  /**
+   * Publishes to an existing project, or to a new one when `newProject` is
+   * given (exactly one of the two).
+   */
   @responseHandler("instance")
   static async publishCampusModpack(
     instanceId: string,
-    project: string,
+    project: string | null,
+    newProject: CampusNewProject | null,
     versionNumber: string,
     changelog: string,
     files: string[]
@@ -41,10 +35,32 @@ export class CampusModpackService {
     return await invoke("publish_campus_modpack", {
       instanceId,
       project,
+      newProject,
       versionNumber,
       changelog,
       files,
     });
+  }
+
+  @responseHandler("instance")
+  static async listCampusModpackPublishJobs(): Promise<
+    InvokeResponse<CampusUnfinishedPublish[]>
+  > {
+    return await invoke("list_campus_modpack_publish_jobs");
+  }
+
+  @responseHandler("instance")
+  static async resumeCampusModpackPublish(
+    jobId: string
+  ): Promise<InvokeResponse<CampusPublishStarted>> {
+    return await invoke("resume_campus_modpack_publish", { jobId });
+  }
+
+  @responseHandler("instance")
+  static async discardCampusModpackPublish(
+    jobId: string
+  ): Promise<InvokeResponse<null>> {
+    return await invoke("discard_campus_modpack_publish", { jobId });
   }
 
   /**

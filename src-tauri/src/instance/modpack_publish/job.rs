@@ -1,64 +1,89 @@
-//! The background half of publishing: uploads, the new version, the record.
+//! The background half of publishing: sends the delta pack, commits the version
+//! and waits for the platform to publish it.
 //!
-//! The command prepares the plan and returns; this runs on its own and shows
-//! on the task list next to the downloads, one task per file.
+//! The command prepares the plan and the version and returns; this runs on its
+//! own and shows on the task list next to the downloads. Everything it needs to
+//! start over after a failure or a restart is in the [`JobRecord`].
 
 use super::commands::{
-  adopt_published, authed_json, failure, put_file, write_bundle, PublishOutcome, TempDir, TempFile,
+  adopt_published, authed_json, failure, failure_code, instance_of, PublishOutcome,
 };
-use super::manifest::{LocalFile, PublishPlan};
-use super::transfer::{Concurrency, Transfers};
+use super::manifest::{LocalFile, PackObject};
+use super::pack::build_pack;
+use super::record::{jobs_dir, paths, JobRecord, Phase, RecordedUpload};
+use super::transfer::{report, SentBytes};
+use crate::account::helpers::vustb;
 use crate::error::{USTBLError, USTBLResult};
-use crate::instance::models::misc::{Instance, InstanceError};
+use crate::instance::models::misc::InstanceError;
+use crate::instance::modpack_update::diff::FileKey;
+use crate::instance::modpack_update::sources::CAMPUS_API;
 use crate::tasks::monitor::TaskMonitor;
 use crate::tasks::upload::upload_handle;
 use crate::tasks::PTaskHandle;
 use futures::stream::{FuturesUnordered, StreamExt};
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::Value;
+use sha1::{Digest, Sha1};
 use std::collections::{HashSet, VecDeque};
-use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::io::{self, SeekFrom};
+use std::path::Path;
 use std::pin::Pin;
-use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::time::{interval, MissedTickBehavior};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio::time::{interval, sleep, MissedTickBehavior};
+use tokio_util::bytes::Bytes;
 
 const FINISHED_EVENT: &str = "modpack-publish:finished";
-const MISSING_BATCH: usize = 5000;
+/// Chunks in flight at once. Fixed: the platform takes them in parallel and the
+/// cloud behind it is not the limit chunks of this size run into.
+const CHUNK_CONCURRENCY: usize = 3;
+const CHUNK_ATTEMPTS: u32 = 4;
+/// Bytes handed to the HTTP stack at a time, so progress moves smoothly.
+const SLICE: usize = 64 * 1024;
 /// Matches the reporting interval of the task list, which shows speed per tick.
 const TICK: Duration = Duration::from_secs(1);
-/// How long one upload count is measured before trying a different one.
-const PROBE_EPOCH: Duration = Duration::from_secs(4);
+const POLL: Duration = Duration::from_secs(2);
 
 type Handle = Arc<RwLock<PTaskHandle>>;
 
-pub(super) struct UploadJob {
-  sha1: String,
-  path: PathBuf,
-  size: u64,
+/// Jobs that run right now; the rest of the records are waiting for the user.
+static ACTIVE: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+pub(super) fn is_running(job_id: &str) -> bool {
+  ACTIVE.lock().unwrap().iter().any(|id| id == job_id)
 }
 
-struct Queued {
-  job: UploadJob,
-  handle: Handle,
+struct ActiveToken(String);
+
+impl ActiveToken {
+  fn take(job_id: &str) -> Option<Self> {
+    let mut active = ACTIVE.lock().unwrap();
+    if active.iter().any(|id| id == job_id) {
+      return None;
+    }
+    active.push(job_id.to_string());
+    Some(Self(job_id.to_string()))
+  }
+}
+
+impl Drop for ActiveToken {
+  fn drop(&mut self) {
+    ACTIVE.lock().unwrap().retain(|id| id != &self.0);
+  }
 }
 
 struct Tasks {
   group: String,
-  files: Vec<Handle>,
-  bundle: Option<Handle>,
+  pack: Option<Handle>,
   finish: Handle,
 }
 
 impl Tasks {
   fn all(&self) -> impl Iterator<Item = &Handle> {
-    self
-      .files
-      .iter()
-      .chain(self.bundle.iter())
-      .chain(std::iter::once(&self.finish))
+    self.pack.iter().chain(std::iter::once(&self.finish))
   }
 
   /// After a failure: whatever has not ended is cancelled.
@@ -78,42 +103,30 @@ impl Tasks {
 struct PublishFinished {
   instance_id: String,
   group: String,
+  job_id: String,
   #[serde(skip_serializing_if = "Option::is_none")]
   outcome: Option<PublishOutcome>,
   #[serde(skip_serializing_if = "Option::is_none")]
   error: Option<String>,
 }
 
-/// Deletes the draft version on the platform if the publish does not get to
-/// the end, whether it failed or was cancelled (which drops the job).
-struct DraftGuard {
+/// Cancelling the task drops the job; that gives the version up on the platform
+/// and forgets the record. Closing the launcher drops it too but must keep
+/// both, so the cleanup is a task of its own that does not outlive the app.
+struct CancelGuard {
   app: AppHandle,
+  job_id: String,
   version_id: i64,
   armed: bool,
 }
 
-impl DraftGuard {
-  fn new(app: &AppHandle, version_id: i64) -> Self {
-    Self {
-      app: app.clone(),
-      version_id,
-      armed: true,
-    }
-  }
-
-  fn disarm(&mut self) {
-    self.armed = false;
-  }
-}
-
-impl Drop for DraftGuard {
+impl Drop for CancelGuard {
   fn drop(&mut self) {
     if !self.armed {
       return;
     }
-    let (app, version_id) = (self.app.clone(), self.version_id);
+    let (app, job_id, version_id) = (self.app.clone(), self.job_id.clone(), self.version_id);
     tauri::async_runtime::spawn(async move {
-      // A draft that never published only takes up space on the server.
       let _ = authed_json(
         &app,
         reqwest::Method::DELETE,
@@ -121,17 +134,9 @@ impl Drop for DraftGuard {
         None,
       )
       .await;
+      JobRecord::remove(&jobs_dir(), &job_id);
     });
   }
-}
-
-/// Runs a step for a task, marking the task failed if the step fails.
-async fn tracked<T>(handle: &Handle, step: impl Future<Output = USTBLResult<T>>) -> USTBLResult<T> {
-  let result = step.await;
-  if let Err(error) = &result {
-    handle.write().unwrap().mark_failed(error.0.clone());
-  }
-  result
 }
 
 fn complete(handle: &Handle) {
@@ -140,119 +145,118 @@ fn complete(handle: &Handle) {
   handle.mark_completed();
 }
 
-/// The files the platform does not have yet.
-pub(super) async fn find_missing(
-  app: &AppHandle,
-  root: &Path,
-  plan: &PublishPlan,
-) -> USTBLResult<Vec<UploadJob>> {
-  let blobs = plan.blob_sources(root);
-  let hashes: Vec<&String> = blobs.keys().collect();
-  let mut missing = Vec::new();
-  for batch in hashes.chunks(MISSING_BATCH) {
-    let response = authed_json(
-      app,
-      reqwest::Method::POST,
-      "/blobs/missing",
-      Some(json!({ "sha1s": batch })),
-    )
-    .await?;
-    if !response.status().is_success() {
-      return Err(failure(response).await);
+fn chunk_length(total: u64, chunk_size: u64, count: u32, n: u32) -> u64 {
+  if n + 1 == count {
+    total - chunk_size * (count as u64 - 1)
+  } else {
+    chunk_size
+  }
+}
+
+fn retriable(status: reqwest::StatusCode) -> bool {
+  status.is_server_error()
+    || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+    || status == reqwest::StatusCode::REQUEST_TIMEOUT
+}
+
+fn counting_body(data: Bytes, sent: Arc<SentBytes>, counted: Arc<AtomicU64>) -> reqwest::Body {
+  let stream = futures::stream::unfold(0usize, move |offset| {
+    let (data, sent, counted) = (data.clone(), sent.clone(), counted.clone());
+    async move {
+      if offset >= data.len() {
+        return None;
+      }
+      let end = (offset + SLICE).min(data.len());
+      let part = data.slice(offset..end);
+      sent.add(part.len() as u64);
+      counted.fetch_add(part.len() as u64, Ordering::Relaxed);
+      Some((Ok::<_, io::Error>(part), end))
     }
-    let body: Value = response.json().await?;
-    missing.extend(
-      body["missing"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|item| item.as_str().map(str::to_string)),
-    );
-  }
-  let mut jobs = Vec::with_capacity(missing.len());
-  for sha1 in missing {
-    let path = blobs
-      .get(&sha1)
-      .ok_or_else(|| USTBLError("平台请求了未知的文件".into()))?
-      .clone();
-    let size = tokio::fs::metadata(&path).await?.len();
-    jobs.push(UploadJob { sha1, path, size });
-  }
-  Ok(jobs)
+  });
+  reqwest::Body::wrap_stream(stream)
+}
+
+async fn read_chunk(pack: &Path, offset: u64, length: u64) -> USTBLResult<Bytes> {
+  let mut file = tokio::fs::File::open(pack).await?;
+  file.seek(SeekFrom::Start(offset)).await?;
+  let mut buffer = vec![0u8; length as usize];
+  file.read_exact(&mut buffer).await?;
+  Ok(Bytes::from(buffer))
 }
 
 pub(super) struct PublishJob {
   pub app: AppHandle,
   pub uploader: reqwest::Client,
-  pub instance: Instance,
-  pub project: String,
-  pub version_number: String,
-  pub changelog: String,
-  pub root: PathBuf,
-  pub plan: PublishPlan,
-  pub parent_version_id: Option<i64>,
-  pub loader_type: String,
-  /// Patches of a component profile live here until they are uploaded.
-  pub _component_work: TempDir,
+  pub record: JobRecord,
 }
 
 impl PublishJob {
   /// Puts the job on the task list and runs it in the background. Returns the
   /// name of the task group.
-  pub(super) fn start(self, missing: Vec<UploadJob>) -> String {
+  pub(super) fn start(self) -> USTBLResult<String> {
+    let token = ActiveToken::take(&self.record.id)
+      .ok_or_else(|| USTBLError("这个发布任务已在进行中".into()))?;
     let app = self.app.clone();
     let monitor = app.state::<Pin<Box<TaskMonitor>>>();
     let group = format!(
       "modpack-publish?{} {}@{}",
-      self.project,
-      self.version_number,
+      self.record.project_slug,
+      self.record.version_number,
       chrono::Utc::now().timestamp_millis()
     );
 
-    let mut queue = VecDeque::new();
-    let mut files = Vec::new();
-    for job in missing {
-      let name = job
-        .path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| job.sha1.clone());
-      let handle = upload_handle(&app, monitor.get_new_id(), &group, name, job.size as i64);
-      files.push(handle.clone());
-      queue.push_back(Queued { job, handle });
-    }
-    // The size of the bundle is known once it is packed.
-    let bundle = (!self.plan.bundle_files().is_empty())
-      .then(|| upload_handle(&app, monitor.get_new_id(), &group, "bundle.zip".into(), 0));
+    let pack = self.record.pack.as_ref().map(|pack| {
+      upload_handle(
+        &app,
+        monitor.get_new_id(),
+        &group,
+        "增量包".to_string(),
+        pack.size as i64,
+      )
+    });
     let finish = upload_handle(
       &app,
       monitor.get_new_id(),
       &group,
-      format!("发布版本 {}", self.version_number),
+      format!("发布版本 {}", self.record.version_number),
       1,
     );
     let tasks = Tasks {
       group: group.clone(),
-      files,
-      bundle,
+      pack,
       finish,
     };
     let handles: Vec<Handle> = tasks.all().cloned().collect();
     monitor.register_job_group(&group, &handles);
 
     let finish_id = tasks.finish.read().unwrap().desc.task_id;
-    let job = tauri::async_runtime::spawn(self.run(tasks, queue));
+    let job = tauri::async_runtime::spawn(self.run(tasks, token));
     monitor.bind_job(finish_id, job);
-    group
+    Ok(group)
   }
 
-  async fn run(self, tasks: Tasks, queue: VecDeque<Queued>) {
+  async fn run(mut self, tasks: Tasks, _token: ActiveToken) {
     let app = self.app.clone();
-    let instance_id = self.instance.id.clone();
+    let dir = jobs_dir();
     let finish_id = tasks.finish.read().unwrap().desc.task_id;
-    let result = self.execute(&tasks, queue).await;
-    if result.is_err() {
-      tasks.abandon();
+    let mut guard = CancelGuard {
+      app: app.clone(),
+      job_id: self.record.id.clone(),
+      version_id: self.record.version_id,
+      armed: true,
+    };
+    let result = self.execute(&tasks).await;
+    guard.armed = false;
+
+    match &result {
+      Ok(_) => JobRecord::remove(&dir, &self.record.id),
+      Err(error) => {
+        tasks.abandon();
+        // Kept, so the user can send it again or give it up.
+        self.record.phase = Phase::Failed;
+        self.record.error = Some(error.0.clone());
+        let _ = self.record.save(&dir);
+      }
     }
     app
       .state::<Pin<Box<TaskMonitor>>>()
@@ -265,204 +269,328 @@ impl PublishJob {
       "main",
       FINISHED_EVENT,
       PublishFinished {
-        instance_id,
+        instance_id: self.record.instance_id.clone(),
         group: tasks.group.clone(),
+        job_id: self.record.id.clone(),
         outcome,
         error,
       },
     );
   }
 
-  async fn execute(&self, tasks: &Tasks, queue: VecDeque<Queued>) -> USTBLResult<PublishOutcome> {
-    self.upload_blobs(&tasks.group, queue).await?;
+  async fn status(&self) -> USTBLResult<Value> {
+    let response = authed_json(
+      &self.app,
+      reqwest::Method::GET,
+      &format!("/versions/{}/status", self.record.version_id),
+      None,
+    )
+    .await?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+      return Err(USTBLError(
+        "平台上已找不到这个版本，请放弃这个任务后重新发布".into(),
+      ));
+    }
+    if !response.status().is_success() {
+      return Err(failure(response).await);
+    }
+    Ok(response.json().await?)
+  }
 
-    tasks.finish.write().unwrap().mark_started();
-    let version_id = tracked(&tasks.finish, self.release(tasks)).await?;
+  async fn execute(&mut self, tasks: &Tasks) -> USTBLResult<PublishOutcome> {
+    let mut state = self.status().await?;
+    let mut current = state["status"].as_str().unwrap_or_default().to_string();
+    if current != "published" && current != "processing" {
+      if self.record.upload.is_some() {
+        let pack = tasks
+          .pack
+          .as_ref()
+          .ok_or_else(|| USTBLError("缺少增量包任务".into()))?;
+        if let Err(error) = self.upload_pack(pack, &tasks.group).await {
+          pack.write().unwrap().mark_failed(error.0.clone());
+          return Err(error);
+        }
+      }
+      tasks.finish.write().unwrap().mark_started();
+      self.record.phase = Phase::Processing;
+      self.record.error = None;
+      self.record.save(&jobs_dir())?;
+      if let Err(error) = self.commit().await {
+        tasks.finish.write().unwrap().mark_failed(error.0.clone());
+        return Err(error);
+      }
+      current = "processing".into();
+    } else {
+      tasks.finish.write().unwrap().mark_started();
+    }
+
+    while current != "published" {
+      state = self.status().await?;
+      current = state["status"].as_str().unwrap_or_default().to_string();
+      if current == "failed" {
+        let message = state["error"]
+          .as_str()
+          .filter(|text| !text.is_empty())
+          .unwrap_or("平台处理增量包失败");
+        let error = USTBLError(message.to_string());
+        tasks.finish.write().unwrap().mark_failed(error.0.clone());
+        return Err(error);
+      }
+      if current != "published" {
+        sleep(POLL).await;
+      }
+    }
     complete(&tasks.finish);
 
-    let adoption = adopt_published(
-      &self.app,
-      &self.instance,
-      &self.project,
-      version_id,
-      &self.version_number,
-      &self.plan,
-    )
-    .await;
+    let files: Vec<LocalFile> = self
+      .record
+      .files
+      .iter()
+      .map(|file| LocalFile {
+        path: file.path.clone(),
+        key: FileKey {
+          sha1: file.sha1.clone(),
+          size: file.size,
+        },
+      })
+      .collect();
+    let slug = state["project_slug"]
+      .as_str()
+      .unwrap_or(&self.record.project_slug)
+      .to_string();
+    let adoption = match instance_of(&self.app, &self.record.instance_id) {
+      Ok(instance) => {
+        adopt_published(
+          &self.app,
+          &instance,
+          &slug,
+          self.record.version_id,
+          &self.record.version_number,
+          &files,
+          self.record.mmc_pack.as_ref(),
+        )
+        .await
+      }
+      // The instance was deleted while the version went out.
+      Err(_) => super::commands::Adoption::RecordFailed,
+    };
     Ok(PublishOutcome {
-      version_id,
-      skipped: self.plan.skipped.clone(),
+      version_id: self.record.version_id,
+      skipped: self.record.skipped.clone(),
       adoption,
     })
   }
 
-  /// Creates the version, sends the bundle and publishes. Returns the id.
-  async fn release(&self, tasks: &Tasks) -> USTBLResult<i64> {
-    let created = authed_json(
-      &self.app,
-      reqwest::Method::POST,
-      &format!("/projects/{}/versions", self.project),
-      Some(json!({
-        "game_version": self.instance.version,
-        "loader_type": self.loader_type,
-        "loader_version": self.instance.mod_loader.version,
-        "version_number": self.version_number,
-        "changelog": self.changelog,
-        "parent_version_id": self.parent_version_id,
-        "manifest": self.plan.manifest(),
-      })),
-    )
-    .await?;
-    if !created.status().is_success() {
-      return Err(failure(created).await);
-    }
-    let version_id = created.json::<Value>().await?["id"]
-      .as_i64()
-      .ok_or_else(|| USTBLError("平台返回了无法识别的版本".into()))?;
-
-    let mut draft = DraftGuard::new(&self.app, version_id);
-    if let Some(bundle) = &tasks.bundle {
-      tracked(bundle, self.send_bundle(bundle, version_id)).await?;
-    }
+  async fn commit(&self) -> USTBLResult<()> {
     let response = authed_json(
       &self.app,
       reqwest::Method::POST,
-      &format!("/versions/{version_id}/publish"),
+      &format!("/versions/{}/commit", self.record.version_id),
       None,
     )
     .await?;
-    if response.status() == reqwest::StatusCode::CONFLICT {
+    if response.status().is_success() {
+      return Ok(());
+    }
+    let (code, error) = failure_code(response).await;
+    if code.as_deref() == Some("PARENT_MISMATCH") {
       return Err(InstanceError::ModpackPublishStale.into());
     }
-    if !response.status().is_success() {
-      return Err(failure(response).await);
-    }
-    draft.disarm();
-    Ok(version_id)
+    Err(error)
   }
 
-  async fn send_bundle(&self, handle: &Handle, version_id: i64) -> USTBLResult<()> {
-    let temp =
-      TempFile(std::env::temp_dir().join(format!("ustbl-bundle-{}.zip", uuid::Uuid::new_v4())));
-    let (zip_root, zip_path) = (self.root.clone(), temp.0.clone());
-    let entries: Vec<LocalFile> = self.plan.bundle_files().into_iter().cloned().collect();
-    tokio::task::spawn_blocking(move || {
-      let refs: Vec<&LocalFile> = entries.iter().collect();
-      write_bundle(&zip_root, &refs, &zip_path)
-    })
-    .await
-    .map_err(|e| USTBLError(e.to_string()))??;
-
-    let size = tokio::fs::metadata(&temp.0).await?.len();
+  /// The pack is built again from the recorded sources when it is gone, and has
+  /// to come out as the pack the platform was promised.
+  async fn ensure_pack(&self) -> USTBLResult<std::path::PathBuf> {
+    let pack = self
+      .record
+      .pack
+      .clone()
+      .ok_or_else(|| USTBLError("这个版本没有增量包".into()))?;
+    let path = paths(&jobs_dir(), &self.record.id)?.pack;
+    if tokio::fs::metadata(&path)
+      .await
+      .is_ok_and(|meta| meta.len() == pack.size)
     {
-      let mut handle = handle.write().unwrap();
-      handle.set_total(size as i64);
-      handle.mark_started();
+      return Ok(path);
     }
-    let transfers = Transfers::new();
-    let file = transfers.begin(handle);
-    let bundle_path = format!("/versions/{version_id}/bundle");
-    let upload = put_file(&self.app, &self.uploader, &bundle_path, &temp.0, &file);
-    tokio::pin!(upload);
+    let objects: Vec<PackObject> = self.record.objects.iter().map(PackObject::from).collect();
+    let target = path.clone();
+    let built = tokio::task::spawn_blocking(move || build_pack(&objects, &target))
+      .await
+      .map_err(|e| USTBLError(e.to_string()))??;
+    if built.sha1 != pack.sha1 || built.size != pack.size {
+      let _ = tokio::fs::remove_file(&path).await;
+      return Err(USTBLError(
+        "实例中的文件在上次发布后发生了变化，无法继续，请放弃这个任务后重新发布".into(),
+      ));
+    }
+    Ok(path)
+  }
+
+  async fn upload_pack(&self, handle: &Handle, group: &str) -> USTBLResult<()> {
+    let upload: RecordedUpload = self
+      .record
+      .upload
+      .clone()
+      .ok_or_else(|| USTBLError("这个版本没有上传会话".into()))?;
+    let total = self.record.pack.as_ref().map_or(0, |pack| pack.size);
+    let path = self.ensure_pack().await?;
+
+    let received = self.received_chunks(&upload).await?;
+    let stored: u64 = received
+      .iter()
+      .map(|n| chunk_length(total, upload.chunk_size, upload.chunk_count, *n))
+      .sum();
+    let mut queue: VecDeque<u32> = (0..upload.chunk_count)
+      .filter(|n| !received.contains(n))
+      .collect();
+
+    handle.write().unwrap().mark_started();
+    let sent = SentBytes::new(total, stored);
+    let monitor = self.app.state::<Pin<Box<TaskMonitor>>>();
+    let mut running = FuturesUnordered::new();
     let mut tick = interval(TICK);
     tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
-    let response = loop {
-      tokio::select! {
-        response = &mut upload => break response,
-        _ = tick.tick() => transfers.report(),
+
+    loop {
+      // A paused group starts no new chunk.
+      if !monitor.is_group_stopped(group) {
+        while running.len() < CHUNK_CONCURRENCY {
+          let Some(n) = queue.pop_front() else { break };
+          let length = chunk_length(total, upload.chunk_size, upload.chunk_count, n);
+          running.push(self.send_chunk(&upload, &path, n, length, &sent));
+        }
       }
-    };
-    transfers.end(&file);
-    let response = response?;
-    if !response.status().is_success() {
-      return Err(failure(response).await);
+      if running.is_empty() && queue.is_empty() {
+        break;
+      }
+      tokio::select! {
+        finished = running.next(), if !running.is_empty() => {
+          if let Some(result) = finished {
+            result?;
+          }
+        }
+        _ = tick.tick() => report(handle, sent.done()),
+      }
     }
     complete(handle);
     Ok(())
   }
 
-  /// Sends the missing files, a few at a time. How many is found out on the
-  /// way: files are added while the total speed rises.
-  async fn upload_blobs(&self, group: &str, mut queue: VecDeque<Queued>) -> USTBLResult<()> {
-    let monitor = self.app.state::<Pin<Box<TaskMonitor>>>();
-    let transfers = Transfers::new();
-    let mut level = Concurrency::new();
-    let mut retried = HashSet::new();
-    let mut running = FuturesUnordered::new();
-    let mut tick = interval(TICK);
-    tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
-    let mut epoch = (Instant::now(), 0u64);
-
-    loop {
-      // A paused group starts no new file.
-      if !monitor.is_group_stopped(group) {
-        while running.len() < level.level() {
-          let Some(next) = queue.pop_front() else { break };
-          running.push(self.upload_one(&transfers, next));
-        }
-      }
-      if running.is_empty() && queue.is_empty() {
-        return Ok(());
-      }
-      tokio::select! {
-        finished = running.next(), if !running.is_empty() => {
-          let Some((next, result)) = finished else { continue };
-          match result {
-            Ok(()) => {}
-            // Several files at once may be what the platform or the cloud
-            // objects to: try this one again on its own before giving up.
-            Err(_) if level.level() > 1 && retried.insert(next.job.sha1.clone()) => {
-              level.back_off();
-              queue.push_front(next);
-            }
-            Err(error) => {
-              next.handle.write().unwrap().mark_failed(error.0.clone());
-              return Err(error);
-            }
-          }
-        }
-        _ = tick.tick() => {
-          transfers.report();
-          if epoch.0.elapsed() >= PROBE_EPOCH {
-            let sent = transfers.sent_bytes();
-            // Only a full set of files in flight says anything about the count.
-            if running.len() >= level.level() && !queue.is_empty() {
-              let seconds = epoch.0.elapsed().as_secs_f64();
-              level.observe(sent.saturating_sub(epoch.1) as f64 / seconds);
-            }
-            epoch = (Instant::now(), sent);
-          }
-        }
-      }
+  async fn received_chunks(&self, upload: &RecordedUpload) -> USTBLResult<HashSet<u32>> {
+    let response = authed_json(
+      &self.app,
+      reqwest::Method::GET,
+      &format!("/uploads/{}", upload.id),
+      None,
+    )
+    .await?;
+    let status = response.status();
+    if status == reqwest::StatusCode::NOT_FOUND || status == reqwest::StatusCode::GONE {
+      return Err(USTBLError(
+        "平台上的上传会话已过期，请放弃这个任务后重新发布".into(),
+      ));
     }
+    if !status.is_success() {
+      return Err(failure(response).await);
+    }
+    let body: Value = response.json().await?;
+    Ok(
+      body["received"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|n| n.as_u64().map(|n| n as u32))
+        .collect(),
+    )
   }
 
-  async fn upload_one(&self, transfers: &Transfers, next: Queued) -> (Queued, USTBLResult<()>) {
-    next.handle.write().unwrap().mark_started();
-    let file = transfers.begin(&next.handle);
-    let result = async {
-      let path = format!("/blobs/{}", next.job.sha1);
-      let response = put_file(&self.app, &self.uploader, &path, &next.job.path, &file).await?;
-      if response.status().is_success() {
-        Ok(())
-      } else {
-        Err(failure(response).await)
+  async fn send_chunk(
+    &self,
+    upload: &RecordedUpload,
+    pack: &Path,
+    n: u32,
+    length: u64,
+    sent: &Arc<SentBytes>,
+  ) -> USTBLResult<()> {
+    let data = read_chunk(pack, n as u64 * upload.chunk_size, length).await?;
+    let digest = hex::encode(Sha1::digest(&data));
+    let url = format!("{CAMPUS_API}/uploads/{}/chunks/{n}", upload.id);
+
+    let mut last = USTBLError("上传失败".into());
+    for attempt in 0..CHUNK_ATTEMPTS {
+      if attempt > 0 {
+        sleep(Duration::from_secs(1 << (attempt - 1))).await;
+      }
+      let counted = Arc::new(AtomicU64::new(0));
+      let response = vustb::send_authenticated_with(&self.app, &self.uploader, |client, token| {
+        client
+          .put(&url)
+          .bearer_auth(token)
+          .header("Content-Type", "application/octet-stream")
+          .header("Content-Length", length)
+          .header("X-Chunk-SHA1", &digest)
+          .body(counting_body(data.clone(), sent.clone(), counted.clone()))
+      })
+      .await;
+      let sent_now = counted.load(Ordering::Relaxed);
+      match response {
+        Ok(response) if response.status().is_success() => {
+          // Whatever the stream did not count (it is read once per request).
+          if sent_now < length {
+            sent.add(length - sent_now);
+          } else {
+            sent.take_back(sent_now - length);
+          }
+          return Ok(());
+        }
+        Ok(response) if retriable(response.status()) => {
+          sent.take_back(sent_now);
+          last = failure(response).await;
+        }
+        Ok(response) => {
+          sent.take_back(sent_now);
+          return Err(failure(response).await);
+        }
+        Err(error) => {
+          sent.take_back(sent_now);
+          last = error;
+        }
       }
     }
-    .await;
-    transfers.end(&file);
-    let (sending, waiting) = file.timings();
-    log::info!(
-      "Uploaded {} ({} bytes): sent in {:.1}s, platform answered after {:.1}s ({})",
-      next.job.sha1,
-      next.job.size,
-      sending.as_secs_f64(),
-      waiting.as_secs_f64(),
-      if result.is_ok() { "ok" } else { "failed" }
-    );
-    if result.is_ok() {
-      complete(&next.handle);
-    }
-    (next, result)
+    Err(last)
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn chunks_cover_the_pack_with_a_shorter_last_one() {
+    // 20 bytes in chunks of 8: 8 + 8 + 4.
+    let lengths: Vec<u64> = (0..3).map(|n| chunk_length(20, 8, 3, n)).collect();
+    assert_eq!(lengths, [8, 8, 4]);
+    assert_eq!(chunk_length(8, 8, 1, 0), 8);
+    assert_eq!(chunk_length(5, 8, 1, 0), 5);
+  }
+
+  #[test]
+  fn only_server_trouble_and_throttling_are_retried() {
+    use reqwest::StatusCode;
+    assert!(retriable(StatusCode::BAD_GATEWAY));
+    assert!(retriable(StatusCode::TOO_MANY_REQUESTS));
+    assert!(!retriable(StatusCode::UNPROCESSABLE_ENTITY));
+    assert!(!retriable(StatusCode::GONE));
+  }
+
+  #[test]
+  fn a_job_runs_once_at_a_time() {
+    let token = ActiveToken::take("job-x").unwrap();
+    assert!(is_running("job-x"));
+    assert!(ActiveToken::take("job-x").is_none());
+    drop(token);
+    assert!(!is_running("job-x"));
   }
 }

@@ -657,6 +657,16 @@
   },
   "DownloadTasksPage": {
     "title": "Tâches de téléchargement en cours",
+    "unfinishedPublish": {
+      "title": "Publications inachevées",
+      "phase": {
+        "uploading": "Envoi interrompu, reprise possible",
+        "processing": "Traitement en cours sur la plateforme",
+        "failed": "Échec de la publication"
+      },
+      "resume": "Reprendre",
+      "discard": "Abandonner"
+    },
     "button": {
       "settings": "Paramètres de téléchargement",
       "pause": "Pause",
@@ -3000,7 +3010,6 @@
       "project": "Projet",
       "target": "Publier vers",
       "newProject": "Nouveau projet",
-      "slug": "Identifiant du projet",
       "projectName": "Nom du projet",
       "summary": "Résumé",
       "version": "Version",
@@ -3017,9 +3026,6 @@
       "invalidProject": "Veuillez compléter les informations du projet"
     },
     "errorMessage": {
-      "slug": {
-        "error-1": "2 à 64 minuscules, chiffres ou tirets, en commençant par une lettre"
-      },
       "name": {
         "error-1": "Le nom ne peut pas être vide",
         "error-2": "Le nom est trop long (128 caractères max)"
@@ -3036,7 +3042,8 @@
       }
     },
     "stage": {
-      "hashing": "Vérification des fichiers ({{done}}/{{total}})"
+      "hashing": "Vérification des fichiers ({{done}}/{{total}})",
+      "packing": "Création du paquet des nouveautés"
     },
     "skipped": "{{count}} fichier(s) exclu(s) (mods désactivés ou fichiers du lanceur)",
     "adoption": {

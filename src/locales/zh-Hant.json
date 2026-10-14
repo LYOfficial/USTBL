@@ -657,6 +657,16 @@
   },
   "DownloadTasksPage": {
     "title": "下載任務",
+    "unfinishedPublish": {
+      "title": "未完成的發佈",
+      "phase": {
+        "uploading": "上傳中斷，可繼續",
+        "processing": "平台正在處理",
+        "failed": "發佈失敗"
+      },
+      "resume": "繼續",
+      "discard": "放棄"
+    },
     "button": {
       "settings": "下載設定",
       "pause": "暫停",
@@ -3000,7 +3010,6 @@
       "project": "專案",
       "target": "發佈到",
       "newProject": "新建專案",
-      "slug": "專案標識",
       "projectName": "專案名稱",
       "summary": "簡介",
       "version": "版本",
@@ -3017,9 +3026,6 @@
       "invalidProject": "請補全專案資訊"
     },
     "errorMessage": {
-      "slug": {
-        "error-1": "需為 2 到 64 位小寫字母、數字或連字號，並以字母開頭"
-      },
       "name": {
         "error-1": "名稱不能為空",
         "error-2": "名稱過長（最多 128 個字元）"
@@ -3036,7 +3042,8 @@
       }
     },
     "stage": {
-      "hashing": "正在檢查檔案（{{done}}/{{total}}）"
+      "hashing": "正在檢查檔案（{{done}}/{{total}}）",
+      "packing": "正在打包新增內容"
     },
     "skipped": "有 {{count}} 個檔案被排除（已停用的模組或啟動器檔案）",
     "adoption": {

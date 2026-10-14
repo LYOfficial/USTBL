@@ -657,6 +657,16 @@
   },
   "DownloadTasksPage": {
     "title": "Download Tasks",
+    "unfinishedPublish": {
+      "title": "Unfinished publishes",
+      "phase": {
+        "uploading": "Upload interrupted, can be continued",
+        "processing": "The platform is processing it",
+        "failed": "Publish failed"
+      },
+      "resume": "Continue",
+      "discard": "Discard"
+    },
     "button": {
       "settings": "Download Settings",
       "pause": "Pause",
@@ -3000,7 +3010,6 @@
       "project": "Project",
       "target": "Publish To",
       "newProject": "New project",
-      "slug": "Project ID",
       "projectName": "Project Name",
       "summary": "Summary",
       "version": "Version",
@@ -3017,9 +3026,6 @@
       "invalidProject": "Please complete the project information"
     },
     "errorMessage": {
-      "slug": {
-        "error-1": "Use 2-64 lowercase letters, digits or hyphens, starting with a letter"
-      },
       "name": {
         "error-1": "Name cannot be empty",
         "error-2": "Name is too long (max 128 characters)"
@@ -3036,7 +3042,8 @@
       }
     },
     "stage": {
-      "hashing": "Checking files ({{done}}/{{total}})"
+      "hashing": "Checking files ({{done}}/{{total}})",
+      "packing": "Packing new content"
     },
     "skipped": "{{count}} file(s) were left out (disabled mods or launcher files)",
     "adoption": {

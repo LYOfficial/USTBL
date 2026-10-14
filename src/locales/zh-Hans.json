@@ -657,6 +657,16 @@
   },
   "DownloadTasksPage": {
     "title": "下载任务",
+    "unfinishedPublish": {
+      "title": "未完成的发布",
+      "phase": {
+        "uploading": "上传中断，可继续",
+        "processing": "平台正在处理",
+        "failed": "发布失败"
+      },
+      "resume": "继续",
+      "discard": "放弃"
+    },
     "button": {
       "settings": "下载设置",
       "pause": "暂停",
@@ -3000,7 +3010,6 @@
       "project": "项目",
       "target": "发布到",
       "newProject": "新建项目",
-      "slug": "项目标识",
       "projectName": "项目名称",
       "summary": "简介",
       "version": "版本",
@@ -3017,9 +3026,6 @@
       "invalidProject": "请补全项目信息"
     },
     "errorMessage": {
-      "slug": {
-        "error-1": "需为 2 到 64 位小写字母、数字或连字符，并以字母开头"
-      },
       "name": {
         "error-1": "名称不能为空",
         "error-2": "名称过长（最多 128 个字符）"
@@ -3036,7 +3042,8 @@
       }
     },
     "stage": {
-      "hashing": "正在检查文件（{{done}}/{{total}}）"
+      "hashing": "正在检查文件（{{done}}/{{total}}）",
+      "packing": "正在打包新增内容"
     },
     "skipped": "有 {{count}} 个文件被排除（已禁用的模组或启动器文件）",
     "adoption": {
