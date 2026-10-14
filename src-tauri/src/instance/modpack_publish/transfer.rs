@@ -1,62 +1,42 @@
-//! Upload bookkeeping: bytes sent, speed, and how many files go up at once.
+//! Bytes sent and the number of simultaneous uploads while publishing.
 
-use serde::Serialize;
-use std::collections::VecDeque;
+use crate::tasks::streams::desc::PStatus;
+use crate::tasks::PTaskHandle;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex, RwLock};
 
 const START_LEVEL: usize = 2;
 const MAX_LEVEL: usize = 6;
 /// Another file in flight must lift the total speed by this much to be kept.
 const GAIN_TO_KEEP: f64 = 1.15;
-const SPEED_WINDOW: Duration = Duration::from_secs(3);
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FileTransfer {
-  pub name: String,
-  pub done: u64,
-  pub total: u64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Transfer {
-  pub bytes_done: u64,
-  pub bytes_total: u64,
-  /// Bytes per second over the last few seconds.
-  pub speed: u64,
-  pub concurrency: usize,
-  /// Files being sent right now.
-  pub files: Vec<FileTransfer>,
-}
-
-/// One file on its way up. Counts the bytes handed to the HTTP stack, so it
-/// runs slightly ahead of what the server has taken, and reads 100% while the
-/// server still relays the file on to cloud storage.
-pub struct ActiveFile {
-  name: String,
+/// Bytes of one file handed to the HTTP stack, and of all files together.
+///
+/// This runs slightly ahead of what the server has taken, and reads 100% while
+/// the server still relays the file on to cloud storage.
+pub struct ByteCounter {
   total: u64,
   sent: AtomicU64,
+  all: Arc<AtomicU64>,
 }
 
-impl ActiveFile {
-  pub fn new(name: String, total: u64) -> Arc<Self> {
-    Arc::new(Self {
-      name,
+impl ByteCounter {
+  fn new(total: u64, all: Arc<AtomicU64>) -> Self {
+    Self {
       total,
       sent: AtomicU64::new(0),
-    })
+      all,
+    }
   }
 
-  /// A retried request (after a token refresh) sends the file from the start.
-  pub fn restart(&self) {
+  /// A request sent again (after a token refresh) starts the file over.
+  fn restart(&self) {
     self.sent.store(0, Ordering::Relaxed);
   }
 
-  pub fn add(&self, bytes: u64) {
+  fn add(&self, bytes: u64) {
     self.sent.fetch_add(bytes, Ordering::Relaxed);
+    self.all.fetch_add(bytes, Ordering::Relaxed);
   }
 
   fn done(&self) -> u64 {
@@ -64,93 +44,80 @@ impl ActiveFile {
   }
 }
 
-pub struct Tracker {
-  bytes_total: u64,
-  finished: AtomicU64,
-  active: Mutex<Vec<Arc<ActiveFile>>>,
-  samples: Mutex<VecDeque<(Instant, u64)>>,
+/// One file on its way up, tied to its entry on the task list.
+pub struct ActiveFile {
+  handle: Arc<RwLock<PTaskHandle>>,
+  bytes: ByteCounter,
 }
 
-impl Tracker {
-  pub fn new(bytes_total: u64) -> Self {
+impl ActiveFile {
+  pub fn restart(&self) {
+    self.bytes.restart();
+  }
+
+  pub fn add(&self, bytes: u64) {
+    self.bytes.add(bytes);
+  }
+
+  pub fn status(&self) -> PStatus {
+    self.handle.read().unwrap().status().clone()
+  }
+}
+
+/// The files being sent right now.
+pub struct Transfers {
+  all: Arc<AtomicU64>,
+  active: Mutex<Vec<Arc<ActiveFile>>>,
+}
+
+impl Transfers {
+  pub fn new() -> Self {
     Self {
-      bytes_total,
-      finished: AtomicU64::new(0),
+      all: Arc::new(AtomicU64::new(0)),
       active: Mutex::new(Vec::new()),
-      samples: Mutex::new(VecDeque::new()),
     }
   }
 
-  pub fn begin(&self, file: &Arc<ActiveFile>) {
-    self.active.lock().unwrap().push(file.clone());
+  /// Everything handed to the network so far, retried bytes included.
+  pub fn sent_bytes(&self) -> u64 {
+    self.all.load(Ordering::Relaxed)
   }
 
-  /// Takes the file off the list; a stored file counts in full.
-  pub fn end(&self, file: &Arc<ActiveFile>, stored: bool) {
+  pub fn begin(&self, handle: &Arc<RwLock<PTaskHandle>>) -> Arc<ActiveFile> {
+    let total = handle.read().unwrap().desc.total.max(0) as u64;
+    let file = Arc::new(ActiveFile {
+      handle: handle.clone(),
+      bytes: ByteCounter::new(total, self.all.clone()),
+    });
+    self.active.lock().unwrap().push(file.clone());
+    file
+  }
+
+  pub fn end(&self, file: &Arc<ActiveFile>) {
     self
       .active
       .lock()
       .unwrap()
       .retain(|item| !Arc::ptr_eq(item, file));
-    if stored {
-      self.finished.fetch_add(file.total, Ordering::Relaxed);
-    }
   }
 
-  pub fn bytes_done(&self) -> u64 {
-    let active: u64 = self
-      .active
-      .lock()
-      .unwrap()
-      .iter()
-      .map(|file| file.done())
-      .sum();
-    (self.finished.load(Ordering::Relaxed) + active).min(self.bytes_total)
-  }
-
-  pub fn snapshot(&self, concurrency: usize) -> Transfer {
-    let now = Instant::now();
-    let bytes_done = self.bytes_done();
-    let speed = {
-      let mut samples = self.samples.lock().unwrap();
-      samples.push_back((now, bytes_done));
-      while samples.len() > 2 && now.duration_since(samples[1].0) >= SPEED_WINDOW {
-        samples.pop_front();
+  /// Tells the task list how far every running file got. Call once a second:
+  /// the speed shown is bytes per reporting interval.
+  pub fn report(&self) {
+    for file in self.active.lock().unwrap().iter() {
+      let mut handle = file.handle.write().unwrap();
+      if !handle.status().is_in_progress() {
+        continue;
       }
-      speed_of(&samples)
-    };
-    let files = self
-      .active
-      .lock()
-      .unwrap()
-      .iter()
-      .map(|file| FileTransfer {
-        name: file.name.clone(),
-        done: file.done(),
-        total: file.total,
-      })
-      .collect();
-    Transfer {
-      bytes_done,
-      bytes_total: self.bytes_total,
-      speed,
-      concurrency,
-      files,
+      let current = file.bytes.done() as i64;
+      handle.desc.current = current;
+      let (id, group) = (handle.desc.task_id, handle.desc.task_group.clone());
+      handle
+        .reporter
+        .report_progress(id, group.as_deref(), current);
     }
   }
 }
-
-fn speed_of(samples: &VecDeque<(Instant, u64)>) -> u64 {
-  let (Some(first), Some(last)) = (samples.front(), samples.back()) else {
-    return 0;
-  };
-  let seconds = last.0.duration_since(first.0).as_secs_f64();
-  if seconds <= 0.0 {
-    return 0;
-  }
-  (last.1.saturating_sub(first.1) as f64 / seconds) as u64
-}
-
 /// Feels its way to a good number of simultaneous uploads: adds one at a time
 /// while the total speed keeps rising, then keeps the last count that helped.
 #[derive(Debug)]
@@ -248,45 +215,28 @@ mod tests {
   }
 
   #[test]
-  fn tracker_counts_stored_files_in_full_and_active_ones_by_bytes() {
-    let tracker = Tracker::new(300);
-    let first = ActiveFile::new("a".into(), 100);
-    let second = ActiveFile::new("b".into(), 200);
-    tracker.begin(&first);
-    tracker.begin(&second);
+  fn a_file_counts_up_to_its_size_and_all_files_add_up() {
+    let all = Arc::new(AtomicU64::new(0));
+    let first = ByteCounter::new(100, all.clone());
+    let second = ByteCounter::new(200, all.clone());
     first.add(100);
     second.add(50);
-    assert_eq!(tracker.bytes_done(), 150);
+    assert_eq!(first.done(), 100);
+    assert_eq!(second.done(), 50);
+    assert_eq!(all.load(Ordering::Relaxed), 150);
 
-    tracker.end(&first, true);
-    assert_eq!(tracker.bytes_done(), 150);
-    // A failed file stops counting.
-    tracker.end(&second, false);
-    assert_eq!(tracker.bytes_done(), 100);
+    // Never past the file's size.
+    first.add(30);
+    assert_eq!(first.done(), 100);
   }
 
   #[test]
-  fn a_restarted_file_counts_from_zero_again() {
-    let tracker = Tracker::new(100);
-    let file = ActiveFile::new("a".into(), 100);
-    tracker.begin(&file);
+  fn a_restarted_file_counts_from_zero_but_the_total_keeps_the_traffic() {
+    let all = Arc::new(AtomicU64::new(0));
+    let file = ByteCounter::new(100, all.clone());
     file.add(80);
     file.restart();
-    assert_eq!(tracker.bytes_done(), 0);
-    file.add(500);
-    // Never past the file's size.
-    assert_eq!(tracker.bytes_done(), 100);
-  }
-
-  #[test]
-  fn speed_is_bytes_over_the_sampled_time() {
-    let start = Instant::now();
-    let mut samples = VecDeque::new();
-    samples.push_back((start, 0));
-    samples.push_back((start + Duration::from_secs(2), 2_000_000));
-    assert_eq!(speed_of(&samples), 1_000_000);
-    // Counters that went backwards read as no speed, not a huge number.
-    samples.push_back((start + Duration::from_secs(3), 10));
-    assert_eq!(speed_of(&samples), 3);
+    assert_eq!(file.done(), 0);
+    assert_eq!(all.load(Ordering::Relaxed), 80);
   }
 }

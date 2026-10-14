@@ -1,8 +1,9 @@
 //! Publishing an instance to the campus modpack platform.
 
 use super::components::plan_components;
+use super::job::{find_missing, PublishJob};
 use super::manifest::{plan_files, LocalFile, PublishPlan};
-use super::transfer::{ActiveFile, Concurrency, Tracker, Transfer};
+use super::transfer::ActiveFile;
 use crate::account::helpers::vustb;
 use crate::account::models::AccountInfo;
 use crate::error::{USTBLError, USTBLResult};
@@ -20,25 +21,20 @@ use crate::instance::models::misc::{
 use crate::instance::modpack_update::commands::store_instance;
 use crate::instance::modpack_update::diff::FileKey;
 use crate::instance::modpack_update::sources::{loader_slug, CAMPUS_API};
+use crate::tasks::streams::desc::PStatus;
 use crate::utils::web::build_ustbl_upload_client;
-use futures::stream::{FuturesUnordered, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::AsyncReadExt;
-use tokio::time::MissedTickBehavior;
 
 const PROGRESS_EVENT: &str = "modpack-publish:progress";
-const MISSING_BATCH: usize = 5000;
-const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
-/// How long one upload count is measured before trying a different one.
-const PROBE_EPOCH: Duration = Duration::from_secs(4);
 
 /// The UI hides publishing from other accounts, but the role is checked here too;
 /// the platform authenticates the bearer token again.
@@ -105,6 +101,13 @@ pub struct CampusRecommendation {
   pub loader_type: Option<String>,
 }
 
+/// The upload is under way; the task group shows how it goes.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublishStarted {
+  pub group: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PublishOutcome {
@@ -136,9 +139,6 @@ pub enum Adoption {
 #[serde(rename_all = "camelCase")]
 enum Stage {
   Hashing,
-  Uploading,
-  Bundling,
-  Publishing,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -148,23 +148,9 @@ struct Progress {
   stage: Stage,
   done: usize,
   total: usize,
-  /// Byte-level detail of an upload in progress.
-  #[serde(skip_serializing_if = "Option::is_none")]
-  transfer: Option<Transfer>,
 }
 
 fn report(app: &AppHandle, instance_id: &str, stage: Stage, done: usize, total: usize) {
-  emit_progress(app, instance_id, stage, done, total, None);
-}
-
-fn emit_progress(
-  app: &AppHandle,
-  instance_id: &str,
-  stage: Stage,
-  done: usize,
-  total: usize,
-  transfer: Option<Transfer>,
-) {
   let _ = app.emit_to(
     "main",
     PROGRESS_EVENT,
@@ -173,14 +159,13 @@ fn emit_progress(
       stage,
       done,
       total,
-      transfer,
     },
   );
 }
 
 /// The server explains refusals in `detail`; pass that on instead of a bare
 /// status code.
-async fn failure(response: reqwest::Response) -> USTBLError {
+pub(super) async fn failure(response: reqwest::Response) -> USTBLError {
   let status = response.status();
   let detail = response
     .json::<Value>()
@@ -197,7 +182,7 @@ async fn failure(response: reqwest::Response) -> USTBLError {
   USTBLError(detail.unwrap_or_else(|| format!("HTTP {status}")))
 }
 
-async fn authed_json(
+pub(super) async fn authed_json(
   app: &AppHandle,
   method: reqwest::Method,
   path: &str,
@@ -214,20 +199,29 @@ async fn authed_json(
   .await
 }
 
-fn file_body(path: &Path, progress: Option<Arc<ActiveFile>>) -> io::Result<reqwest::Body> {
+fn file_body(path: &Path, progress: Arc<ActiveFile>) -> io::Result<reqwest::Body> {
   let file = tokio::fs::File::from_std(fs::File::open(path)?);
-  if let Some(progress) = &progress {
-    progress.restart();
-  }
+  progress.restart();
   let stream = futures::stream::unfold((file, progress), |(mut file, progress)| async move {
+    // Pausing the task holds back the bytes, not the connection.
+    loop {
+      match progress.status() {
+        PStatus::Stopped => tokio::time::sleep(Duration::from_millis(200)).await,
+        PStatus::Cancelled => {
+          return Some((
+            Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled")),
+            (file, progress),
+          ))
+        }
+        _ => break,
+      }
+    }
     let mut buffer = vec![0u8; 256 * 1024];
     match file.read(&mut buffer).await {
       Ok(0) => None,
       Ok(read) => {
         buffer.truncate(read);
-        if let Some(progress) = &progress {
-          progress.add(read as u64);
-        }
+        progress.add(read as u64);
         Some((Ok::<_, io::Error>(bytes_from(buffer)), (file, progress)))
       }
       Err(error) => Some((Err(error), (file, progress))),
@@ -240,12 +234,12 @@ fn bytes_from(buffer: Vec<u8>) -> tokio_util::bytes::Bytes {
   tokio_util::bytes::Bytes::from(buffer)
 }
 
-async fn put_file(
+pub(super) async fn put_file(
   app: &AppHandle,
   uploader: &reqwest::Client,
   path: &str,
   file: &Path,
-  progress: Option<&Arc<ActiveFile>>,
+  progress: &Arc<ActiveFile>,
 ) -> USTBLResult<reqwest::Response> {
   let url = format!("{CAMPUS_API}{path}");
   let size = tokio::fs::metadata(file).await?.len();
@@ -255,7 +249,7 @@ async fn put_file(
       .bearer_auth(token)
       .header("Content-Type", "application/octet-stream")
       .header("Content-Length", size);
-    match file_body(file, progress.cloned()) {
+    match file_body(file, progress.clone()) {
       Ok(body) => request.body(body),
       // An unreadable file surfaces as an empty body the server rejects.
       Err(_) => request,
@@ -383,7 +377,7 @@ fn hash_selection(root: &Path, selected: &[String]) -> USTBLResult<Vec<LocalFile
 }
 
 /// Zip the files that ride along with the version.
-fn write_bundle(root: &Path, files: &[&LocalFile], dest: &Path) -> USTBLResult<()> {
+pub(super) fn write_bundle(root: &Path, files: &[&LocalFile], dest: &Path) -> USTBLResult<()> {
   let mut zip = zip::ZipWriter::new(fs::File::create(dest)?);
   let options =
     zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
@@ -396,7 +390,7 @@ fn write_bundle(root: &Path, files: &[&LocalFile], dest: &Path) -> USTBLResult<(
   Ok(())
 }
 
-struct TempFile(PathBuf);
+pub(super) struct TempFile(pub(super) PathBuf);
 
 impl Drop for TempFile {
   fn drop(&mut self) {
@@ -404,157 +398,12 @@ impl Drop for TempFile {
   }
 }
 
-struct TempDir(PathBuf);
+pub(super) struct TempDir(pub(super) PathBuf);
 
 impl Drop for TempDir {
   fn drop(&mut self) {
     let _ = fs::remove_dir_all(&self.0);
   }
-}
-
-async fn upload_missing_blobs(
-  app: &AppHandle,
-  uploader: &reqwest::Client,
-  instance_id: &str,
-  root: &Path,
-  plan: &PublishPlan,
-) -> USTBLResult<()> {
-  let blobs = plan.blob_sources(root);
-  let hashes: Vec<&String> = blobs.keys().collect();
-  let mut missing = Vec::new();
-  for batch in hashes.chunks(MISSING_BATCH) {
-    let response = authed_json(
-      app,
-      reqwest::Method::POST,
-      "/blobs/missing",
-      Some(json!({ "sha1s": batch })),
-    )
-    .await?;
-    if !response.status().is_success() {
-      return Err(failure(response).await);
-    }
-    let body: Value = response.json().await?;
-    missing.extend(
-      body["missing"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|item| item.as_str().map(str::to_string)),
-    );
-  }
-  let mut queue = VecDeque::new();
-  let mut bytes_total = 0;
-  for sha1 in missing {
-    let path = blobs
-      .get(&sha1)
-      .ok_or_else(|| USTBLError("平台请求了未知的文件".into()))?
-      .clone();
-    let size = tokio::fs::metadata(&path).await?.len();
-    bytes_total += size;
-    queue.push_back(UploadJob { sha1, path, size });
-  }
-  let total = queue.len();
-  let tracker = Tracker::new(bytes_total);
-  let mut level = Concurrency::new();
-  let mut retried = HashSet::new();
-  let mut running = FuturesUnordered::new();
-  let mut stored = 0;
-  let mut tick = tokio::time::interval(PROGRESS_INTERVAL);
-  tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
-  let mut epoch = (Instant::now(), 0u64);
-
-  report(app, instance_id, Stage::Uploading, 0, total);
-  loop {
-    while running.len() < level.level() {
-      let Some(job) = queue.pop_front() else { break };
-      running.push(upload_one(app, uploader, &tracker, job));
-    }
-    if running.is_empty() {
-      break;
-    }
-    tokio::select! {
-      finished = running.next() => {
-        let Some((job, result)) = finished else { continue };
-        match result {
-          Ok(()) => stored += 1,
-          // Several files at once may be what the platform or the cloud
-          // objects to: try this one again on its own before giving up.
-          Err(_) if level.level() > 1 && retried.insert(job.sha1.clone()) => {
-            level.back_off();
-            queue.push_front(job);
-          }
-          Err(error) => return Err(error),
-        }
-      }
-      _ = tick.tick() => {
-        emit_progress(
-          app,
-          instance_id,
-          Stage::Uploading,
-          stored,
-          total,
-          Some(tracker.snapshot(level.level())),
-        );
-        if epoch.0.elapsed() >= PROBE_EPOCH {
-          let now = tracker.bytes_done();
-          // Only a full set of files in flight says anything about the count.
-          if running.len() >= level.level() && !queue.is_empty() {
-            let seconds = epoch.0.elapsed().as_secs_f64();
-            level.observe(now.saturating_sub(epoch.1) as f64 / seconds);
-          }
-          epoch = (Instant::now(), now);
-        }
-      }
-    }
-  }
-  emit_progress(
-    app,
-    instance_id,
-    Stage::Uploading,
-    stored,
-    total,
-    Some(tracker.snapshot(level.level())),
-  );
-  Ok(())
-}
-
-struct UploadJob {
-  sha1: String,
-  path: PathBuf,
-  size: u64,
-}
-
-async fn upload_one(
-  app: &AppHandle,
-  uploader: &reqwest::Client,
-  tracker: &Tracker,
-  job: UploadJob,
-) -> (UploadJob, USTBLResult<()>) {
-  let name = job
-    .path
-    .file_name()
-    .map(|name| name.to_string_lossy().into_owned())
-    .unwrap_or_else(|| job.sha1.clone());
-  let file = ActiveFile::new(name, job.size);
-  tracker.begin(&file);
-  let result = async {
-    let response = put_file(
-      app,
-      uploader,
-      &format!("/blobs/{}", job.sha1),
-      &job.path,
-      Some(&file),
-    )
-    .await?;
-    if response.status().is_success() {
-      Ok(())
-    } else {
-      Err(failure(response).await)
-    }
-  }
-  .await;
-  tracker.end(&file, result.is_ok());
-  (job, result)
 }
 
 /// Paths the line's current release already lists, so the publish dialog can
@@ -609,7 +458,7 @@ pub async fn publish_campus_modpack(
   version_number: String,
   changelog: String,
   files: Vec<String>,
-) -> USTBLResult<PublishOutcome> {
+) -> USTBLResult<PublishStarted> {
   ensure_manager(&app)?;
   let instance = instance_of(&app, &instance_id)?;
   let root = instance.version_path.clone();
@@ -661,62 +510,30 @@ pub async fn publish_campus_modpack(
 
   // Big uploads outlast the shared client's read timeout.
   let uploader = build_ustbl_upload_client(&app, true);
-  upload_missing_blobs(&app, &uploader, &instance_id, &root, &plan).await?;
+  let missing = find_missing(&app, &root, &plan).await?;
 
-  let created = authed_json(
-    &app,
-    reqwest::Method::POST,
-    &format!("/projects/{project}/versions"),
-    Some(json!({
-      "game_version": instance.version,
-      "loader_type": loader_type,
-      "loader_version": instance.mod_loader.version,
-      "version_number": version_number,
-      "changelog": changelog,
-      "parent_version_id": parent_version_id,
-      "manifest": plan.manifest(),
-    })),
-  )
-  .await?;
-  if !created.status().is_success() {
-    return Err(failure(created).await);
+  // From here on the upload runs in the background, on the task list.
+  let group = PublishJob {
+    app: app.clone(),
+    uploader,
+    instance,
+    project,
+    version_number,
+    changelog,
+    root,
+    plan,
+    parent_version_id,
+    loader_type: loader_type.to_string(),
+    _component_work: component_work,
   }
-  let version_id = created.json::<Value>().await?["id"]
-    .as_i64()
-    .ok_or_else(|| USTBLError("平台返回了无法识别的版本".into()))?;
-
-  let result = finish_draft(&app, &uploader, &instance_id, &root, &plan, version_id).await;
-  if result.is_err() {
-    // A draft that never published only takes up space on the server.
-    let _ = authed_json(
-      &app,
-      reqwest::Method::DELETE,
-      &format!("/versions/{version_id}"),
-      None,
-    )
-    .await;
-  }
-  result?;
-  let adoption = adopt_published(
-    &app,
-    &instance,
-    &project,
-    version_id,
-    &version_number,
-    &plan,
-  )
-  .await;
-  Ok(PublishOutcome {
-    version_id,
-    skipped: plan.skipped,
-    adoption,
-  })
+  .start(missing);
+  Ok(PublishStarted { group })
 }
 
 /// Fast-forward: after publishing, the instance holds exactly what the new
 /// version lists. When that still holds, record it as the instance's baseline,
 /// so the first check does not offer the publisher their own release.
-async fn adopt_published(
+pub(super) async fn adopt_published(
   app: &AppHandle,
   instance: &Instance,
   project: &str,
@@ -812,72 +629,6 @@ async fn try_adopt(
   })
   .await?;
   Ok(Adoption::Followed)
-}
-
-async fn finish_draft(
-  app: &AppHandle,
-  uploader: &reqwest::Client,
-  instance_id: &str,
-  root: &Path,
-  plan: &PublishPlan,
-  version_id: i64,
-) -> USTBLResult<()> {
-  let bundled = plan.bundle_files();
-  if !bundled.is_empty() {
-    report(app, instance_id, Stage::Bundling, 0, bundled.len());
-    let temp =
-      TempFile(std::env::temp_dir().join(format!("ustbl-bundle-{}.zip", uuid::Uuid::new_v4())));
-    let (zip_root, zip_path) = (root.to_path_buf(), temp.0.clone());
-    let entries: Vec<LocalFile> = bundled.into_iter().cloned().collect();
-    tokio::task::spawn_blocking(move || {
-      let refs: Vec<&LocalFile> = entries.iter().collect();
-      write_bundle(&zip_root, &refs, &zip_path)
-    })
-    .await
-    .map_err(|e| USTBLError(e.to_string()))??;
-    let size = tokio::fs::metadata(&temp.0).await?.len();
-    let tracker = Tracker::new(size);
-    let file = ActiveFile::new("bundle.zip".into(), size);
-    tracker.begin(&file);
-    let bundle_path = format!("/versions/{version_id}/bundle");
-    let upload = put_file(app, uploader, &bundle_path, &temp.0, Some(&file));
-    tokio::pin!(upload);
-    let mut tick = tokio::time::interval(PROGRESS_INTERVAL);
-    tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
-    let response = loop {
-      tokio::select! {
-        response = &mut upload => break response?,
-        _ = tick.tick() => emit_progress(
-          app,
-          instance_id,
-          Stage::Bundling,
-          0,
-          1,
-          Some(tracker.snapshot(1)),
-        ),
-      }
-    };
-    if !response.status().is_success() {
-      return Err(failure(response).await);
-    }
-  }
-
-  report(app, instance_id, Stage::Publishing, 0, 1);
-  let response = authed_json(
-    app,
-    reqwest::Method::POST,
-    &format!("/versions/{version_id}/publish"),
-    None,
-  )
-  .await?;
-  if response.status() == reqwest::StatusCode::CONFLICT {
-    return Err(InstanceError::ModpackPublishStale.into());
-  }
-  if !response.status().is_success() {
-    return Err(failure(response).await);
-  }
-  report(app, instance_id, Stage::Publishing, 1, 1);
-  Ok(())
 }
 
 #[cfg(test)]
