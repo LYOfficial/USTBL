@@ -98,7 +98,7 @@
       },
       "campusModpack": {
         "title": "Installer le modpack USTB",
-        "description": "Ouvrir Découvrir pour installer le modpack du campus Pixel USTB"
+        "description": "Installez les packs du campus depuis « Synchronisation et mises à jour »"
       },
       "manageDirs": {
         "title": "Gérer les répertoires du jeu",
@@ -263,17 +263,6 @@
     },
     "sortBy": "Trier par",
     "title": "Toutes les instances"
-  },
-  "SharedInstanceStartupNotifier": {
-    "update": {
-      "title": "L'instance partagée {{name}} contient des mises à jour",
-      "description": "Cliquez pour synchroniser."
-    },
-    "bind": {
-      "title": "L'instance partagée {{name}} n'a pas été synchronisée",
-      "description": "Cliquez pour lier et synchroniser l'instance.",
-      "ignore": "Ignorer"
-    }
   },
   "AppearanceSettingsPage": {
     "theme": {
@@ -506,9 +495,6 @@
       "home": "Accueil",
       "community-news": "Communauté",
       "minecraft-news": "Actualités Minecraft",
-      "install-modpack": "Installer un modpack",
-      "original-modpack": "Modpack original",
-      "campus-modpack": "Modpack du campus",
       "modpack": "Modpacks",
       "mod": "Mods",
       "world": "Mondes",
@@ -516,22 +502,6 @@
       "shader": "Packs de shaders",
       "datapack": "Packs de données",
       "messages": "消息"
-    }
-  },
-  "InstallModpackPage": {
-    "xplus": {
-      "description": "Seule la dernière version publiée pour chaque version du jeu est conservée. Minecraft {{version}} est recommandé par défaut.",
-      "loadFailed": "Impossible de charger les versions Modrinth, utilisation de la version recommandée.",
-      "downloadStarted": "Téléchargement de {{version}} démarré",
-      "downloadDescription": "L’installation du modpack démarrera automatiquement après le téléchargement."
-    },
-    "campus": {
-      "title": "Modpack du campus",
-      "description": "Ressources de modpacks du campus hébergées sur le cloud Anyshare de l’USTB.",
-      "loadFailed": "Impossible de charger la liste des modpacks du campus : {{error}}",
-      "downloadStarted": "Téléchargement de {{name}} démarré",
-      "downloadDescription": "L’installation du modpack démarrera automatiquement après le téléchargement.",
-      "downloadFailed": "Échec du téléchargement"
     }
   },
   "DiscoverSourcesPage": {
@@ -657,6 +627,16 @@
   },
   "DownloadTasksPage": {
     "title": "Tâches de téléchargement en cours",
+    "unfinishedPublish": {
+      "title": "Publications inachevées",
+      "phase": {
+        "uploading": "Envoi interrompu, reprise possible",
+        "processing": "Traitement en cours sur la plateforme",
+        "failed": "Échec de la publication"
+      },
+      "resume": "Reprendre",
+      "discard": "Abandonner"
+    },
     "button": {
       "settings": "Paramètres de téléchargement",
       "pause": "Pause",
@@ -686,7 +666,8 @@
       "neoforge-libraries": "Bibliothèques d'exécution de NeoForge ",
       "forge-libraries": "Bibliothèques d'exécution de Forge",
       "launcher-update": "Mettre à jour le lanceur",
-      "mojang-java": "Java {{param}} fonctionne"
+      "mojang-java": "Java {{param}} fonctionne",
+      "modpack-publish": "Publication du modpack {{param}}"
     }
   },
   "Editable": {
@@ -1280,7 +1261,10 @@
       "createShortcut": "Créer un raccourci de lancement",
       "exportModPack": "Exporter en tant que modpack",
       "star": "Mettre en favori cette instance",
-      "unstar": "Retirer des favoris"
+      "unstar": "Retirer des favoris",
+      "publishModPack": "Publier dans les modpacks du campus",
+      "updateModpack": "Mettre à jour le pack",
+      "updateModpackAvailable": "Mettre à jour le pack (nouvelle version)"
     },
     "instanceTabList": {
       "overview": "Aperçu",
@@ -2620,6 +2604,118 @@
         "error": {
           "title": "Échec de la liste des fichiers"
         }
+      },
+      "listCampusModpackProjects": {
+        "success": "Modpacks du campus chargés",
+        "error": {
+          "title": "Échec du chargement des modpacks du campus"
+        }
+      },
+      "createCampusModpackProject": {
+        "success": "Projet créé",
+        "error": {
+          "title": "Échec de la création du projet"
+        }
+      },
+      "publishCampusModpack": {
+        "success": "Modpack publié",
+        "error": {
+          "title": "Échec de la publication",
+          "description": {
+            "MODPACK_PUBLISH_STALE": "Cette ligne a été mise à jour par quelqu'un d'autre pendant la publication ; rechargez et réessayez",
+            "MODPACK_UPDATE_UNSUPPORTED": "Cette instance n'a pas de chargeur de mods pris en charge et ne peut pas être publiée"
+          }
+        }
+      },
+      "installCampusModpack": {
+        "success": "Modpack installé",
+        "error": {
+          "title": "Échec de l'installation du modpack",
+          "description": {
+            "MODPACK_UPDATE_BUSY": "Ce pack de mods est déjà en cours de mise à jour",
+            "MODPACK_UPDATE_VERIFY_FAILED": "Un fichier téléchargé a échoué à la vérification ; l’instance n’a pas été modifiée",
+            "MODPACK_UPDATE_STALE": "Les fichiers locaux ont changé après la vérification ; vérifiez de nouveau les mises à jour",
+            "MODPACK_UPDATE_REMOTE_INVALID": "La liste de fichiers de la nouvelle version est invalide ; la mise à jour a été refusée",
+            "MODPACK_UPDATE_LINE_MISMATCH": "La nouvelle version cible une autre version du jeu ou un autre chargeur que cette instance",
+            "MODPACK_UPDATE_UNSUPPORTED": "Cette instance ne peut pas être mise à jour automatiquement",
+            "MODPACK_UPDATE_RUNNING": "Le jeu est en cours d’exécution ; fermez-le avant de mettre à jour le pack de mods",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "Cette version modifie la chaîne de composants du pack et ne peut pas être appliquée sur place ; réinstallez-la",
+            "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "Les fichiers de cette version sont momentanément indisponibles sur la plateforme. Réessayez plus tard"
+          }
+        }
+      },
+      "fetchCampusModpackRecommendation": {
+        "success": "Modpack recommandé chargé",
+        "error": {
+          "title": "Échec du chargement du modpack recommandé"
+        }
+      },
+      "prepareCampusComponentPack": {
+        "error": {
+          "title": "Échec de la préparation du pack à chaîne de composants"
+        }
+      },
+      "checkModpackUpdate": {
+        "error": {
+          "title": "Échec de la recherche de mises à jour du pack"
+        }
+      },
+      "prepareModpackUpdate": {
+        "error": {
+          "title": "Échec de la comparaison de la nouvelle version",
+          "description": {
+            "MODPACK_UPDATE_BUSY": "Ce pack de mods est déjà en cours de mise à jour",
+            "MODPACK_UPDATE_VERIFY_FAILED": "Un fichier téléchargé a échoué à la vérification ; l’instance n’a pas été modifiée",
+            "MODPACK_UPDATE_STALE": "Les fichiers locaux ont changé après la vérification ; vérifiez de nouveau les mises à jour",
+            "MODPACK_UPDATE_REMOTE_INVALID": "La liste de fichiers de la nouvelle version est invalide ; la mise à jour a été refusée",
+            "MODPACK_UPDATE_LINE_MISMATCH": "La nouvelle version cible une autre version du jeu ou un autre chargeur que cette instance",
+            "MODPACK_UPDATE_UNSUPPORTED": "Cette instance ne peut pas être mise à jour automatiquement",
+            "MODPACK_UPDATE_RUNNING": "Le jeu est en cours d’exécution ; fermez-le avant de mettre à jour le pack de mods",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "Cette version modifie la chaîne de composants du pack et ne peut pas être appliquée sur place ; réinstallez-la",
+            "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "Les fichiers de cette version sont momentanément indisponibles sur la plateforme. Réessayez plus tard"
+          }
+        }
+      },
+      "recoverModpackUpdate": {
+        "error": {
+          "title": "Échec de la reprise de la mise à jour interrompue"
+        }
+      },
+      "setModpackFollow": {
+        "success": "Réglage de suivi mis à jour",
+        "error": {
+          "title": "Échec de la mise à jour du réglage de suivi"
+        }
+      },
+      "applyModpackUpdate": {
+        "success": "Pack mis à jour",
+        "error": {
+          "title": "Échec de la mise à jour du pack",
+          "description": {
+            "MODPACK_UPDATE_BUSY": "Ce pack de mods est déjà en cours de mise à jour",
+            "MODPACK_UPDATE_VERIFY_FAILED": "Un fichier téléchargé a échoué à la vérification ; l’instance n’a pas été modifiée",
+            "MODPACK_UPDATE_STALE": "Les fichiers locaux ont changé après la vérification ; vérifiez de nouveau les mises à jour",
+            "MODPACK_UPDATE_REMOTE_INVALID": "La liste de fichiers de la nouvelle version est invalide ; la mise à jour a été refusée",
+            "MODPACK_UPDATE_LINE_MISMATCH": "La nouvelle version cible une autre version du jeu ou un autre chargeur que cette instance",
+            "MODPACK_UPDATE_UNSUPPORTED": "Cette instance ne peut pas être mise à jour automatiquement",
+            "MODPACK_UPDATE_RUNNING": "Le jeu est en cours d’exécution ; fermez-le avant de mettre à jour le pack de mods",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "Cette version modifie la chaîne de composants du pack et ne peut pas être appliquée sur place ; réinstallez-la",
+            "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "Les fichiers de cette version sont momentanément indisponibles sur la plateforme. Réessayez plus tard"
+          }
+        }
+      },
+      "rollbackModpackUpdate": {
+        "success": "Dernière mise à jour annulée",
+        "error": {
+          "title": "Échec de l'annulation de la dernière mise à jour",
+          "description": {
+            "MODPACK_UPDATE_RUNNING": "Le jeu est en cours d’exécution ; fermez-le avant de mettre à jour le pack de mods",
+            "MODPACK_UPDATE_UNSUPPORTED": "Cette instance ne peut pas être mise à jour automatiquement"
+          }
+        }
       }
     },
     "task": {
@@ -2686,6 +2782,14 @@
           "title": "IPv6 operation failed",
           "description": {}
         }
+      }
+    },
+    "campusInstall": {
+      "installing": "Installation de {{name}}",
+      "stage": {
+        "fetching": "Téléchargement des fichiers {{done}}/{{total}}",
+        "applying": "Écriture des fichiers {{done}}/{{total}}",
+        "finalizing": "Finalisation"
       }
     }
   },
@@ -2956,6 +3060,187 @@
         "MultiMC": "Compatible avec les principaux lanceurs ; exporté comme une instance complète.",
         "MultiMCComponentOnly": "Cette instance provient d’un profil de composants MultiMC : elle ne peut être exportée qu’au format MultiMC, avec ses composants, correctifs et bibliothèques locales conservés."
       }
+    }
+  },
+  "PublishModpackModal": {
+    "header": {
+      "title": "Publier {{param}} dans les modpacks du campus"
+    },
+    "label": {
+      "project": "Projet",
+      "target": "Publier vers",
+      "newProject": "Nouveau projet",
+      "projectName": "Nom du projet",
+      "summary": "Résumé",
+      "version": "Version",
+      "versionNumber": "Numéro de version",
+      "changelog": "Journal des modifications",
+      "includedFiles": "Fichiers inclus"
+    },
+    "button": {
+      "publish": "Publier"
+    },
+    "error": {
+      "invalidVersion": "Veuillez saisir un numéro de version valide",
+      "noFileSelected": "Veuillez sélectionner au moins un fichier",
+      "invalidProject": "Veuillez compléter les informations du projet"
+    },
+    "errorMessage": {
+      "name": {
+        "error-1": "Le nom ne peut pas être vide",
+        "error-2": "Le nom est trop long (128 caractères max)"
+      },
+      "summary": {
+        "error-1": "Le résumé est trop long (512 caractères max)"
+      },
+      "version": {
+        "error-1": "Le numéro de version ne peut pas être vide",
+        "error-2": "Le numéro de version est trop long (64 caractères max)"
+      },
+      "changelog": {
+        "error-1": "Le journal est trop long (20000 caractères max)"
+      }
+    },
+    "stage": {
+      "hashing": "Vérification des fichiers ({{done}}/{{total}})",
+      "packing": "Création du paquet des nouveautés"
+    },
+    "skipped": "{{count}} fichier(s) exclu(s) (mods désactivés ou fichiers du lanceur)",
+    "adoption": {
+      "keptOther": "L'instance suit déjà un autre pack ou une autre ligne ; son enregistrement de source est inchangé.",
+      "notIsolated": "L'isolation de version est désactivée pour cette instance ; elle n'a pas été liée à ce pack.",
+      "localChanged": "Des fichiers locaux ont changé pendant l'envoi ; l'instance n'a pas été liée à cette version.",
+      "recordFailed": "La version est publiée, mais l'instance n'a pas pu y être liée. La prochaine vérification comparera normalement."
+    },
+    "started": {
+      "title": "Envoi démarré",
+      "description": "L'envoi continue en arrière-plan. Suivez-le sur la page des téléchargements."
+    }
+  },
+  "InstallCampusModpackModal": {
+    "header": {
+      "title": "Installer un modpack du campus"
+    },
+    "label": {
+      "gameVersion": "Version du jeu",
+      "modLoader": "Chargeur de mods",
+      "modpackVersion": "Version du modpack",
+      "modpackInfo": "Infos du modpack"
+    },
+    "button": {
+      "install": "Installer"
+    },
+    "error": {
+      "loaderUnavailable": "Le chargeur {{loader}} {{version}} est introuvable, installation impossible"
+    }
+  },
+  "UpdateModpackModal": {
+    "header": {
+      "title": "Mettre à jour le pack : {{name}}"
+    },
+    "status": {
+      "checking": "Recherche de mises à jour…",
+      "planning": "Comparaison de la nouvelle version avec les fichiers locaux…",
+      "applying": "Mise à jour du pack. Ne fermez pas le lanceur…",
+      "available": "Nouvelle version disponible : {{latest}}",
+      "upToDate": "Déjà à jour",
+      "paused": "Le suivi de ce pack est en pause",
+      "notFollowing": "Cette instance ne suit aucun pack",
+      "needsRepair": "Cette instance ne peut pas être comparée tant qu'elle n'est pas réparée",
+      "unknown": "Impossible d'obtenir les informations de mise à jour. Réessayez plus tard",
+      "waitingLoader": "En attente de la fin de l'installation du chargeur de mods avant de vérifier les mises à jour",
+      "localChanges": "Vous avez modifié {{count}} fichier(s) géré(s) par le pack ; la mise à jour demandera pour chacun"
+    },
+    "label": {
+      "current": "Version actuelle : {{current}}"
+    },
+    "plan": {
+      "summary": "Mise à jour vers {{latest}}",
+      "fastForward": "Les fichiers locaux correspondent déjà à {{latest}} ; seule la version enregistrée sera synchronisée",
+      "add": "{{count}} ajouté(s)",
+      "update": "{{count}} mis à jour",
+      "delete": "{{count}} supprimé(s)",
+      "loaderChange": "Le chargeur de mods passera de {{from}} à {{to}}",
+      "conflicts": "{{count}} fichiers entrent en conflit avec vos modifications. Choisissez (le local est conservé par défaut)",
+      "autoMerged": "{{count}} fichiers de configuration ont été fusionnés automatiquement",
+      "reinstallRequired": "{{latest}} modifie la chaîne de composants du pack et ne peut pas être appliquée sur place. Réinstallez le pack"
+    },
+    "conflictKind": {
+      "modifiedLocallyChangedRemotely": "Vous l'avez modifié et la nouvelle version aussi",
+      "modifiedLocallyRemovedRemotely": "Vous l'avez modifié et la nouvelle version ne l'inclut plus",
+      "deletedLocallyChangedRemotely": "Vous l'avez supprimé et la nouvelle version l'a modifié",
+      "unmanagedFileInTheWay": "Un fichier étranger au pack occupe l'emplacement",
+      "disabledLocally": "Vous l'avez désactivé et la nouvelle version le concerne"
+    },
+    "choice": {
+      "keepLocal": "Garder le local",
+      "takeRemote": "Utiliser la nouvelle version",
+      "revealFile": "Afficher dans le dossier",
+      "hunk": "Conflit {{number}} (lignes de base {{from}}-{{to}})"
+    },
+    "button": {
+      "preview": "Aperçu de la mise à jour",
+      "apply": "Mettre à jour",
+      "sync": "Synchroniser la version",
+      "resume": "Reprendre le suivi",
+      "retry": "Réessayer",
+      "rollback": "Annuler la dernière mise à jour",
+      "confirmRollback": "Confirmer l'annulation"
+    },
+    "toast": {
+      "loaderPending": "Le chargeur de mods doit être réinstallé. Consultez la page des téléchargements"
+    },
+    "reason": {
+      "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack",
+      "MODPACK_UPDATE_UNSUPPORTED": "Cette instance n'a pas d'enregistrement d'installation utilisable ou l'isolation de version est désactivée",
+      "MODPACK_UPDATE_NOT_ISOLATED": "L'isolation de version est désactivée pour cette instance, la comparaison n'est pas sûre. Activez-la dans les paramètres de l'instance puis réessayez",
+      "MODPACK_UPDATE_BASELINE_MISSING": "Cette instance n'a pas d'enregistrement d'installation du pack, ou il est endommagé ; comparaison impossible",
+      "MODPACK_UPDATE_PACK_UNAVAILABLE": "Les fichiers de cette version sont momentanément indisponibles sur la plateforme. Réessayez plus tard"
+    },
+    "rollback": {
+      "hint": "Vous pouvez annuler la dernière mise à jour du pack et rétablir fichiers et chargeur comme avant.",
+      "confirm": "L'annulation écrase les modifications faites sur ces fichiers depuis la mise à jour, et ne peut se faire qu'une fois."
+    }
+  },
+  "InstanceSyncPage": {
+    "title": "Synchronisation et mises à jour",
+    "description": "Instances qui suivent un pack, packs du campus et recommandations",
+    "platform": {
+      "title": "Modpacks du campus",
+      "description": "Modpacks publiés par les responsables du campus. Les instances installées peuvent suivre les nouvelles versions.",
+      "recommended": "Recommandé",
+      "vanilla": "Vanilla",
+      "onOtherPlatform": "Disponible sur {{platform}}",
+      "openOriginal": "Voir",
+      "noVersion": "Ce projet n'a pas de version de pack pour {{gameVersion}} ({{loader}})",
+      "downloadStarted": "Téléchargement de {{version}} lancé",
+      "downloadDescription": "L'installation du pack démarre à la fin du téléchargement."
+    },
+    "ledger": {
+      "title": "Mes instances de packs",
+      "checkAll": "Tout vérifier",
+      "badge": {
+        "upToDate": "À jour",
+        "available": "Mise à jour disponible",
+        "localChanges": "Modifications locales",
+        "paused": "En pause",
+        "needsRepair": "À réparer",
+        "waitingLoader": "En attente du chargeur",
+        "unknown": "Échec de la vérification",
+        "notChecked": "Non vérifié"
+      },
+      "action": {
+        "update": "Mettre à jour",
+        "publish": "Publier",
+        "details": "Détails"
+      },
+      "updateTo": "Mise à jour vers {{latest}}",
+      "changes": "{{count}} fichier(s) modifié(s) localement",
+      "platform": {
+        "campus": "Campus"
+      },
+      "installed": "Installé",
+      "installedHint": "{{count}} instance(s) correspondante(s) sur cet appareil, cliquez pour voir"
     }
   }
 }

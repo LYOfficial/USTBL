@@ -10,8 +10,10 @@ import GenericConfirmDialog from "@/components/modals/generic-confirm-dialog";
 import ImportModpackModal from "@/components/modals/import-modpack-modal";
 import LaunchProcessModal from "@/components/modals/launch-process-modal";
 import NotifyNewVersionModal from "@/components/modals/notify-new-version-modal";
+import PublishModpackModal from "@/components/modals/publish-modpack-modal";
 import ReLoginPlayerModal from "@/components/modals/relogin-player-modal";
 import SpotlightSearchModal from "@/components/modals/spotlight-search-modal";
+import UpdateModpackModal from "@/components/modals/update-modpack-modal";
 import VustbAnnouncementModal from "@/components/modals/vustb-announcement-modal";
 import VustbFriendsModal from "@/components/modals/vustb-friends-modal";
 import { SharedModalContextProvider } from "@/contexts/shared-modal";
@@ -45,8 +47,10 @@ const SharedModals: React.FC<{ children: React.ReactNode }> = ({
     "import-modpack": ImportModpackModal,
     launch: LaunchProcessModal,
     "notify-new-version": NotifyNewVersionModal,
+    "publish-modpack": PublishModpackModal,
     relogin: ReLoginPlayerModal,
     "spotlight-search": SpotlightSearchModal,
+    "update-modpack": UpdateModpackModal,
     "vustb-announcement": VustbAnnouncementModal,
     "vustb-friends": VustbFriendsModal,
   };

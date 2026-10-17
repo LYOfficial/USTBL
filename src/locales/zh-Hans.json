@@ -98,7 +98,7 @@
       },
       "campusModpack": {
         "title": "安装北科整合包",
-        "description": "前往发现页安装像素北科校内整合包"
+        "description": "前往「实例同步与更新」安装像素北科校内整合包"
       },
       "manageDirs": {
         "title": "管理游戏目录",
@@ -263,17 +263,6 @@
     },
     "sortBy": "排序方式",
     "title": "全部实例"
-  },
-  "SharedInstanceStartupNotifier": {
-    "update": {
-      "title": "共享实例 {{name}} 已有更新内容",
-      "description": "点击前往同步。"
-    },
-    "bind": {
-      "title": "有未同步的共享实例 {{name}}",
-      "description": "点击前往绑定并同步。",
-      "ignore": "忽略"
-    }
   },
   "AppearanceSettingsPage": {
     "theme": {
@@ -506,9 +495,6 @@
       "home": "主页",
       "community-news": "社团新闻",
       "minecraft-news": "Minecraft 新闻",
-      "install-modpack": "安装整合包",
-      "original-modpack": "原版整合包",
-      "campus-modpack": "校内整合包",
       "modpack": "整合包",
       "mod": "模组",
       "world": "世界",
@@ -516,22 +502,6 @@
       "shader": "光影",
       "datapack": "数据包",
       "messages": "消息"
-    }
-  },
-  "InstallModpackPage": {
-    "xplus": {
-      "description": "各游戏版本仅保留最新发布版本。默认推荐下载 Minecraft {{version}} 版本。",
-      "loadFailed": "Modrinth 版本列表加载失败，已使用推荐版本。",
-      "downloadStarted": "已开始下载 {{version}}",
-      "downloadDescription": "下载完成后会自动进入整合包安装流程。"
-    },
-    "campus": {
-      "title": "校内整合包",
-      "description": "来自北科大 Anyshare 云盘的校内整合包资源。",
-      "loadFailed": "校内整合包列表加载失败：{{error}}",
-      "downloadStarted": "已开始下载 {{name}}",
-      "downloadDescription": "下载完成后会自动进入整合包安装流程。",
-      "downloadFailed": "下载失败"
     }
   },
   "DiscoverSourcesPage": {
@@ -657,6 +627,16 @@
   },
   "DownloadTasksPage": {
     "title": "下载任务",
+    "unfinishedPublish": {
+      "title": "未完成的发布",
+      "phase": {
+        "uploading": "上传中断，可继续",
+        "processing": "平台正在处理",
+        "failed": "发布失败"
+      },
+      "resume": "继续",
+      "discard": "放弃"
+    },
     "button": {
       "settings": "下载设置",
       "pause": "暂停",
@@ -686,7 +666,8 @@
       "neoforge-libraries": "NeoForge 运行库",
       "forge-libraries": "Forge 运行库",
       "launcher-update": "更新启动器",
-      "mojang-java": "Java {{param}} 运行时"
+      "mojang-java": "Java {{param}} 运行时",
+      "modpack-publish": "发布整合包 {{param}}"
     }
   },
   "Editable": {
@@ -1280,7 +1261,10 @@
       "createShortcut": "创建启动快捷方式",
       "exportModPack": "导出为整合包",
       "star": "星标此实例",
-      "unstar": "取消星标"
+      "unstar": "取消星标",
+      "publishModPack": "发布到校园整合包",
+      "updateModpack": "更新整合包",
+      "updateModpackAvailable": "更新整合包（有新版本）"
     },
     "instanceTabList": {
       "overview": "概览",
@@ -2620,6 +2604,118 @@
             "MODPACK_EXPORT_PROFILE_MISSING": "该实例由旧版本导入，缺少导出所需的组件信息，请重新导入整合包后再导出"
           }
         }
+      },
+      "listCampusModpackProjects": {
+        "success": "已加载校园整合包",
+        "error": {
+          "title": "加载校园整合包失败"
+        }
+      },
+      "createCampusModpackProject": {
+        "success": "项目已创建",
+        "error": {
+          "title": "创建项目失败"
+        }
+      },
+      "publishCampusModpack": {
+        "success": "整合包已发布",
+        "error": {
+          "title": "发布失败",
+          "description": {
+            "MODPACK_PUBLISH_STALE": "发布期间该线路已被其他人更新，请重新加载后再试",
+            "MODPACK_UPDATE_UNSUPPORTED": "该实例没有受支持的模组加载器，无法发布"
+          }
+        }
+      },
+      "installCampusModpack": {
+        "success": "整合包已安装",
+        "error": {
+          "title": "安装整合包失败",
+          "description": {
+            "MODPACK_UPDATE_BUSY": "该整合包正在更新中",
+            "MODPACK_UPDATE_VERIFY_FAILED": "下载的文件校验失败，未对实例做任何修改",
+            "MODPACK_UPDATE_STALE": "本地文件在检查后发生了变化，请重新检查更新",
+            "MODPACK_UPDATE_REMOTE_INVALID": "新版本的文件清单不合法，已拒绝更新",
+            "MODPACK_UPDATE_LINE_MISMATCH": "新版本的游戏版本或加载器与此实例不一致，无法更新",
+            "MODPACK_UPDATE_UNSUPPORTED": "此实例暂不支持自动更新",
+            "MODPACK_UPDATE_RUNNING": "游戏正在运行，请先关闭游戏再更新整合包",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的组件链，无法就地更新，请重新安装",
+            "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试"
+          }
+        }
+      },
+      "fetchCampusModpackRecommendation": {
+        "success": "已加载推荐整合包",
+        "error": {
+          "title": "加载推荐整合包失败"
+        }
+      },
+      "prepareCampusComponentPack": {
+        "error": {
+          "title": "无法准备组件链整合包"
+        }
+      },
+      "checkModpackUpdate": {
+        "error": {
+          "title": "检查整合包更新失败"
+        }
+      },
+      "prepareModpackUpdate": {
+        "error": {
+          "title": "无法对比整合包新版本",
+          "description": {
+            "MODPACK_UPDATE_BUSY": "该整合包正在更新中",
+            "MODPACK_UPDATE_VERIFY_FAILED": "下载的文件校验失败，未对实例做任何修改",
+            "MODPACK_UPDATE_STALE": "本地文件在检查后发生了变化，请重新检查更新",
+            "MODPACK_UPDATE_REMOTE_INVALID": "新版本的文件清单不合法，已拒绝更新",
+            "MODPACK_UPDATE_LINE_MISMATCH": "新版本的游戏版本或加载器与此实例不一致，无法更新",
+            "MODPACK_UPDATE_UNSUPPORTED": "此实例暂不支持自动更新",
+            "MODPACK_UPDATE_RUNNING": "游戏正在运行，请先关闭游戏再更新整合包",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的组件链，无法就地更新，请重新安装",
+            "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试"
+          }
+        }
+      },
+      "recoverModpackUpdate": {
+        "error": {
+          "title": "恢复未完成的整合包更新失败"
+        }
+      },
+      "setModpackFollow": {
+        "success": "已更新跟随设置",
+        "error": {
+          "title": "更新跟随设置失败"
+        }
+      },
+      "applyModpackUpdate": {
+        "success": "整合包已更新",
+        "error": {
+          "title": "整合包更新失败",
+          "description": {
+            "MODPACK_UPDATE_BUSY": "该整合包正在更新中",
+            "MODPACK_UPDATE_VERIFY_FAILED": "下载的文件校验失败，未对实例做任何修改",
+            "MODPACK_UPDATE_STALE": "本地文件在检查后发生了变化，请重新检查更新",
+            "MODPACK_UPDATE_REMOTE_INVALID": "新版本的文件清单不合法，已拒绝更新",
+            "MODPACK_UPDATE_LINE_MISMATCH": "新版本的游戏版本或加载器与此实例不一致，无法更新",
+            "MODPACK_UPDATE_UNSUPPORTED": "此实例暂不支持自动更新",
+            "MODPACK_UPDATE_RUNNING": "游戏正在运行，请先关闭游戏再更新整合包",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的组件链，无法就地更新，请重新安装",
+            "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试"
+          }
+        }
+      },
+      "rollbackModpackUpdate": {
+        "success": "已撤销上次更新",
+        "error": {
+          "title": "撤销上次更新失败",
+          "description": {
+            "MODPACK_UPDATE_RUNNING": "游戏正在运行，请先关闭游戏再更新整合包",
+            "MODPACK_UPDATE_UNSUPPORTED": "此实例暂不支持自动更新"
+          }
+        }
       }
     },
     "task": {
@@ -2686,6 +2782,14 @@
           "title": "IPv6 免流操作失败",
           "description": {}
         }
+      }
+    },
+    "campusInstall": {
+      "installing": "正在安装 {{name}}",
+      "stage": {
+        "fetching": "下载文件 {{done}}/{{total}}",
+        "applying": "写入文件 {{done}}/{{total}}",
+        "finalizing": "收尾中"
       }
     }
   },
@@ -2956,6 +3060,187 @@
         "MultiMC": "主流启动器广泛支持，打包完整实例",
         "MultiMCComponentOnly": "该实例由 MultiMC 组件配置导入，只能导出为 MultiMC 格式，并原样保留组件链、补丁与本地库"
       }
+    }
+  },
+  "PublishModpackModal": {
+    "header": {
+      "title": "将 {{param}} 发布到校园整合包"
+    },
+    "label": {
+      "project": "项目",
+      "target": "发布到",
+      "newProject": "新建项目",
+      "projectName": "项目名称",
+      "summary": "简介",
+      "version": "版本",
+      "versionNumber": "版本号",
+      "changelog": "更新日志",
+      "includedFiles": "包含的文件"
+    },
+    "button": {
+      "publish": "发布"
+    },
+    "error": {
+      "invalidVersion": "请输入有效的版本号",
+      "noFileSelected": "请至少选择一个文件",
+      "invalidProject": "请补全项目信息"
+    },
+    "errorMessage": {
+      "name": {
+        "error-1": "名称不能为空",
+        "error-2": "名称过长（最多 128 个字符）"
+      },
+      "summary": {
+        "error-1": "简介过长（最多 512 个字符）"
+      },
+      "version": {
+        "error-1": "版本号不能为空",
+        "error-2": "版本号过长（最多 64 个字符）"
+      },
+      "changelog": {
+        "error-1": "更新日志过长（最多 20000 个字符）"
+      }
+    },
+    "stage": {
+      "hashing": "正在检查文件（{{done}}/{{total}}）",
+      "packing": "正在打包新增内容"
+    },
+    "skipped": "有 {{count}} 个文件被排除（已禁用的模组或启动器文件）",
+    "adoption": {
+      "keptOther": "该实例已跟随其他整合包或其他线，未改动其来源记录。",
+      "notIsolated": "该实例未开启版本隔离，未将其关联到此整合包。",
+      "localChanged": "上传期间本地文件发生了变化，未将该实例关联到此版本。",
+      "recordFailed": "版本已发布，但未能记录该实例与此版本的关联，下次检查将按常规比较。"
+    },
+    "started": {
+      "title": "已开始上传整合包",
+      "description": "上传在后台进行，可在下载页查看进度。"
+    }
+  },
+  "InstallCampusModpackModal": {
+    "header": {
+      "title": "安装校内整合包"
+    },
+    "label": {
+      "gameVersion": "游戏版本",
+      "modLoader": "模组加载器",
+      "modpackVersion": "整合包版本",
+      "modpackInfo": "整合包信息"
+    },
+    "button": {
+      "install": "安装"
+    },
+    "error": {
+      "loaderUnavailable": "找不到加载器 {{loader}} {{version}}，无法安装"
+    }
+  },
+  "UpdateModpackModal": {
+    "header": {
+      "title": "更新整合包：{{name}}"
+    },
+    "status": {
+      "checking": "正在检查更新…",
+      "planning": "正在对比新版本与本地文件…",
+      "applying": "正在更新整合包，请勿关闭启动器…",
+      "available": "有新版本：{{latest}}",
+      "upToDate": "已是最新版本",
+      "paused": "已暂停跟随该整合包的更新",
+      "notFollowing": "此实例未关联可跟随的整合包",
+      "needsRepair": "该实例暂时无法对比更新，需要先修复",
+      "unknown": "暂时无法获取更新信息，请稍后重试",
+      "waitingLoader": "正在等待模组加载器安装完成，完成后再检查更新",
+      "localChanges": "你修改过其中 {{count}} 个由整合包管理的文件，更新时会逐项询问"
+    },
+    "label": {
+      "current": "当前版本：{{current}}"
+    },
+    "plan": {
+      "summary": "将更新到 {{latest}}",
+      "fastForward": "本地文件已与 {{latest}} 一致，只需同步版本记录",
+      "add": "新增 {{count}}",
+      "update": "更新 {{count}}",
+      "delete": "删除 {{count}}",
+      "loaderChange": "模组加载器将从 {{from}} 切换到 {{to}}",
+      "conflicts": "有 {{count}} 个文件与本地修改冲突，请选择处理方式（默认保留本地）",
+      "autoMerged": "已自动合并 {{count}} 个配置文件",
+      "reinstallRequired": "{{latest}} 更改了整合包的组件链，无法就地更新，请重新安装该整合包"
+    },
+    "conflictKind": {
+      "modifiedLocallyChangedRemotely": "你修改过，新版本也改了它",
+      "modifiedLocallyRemovedRemotely": "你修改过，新版本已不再包含它",
+      "deletedLocallyChangedRemotely": "你删除了它，新版本更新了它",
+      "unmanagedFileInTheWay": "同名文件不属于整合包，新版本想要写入",
+      "disabledLocally": "你已禁用它，新版本也涉及它"
+    },
+    "choice": {
+      "keepLocal": "保留本地",
+      "takeRemote": "使用新版本",
+      "revealFile": "在文件夹中显示",
+      "hunk": "第 {{number}} 处冲突（基线第 {{from}}-{{to}} 行）"
+    },
+    "button": {
+      "preview": "预览更新",
+      "apply": "开始更新",
+      "sync": "同步版本记录",
+      "resume": "恢复跟随",
+      "retry": "重试",
+      "rollback": "撤销上次更新",
+      "confirmRollback": "确认撤销"
+    },
+    "toast": {
+      "loaderPending": "模组加载器需要重新安装，请在下载页查看进度"
+    },
+    "reason": {
+      "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线",
+      "MODPACK_UPDATE_UNSUPPORTED": "该实例缺少可用的安装记录或未开启版本隔离",
+      "MODPACK_UPDATE_NOT_ISOLATED": "该实例没有开启版本隔离，无法安全对比更新。请在实例设置中开启后重试",
+      "MODPACK_UPDATE_BASELINE_MISSING": "该实例缺少整合包的安装记录或记录已损坏，无法对比更新",
+      "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试"
+    },
+    "rollback": {
+      "hint": "可以撤销上一次整合包更新，把文件和加载器恢复成更新前的样子。",
+      "confirm": "撤销会覆盖更新之后你对这些文件做的修改，且只能撤销一次。"
+    }
+  },
+  "InstanceSyncPage": {
+    "title": "实例同步与更新",
+    "description": "跟随整合包的实例状态，以及校内整合包与推荐",
+    "platform": {
+      "title": "校内整合包",
+      "description": "由校内管理员发布的整合包，安装后可跟随新版本更新。",
+      "recommended": "推荐",
+      "vanilla": "原版",
+      "onOtherPlatform": "不在校内平台上，前往 {{platform}} 获取",
+      "openOriginal": "查看",
+      "noVersion": "该项目没有适用于 {{gameVersion}}（{{loader}}）的整合包版本",
+      "downloadStarted": "已开始下载 {{version}}",
+      "downloadDescription": "下载完成后会自动进入整合包安装流程。"
+    },
+    "ledger": {
+      "title": "我的整合包实例",
+      "checkAll": "全部检查",
+      "badge": {
+        "upToDate": "最新",
+        "available": "有更新",
+        "localChanges": "有本地改动",
+        "paused": "已暂停",
+        "needsRepair": "需修复",
+        "waitingLoader": "等待加载器",
+        "unknown": "检查失败",
+        "notChecked": "未检查"
+      },
+      "action": {
+        "update": "更新",
+        "publish": "发布",
+        "details": "详情"
+      },
+      "updateTo": "可更新到 {{latest}}",
+      "changes": "{{count}} 个文件有本地改动",
+      "platform": {
+        "campus": "校内"
+      },
+      "installed": "已安装",
+      "installedHint": "本地已有 {{count}} 个对应实例，点击查看"
     }
   }
 }

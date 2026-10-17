@@ -393,6 +393,7 @@ pub async fn download_neoforge_libraries(
   let mut seen = std::collections::HashSet::new();
   task_params.retain(|param| match param {
     PTaskParam::Download(dp) => seen.insert(dp.dest.clone()),
+    PTaskParam::Upload(_) => true,
   });
 
   schedule_progressive_task_group(

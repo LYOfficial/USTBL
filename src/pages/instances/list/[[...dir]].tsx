@@ -172,7 +172,7 @@ const InstanceListPage = () => {
             colorScheme={primaryColor}
             variant={primaryColor === "gray" ? "subtle" : "outline"}
             onClick={() => {
-              router.push("/discover/install-modpack?tab=campus");
+              router.push("/instances/sync");
             }}
           >
             {t("AllInstancesPage.button.installCampusModpack")}

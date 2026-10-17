@@ -31,6 +31,17 @@ export interface VustbAccount {
   playerId: string;
 }
 
+// Groups allowed to manage campus modpacks.
+const MANAGER_GROUPS = new Set([
+  "super_admin",
+  "admin",
+  "platform_manager",
+  "server_manager",
+]);
+
+export const isVustbManager = (account: VustbAccount | null): boolean =>
+  !!account && MANAGER_GROUPS.has(account.userGroup);
+
 export interface VustbCheckinResult {
   message: string;
   experienceGained: number;

@@ -23,13 +23,16 @@ import { CommonIconButton } from "@/components/common/common-icon-button";
 import Empty from "@/components/common/empty";
 import { OptionItem, OptionItemGroup } from "@/components/common/option-item";
 import { Section } from "@/components/common/section";
+import { UnfinishedPublishes } from "@/components/unfinished-publishes";
 import { useLauncherConfig } from "@/contexts/config";
-import { parseTaskGroup, useTaskContext } from "@/contexts/task";
+import { destOf, parseTaskGroup, useTaskContext } from "@/contexts/task";
 import {
   GTaskEventStatusEnums,
   TaskDesc,
   TaskDescStatusEnums,
   TaskGroupDesc,
+  TaskParam,
+  TaskTypeEnums,
 } from "@/models/task";
 import { formatTimeInterval } from "@/utils/datetime";
 import { formatByteSize } from "@/utils/string";
@@ -85,6 +88,12 @@ export const DownloadTasksPage = () => {
     return text.join(" - ");
   };
 
+  // An upload starts over by publishing again, not by retrying.
+  const isRetryable = (group: TaskGroupDesc) =>
+    group.taskDescs.every(
+      (task) => task.payload.taskType === TaskTypeEnums.Download
+    );
+
   const parseGroupTitle = (taskGroup: string) => {
     let { name, version, isRetry } = parseTaskGroup(taskGroup);
 
@@ -130,6 +139,7 @@ export const DownloadTasksPage = () => {
       }
     >
       <VStack align="stretch" px="10%" spacing={4}>
+        <UnfinishedPublishes refreshKey={tasks.length} />
         {taskGroupList.length === 0 && <Empty withIcon={false} size="sm" />}
         {taskGroupList.map(([group, expanded]) => (
           <OptionItemGroup
@@ -214,34 +224,34 @@ export const DownloadTasksPage = () => {
                     )}
 
                     {(group.status === GTaskEventStatusEnums.Failed ||
-                      group.status === GTaskEventStatusEnums.Cancelled) && (
-                      <Tooltip label={t("DownloadTasksPage.button.retry")}>
-                        <IconButton
-                          aria-label="retry"
-                          icon={<LuRotateCcw />}
-                          size="xs"
-                          fontSize="sm"
-                          h={21}
-                          ml={1}
-                          variant="ghost"
-                          onClick={() =>
-                            handleScheduleProgressiveTaskGroup(
-                              "retry-" +
-                                parseTaskGroup(group.taskGroup).rawName.replace(
-                                  /^retry-/,
-                                  ""
-                                ),
-                              group.taskDescs
-                                .filter(
-                                  (t) =>
-                                    t.status !== TaskDescStatusEnums.Completed
-                                )
-                                .map((t) => t.payload)
-                            )
-                          }
-                        />
-                      </Tooltip>
-                    )}
+                      group.status === GTaskEventStatusEnums.Cancelled) &&
+                      isRetryable(group) && (
+                        <Tooltip label={t("DownloadTasksPage.button.retry")}>
+                          <IconButton
+                            aria-label="retry"
+                            icon={<LuRotateCcw />}
+                            size="xs"
+                            fontSize="sm"
+                            h={21}
+                            ml={1}
+                            variant="ghost"
+                            onClick={() =>
+                              handleScheduleProgressiveTaskGroup(
+                                "retry-" +
+                                  parseTaskGroup(
+                                    group.taskGroup
+                                  ).rawName.replace(/^retry-/, ""),
+                                group.taskDescs
+                                  .filter(
+                                    (t) =>
+                                      t.status !== TaskDescStatusEnums.Completed
+                                  )
+                                  .map((t) => t.payload as TaskParam)
+                              )
+                            }
+                          />
+                        </Tooltip>
+                      )}
 
                     {group.status !== GTaskEventStatusEnums.Cancelled &&
                       group.status !== GTaskEventStatusEnums.Completed && (
@@ -320,15 +330,18 @@ export const DownloadTasksPage = () => {
                           </Text>
                         </Tooltip>
                       )}
-                      {task.status === TaskDescStatusEnums.Completed && (
-                        <CommonIconButton
-                          icon="revealFile"
-                          size="xs"
-                          fontSize="sm"
-                          h={21}
-                          onClick={() => revealItemInDir(task.payload.dest)}
-                        />
-                      )}
+                      {task.status === TaskDescStatusEnums.Completed &&
+                        destOf(task.payload) && (
+                          <CommonIconButton
+                            icon="revealFile"
+                            size="xs"
+                            fontSize="sm"
+                            h={21}
+                            onClick={() =>
+                              revealItemInDir(destOf(task.payload) ?? "")
+                            }
+                          />
+                        )}
                     </OptionItem>
                   ))
                 : []),

@@ -104,6 +104,8 @@ static BLACKLIST: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     "assets",
     "libraries",
     "crash-reports",
+    // Staging, journal and backups of a modpack update
+    ".ustbl-update",
     "NVIDIA",
     "AMD",
     "screenshots",
@@ -934,6 +936,24 @@ mod tests {
     eprintln!("round trip ok, {libraries} shipped librar(ies)");
   }
 
+  #[test]
+  fn update_folder_is_never_offered_for_export() {
+    let root = std::env::temp_dir().join(format!("ustbl-export-list-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(root.join(".ustbl-update/backup/files/mods")).unwrap();
+    fs::write(root.join(".ustbl-update/backup/files/mods/a.jar"), "old").unwrap();
+    fs::create_dir_all(root.join("mods")).unwrap();
+    fs::write(root.join("mods/b.jar"), "kept").unwrap();
+    let instance = Instance {
+      name: "pack".into(),
+      version_path: root.clone(),
+      ..Default::default()
+    };
+
+    let listed = list_files(&instance).unwrap();
+
+    assert_eq!(listed.all, vec!["mods/b.jar".to_string()]);
+    let _ = fs::remove_dir_all(root);
+  }
   #[test]
   fn exported_cfg_drops_machine_state_and_applies_options() {
     let snapshot = ComponentSnapshot {

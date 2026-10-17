@@ -7,6 +7,7 @@ use crate::resource::models::{
   OtherResourceInfo, OtherResourceSource, OtherResourceVersionPack, ResourceError, ResourceType,
   SourceType,
 };
+use crate::tasks::download::DownloadTransferOptions;
 use std::cmp::Ordering;
 use std::sync::Mutex;
 use strum::IntoEnumIterator;
@@ -157,6 +158,21 @@ pub fn download_source_candidates(
   Ok(sources)
 }
 
+/// The preferred URL for `url` plus its equivalents on the other sources, ready
+/// to be used as the `src` and transfer options of a download.
+pub fn download_with_source_fallbacks(
+  url: &Url,
+  resource_types: &[ResourceType],
+  priority: &[SourceType],
+) -> USTBLResult<(Url, DownloadTransferOptions)> {
+  let mut candidates = download_source_candidates(url, resource_types, priority)?.into_iter();
+  let src = candidates.next().unwrap_or_else(|| url.clone());
+  Ok((
+    src,
+    DownloadTransferOptions::with_fallbacks(candidates.collect()),
+  ))
+}
+
 pub fn version_pack_sort(a: &OtherResourceVersionPack, b: &OtherResourceVersionPack) -> Ordering {
   fn parse_version(version: &str) -> (Vec<u32>, String) {
     let mut version_numbers = Vec::new();
@@ -253,7 +269,7 @@ pub async fn apply_other_resource_enhancements(
 
 #[cfg(test)]
 mod tests {
-  use super::download_source_candidates;
+  use super::{download_source_candidates, download_with_source_fallbacks};
   use crate::resource::models::{ResourceType, SourceType};
   use url::Url;
 
@@ -276,6 +292,38 @@ mod tests {
           .unwrap(),
         official,
       ]
+    );
+  }
+
+  #[test]
+  fn fabric_libraries_keep_the_official_maven_as_a_fallback_to_the_mirror() {
+    let official = Url::parse(
+      "https://maven.fabricmc.net/org/ow2/asm/asm-analysis/9.10.1/asm-analysis-9.10.1.jar",
+    )
+    .unwrap();
+
+    let (src, options) = download_with_source_fallbacks(
+      &official,
+      &[ResourceType::FabricMaven, ResourceType::Libraries],
+      &[SourceType::BMCLAPIMirror, SourceType::Official],
+    )
+    .unwrap();
+
+    assert_eq!(src.host_str(), Some("bmclapi2.bangbang93.com"));
+    assert_eq!(options.fallback_sources, vec![official.clone()]);
+
+    let (src, options) = download_with_source_fallbacks(
+      &official,
+      &[ResourceType::FabricMaven, ResourceType::Libraries],
+      &[SourceType::Official, SourceType::BMCLAPIMirror],
+    )
+    .unwrap();
+
+    assert_eq!(src, official);
+    assert_eq!(options.fallback_sources.len(), 1);
+    assert_eq!(
+      options.fallback_sources[0].host_str(),
+      Some("bmclapi2.bangbang93.com")
     );
   }
 

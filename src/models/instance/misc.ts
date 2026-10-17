@@ -28,6 +28,15 @@ export type OriginPlatform = "modrinth" | "curseforge" | "campus";
  * Origin claimed by the entry that downloaded a modpack. The backend only
  * accepts it when the archive matches `expectedSha1`.
  */
+export interface InstanceOrigin {
+  platform: OriginPlatform;
+  projectId: string;
+  versionId: string;
+  gameVersion: string;
+  loaderType: ModLoaderType;
+  follow: boolean;
+}
+
 export interface ModpackOriginInput {
   platform: OriginPlatform;
   projectId: string;
@@ -52,6 +61,7 @@ export interface InstanceSummary {
   isVersionIsolated: boolean;
   modpackVersion?: string;
   isComponentProfile: boolean;
+  origin?: InstanceOrigin;
 }
 
 export interface ModpackMetaInfo {

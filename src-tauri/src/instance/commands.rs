@@ -13,8 +13,10 @@ use crate::instance::helpers::misc::{
   refresh_and_update_instances, unify_instance_name,
 };
 use crate::instance::helpers::modpack::baseline::{
-  hash_existing_files, hash_file, BaselineFile, BaselineLoader, ModpackBaseline,
+  components_of_mmc_pack, hash_existing_files, hash_file, BaselineFile, BaselineLoader,
+  ModpackBaseline,
 };
+use crate::instance::helpers::modpack::base_store;
 use crate::instance::helpers::modpack::export::{
   build_component_export, collect_modrinth_files, create_modpack_zip, generate_modrinth_manifest,
   generate_multimc_instance_cfg, generate_multimc_manifest, list_files, validate_export_options,
@@ -45,7 +47,7 @@ use crate::instance::helpers::world::{load_level_data_from_nbt, load_world_info_
 use crate::instance::models::misc::{
   Instance, InstanceError, InstanceOrigin, InstanceSubdirType, InstanceSummary, LocalModInfo,
   ModLoader, ModLoaderStatus, ModLoaderType, ModpackFileList, ModpackOriginInput, OptiFine,
-  ResourcePackInfo, SchematicInfo, ScreenshotInfo, ShaderPackInfo,
+  OriginPlatform, ResourcePackInfo, SchematicInfo, ScreenshotInfo, ShaderPackInfo,
 };
 use crate::instance::models::world::base::WorldInfo;
 use crate::instance::models::world::level::LevelData;
@@ -952,20 +954,33 @@ pub fn create_launch_desktop_shortcut(
 
 /// Accept the origin claimed by the download entry only when it is provably the
 /// modpack file being imported: the archive must match the SHA-1 the platform
-/// published, and a component profile (which cannot be followed) never gets one.
+/// published. The pack's internal structure does not matter, a component profile
+/// is followed like any other pack.
+///
+/// One exception: a campus install has no archive. It creates an empty instance
+/// whose origin points at the placeholder version `""`, and the update engine
+/// then installs the real version into it like any other update.
 async fn verify_origin(
   input: Option<ModpackOriginInput>,
   modpack_path: Option<&String>,
-  is_component_profile: bool,
   game_version: &str,
   loader_type: ModLoaderType,
 ) -> Option<InstanceOrigin> {
   let input = input?;
-  let path = PathBuf::from(modpack_path?);
-  if is_component_profile {
-    log::warn!("Dropping modpack origin: component profiles cannot be followed");
-    return None;
+  if modpack_path.is_none()
+    && input.platform == OriginPlatform::Campus
+    && input.expected_sha1.is_empty()
+  {
+    return Some(InstanceOrigin {
+      platform: input.platform,
+      project_id: input.project_id,
+      version_id: String::new(),
+      game_version: game_version.to_string(),
+      loader_type,
+      follow: true,
+    });
   }
+  let path = PathBuf::from(modpack_path?);
   let expected = input.expected_sha1.trim().to_lowercase();
   let actual = tokio::task::spawn_blocking(move || hash_file(&path))
     .await
@@ -1041,7 +1056,6 @@ pub async fn create_instance(
   let origin = verify_origin(
     origin,
     modpack_path.as_ref(),
-    component_import.is_some(),
     &game.id,
     mod_loader.loader_type,
   )
@@ -1335,16 +1349,34 @@ pub async fn create_instance(
     .await
     .map_err(|_| InstanceError::FileCreationFailed)?;
   if let Some(origin) = &instance.origin {
-    ModpackBaseline::build(
+    let mut baseline = ModpackBaseline::build(
       origin,
       BaselineLoader {
         loader_type: instance.mod_loader.loader_type,
         version: instance.mod_loader.version.clone(),
       },
       baseline_files,
-    )
-    .save(&version_path)
+    );
+    // The chain of a component profile is taken from the snapshot the importer
+    // already wrote, so the baseline and the exported pack cannot disagree.
+    if component_import.is_some() {
+      let snapshot = ComponentSnapshot::load(&version_path)
+        .await
+        .map_err(|_| InstanceError::FileCreationFailed)?
+        .ok_or(InstanceError::FileCreationFailed)?;
+      baseline = baseline.with_components(components_of_mmc_pack(&snapshot.mmc_pack));
+    }
+    baseline
+      .save(&version_path)
+      .await
+      .map_err(|_| InstanceError::FileCreationFailed)?;
+    let files = baseline.files.clone();
+    tokio::task::spawn_blocking({
+      let version_path = version_path.clone();
+      move || base_store::sync(&version_path, &files)
+    })
     .await
+    .map_err(|_| InstanceError::FileCreationFailed)?
     .map_err(|_| InstanceError::FileCreationFailed)?;
   }
 
@@ -1478,6 +1510,25 @@ pub async fn change_mod_loader(
   new_mod_loader: ModLoaderResourceInfo,
   is_install_fabric_api: Option<bool>,
 ) -> USTBLResult<()> {
+  switch_mod_loader(
+    app,
+    instance_id,
+    new_mod_loader,
+    is_install_fabric_api,
+    false,
+  )
+  .await
+}
+
+/// keep_fabric_api leaves the Fabric API mods alone when leaving Fabric; a
+/// modpack update manages those files itself.
+pub(crate) async fn switch_mod_loader(
+  app: AppHandle,
+  instance_id: String,
+  new_mod_loader: ModLoaderResourceInfo,
+  is_install_fabric_api: Option<bool>,
+  keep_fabric_api: bool,
+) -> USTBLResult<()> {
   let mut instance = {
     let binding = app.state::<Mutex<HashMap<String, Instance>>>();
     let state = binding.lock()?;
@@ -1532,7 +1583,10 @@ pub async fn change_mod_loader(
     return Err(InstanceError::InstanceNotFoundByID.into());
   };
   // Remove Fabric API mods if switching from Fabric modloader
-  if instance.mod_loader.loader_type == ModLoaderType::Fabric && version_isolation {
+  if instance.mod_loader.loader_type == ModLoaderType::Fabric
+    && version_isolation
+    && !keep_fabric_api
+  {
     remove_fabric_api_mods(mods_dir).await?;
   }
   // construct new version info
@@ -1720,7 +1774,6 @@ pub async fn export_modpack(
 #[cfg(test)]
 mod origin_tests {
   use super::*;
-  use crate::instance::models::misc::OriginPlatform;
   use std::io::Write;
 
   fn input(sha1: &str) -> ModpackOriginInput {
@@ -1743,28 +1796,43 @@ mod origin_tests {
   async fn origin_is_kept_only_when_the_archive_matches_the_published_sha1() {
     let (path, sha1) = archive();
     let path_str = path.to_string_lossy().to_string();
-    let verify = |input, component| {
-      verify_origin(
-        input,
-        Some(&path_str),
-        component,
-        "1.21.1",
-        ModLoaderType::NeoForge,
-      )
-    };
+    let verify = |input| verify_origin(input, Some(&path_str), "1.21.1", ModLoaderType::NeoForge);
 
-    let kept = verify(Some(input(&sha1.to_uppercase())), false)
-      .await
-      .unwrap();
+    let kept = verify(Some(input(&sha1.to_uppercase()))).await.unwrap();
     assert_eq!(
       (kept.game_version.as_str(), kept.loader_type),
       ("1.21.1", ModLoaderType::NeoForge)
     );
     assert!(kept.follow);
-    assert!(verify(Some(input("deadbeef")), false).await.is_none());
-    assert!(verify(Some(input("")), false).await.is_none());
-    assert!(verify(Some(input(&sha1)), true).await.is_none());
-    assert!(verify(None, false).await.is_none());
+    assert!(verify(Some(input("deadbeef"))).await.is_none());
+    assert!(verify(Some(input(""))).await.is_none());
+    assert!(verify(None).await.is_none());
     let _ = fs::remove_file(path);
+  }
+
+  #[tokio::test]
+  async fn a_campus_install_without_an_archive_starts_from_the_placeholder_version() {
+    let campus = |sha1: &str| ModpackOriginInput {
+      platform: OriginPlatform::Campus,
+      project_id: "gtnh".into(),
+      version_id: "42".into(),
+      expected_sha1: sha1.into(),
+    };
+    let origin = verify_origin(Some(campus("")), None, "1.7.10", ModLoaderType::Forge)
+      .await
+      .unwrap();
+    assert_eq!(origin.version_id, "");
+    assert!(origin.follow);
+    // A hash or another platform still has to be proven by an archive.
+    assert!(
+      verify_origin(Some(campus("abc")), None, "1.7.10", ModLoaderType::Forge)
+        .await
+        .is_none()
+    );
+    assert!(
+      verify_origin(Some(input("")), None, "1.21.1", ModLoaderType::Fabric)
+        .await
+        .is_none()
+    );
   }
 }

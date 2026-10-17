@@ -1,6 +1,3 @@
-use crate::discover::helpers::anyshare::{
-  get_download_url, list_share_folder, AnyshareDownloadInfo, AnyshareFolderItem,
-};
 use crate::discover::helpers::mc_news::{fetch_mc_news_page, MC_NEWS_ENDPOINT};
 use crate::discover::helpers::rss::{fetch_rss_page, fetch_rss_source_info, is_rss_source};
 use crate::discover::models::{McServerStatus, NewsPostRequest, NewsPostResponse, NewsSourceInfo};
@@ -12,7 +9,6 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_http::reqwest;
-use tauri_plugin_http::reqwest::cookie::CookieStore;
 
 const VUSTB_SERVER_STATUS_ENDPOINT: &str = "https://www.ustb.world/api/mc-servers/statuses";
 
@@ -157,61 +153,4 @@ pub async fn fetch_vustb_server_statuses(app: AppHandle) -> USTBLResult<Vec<McSe
     .json::<Vec<McServerStatus>>()
     .await
     .map_err(|error| USTBLError(format!("无法解析像素北科服务器列表：{error}")))
-}
-
-#[tauri::command]
-pub async fn fetch_anyshare_folder_list(
-  _app: AppHandle,
-  share_url: String,
-) -> USTBLResult<Vec<AnyshareFolderItem>> {
-  list_share_folder(&share_url).await
-}
-
-#[tauri::command]
-pub async fn fetch_anyshare_download_url(
-  _app: AppHandle,
-  share_url: String,
-  docid: String,
-  file_name: String,
-) -> USTBLResult<AnyshareDownloadInfo> {
-  // Build a dedicated client with cookie jar to obtain the link_token,
-  // then call osdownload to get the pre-signed URL and required headers.
-  // We include the link_token as a Cookie header in the response so the
-  // frontend can pass it to the progressive download system's custom_headers.
-  let (client, jar) = crate::discover::helpers::anyshare::build_anyshare_client_with_jar()?;
-  let link_id = crate::discover::helpers::anyshare::extract_link_id(&share_url)?;
-  let base_url = crate::discover::helpers::anyshare::base_url_from_link(&share_url)?;
-
-  crate::discover::helpers::anyshare::check_share_info(&client, &base_url, &link_id).await?;
-  let token = crate::discover::helpers::anyshare::ensure_link_token(
-    &client, &jar, &share_url, &base_url, &link_id,
-  )
-  .await?;
-
-  let mut download_info = get_download_url(&client, &base_url, &token, &docid, &file_name).await?;
-
-  // Add the link_token as a Cookie header so the progressive download task
-  // can authenticate with the Anyshare server even though it uses the app's
-  // shared reqwest client (which doesn't have the cookie jar).
-  let cookie_name = format!("link_token:{}", link_id);
-  let base_parsed_url =
-    url::Url::parse(&base_url).map_err(|e| crate::error::USTBLError(e.to_string()))?;
-  let cookie_header: Option<reqwest::header::HeaderValue> = jar.cookies(&base_parsed_url);
-  if let Some(header_val) = cookie_header {
-    if let Ok(header_str) = header_val.to_str() {
-      if let Some(link_token_value) =
-        crate::discover::helpers::anyshare::extract_token_from_cookie_header(
-          header_str,
-          &cookie_name,
-        )
-      {
-        download_info.headers.insert(
-          "Cookie".to_string(),
-          format!("{}={}", cookie_name, link_token_value),
-        );
-      }
-    }
-  }
-
-  Ok(download_info)
 }

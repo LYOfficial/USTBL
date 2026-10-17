@@ -91,14 +91,6 @@ pub fn get_instance_subdir_path_by_id(
   get_instance_subdir_paths(app, instance, &[directory_type]).and_then(|mut paths| paths.pop())
 }
 
-pub fn get_instance_version_path_by_id(app: &AppHandle, instance_id: &String) -> Option<PathBuf> {
-  let binding = app.state::<Mutex<HashMap<String, Instance>>>();
-  let state = binding.lock().unwrap();
-  state
-    .get(instance_id)
-    .map(|instance| instance.version_path.clone())
-}
-
 pub fn unify_instance_name(src_version_path: &PathBuf, tgt_name: &String) -> USTBLResult<PathBuf> {
   if !sanitize_filename::is_sanitized(tgt_name) {
     return Err(InstanceError::InvalidNameError.into());
@@ -354,6 +346,14 @@ pub async fn refresh_instances(
         continue;
       }
     };
+    // A modpack update that died half way is undone before the instance is read.
+    if is_first_run && version_path.join(".ustbl-update/journal.json").is_file() {
+      match crate::instance::modpack_update::apply::recover(&version_path) {
+        Ok(outcome) => log::warn!("Recovered interrupted modpack update of {name}: {outcome:?}"),
+        Err(error) => log::error!("Could not recover modpack update of {name}: {error:?}"),
+      }
+    }
+
     // if there exists name.jar and name.json, then it's a valid instance
     let jar_path = version_path.join(format!("{}.jar", name));
     let json_path = version_path.join(format!("{}.json", name));
