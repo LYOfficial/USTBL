@@ -2617,7 +2617,17 @@
           "title": "导出失败",
           "description": {
             "MODPACK_EXPORT_COMPONENT_INSTANCE": "组件式实例只能导出为 MultiMC 格式",
-            "MODPACK_EXPORT_PROFILE_MISSING": "该实例由旧版本导入，缺少导出所需的组件信息，请重新导入整合包后再导出"
+            "MODPACK_EXPORT_PROFILE_MISSING": "该实例由旧版本导入，缺少导出所需的组件信息，请重新导入整合包后再导出",
+            "MODPACK_UPDATE_BUSY": "该整合包正在更新中",
+            "MODPACK_UPDATE_VERIFY_FAILED": "下载的文件校验失败，未对实例做任何修改",
+            "MODPACK_UPDATE_STALE": "本地文件在检查后发生了变化，请重新检查更新",
+            "MODPACK_UPDATE_REMOTE_INVALID": "新版本的文件清单不合法，已拒绝更新",
+            "MODPACK_UPDATE_LINE_MISMATCH": "新版本的游戏版本或加载器与此实例不一致，无法更新",
+            "MODPACK_UPDATE_UNSUPPORTED": "此实例暂不支持自动更新",
+            "MODPACK_UPDATE_RUNNING": "游戏正在运行，请先关闭游戏再更新整合包",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的组件链，无法就地更新，请重新安装",
+            "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试"
           }
         }
       }

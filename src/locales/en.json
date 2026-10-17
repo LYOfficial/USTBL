@@ -2617,7 +2617,17 @@
           "title": "Export failed",
           "description": {
             "MODPACK_EXPORT_COMPONENT_INSTANCE": "Component-profile instances can only be exported as MultiMC",
-            "MODPACK_EXPORT_PROFILE_MISSING": "This instance was imported by an older version and lacks the component data needed for export. Re-import the modpack and try again"
+            "MODPACK_EXPORT_PROFILE_MISSING": "This instance was imported by an older version and lacks the component data needed for export. Re-import the modpack and try again",
+            "MODPACK_UPDATE_BUSY": "This modpack is already being updated",
+            "MODPACK_UPDATE_VERIFY_FAILED": "A downloaded file failed verification; the instance was not changed",
+            "MODPACK_UPDATE_STALE": "Local files changed after the check; check for updates again",
+            "MODPACK_UPDATE_REMOTE_INVALID": "The new version file list is invalid; the update was refused",
+            "MODPACK_UPDATE_LINE_MISMATCH": "The new version is for a different game version or mod loader than this instance",
+            "MODPACK_UPDATE_UNSUPPORTED": "This instance cannot be updated automatically",
+            "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "This version changes the modpack's component chain and cannot be applied in place; install it again",
+            "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "The files of this version are temporarily unavailable on the platform. Try again later"
           }
         }
       }

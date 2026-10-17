@@ -354,6 +354,14 @@ pub async fn refresh_instances(
         continue;
       }
     };
+    // A modpack update that died half way is undone before the instance is read.
+    if is_first_run && version_path.join(".ustbl-update/journal.json").is_file() {
+      match crate::instance::modpack_update::apply::recover(&version_path) {
+        Ok(outcome) => log::warn!("Recovered interrupted modpack update of {name}: {outcome:?}"),
+        Err(error) => log::error!("Could not recover modpack update of {name}: {error:?}"),
+      }
+    }
+
     // if there exists name.jar and name.json, then it's a valid instance
     let jar_path = version_path.join(format!("{}.jar", name));
     let json_path = version_path.join(format!("{}.json", name));
