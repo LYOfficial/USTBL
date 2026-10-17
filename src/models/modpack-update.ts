@@ -51,6 +51,14 @@ export interface ModpackConflict {
   baseline?: ModpackFileKey;
   local?: ModpackFileKey;
   remote?: ModpackFileKey;
+  hunks: ModpackMergeConflict[];
+}
+
+export interface ModpackMergeConflict {
+  baseStart: number;
+  baseEnd: number;
+  local: string[];
+  remote: string[];
 }
 
 export type ModpackConflictChoice = "keepLocal" | "takeRemote";

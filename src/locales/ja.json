@@ -3175,7 +3175,8 @@
     "choice": {
       "keepLocal": "ローカルを保持",
       "takeRemote": "新バージョンを使用",
-      "revealFile": "フォルダーに表示"
+      "revealFile": "フォルダーに表示",
+      "hunk": "競合 {{number}}（ベースライン {{from}}-{{to}} 行）"
     },
     "button": {
       "preview": "更新をプレビュー",

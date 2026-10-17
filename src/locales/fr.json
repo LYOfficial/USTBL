@@ -3175,7 +3175,8 @@
     "choice": {
       "keepLocal": "Garder le local",
       "takeRemote": "Utiliser la nouvelle version",
-      "revealFile": "Afficher dans le dossier"
+      "revealFile": "Afficher dans le dossier",
+      "hunk": "Conflit {{number}} (lignes de base {{from}}-{{to}})"
     },
     "button": {
       "preview": "Aperçu de la mise à jour",

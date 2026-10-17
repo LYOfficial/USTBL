@@ -364,6 +364,57 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
                 >
                   {t("UpdateModpackModal.choice.revealFile")}
                 </Button>
+                {conflict.hunks.map((hunk, index) => {
+                  const key = `${conflict.path}#${index}`;
+                  const choice = choices[key] ?? "keepLocal";
+                  return (
+                    <VStack key={key} align="stretch" spacing={1} w="100%">
+                      <Text fontSize="xs" className="secondary-text">
+                        {t("UpdateModpackModal.choice.hunk", {
+                          number: index + 1,
+                          from: hunk.baseStart + 1,
+                          to: hunk.baseEnd,
+                        })}
+                      </Text>
+                      <HStack align="stretch" spacing={1}>
+                        <Button
+                          size="xs"
+                          variant={choice === "keepLocal" ? "solid" : "outline"}
+                          onClick={() =>
+                            setChoices((prev) => ({
+                              ...prev,
+                              [key]: "keepLocal",
+                            }))
+                          }
+                        >
+                          {t("UpdateModpackModal.choice.keepLocal")}
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant={
+                            choice === "takeRemote" ? "solid" : "outline"
+                          }
+                          onClick={() =>
+                            setChoices((prev) => ({
+                              ...prev,
+                              [key]: "takeRemote",
+                            }))
+                          }
+                        >
+                          {t("UpdateModpackModal.choice.takeRemote")}
+                        </Button>
+                      </HStack>
+                      <Text
+                        fontSize="xs"
+                        whiteSpace="pre-wrap"
+                        bg="blackAlpha.50"
+                        p={1}
+                      >
+                        {`${hunk.local.join("\n")}\n→\n${hunk.remote.join("\n")}`}
+                      </Text>
+                    </VStack>
+                  );
+                })}
               </HStack>
             ))}
           </VStack>

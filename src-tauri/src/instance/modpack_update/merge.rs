@@ -9,7 +9,8 @@ pub struct Hunk {
   pub replacement: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MergeConflict {
   pub base_start: usize,
   pub base_end: usize,
@@ -28,6 +29,32 @@ pub enum TextMergeError {
   InvalidText,
   InvalidMergedFormat,
   Conflict(MergeResult),
+}
+
+/// Return the line-level conflicts while keeping the local file as the
+/// fallback result. The caller may replace selected hunks with remote lines.
+pub fn text_conflicts(
+  path: &str,
+  base: &[u8],
+  local: &[u8],
+  remote: &[u8],
+) -> Result<Vec<MergeConflict>, TextMergeError> {
+  let to_lines = |bytes: &[u8]| {
+    std::str::from_utf8(bytes)
+      .map(|text| text.replace("\r\n", "\n").replace('\r', "\n"))
+      .map(|text| text.lines().map(str::to_owned).collect::<Vec<_>>())
+  };
+  let (base, local, remote) = (to_lines(base), to_lines(local), to_lines(remote));
+  let (Ok(base), Ok(local), Ok(remote)) = (base, local, remote) else {
+    return Err(TextMergeError::InvalidText);
+  };
+  if !valid_format(path, &base.join("\n"))
+    || !valid_format(path, &local.join("\n"))
+    || !valid_format(path, &remote.join("\n"))
+  {
+    return Err(TextMergeError::InvalidText);
+  }
+  Ok(three_way(&base, &local, &remote).conflicts)
 }
 
 fn line_ending(bytes: &[u8]) -> &'static str {
@@ -190,6 +217,42 @@ pub fn three_way(base: &[String], local: &[String], remote: &[String]) -> MergeR
   }
   accepted.sort_by_key(|edit| (edit.base_start, edit.base_end));
   MergeResult { lines: apply_hunks(base, &accepted), conflicts }
+}
+
+/// Merge while replacing only the selected conflict hunks with the remote
+/// side. Unselected hunks keep the local side.
+pub fn three_way_with_choices(
+  base: &[String],
+  local: &[String],
+  remote: &[String],
+  remote_hunks: &[usize],
+) -> Vec<String> {
+  let local_hunks = hunks(base, local);
+  let remote_hunks_all = hunks(base, remote);
+  let mut accepted = Vec::new();
+  let mut conflict_index = 0usize;
+  for local_edit in &local_hunks {
+    for remote_edit in &remote_hunks_all {
+      if overlaps_or_touches(local_edit, remote_edit) && local_edit != remote_edit {
+        if remote_hunks.contains(&conflict_index) {
+          accepted.push(remote_edit.clone());
+        } else {
+          accepted.push(local_edit.clone());
+        }
+        conflict_index += 1;
+      }
+    }
+  }
+  for edit in local_hunks.iter().chain(remote_hunks_all.iter()) {
+    if !accepted.iter().any(|known: &Hunk| known == edit) {
+      let conflicting = accepted.iter().any(|known| overlaps_or_touches(known, edit));
+      if !conflicting {
+        accepted.push(edit.clone());
+      }
+    }
+  }
+  accepted.sort_by_key(|edit| (edit.base_start, edit.base_end));
+  apply_hunks(base, &accepted)
 }
 
 #[cfg(test)]

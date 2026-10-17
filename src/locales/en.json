@@ -3175,7 +3175,8 @@
     "choice": {
       "keepLocal": "Keep local",
       "takeRemote": "Use new version",
-      "revealFile": "Show in folder"
+      "revealFile": "Show in folder",
+      "hunk": "Conflict {{number}} (baseline lines {{from}}-{{to}})"
     },
     "button": {
       "preview": "Preview update",

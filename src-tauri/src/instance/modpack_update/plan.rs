@@ -2,7 +2,7 @@
 
 use super::diff::{collect_local_states, three_way, Diff, FileKey, LocalState};
 use super::remote::RemoteModpack;
-use super::merge::{merge_text, TextMergeError};
+use super::merge::{merge_text, text_conflicts, TextMergeError};
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::modpack::baseline::ModpackBaseline;
 use crate::instance::helpers::modpack::{base_store, text};
@@ -17,6 +17,7 @@ pub struct Prepared {
   pub plan_hash: String,
   /// Bytes for automatically merged files, keyed by relative path.
   pub merged_contents: BTreeMap<String, Vec<u8>>,
+  pub conflict_sources: BTreeMap<String, (Vec<u8>, Vec<u8>, Vec<u8>)>,
 }
 
 fn baseline_keys(baseline: &ModpackBaseline) -> BTreeMap<String, FileKey> {
@@ -155,15 +156,16 @@ pub async fn prepare_with_contents(
   }
   let mut diff = three_way(&baseline_map, &local, &remote_map);
   let mut merged_contents = BTreeMap::new();
+  let mut conflict_sources = BTreeMap::new();
   let mut remaining = Vec::new();
   for conflict in diff.conflicts {
-    let merged = match (
+      let merged = match (
       conflict.kind,
       conflict.baseline.as_ref(),
       conflict.local.as_ref(),
       conflict.remote.as_ref(),
       remote_contents.get(&conflict.path),
-    ) {
+      ) {
       (super::diff::ConflictKind::ModifiedLocallyChangedRemotely, Some(base), Some(_local_key), Some(remote_key), Some(remote_bytes)) => {
         let base_bytes = base_store::load(&root, &base.sha1).ok().flatten();
         let local_bytes = std::fs::read(root.join(&conflict.path)).ok();
@@ -185,6 +187,32 @@ pub async fn prepare_with_contents(
         local_size: conflict.local.map(|key| key.size),
       });
     } else {
+      if let (
+        super::diff::ConflictKind::ModifiedLocallyChangedRemotely,
+        Some(base),
+        Some(_),
+        Some(_),
+        Some(remote_bytes),
+      ) = (
+        conflict.kind,
+        conflict.baseline.as_ref(),
+        conflict.local.as_ref(),
+        conflict.remote.as_ref(),
+        remote_contents.get(&conflict.path),
+      ) {
+        if let (Some(base_bytes), Ok(local_bytes)) = (
+          base_store::load(&root, &base.sha1).ok().flatten(),
+          std::fs::read(root.join(&conflict.path)),
+        ) {
+          if let Ok(hunks) = text_conflicts(&conflict.path, &base_bytes, &local_bytes, remote_bytes) {
+            let mut conflict = conflict;
+            conflict.hunks = hunks;
+            conflict_sources.insert(conflict.path.clone(), (base_bytes, local_bytes, remote_bytes.clone()));
+            remaining.push(conflict);
+            continue;
+          }
+        }
+      }
       remaining.push(conflict);
     }
   }
@@ -193,6 +221,7 @@ pub async fn prepare_with_contents(
     plan_hash: plan_hash(remote, &diff),
     diff,
     merged_contents,
+    conflict_sources,
   })
 }
 
