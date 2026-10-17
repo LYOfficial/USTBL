@@ -69,15 +69,32 @@ pub async fn count_local_changes(root: &Path, baseline: &ModpackBaseline) -> UST
   let keys = baseline_keys(baseline);
   let paths: BTreeSet<String> = keys.keys().cloned().collect();
   let root = root.to_path_buf();
-  let local = tokio::task::spawn_blocking(move || collect_local_states(&root, &paths))
+  let local_root = root.clone();
+  let local = tokio::task::spawn_blocking(move || collect_local_states(&local_root, &paths))
     .await
     .map_err(|e| USTBLError(e.to_string()))??;
-  Ok(
-    keys
-      .iter()
-      .filter(|(path, key)| local.get(*path) != Some(&LocalState::Present((*key).clone())))
-      .count(),
-  )
+  let mut changed = 0;
+  for (path, key) in &keys {
+    let Some(LocalState::Present(local_key)) = local.get(path) else {
+      changed += 1;
+      continue;
+    };
+    if local_key == key {
+      continue;
+    }
+    let normalized_equal = base_store::load(&root, &key.sha1)
+      .ok()
+      .flatten()
+      .and_then(|base| {
+        let local_bytes = std::fs::read(root.join(path)).ok()?;
+        Some(text::normalize_text(path, &base)? == text::normalize_text(path, &local_bytes)?)
+      })
+      .unwrap_or(false);
+    if !normalized_equal {
+      changed += 1;
+    }
+  }
+  Ok(changed)
 }
 
 /// Hash the files both versions care about and compare the three states.
@@ -401,6 +418,22 @@ mod tests {
     assert_eq!(count_local_changes(&root, &installed).await.unwrap(), 3);
     let clean = baseline(&[("mods/same.jar", "same")]);
     assert_eq!(count_local_changes(&root, &clean).await.unwrap(), 0);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn local_change_count_ignores_cached_text_formatting_noise() {
+    let root = instance(&[("config/a.toml", "a=1\r\n")]);
+    let baseline_bytes = b"a=1\n";
+    let baseline_sha1 = hex::encode(Sha1::digest(baseline_bytes));
+    let baseline = baseline(&[("config/a.toml", "a=1\n")]);
+    fs::create_dir_all(crate::instance::helpers::modpack::base_store::base_dir(&root)).unwrap();
+    fs::write(
+      crate::instance::helpers::modpack::base_store::base_path(&root, &baseline_sha1),
+      baseline_bytes,
+    )
+    .unwrap();
+    assert_eq!(count_local_changes(&root, &baseline).await.unwrap(), 0);
     let _ = fs::remove_dir_all(root);
   }
 }
