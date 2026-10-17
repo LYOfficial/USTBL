@@ -12,6 +12,7 @@ use crate::error::USTBLResult;
 use crate::instance::commands::switch_mod_loader;
 use crate::instance::helpers::misc::{get_instance_game_config, refresh_and_update_instances};
 use crate::instance::helpers::modpack::baseline::{BaselineLoader, ModpackBaseline};
+use crate::instance::helpers::modpack::base_store;
 use crate::instance::models::misc::{
   Instance, InstanceError, InstanceOrigin, ModLoader, ModLoaderStatus, ModLoaderType,
 };
@@ -320,6 +321,13 @@ pub async fn check_modpack_update(
       })
     }
   };
+  if scan_local == Some(true) {
+    let root = target.root.clone();
+    let files = baseline.files.clone();
+    tokio::task::spawn_blocking(move || base_store::bootstrap_legacy(&root, &files))
+      .await
+      .map_err(|e| crate::error::USTBLError(e.to_string()))??;
+  }
   if target.instance.mod_loader.status != ModLoaderStatus::Installed {
     return Ok(check_of(CheckStatus::WaitingLoader, &target));
   }

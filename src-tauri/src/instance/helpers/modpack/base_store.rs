@@ -60,6 +60,34 @@ pub fn sync(root: &Path, files: &[BaselineFile]) -> io::Result<()> {
   Ok(())
 }
 
+/// Bootstrap a legacy instance that predates the text-baseline cache.
+///
+/// The old baseline stores only hashes, so the original bytes cannot be
+/// reconstructed locally. Keeping the current text bytes under the recorded
+/// baseline hash gives legacy instances a stable comparison point until the
+/// remote historical-object fetch is available to the update command.
+pub fn bootstrap_legacy(root: &Path, files: &[BaselineFile]) -> io::Result<bool> {
+  let dir = base_dir(root);
+  fs::create_dir_all(&dir)?;
+  let mut created = false;
+  for file in files {
+    let target = base_path(root, &file.sha1);
+    if target.exists() {
+      continue;
+    }
+    let source = root.join(&file.path);
+    let bytes = match fs::read(source) {
+      Ok(bytes) if super::text::is_text_path(&file.path, &bytes) => bytes,
+      Ok(_) => continue,
+      Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+      Err(error) => return Err(error),
+    };
+    fs::write(target, bytes)?;
+    created = true;
+  }
+  Ok(created)
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -85,6 +113,20 @@ mod tests {
     .unwrap();
     assert_eq!(load(&root, &sha1).unwrap(), Some(text.to_vec()));
     assert!(!base_path(&root, "old").exists());
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn bootstrap_legacy_keeps_current_text_under_the_old_baseline_key() {
+    let root = std::env::temp_dir().join(format!("ustbl-base-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(root.join("config")).unwrap();
+    let bytes = b"a=1\r\n";
+    fs::write(root.join("config/a.properties"), bytes).unwrap();
+    let key = "baseline-sha1";
+    let files = [BaselineFile { path: "config/a.properties".into(), sha1: key.into(), size: 4 }];
+    assert!(bootstrap_legacy(&root, &files).unwrap());
+    assert_eq!(load(&root, key).unwrap(), Some(bytes.to_vec()));
+    assert!(!bootstrap_legacy(&root, &files).unwrap());
     let _ = fs::remove_dir_all(root);
   }
 }
