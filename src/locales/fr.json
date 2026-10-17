@@ -3162,6 +3162,7 @@
       "delete": "{{count}} supprimé(s)",
       "loaderChange": "Le chargeur de mods passera de {{from}} à {{to}}",
       "conflicts": "{{count}} fichiers entrent en conflit avec vos modifications. Choisissez (le local est conservé par défaut)",
+      "autoMerged": "{{count}} fichiers de configuration ont été fusionnés automatiquement",
       "reinstallRequired": "{{latest}} modifie la chaîne de composants du pack et ne peut pas être appliquée sur place. Réinstallez le pack"
     },
     "conflictKind": {

@@ -3162,6 +3162,7 @@
       "delete": "刪除 {{count}}",
       "loaderChange": "模組載入器將從 {{from}} 切換到 {{to}}",
       "conflicts": "有 {{count}} 個檔案與本機修改衝突，請選擇處理方式（預設保留本機）",
+      "autoMerged": "已自動合併 {{count}} 個設定檔",
       "reinstallRequired": "{{latest}} 更改了整合包的組件鏈，無法就地更新，請重新安裝該整合包"
     },
     "conflictKind": {

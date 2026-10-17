@@ -314,6 +314,13 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
             })}
           </Text>
         )}
+        {plan.autoMerged.length > 0 && (
+          <Text fontSize="xs-sm" color="green.500">
+            {t("UpdateModpackModal.plan.autoMerged", {
+              count: plan.autoMerged.length,
+            })}
+          </Text>
+        )}
         {plan.conflicts.length > 0 && (
           <VStack align="stretch" spacing={2}>
             <Text fontWeight="medium">

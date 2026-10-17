@@ -66,6 +66,7 @@ export interface ModpackUpdatePlan {
   toLabel: string;
   changes: ModpackFileChange[];
   conflicts: ModpackConflict[];
+  autoMerged: ModpackFileChange[];
   loaderChange?: { from: ModpackBaselineLoader; to: ModpackBaselineLoader };
   reinstallRequired: boolean;
   fastForward: boolean;

@@ -3162,6 +3162,7 @@
       "delete": "{{count}} removed",
       "loaderChange": "Mod loader will change from {{from}} to {{to}}",
       "conflicts": "{{count}} files conflict with local changes. Choose what to do (local is kept by default)",
+      "autoMerged": "{{count}} configuration files were merged automatically",
       "reinstallRequired": "{{latest}} changes the modpack's component chain and cannot be applied in place. Install the modpack again"
     },
     "conflictKind": {

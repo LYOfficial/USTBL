@@ -3162,6 +3162,7 @@
       "delete": "削除 {{count}}",
       "loaderChange": "MODローダーを {{from}} から {{to}} に切り替えます",
       "conflicts": "{{count}} 個のファイルがローカルの変更と競合しています。処理を選択してください（既定はローカルを保持）",
+      "autoMerged": "{{count}} 個の設定ファイルを自動的にマージしました",
       "reinstallRequired": "{{latest}} はコンポーネント構成を変更するため、そのまま更新できません。モッドパックを再インストールしてください"
     },
     "conflictKind": {

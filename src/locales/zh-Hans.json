@@ -3162,6 +3162,7 @@
       "delete": "删除 {{count}}",
       "loaderChange": "模组加载器将从 {{from}} 切换到 {{to}}",
       "conflicts": "有 {{count}} 个文件与本地修改冲突，请选择处理方式（默认保留本地）",
+      "autoMerged": "已自动合并 {{count}} 个配置文件",
       "reinstallRequired": "{{latest}} 更改了整合包的组件链，无法就地更新，请重新安装该整合包"
     },
     "conflictKind": {

@@ -138,6 +138,9 @@ pub struct UpdateRequest {
   /// Install the remote version's component profile into an instance that has
   /// none. Takes the place of the loader switch.
   pub restore_components: bool,
+  /// Content for automatically merged text files. Other operations fetch the
+  /// remote file through its normal source.
+  pub merged_contents: BTreeMap<String, Vec<u8>>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -346,7 +349,7 @@ fn extract_entry(archive: &Path, entry: &str, dest: &Path) -> USTBLResult<()> {
 
 /// Tell every pack session which of its files are about to be fetched, so it
 /// can locate just those.
-async fn prepare_packs(files: &[&RemoteFile]) -> USTBLResult<()> {
+pub async fn prepare_packs(files: &[&RemoteFile]) -> USTBLResult<()> {
   let mut sessions: Vec<(Arc<PackSession>, Vec<String>)> = Vec::new();
   for file in files {
     let FileSource::Pack(session) = &file.source else {
@@ -392,6 +395,14 @@ async fn stage_file(env: &dyn UpdateEnv, dest: PathBuf, file: &RemoteFile) -> US
     return Err(InstanceError::ModpackUpdateVerifyFailed.into());
   }
   Ok(())
+}
+
+pub async fn materialize_remote_file(
+  env: &dyn UpdateEnv,
+  dest: PathBuf,
+  file: &RemoteFile,
+) -> USTBLResult<()> {
+  stage_file(env, dest, file).await
 }
 
 /// Move originals aside and put the staged files in place.
@@ -485,6 +496,7 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
   }
   let mut to_fetch: Vec<(&RemoteFile, PathBuf)> = to_fetch
     .into_iter()
+    .filter(|file| !request.merged_contents.contains_key(&file.path))
     .map(|file| (file, staging_dir(root).join(&file.path)))
     .collect();
   let pack = if request.restore_components {
@@ -536,6 +548,16 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
       done,
       total,
     });
+  }
+  for (path, bytes) in &request.merged_contents {
+    let dest = staging_dir(root).join(path);
+    if let Some(parent) = dest.parent() {
+      fs::create_dir_all(parent).map_err(io_error)?;
+    }
+    fs::write(&dest, bytes).map_err(io_error)?;
+    if !crate::instance::helpers::modpack::text::is_text_path(path, bytes) {
+      return Err(InstanceError::ModpackUpdateVerifyFailed.into());
+    }
   }
 
   // Phase 2: write the journal and save the files the update rewrites.
@@ -806,6 +828,7 @@ mod tests {
       previous_loader: loader("0.15.0"),
       components: None,
       restore_components: false,
+      merged_contents: BTreeMap::new(),
     }
   }
 
