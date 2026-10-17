@@ -4,6 +4,7 @@ use super::diff::{collect_local_states, three_way, Diff, FileKey};
 use super::remote::RemoteModpack;
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::modpack::baseline::ModpackBaseline;
+use crate::instance::helpers::modpack::{base_store, text};
 use sha1::{Digest, Sha1};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -69,9 +70,33 @@ pub async fn prepare(
     .cloned()
     .collect();
   let root = root.to_path_buf();
-  let local = tokio::task::spawn_blocking(move || collect_local_states(&root, &paths))
+  let local_root = root.clone();
+  let local = tokio::task::spawn_blocking(move || collect_local_states(&local_root, &paths))
     .await
     .map_err(|e| USTBLError(e.to_string()))??;
+  let mut local = local;
+  for (path, baseline_key) in &baseline_map {
+    let Some(super::diff::LocalState::Present(local_key)) = local.get(path) else {
+      continue;
+    };
+    if local_key == baseline_key {
+      continue;
+    }
+    let equivalent = base_store::load(&root, &baseline_key.sha1)
+      .ok()
+      .flatten()
+      .and_then(|base| {
+        let local_bytes = std::fs::read(root.join(path)).ok()?;
+        Some(text::normalize_text(path, &base)? == text::normalize_text(path, &local_bytes)?)
+      })
+      .unwrap_or(false);
+    if equivalent {
+      local.insert(
+        path.clone(),
+        super::diff::LocalState::Present(baseline_key.clone()),
+      );
+    }
+  }
   let diff = three_way(&baseline_map, &local, &remote_map);
   Ok(Prepared {
     plan_hash: plan_hash(remote, &diff),
@@ -238,6 +263,32 @@ mod tests {
     .await
     .unwrap();
     assert!(prepared.diff.is_empty());
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn cached_text_baseline_ignores_line_ending_only_local_change() {
+    let root = instance(&[("config/a.toml", "a=1\r\n")]);
+    let baseline = baseline(&[("config/a.toml", "a=1\n")]);
+    let baseline_bytes = b"a=1\n";
+    let sha1 = hex::encode(Sha1::digest(baseline_bytes));
+    std::fs::create_dir_all(crate::instance::helpers::modpack::base_store::base_dir(&root))
+      .unwrap();
+    std::fs::write(
+      crate::instance::helpers::modpack::base_store::base_path(&root, &sha1),
+      baseline_bytes,
+    )
+    .unwrap();
+    assert_eq!(baseline.files[0].sha1, sha1);
+    let prepared = prepare(
+      &root,
+      &baseline,
+      &remote(&[("config/a.toml", "a=2\n")]),
+    )
+    .await
+    .unwrap();
+    assert!(prepared.diff.conflicts.is_empty());
+    assert_eq!(prepared.diff.changes.len(), 1);
     let _ = fs::remove_dir_all(root);
   }
 
