@@ -10,6 +10,7 @@ use super::diff::{Operation, DISABLED_SUFFIX};
 use super::packs::PackSession;
 use super::remote::{ComponentPack, FileSource, RemoteFile, RemoteModpack, UPDATE_DIR};
 use crate::error::USTBLResult;
+use crate::instance::helpers::modpack::base_store;
 use crate::instance::helpers::modpack::baseline::{
   hash_file, BaselineLoader, ComponentRef, ModpackBaseline, BASELINE_FILE_NAME,
 };
@@ -601,6 +602,14 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
       baseline = baseline.with_components(chain.clone());
     }
     baseline.save(root).await.map_err(io_error)?;
+    tokio::task::spawn_blocking({
+      let root = root.clone();
+      let files = baseline.files.clone();
+      move || base_store::sync(&root, &files)
+    })
+    .await
+    .map_err(|e| crate::error::USTBLError(e.to_string()))?
+    .map_err(io_error)?;
     env.commit_origin(&request.remote.version_id).await
   }
   .await;

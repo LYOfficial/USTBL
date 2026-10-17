@@ -16,6 +16,7 @@ use crate::instance::helpers::modpack::baseline::{
   components_of_mmc_pack, hash_existing_files, hash_file, BaselineFile, BaselineLoader,
   ModpackBaseline,
 };
+use crate::instance::helpers::modpack::base_store;
 use crate::instance::helpers::modpack::export::{
   build_component_export, collect_modrinth_files, create_modpack_zip, generate_modrinth_manifest,
   generate_multimc_instance_cfg, generate_multimc_manifest, list_files, validate_export_options,
@@ -1369,6 +1370,14 @@ pub async fn create_instance(
       .save(&version_path)
       .await
       .map_err(|_| InstanceError::FileCreationFailed)?;
+    let files = baseline.files.clone();
+    tokio::task::spawn_blocking({
+      let version_path = version_path.clone();
+      move || base_store::sync(&version_path, &files)
+    })
+    .await
+    .map_err(|_| InstanceError::FileCreationFailed)?
+    .map_err(|_| InstanceError::FileCreationFailed)?;
   }
 
   dir_guard.commit(); // disarm the cleanup guard on success
