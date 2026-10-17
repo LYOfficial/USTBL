@@ -185,6 +185,7 @@ pub async fn run() -> i32 {
       instance::modpack_update::commands::apply_modpack_update,
       instance::modpack_update::commands::recover_modpack_update,
       instance::modpack_update::commands::install_campus_modpack,
+      instance::modpack_update::commands::reveal_modpack_conflict_file,
       instance::modpack_publish::commands::list_campus_modpack_projects,
       instance::modpack_publish::commands::fetch_campus_modpack_recommendation,
       instance::modpack_publish::commands::list_campus_modpack_publish_jobs,

@@ -60,6 +60,17 @@ export class ModpackUpdateService {
     });
   }
 
+  @responseHandler("instance")
+  static async revealModpackConflictFile(
+    instanceId: string,
+    relativePath: string
+  ): Promise<InvokeResponse<null>> {
+    return await invoke("reveal_modpack_conflict_file", {
+      instanceId,
+      relativePath,
+    });
+  }
+
   /**
    * Undo or finish an interrupted update. Resolves to whether anything was done.
    */

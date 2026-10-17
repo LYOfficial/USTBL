@@ -169,6 +169,23 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
     runCheck();
   }, [instanceId, getInstanceList, runCheck, toast]);
 
+  const revealConflictFile = useCallback(
+    async (path: string) => {
+      const response = await ModpackUpdateService.revealModpackConflictFile(
+        instanceId,
+        path
+      );
+      if (response.status !== "success") {
+        toast({
+          title: response.message,
+          description: response.details,
+          status: "error",
+        });
+      }
+    },
+    [instanceId, toast]
+  );
+
   const handleResume = useCallback(async () => {
     const response = await ModpackUpdateService.setModpackFollow(
       instanceId,
@@ -333,6 +350,13 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
                     {t("UpdateModpackModal.choice.takeRemote")}
                   </option>
                 </Select>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  onClick={() => revealConflictFile(conflict.path)}
+                >
+                  {t("UpdateModpackModal.choice.revealFile")}
+                </Button>
               </HStack>
             ))}
           </VStack>

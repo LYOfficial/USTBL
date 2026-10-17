@@ -3173,7 +3173,8 @@
     },
     "choice": {
       "keepLocal": "Keep local",
-      "takeRemote": "Use new version"
+      "takeRemote": "Use new version",
+      "revealFile": "Show in folder"
     },
     "button": {
       "preview": "Preview update",

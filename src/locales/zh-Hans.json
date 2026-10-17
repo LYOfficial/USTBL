@@ -3173,7 +3173,8 @@
     },
     "choice": {
       "keepLocal": "保留本地",
-      "takeRemote": "使用新版本"
+      "takeRemote": "使用新版本",
+      "revealFile": "在文件夹中显示"
     },
     "button": {
       "preview": "预览更新",

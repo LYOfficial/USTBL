@@ -3173,7 +3173,8 @@
     },
     "choice": {
       "keepLocal": "Garder le local",
-      "takeRemote": "Utiliser la nouvelle version"
+      "takeRemote": "Utiliser la nouvelle version",
+      "revealFile": "Afficher dans le dossier"
     },
     "button": {
       "preview": "Aperçu de la mise à jour",

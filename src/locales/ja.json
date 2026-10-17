@@ -3173,7 +3173,8 @@
     },
     "choice": {
       "keepLocal": "ローカルを保持",
-      "takeRemote": "新バージョンを使用"
+      "takeRemote": "新バージョンを使用",
+      "revealFile": "フォルダーに表示"
     },
     "button": {
       "preview": "更新をプレビュー",

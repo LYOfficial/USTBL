@@ -3173,7 +3173,8 @@
     },
     "choice": {
       "keepLocal": "保留本機",
-      "takeRemote": "使用新版本"
+      "takeRemote": "使用新版本",
+      "revealFile": "在資料夾中顯示"
     },
     "button": {
       "preview": "預覽更新",
