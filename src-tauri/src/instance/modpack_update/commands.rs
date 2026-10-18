@@ -5,6 +5,7 @@ use super::apply::{
   Progress, Recovery, UpdateEnv, UpdateRequest,
 };
 use super::diff::{resolve, Conflict, ConflictChoice, FileChange};
+use super::merge::three_way_with_choices;
 use super::plan::{prepare, prepare_with_contents, requires_reinstall};
 use super::sources::{download_param, latest_version, resolve_remote, LatestVersion};
 use crate::error::USTBLResult;
@@ -425,6 +426,35 @@ async fn plan_for(
   })
 }
 
+fn selected_hunk_contents(
+  prepared: &super::plan::Prepared,
+  choices: &mut BTreeMap<String, ConflictChoice>,
+) -> BTreeMap<String, Vec<u8>> {
+  let mut result = prepared.merged_contents.clone();
+  for (path, (base, local, remote)) in &prepared.conflict_sources {
+    let hunk_count = prepared
+      .diff
+      .conflicts
+      .iter()
+      .find(|conflict| conflict.path == *path)
+      .map(|conflict| conflict.hunks.len())
+      .unwrap_or(0);
+    let selected: Vec<usize> = (0..)
+      .take(hunk_count)
+      .filter(|index| choices.get(&format!("{path}#{index}")) == Some(&ConflictChoice::TakeRemote))
+      .collect();
+    if selected.is_empty() {
+      continue;
+    }
+    choices.insert(path.clone(), ConflictChoice::TakeRemote);
+    let lines = |bytes: &[u8]| String::from_utf8_lossy(bytes).replace("\r\n", "\n").replace('\r', "\n").lines().map(str::to_owned).collect::<Vec<_>>();
+    let merged = three_way_with_choices(&lines(base), &lines(local), &lines(remote), &selected);
+    let ending = if local.windows(2).any(|pair| pair == b"\r\n") { "\r\n" } else { "\n" };
+    result.insert(path.clone(), format!("{}{}", merged.join(ending), ending).into_bytes());
+  }
+  result
+}
+
 async fn materialize_text_candidates(
   app: &AppHandle,
   target: &Target,
@@ -513,17 +543,19 @@ pub async fn apply_modpack_update(
     loader_install_pending: AtomicBool::new(false),
   };
   let version_id = remote.version_id.clone();
+  let mut apply_choices = choices.clone();
+  let merged_contents = selected_hunk_contents(&prepared, &mut apply_choices);
   let result = apply(
     &env,
     UpdateRequest {
       root: target.root.clone(),
       instance_name: target.instance.name.clone(),
-      operations: resolve(&prepared.diff, &choices),
+      operations: resolve(&prepared.diff, &apply_choices),
       remote,
       origin: target.origin.clone(),
       previous_loader: baseline.loader.clone(),
       components: baseline.component_refs(),
-      merged_contents: prepared.merged_contents,
+      merged_contents,
     },
   )
   .await;

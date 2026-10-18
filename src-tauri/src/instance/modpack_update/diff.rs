@@ -8,6 +8,7 @@
 //! remote one.
 
 use crate::instance::helpers::modpack::baseline::hash_file;
+use super::merge::MergeConflict;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
@@ -75,6 +76,7 @@ pub struct Conflict {
   pub baseline: Option<FileKey>,
   pub local: Option<FileKey>,
   pub remote: Option<FileKey>,
+  pub hunks: Vec<MergeConflict>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Default, Deserialize, Serialize)]
@@ -127,6 +129,7 @@ pub fn three_way(
       baseline: b.cloned(),
       local: local_key.clone(),
       remote: r.cloned(),
+      hunks: Vec::new(),
     };
     let write = |kind, remote: &FileKey| FileChange {
       path: path.clone(),
