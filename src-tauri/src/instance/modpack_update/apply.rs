@@ -123,6 +123,9 @@ pub struct UpdateRequest {
   pub previous_loader: BaselineLoader,
   /// Component chain recorded in the new baseline.
   pub components: Option<Vec<ComponentRef>>,
+  /// Content for automatically merged text files. Other operations fetch the
+  /// remote file through its normal source.
+  pub merged_contents: BTreeMap<String, Vec<u8>>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -321,7 +324,7 @@ fn extract_entry(archive: &Path, entry: &str, dest: &Path) -> USTBLResult<()> {
 
 /// Tell every pack session which of its files are about to be fetched, so it
 /// can locate just those.
-async fn prepare_packs(files: &[&RemoteFile]) -> USTBLResult<()> {
+pub async fn prepare_packs(files: &[&RemoteFile]) -> USTBLResult<()> {
   let mut sessions: Vec<(Arc<PackSession>, Vec<String>)> = Vec::new();
   for file in files {
     let FileSource::Pack(session) = &file.source else {
@@ -342,7 +345,15 @@ async fn prepare_packs(files: &[&RemoteFile]) -> USTBLResult<()> {
 }
 
 async fn stage_file(env: &dyn UpdateEnv, root: &Path, file: &RemoteFile) -> USTBLResult<()> {
-  let dest = staging_dir(root).join(&file.path);
+  materialize_remote_file(env, staging_dir(root).join(&file.path), file).await
+}
+
+/// Fetch a remote file to `dest` and check it against its key.
+pub async fn materialize_remote_file(
+  env: &dyn UpdateEnv,
+  dest: PathBuf,
+  file: &RemoteFile,
+) -> USTBLResult<()> {
   match &file.source {
     FileSource::Download(param) => {
       let mut param = (**param).clone();
@@ -458,6 +469,11 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
       return Err(InstanceError::ModpackUpdateStale.into());
     }
   }
+  // Merged text files are written from the plan, not fetched.
+  let to_fetch: Vec<&RemoteFile> = to_fetch
+    .into_iter()
+    .filter(|file| !request.merged_contents.contains_key(&file.path))
+    .collect();
   prepare_packs(&to_fetch).await?;
   let total = to_fetch.len();
   env.report(Progress {
@@ -485,6 +501,16 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
       done,
       total,
     });
+  }
+  for (path, bytes) in &request.merged_contents {
+    let dest = staging_dir(root).join(path);
+    if let Some(parent) = dest.parent() {
+      fs::create_dir_all(parent).map_err(io_error)?;
+    }
+    fs::write(&dest, bytes).map_err(io_error)?;
+    if !crate::instance::helpers::modpack::text::is_text_path(path, bytes) {
+      return Err(InstanceError::ModpackUpdateVerifyFailed.into());
+    }
   }
 
   // Phase 2: write the journal and save the files the update rewrites.
@@ -733,6 +759,7 @@ mod tests {
       origin: origin("1"),
       previous_loader: loader("0.15.0"),
       components: None,
+      merged_contents: BTreeMap::new(),
     }
   }
 

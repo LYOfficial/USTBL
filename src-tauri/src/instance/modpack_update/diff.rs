@@ -82,6 +82,8 @@ pub struct Conflict {
 pub struct Diff {
   pub changes: Vec<FileChange>,
   pub conflicts: Vec<Conflict>,
+  /// Text files whose local and remote edits were merged automatically.
+  pub auto_merged: Vec<FileChange>,
   /// Paths whose local content already equals the new version.
   pub already_current: Vec<String>,
 }
@@ -191,6 +193,7 @@ pub fn resolve(diff: &Diff, choices: &BTreeMap<String, ConflictChoice>) -> Vec<O
   let mut operations: Vec<Operation> = diff
     .changes
     .iter()
+    .chain(diff.auto_merged.iter())
     .map(|change| Operation {
       path: change.path.clone(),
       write: change.remote.clone(),
