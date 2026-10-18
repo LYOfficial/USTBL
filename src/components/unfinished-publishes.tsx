@@ -7,8 +7,7 @@ import { CampusUnfinishedPublish } from "@/models/campus-modpack";
 import { CampusModpackService } from "@/services/campus-modpack";
 
 /**
- * Publishes that were interrupted (the launcher was closed) or failed. Each can
- * be continued with what the platform already received, or given up.
+ * Local publish records that are still being monitored or need user action.
  */
 export const UnfinishedPublishes: React.FC<{ refreshKey: number }> = ({
   refreshKey,
@@ -25,6 +24,8 @@ export const UnfinishedPublishes: React.FC<{ refreshKey: number }> = ({
 
   useEffect(() => {
     refresh();
+    const timer = setInterval(refresh, 3000);
+    return () => clearInterval(timer);
   }, [refresh, refreshKey]);
 
   // A publish that just failed becomes an entry here.
@@ -52,7 +53,7 @@ export const UnfinishedPublishes: React.FC<{ refreshKey: number }> = ({
     [refresh, toast]
   );
 
-  const visible = jobs.filter((job) => !job.running);
+  const visible = jobs;
   if (visible.length === 0) return null;
 
   return (
@@ -86,6 +87,7 @@ export const UnfinishedPublishes: React.FC<{ refreshKey: number }> = ({
                     job.jobId
                   )
                 }
+                isDisabled={job.running}
               >
                 {t("DownloadTasksPage.unfinishedPublish.resume")}
               </Button>
@@ -99,6 +101,7 @@ export const UnfinishedPublishes: React.FC<{ refreshKey: number }> = ({
                     job.jobId
                   )
                 }
+                isDisabled={job.running}
               >
                 {t("DownloadTasksPage.unfinishedPublish.discard")}
               </Button>

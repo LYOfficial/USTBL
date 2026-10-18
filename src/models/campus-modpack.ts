@@ -49,7 +49,7 @@ export interface CampusNewProject {
   summary: string;
 }
 
-/** A publish that was interrupted or failed and can be continued or given up. */
+/** A local publish record that can survive launcher restarts. */
 export interface CampusUnfinishedPublish {
   jobId: string;
   instanceId: string;
