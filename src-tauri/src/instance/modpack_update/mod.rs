@@ -7,3 +7,4 @@ pub mod plan;
 pub mod remote;
 pub mod restore;
 pub mod sources;
+pub mod text_diff;

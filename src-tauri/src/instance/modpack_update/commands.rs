@@ -5,7 +5,10 @@ use super::apply::{
   Progress, Recovery, UpdateEnv, UpdateRequest,
 };
 use super::diff::{resolve, Conflict, ConflictChoice, FileChange};
-use super::plan::{count_local_changes, prepare, prepare_with_contents, requires_reinstall};
+use super::plan::{
+  count_local_changes, local_changes, prepare, prepare_with_contents, requires_reinstall,
+  LocalChange,
+};
 use super::merge::three_way_with_choices;
 use super::remote::ComponentPack;
 use super::restore::restore_component_profile;
@@ -329,9 +332,16 @@ pub async fn check_modpack_update(
     return Ok(check_of(CheckStatus::WaitingLoader, &target));
   }
   match latest_version(&app, &target.origin).await {
+    // The status stays `Available`; the count rides along so the local
+    // edits can be shown next to the update.
     Ok(Some(latest)) => Ok(UpdateCheck {
       latest_version_id: Some(latest.version_id),
       latest_label: Some(latest.label),
+      local_changes: if scan_local == Some(true) {
+        Some(count_local_changes(&target.root, &baseline).await?)
+      } else {
+        None
+      },
       ..check_of(CheckStatus::Available, &target)
     }),
     Ok(None) => {
@@ -382,6 +392,18 @@ pub async fn set_modpack_follow(
     }
   })
   .await
+}
+
+/// The managed files changed here since the modpack installed them, with
+/// line diffs for text files. Works offline: only the local record is used.
+#[tauri::command]
+pub async fn list_modpack_local_changes(
+  app: AppHandle,
+  instance_id: String,
+) -> USTBLResult<Vec<LocalChange>> {
+  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let baseline = load_baseline(&target).await?;
+  local_changes(&target.root, &baseline, true).await
 }
 
 /// Reveal a managed file in the system file manager for external editing.

@@ -3,6 +3,8 @@
 use super::diff::{collect_local_states, three_way, Diff, FileKey, LocalState};
 use super::remote::RemoteModpack;
 use super::merge::{merge_text, text_conflicts, TextMergeError};
+use super::text_diff::{unified_diff, DiffHunk, CONTEXT_LINES};
+use serde::Serialize;
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::modpack::baseline::ModpackBaseline;
 use crate::instance::helpers::modpack::{base_store, text};
@@ -70,35 +72,117 @@ pub fn requires_reinstall(baseline: &ModpackBaseline, remote: &RemoteModpack, fr
 /// How many files the modpack manages differ from what it installed. A file the
 /// player switched off counts, since that is a deliberate local change.
 pub async fn count_local_changes(root: &Path, baseline: &ModpackBaseline) -> USTBLResult<usize> {
+  Ok(local_changes(root, baseline, false).await?.len())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LocalChangeKind {
+  Modified,
+  Deleted,
+  Disabled,
+}
+
+/// Why a modified file comes without a line diff.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NoDiffReason {
+  /// Not a text file the launcher compares by line (or too large).
+  NotText,
+  /// The installed text was not kept, so there is nothing to compare with.
+  BaseMissing,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalChange {
+  pub path: String,
+  pub kind: LocalChangeKind,
+  pub baseline: FileKey,
+  pub local: Option<FileKey>,
+  /// Line diff of the normalized texts, installed → local.
+  pub hunks: Option<Vec<DiffHunk>>,
+  pub no_diff: Option<NoDiffReason>,
+}
+
+fn diff_lines(text: &str) -> Vec<String> {
+  text.lines().map(str::to_owned).collect()
+}
+
+/// Managed files that differ from what the modpack installed, by path. Text
+/// files that only differ in normalized-away noise are not changes. With
+/// `with_diff` each modified text file carries its line diff.
+pub async fn local_changes(
+  root: &Path,
+  baseline: &ModpackBaseline,
+  with_diff: bool,
+) -> USTBLResult<Vec<LocalChange>> {
   let keys = baseline_keys(baseline);
-  let paths: BTreeSet<String> = keys.keys().cloned().collect();
   let root = root.to_path_buf();
-  let local_root = root.clone();
-  let local = tokio::task::spawn_blocking(move || collect_local_states(&local_root, &paths))
-    .await
-    .map_err(|e| USTBLError(e.to_string()))??;
-  let mut changed = 0;
-  for (path, key) in &keys {
-    let Some(LocalState::Present(local_key)) = local.get(path) else {
-      changed += 1;
-      continue;
-    };
-    if local_key == key {
-      continue;
+  tokio::task::spawn_blocking(move || {
+    let paths: BTreeSet<String> = keys.keys().cloned().collect();
+    let local = collect_local_states(&root, &paths)?;
+    let mut changes = Vec::new();
+    for (path, key) in keys {
+      let local_key = match local.get(&path) {
+        Some(LocalState::Present(local_key)) if *local_key == key => continue,
+        Some(LocalState::Present(local_key)) => local_key.clone(),
+        Some(LocalState::Disabled(local_key)) => {
+          changes.push(LocalChange {
+            path,
+            kind: LocalChangeKind::Disabled,
+            baseline: key,
+            local: Some(local_key.clone()),
+            hunks: None,
+            no_diff: None,
+          });
+          continue;
+        }
+        _ => {
+          changes.push(LocalChange {
+            path,
+            kind: LocalChangeKind::Deleted,
+            baseline: key,
+            local: None,
+            hunks: None,
+            no_diff: None,
+          });
+          continue;
+        }
+      };
+      let local_bytes = std::fs::read(root.join(&path))?;
+      let local_text = text::normalize_text(&path, &local_bytes);
+      let base_text = match &local_text {
+        Some(_) => base_store::load(&root, &key.sha1)
+          .ok()
+          .flatten()
+          .and_then(|base| text::normalize_text(&path, &base)),
+        None => None,
+      };
+      let (hunks, no_diff) = match (base_text, local_text) {
+        (Some(base), Some(local)) if base == local => continue,
+        (Some(base), Some(local)) => (
+          with_diff.then(|| {
+            unified_diff(&diff_lines(&base), &diff_lines(&local), CONTEXT_LINES)
+          }),
+          None,
+        ),
+        (None, Some(_)) => (None, Some(NoDiffReason::BaseMissing)),
+        _ => (None, Some(NoDiffReason::NotText)),
+      };
+      changes.push(LocalChange {
+        path,
+        kind: LocalChangeKind::Modified,
+        baseline: key,
+        local: Some(local_key),
+        hunks,
+        no_diff,
+      });
     }
-    let normalized_equal = base_store::load(&root, &key.sha1)
-      .ok()
-      .flatten()
-      .and_then(|base| {
-        let local_bytes = std::fs::read(root.join(path)).ok()?;
-        Some(text::normalize_text(path, &base)? == text::normalize_text(path, &local_bytes)?)
-      })
-      .unwrap_or(false);
-    if !normalized_equal {
-      changed += 1;
-    }
-  }
-  Ok(changed)
+    Ok::<_, USTBLError>(changes)
+  })
+  .await
+  .map_err(|e| USTBLError(e.to_string()))?
 }
 
 /// Hash the files both versions care about and compare the three states.
@@ -514,6 +598,54 @@ mod tests {
     )
     .unwrap();
     assert_eq!(count_local_changes(&root, &baseline).await.unwrap(), 0);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn local_changes_list_kinds_and_text_diffs() {
+    let root = instance(&[
+      ("config/a.toml", "a=1\r\nb=3\r\n"),
+      ("config/b.toml", "x=1\n"),
+      ("mods/a.jar", "changed"),
+    ]);
+    let base_text = b"a=1\nb=2\n";
+    let base_sha1 = hex::encode(Sha1::digest(base_text));
+    fs::create_dir_all(crate::instance::helpers::modpack::base_store::base_dir(&root)).unwrap();
+    fs::write(
+      crate::instance::helpers::modpack::base_store::base_path(&root, &base_sha1),
+      base_text,
+    )
+    .unwrap();
+    let installed = baseline(&[
+      ("config/a.toml", "a=1\nb=2\n"),
+      // No kept copy of the installed text.
+      ("config/b.toml", "x=0\n"),
+      ("mods/a.jar", "original"),
+      ("mods/gone.jar", "gone"),
+    ]);
+
+    let changes = local_changes(&root, &installed, true).await.unwrap();
+    let by_path: BTreeMap<_, _> = changes.iter().map(|c| (c.path.as_str(), c)).collect();
+    assert_eq!(by_path.len(), 4);
+
+    let text = by_path["config/a.toml"];
+    assert_eq!(text.kind, LocalChangeKind::Modified);
+    let hunks = text.hunks.as_ref().unwrap();
+    let rendered: Vec<String> = hunks[0]
+      .lines
+      .iter()
+      .map(|line| format!("{:?}:{}", line.kind, line.text))
+      .collect();
+    assert_eq!(rendered, ["Context:a=1", "Delete:b=2", "Add:b=3"]);
+
+    assert_eq!(by_path["config/b.toml"].no_diff, Some(NoDiffReason::BaseMissing));
+    assert_eq!(by_path["mods/a.jar"].no_diff, Some(NoDiffReason::NotText));
+    assert_eq!(by_path["mods/gone.jar"].kind, LocalChangeKind::Deleted);
+
+    // Without diffs the same files are listed, only lighter.
+    let light = local_changes(&root, &installed, false).await.unwrap();
+    assert_eq!(light.len(), 4);
+    assert!(light.iter().all(|change| change.hunks.is_none()));
     let _ = fs::remove_dir_all(root);
   }
 }
