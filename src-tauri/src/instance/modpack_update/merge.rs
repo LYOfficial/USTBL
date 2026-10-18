@@ -14,6 +14,9 @@ pub struct Hunk {
 pub struct MergeConflict {
   pub base_start: usize,
   pub base_end: usize,
+  /// `base[base_start..base_end]`, the lines both sides changed.
+  pub base: Vec<String>,
+  /// The same range as each side has it.
   pub local: Vec<String>,
   pub remote: Vec<String>,
 }
@@ -122,6 +125,11 @@ pub fn merge_text(path: &str, base: &[u8], local: &[u8], remote: &[u8]) -> Resul
   Ok(normalized.replace('\n', line_ending(local)).into_bytes())
 }
 
+/// The changes that turn `base` into `changed`, positioned on `base`.
+pub fn line_hunks(base: &[String], changed: &[String]) -> Vec<Hunk> {
+  hunks(base, changed)
+}
+
 fn hunks(base: &[String], changed: &[String]) -> Vec<Hunk> {
   let n = base.len();
   let m = changed.len();
@@ -172,6 +180,14 @@ fn overlaps_or_touches(a: &Hunk, b: &Hunk) -> bool {
     || b.base_end == a.base_start
 }
 
+/// What `base[start..end]` reads as once `edit`, which lies inside it, is applied.
+fn region(base: &[String], edit: &Hunk, start: usize, end: usize) -> Vec<String> {
+  let mut lines = base[start..edit.base_start].to_vec();
+  lines.extend(edit.replacement.iter().cloned());
+  lines.extend_from_slice(&base[edit.base_end..end]);
+  lines
+}
+
 fn apply_hunks(base: &[String], edits: &[Hunk]) -> Vec<String> {
   let mut output = Vec::new();
   let mut cursor = 0;
@@ -196,11 +212,14 @@ pub fn three_way(base: &[String], local: &[String], remote: &[String]) -> MergeR
         if local_edit == remote_edit {
           accepted.push(local_edit.clone());
         } else {
+          let start = local_edit.base_start.min(remote_edit.base_start);
+          let end = local_edit.base_end.max(remote_edit.base_end);
           conflicts.push(MergeConflict {
-            base_start: local_edit.base_start.min(remote_edit.base_start),
-            base_end: local_edit.base_end.max(remote_edit.base_end),
-            local: apply_hunks(base, std::slice::from_ref(local_edit)),
-            remote: apply_hunks(base, std::slice::from_ref(remote_edit)),
+            base_start: start,
+            base_end: end,
+            base: base[start..end].to_vec(),
+            local: region(base, local_edit, start, end),
+            remote: region(base, remote_edit, start, end),
           });
         }
       }
@@ -275,6 +294,17 @@ mod tests {
     let base = lines("a\nb\nc\nd");
     assert_eq!(three_way(&base, &lines("a\nB\nc\nd"), &lines("a\nX\nc\nd")).conflicts.len(), 1);
     assert_eq!(three_way(&base, &lines("a\nB\nc\nd"), &lines("a\nb\nC\nd")).conflicts.len(), 1);
+  }
+
+  #[test]
+  fn a_conflict_carries_only_its_own_range() {
+    let base = lines("a\nb\nc\nd");
+    let result = three_way(&base, &lines("a\nB\nc\nd"), &lines("a\nb\nC\nd"));
+    let conflict = &result.conflicts[0];
+    assert_eq!((conflict.base_start, conflict.base_end), (1, 3));
+    assert_eq!(conflict.base, lines("b\nc"));
+    assert_eq!(conflict.local, lines("B\nc"));
+    assert_eq!(conflict.remote, lines("b\nC"));
   }
 
   #[test]
