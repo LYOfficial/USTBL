@@ -3176,7 +3176,11 @@
       "keepLocal": "Keep local",
       "takeRemote": "Use new version",
       "revealFile": "Show in folder",
-      "hunk": "Conflict {{number}} (baseline lines {{from}}-{{to}})"
+      "hunk": "Conflict {{number}} (baseline lines {{from}}-{{to}})",
+      "allKeepLocal": "Keep all local",
+      "allTakeRemote": "Use new version for all",
+      "localSide": "Local",
+      "remoteSide": "New version"
     },
     "button": {
       "preview": "Preview update",
@@ -3202,6 +3206,34 @@
       "confirm": "Undoing overwrites changes you made to these files since the update, and works only once."
     }
   },
+  "ModpackLocalChangesModal": {
+    "header": {
+      "title": "Local changes: {{name}}"
+    },
+    "loading": "Comparing local files…",
+    "empty": "All files managed by the modpack match the install",
+    "summary": "{{count}} files managed by the modpack differ from the install. Contents are compared after normalization; files that only differ in line endings or timestamps are not counted.",
+    "kind": {
+      "modified": "Modified",
+      "deleted": "Deleted",
+      "disabled": "Disabled"
+    },
+    "hint": {
+      "deleted": "This file was deleted locally",
+      "disabled": "This file was disabled locally (.disabled)"
+    },
+    "noDiff": {
+      "notText": "Not a text file or too large; contents are not compared",
+      "baseMissing": "The installed content was not kept, so no diff can be shown"
+    },
+    "button": {
+      "publish": "Publish"
+    },
+    "publishHint": {
+      "noPermission": "Publishing requires campus modpack management permission",
+      "updateFirst": "A newer version is online. Update before publishing"
+    }
+  },
   "InstanceSyncPage": {
     "title": "Instance Sync & Updates",
     "description": "Instances that follow a modpack, plus campus modpacks and recommendations",
@@ -3222,7 +3254,6 @@
       "badge": {
         "upToDate": "Up to date",
         "available": "Update available",
-        "localChanges": "Local changes",
         "paused": "Paused",
         "needsRepair": "Needs repair",
         "waitingLoader": "Waiting for loader",
@@ -3231,11 +3262,11 @@
       },
       "action": {
         "update": "Update",
-        "publish": "Publish",
-        "details": "Details"
+        "details": "Details",
+        "viewChanges": "View changes",
+        "viewChangesCount": "View changes ({{count}})"
       },
       "updateTo": "Update to {{latest}}",
-      "changes": "{{count}} file(s) changed locally",
       "platform": {
         "campus": "Campus"
       },

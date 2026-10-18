@@ -3176,7 +3176,11 @@
       "keepLocal": "保留本機",
       "takeRemote": "使用新版本",
       "revealFile": "在資料夾中顯示",
-      "hunk": "第 {{number}} 處衝突（基線第 {{from}}-{{to}} 行）"
+      "hunk": "第 {{number}} 處衝突（基線第 {{from}}-{{to}} 行）",
+      "allKeepLocal": "全部保留本機",
+      "allTakeRemote": "全部使用新版本",
+      "localSide": "本機",
+      "remoteSide": "新版本"
     },
     "button": {
       "preview": "預覽更新",
@@ -3202,6 +3206,34 @@
       "confirm": "撤銷會覆蓋更新之後你對這些檔案做的修改，且只能撤銷一次。"
     }
   },
+  "ModpackLocalChangesModal": {
+    "header": {
+      "title": "本機改動：{{name}}"
+    },
+    "loading": "正在比對本機檔案…",
+    "empty": "由整合包管理的檔案都與安裝時一致",
+    "summary": "{{count}} 個由整合包管理的檔案與安裝時不同。只比較正規化後的內容，僅換行或時間戳不同的檔案不算改動。",
+    "kind": {
+      "modified": "修改",
+      "deleted": "刪除",
+      "disabled": "停用"
+    },
+    "hint": {
+      "deleted": "本機已刪除此檔案",
+      "disabled": "本機已將此檔案停用（.disabled）"
+    },
+    "noDiff": {
+      "notText": "非文字檔案或檔案過大，不顯示內容差異",
+      "baseMissing": "沒有保存安裝時的內容，無法顯示差異"
+    },
+    "button": {
+      "publish": "發布"
+    },
+    "publishHint": {
+      "noPermission": "需要校內整合包管理權限才能發布",
+      "updateFirst": "線上已有新版本，請先更新再發布"
+    }
+  },
   "InstanceSyncPage": {
     "title": "實例同步與更新",
     "description": "跟隨整合包的實例狀態，以及校內整合包與推薦",
@@ -3222,7 +3254,6 @@
       "badge": {
         "upToDate": "最新",
         "available": "有更新",
-        "localChanges": "有本地改動",
         "paused": "已暫停",
         "needsRepair": "需修復",
         "waitingLoader": "等待載入器",
@@ -3231,11 +3262,11 @@
       },
       "action": {
         "update": "更新",
-        "publish": "發布",
-        "details": "詳情"
+        "details": "詳情",
+        "viewChanges": "查看改動",
+        "viewChangesCount": "查看改動（{{count}}）"
       },
       "updateTo": "可更新到 {{latest}}",
-      "changes": "{{count}} 個檔案有本地改動",
       "platform": {
         "campus": "校內"
       },

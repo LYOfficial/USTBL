@@ -57,8 +57,43 @@ export interface ModpackConflict {
 export interface ModpackMergeConflict {
   baseStart: number;
   baseEnd: number;
+  /** `base[baseStart..baseEnd]`, the lines both sides changed. */
+  base: string[];
+  /** The same range as each side has it. */
   local: string[];
   remote: string[];
+}
+
+export type ModpackDiffLineKind = "context" | "add" | "delete";
+
+export interface ModpackDiffLine {
+  kind: ModpackDiffLineKind;
+  /** 1-based; absent on added lines. */
+  oldNumber?: number | null;
+  /** 1-based; absent on deleted lines. */
+  newNumber?: number | null;
+  text: string;
+}
+
+/** One `@@ -oldStart,oldLines +newStart,newLines @@` block. */
+export interface ModpackDiffHunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: ModpackDiffLine[];
+}
+
+export type ModpackLocalChangeKind = "modified" | "deleted" | "disabled";
+
+export interface ModpackLocalChange {
+  path: string;
+  kind: ModpackLocalChangeKind;
+  baseline: ModpackFileKey;
+  local?: ModpackFileKey | null;
+  /** Normalized line diff, installed → local; only for text files. */
+  hunks?: ModpackDiffHunk[] | null;
+  noDiff?: "notText" | "baseMissing" | null;
 }
 
 export type ModpackConflictChoice = "keepLocal" | "takeRemote";

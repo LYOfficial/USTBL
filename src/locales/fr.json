@@ -3176,7 +3176,11 @@
       "keepLocal": "Garder le local",
       "takeRemote": "Utiliser la nouvelle version",
       "revealFile": "Afficher dans le dossier",
-      "hunk": "Conflit {{number}} (lignes de base {{from}}-{{to}})"
+      "hunk": "Conflit {{number}} (lignes de base {{from}}-{{to}})",
+      "allKeepLocal": "Tout garder en local",
+      "allTakeRemote": "Tout prendre de la nouvelle version",
+      "localSide": "Local",
+      "remoteSide": "Nouvelle version"
     },
     "button": {
       "preview": "Aperçu de la mise à jour",
@@ -3202,6 +3206,34 @@
       "confirm": "L'annulation écrase les modifications faites sur ces fichiers depuis la mise à jour, et ne peut se faire qu'une fois."
     }
   },
+  "ModpackLocalChangesModal": {
+    "header": {
+      "title": "Modifications locales : {{name}}"
+    },
+    "loading": "Comparaison des fichiers locaux…",
+    "empty": "Tous les fichiers gérés par le modpack correspondent à l'installation",
+    "summary": "{{count}} fichiers gérés par le modpack diffèrent de l'installation. Le contenu est comparé après normalisation ; les fichiers qui ne diffèrent que par les fins de ligne ou les horodatages ne sont pas comptés.",
+    "kind": {
+      "modified": "Modifié",
+      "deleted": "Supprimé",
+      "disabled": "Désactivé"
+    },
+    "hint": {
+      "deleted": "Ce fichier a été supprimé localement",
+      "disabled": "Ce fichier a été désactivé localement (.disabled)"
+    },
+    "noDiff": {
+      "notText": "Fichier non texte ou trop volumineux ; contenu non comparé",
+      "baseMissing": "Le contenu installé n'a pas été conservé, aucune différence ne peut être affichée"
+    },
+    "button": {
+      "publish": "Publier"
+    },
+    "publishHint": {
+      "noPermission": "La publication nécessite la permission de gestion des modpacks du campus",
+      "updateFirst": "Une version plus récente est en ligne. Mettez à jour avant de publier"
+    }
+  },
   "InstanceSyncPage": {
     "title": "Synchronisation et mises à jour",
     "description": "Instances qui suivent un pack, packs du campus et recommandations",
@@ -3222,7 +3254,6 @@
       "badge": {
         "upToDate": "À jour",
         "available": "Mise à jour disponible",
-        "localChanges": "Modifications locales",
         "paused": "En pause",
         "needsRepair": "À réparer",
         "waitingLoader": "En attente du chargeur",
@@ -3231,11 +3262,11 @@
       },
       "action": {
         "update": "Mettre à jour",
-        "publish": "Publier",
-        "details": "Détails"
+        "details": "Détails",
+        "viewChanges": "Voir les modifications",
+        "viewChangesCount": "Voir les modifications ({{count}})"
       },
       "updateTo": "Mise à jour vers {{latest}}",
-      "changes": "{{count}} fichier(s) modifié(s) localement",
       "platform": {
         "campus": "Campus"
       },

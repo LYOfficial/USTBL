@@ -41,9 +41,13 @@ export const findInstancesOfLine = (
     return true;
   });
 
-/** What a ledger row shows: an engine status, or not checked yet. */
+/**
+ * What a ledger row's badge shows: where the instance stands against its
+ * line, or not checked yet. Local edits are not a line state; the row shows
+ * them on their own (see `ledgerLocalChanges`).
+ */
 export type LedgerBadge =
-  | Exclude<ModpackCheckStatus, "notFollowing">
+  | Exclude<ModpackCheckStatus, "notFollowing" | "localChanges">
   | "notChecked";
 
 export const ledgerBadge = (
@@ -51,8 +55,14 @@ export const ledgerBadge = (
   check: ModpackUpdateCheck | undefined
 ): LedgerBadge => {
   if (!check || check.status === "notFollowing") return "notChecked";
+  if (check.status === "localChanges") return "upToDate";
   return check.status;
 };
+
+/** Managed files changed here, once the local scan has run; else 0. */
+export const ledgerLocalChanges = (
+  check: ModpackUpdateCheck | undefined
+): number => check?.localChanges ?? 0;
 
 /**
  * The ledger of modpack instances: only those with an origin. An instance

@@ -16,20 +16,18 @@ import { useSharedModals } from "@/contexts/shared-modal";
 import { ModLoaderType } from "@/enums/instance";
 import { CampusModpackProject } from "@/models/campus-modpack";
 import { InstanceSummary } from "@/models/instance/misc";
-import { VustbAccount, isVustbManager } from "@/models/vustb";
-import { AccountService } from "@/services/account";
 import {
   LedgerBadge,
   campusProjectRefs,
   ledgerBadge,
   ledgerInstances,
+  ledgerLocalChanges,
   loaderSlug,
 } from "@/utils/modpack-ledger";
 
 const BADGE_COLORS: Record<LedgerBadge, string> = {
   upToDate: "green",
   available: "blue",
-  localChanges: "orange",
   paused: "gray",
   needsRepair: "red",
   waitingLoader: "yellow",
@@ -67,15 +65,7 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
     `${primaryColor}.800`
   );
 
-  const [vustbAccount, setVustbAccount] = useState<VustbAccount | null>(null);
   const [checking, setChecking] = useState(false);
-
-  useEffect(() => {
-    AccountService.retrieveVustbAccount().then((response) => {
-      if (response.status === "success") setVustbAccount(response.data);
-    });
-  }, []);
-  const isManager = isVustbManager(vustbAccount);
 
   const rows = useMemo(() => ledgerInstances(instances), [instances]);
   const followedKey = rows.map((instance) => instance.id).join("\n");
@@ -162,31 +152,28 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
               instanceId: instance.id,
               instanceName: instance.name,
             });
-          const openPublish = () =>
-            openSharedModal("publish-modpack", {
+          const openChanges = () =>
+            openSharedModal("modpack-local-changes", {
               instanceId: instance.id,
               instanceName: instance.name,
             });
+          const localChanges = ledgerLocalChanges(check);
 
           const detail =
             badge === "available" && check?.latestLabel
               ? t("InstanceSyncPage.ledger.updateTo", {
                   latest: check.latestLabel,
                 })
-              : badge === "localChanges"
-                ? t("InstanceSyncPage.ledger.changes", {
-                    count: check?.localChanges ?? 0,
+              : (badge === "needsRepair" || badge === "unknown") &&
+                  check?.reason
+                ? t(`UpdateModpackModal.reason.${check.reason}`, {
+                    defaultValue: check.reason,
                   })
-                : (badge === "needsRepair" || badge === "unknown") &&
-                    check?.reason
-                  ? t(`UpdateModpackModal.reason.${check.reason}`, {
-                      defaultValue: check.reason,
-                    })
-                  : null;
+                : null;
 
-          const canPublish = badge === "localChanges" && isManager;
           // The update dialog is also where a paused, broken or failed line is
           // resumed, repaired or rolled back, so every followed row can reach it.
+          // Local edits have their own button: grey until the scan finds some.
           const actions = (
             <HStack spacing={1}>
               {badge === "available" && (
@@ -198,11 +185,18 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
                   {t("InstanceSyncPage.ledger.action.update")}
                 </Button>
               )}
-              {canPublish && (
-                <Button size="xs" variant="outline" onClick={openPublish}>
-                  {t("InstanceSyncPage.ledger.action.publish")}
-                </Button>
-              )}
+              <Button
+                size="xs"
+                variant="outline"
+                isDisabled={localChanges === 0}
+                onClick={openChanges}
+              >
+                {localChanges > 0
+                  ? t("InstanceSyncPage.ledger.action.viewChangesCount", {
+                      count: localChanges,
+                    })
+                  : t("InstanceSyncPage.ledger.action.viewChanges")}
+              </Button>
               {badge !== "available" && (
                 <CommonIconButton
                   icon="update"

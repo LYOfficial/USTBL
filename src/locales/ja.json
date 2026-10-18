@@ -3176,7 +3176,11 @@
       "keepLocal": "ローカルを保持",
       "takeRemote": "新バージョンを使用",
       "revealFile": "フォルダーに表示",
-      "hunk": "競合 {{number}}（ベースライン {{from}}-{{to}} 行）"
+      "hunk": "競合 {{number}}（ベースライン {{from}}-{{to}} 行）",
+      "allKeepLocal": "すべてローカルを保持",
+      "allTakeRemote": "すべて新しいバージョンを使用",
+      "localSide": "ローカル",
+      "remoteSide": "新しいバージョン"
     },
     "button": {
       "preview": "更新をプレビュー",
@@ -3202,6 +3206,34 @@
       "confirm": "取り消すと、更新後にこれらのファイルへ加えた変更は上書きされます。1 回だけ実行できます。"
     }
   },
+  "ModpackLocalChangesModal": {
+    "header": {
+      "title": "ローカルの変更：{{name}}"
+    },
+    "loading": "ローカルファイルを比較しています…",
+    "empty": "モッドパックが管理するファイルはすべてインストール時と同じです",
+    "summary": "モッドパックが管理する {{count}} 個のファイルがインストール時と異なります。正規化した内容で比較し、改行やタイムスタンプだけが異なるファイルは数えません。",
+    "kind": {
+      "modified": "変更",
+      "deleted": "削除",
+      "disabled": "無効"
+    },
+    "hint": {
+      "deleted": "このファイルはローカルで削除されました",
+      "disabled": "このファイルはローカルで無効化されています（.disabled）"
+    },
+    "noDiff": {
+      "notText": "テキストファイルではないか大きすぎるため、内容の差分は表示しません",
+      "baseMissing": "インストール時の内容が保存されていないため、差分を表示できません"
+    },
+    "button": {
+      "publish": "公開"
+    },
+    "publishHint": {
+      "noPermission": "公開には学内モッドパックの管理権限が必要です",
+      "updateFirst": "新しいバージョンが公開されています。先に更新してください"
+    }
+  },
   "InstanceSyncPage": {
     "title": "インスタンスの同期と更新",
     "description": "モッドパックを追従するインスタンスの状態と、校内モッドパック・おすすめ",
@@ -3222,7 +3254,6 @@
       "badge": {
         "upToDate": "最新",
         "available": "更新あり",
-        "localChanges": "ローカル変更あり",
         "paused": "一時停止中",
         "needsRepair": "要修復",
         "waitingLoader": "ローダー待ち",
@@ -3231,11 +3262,11 @@
       },
       "action": {
         "update": "更新",
-        "publish": "公開",
-        "details": "詳細"
+        "details": "詳細",
+        "viewChanges": "変更を表示",
+        "viewChangesCount": "変更を表示（{{count}}）"
       },
       "updateTo": "{{latest}} に更新できます",
-      "changes": "{{count}} 件のファイルをローカルで変更",
       "platform": {
         "campus": "校内"
       },

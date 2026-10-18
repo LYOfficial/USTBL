@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
   ModpackConflictChoice,
+  ModpackLocalChange,
   ModpackUpdateCheck,
   ModpackUpdateOutcome,
   ModpackUpdatePlan,
@@ -58,6 +59,17 @@ export class ModpackUpdateService {
       planHash,
       choices,
     });
+  }
+
+  /**
+   * The managed files changed since the modpack installed them, with line
+   * diffs for text files. Local only; the platform is not asked.
+   */
+  @responseHandler("instance")
+  static async listModpackLocalChanges(
+    instanceId: string
+  ): Promise<InvokeResponse<ModpackLocalChange[]>> {
+    return await invoke("list_modpack_local_changes", { instanceId });
   }
 
   @responseHandler("instance")

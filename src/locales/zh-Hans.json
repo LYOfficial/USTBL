@@ -3176,7 +3176,11 @@
       "keepLocal": "保留本地",
       "takeRemote": "使用新版本",
       "revealFile": "在文件夹中显示",
-      "hunk": "第 {{number}} 处冲突（基线第 {{from}}-{{to}} 行）"
+      "hunk": "第 {{number}} 处冲突（基线第 {{from}}-{{to}} 行）",
+      "allKeepLocal": "全部保留本地",
+      "allTakeRemote": "全部使用新版本",
+      "localSide": "本地",
+      "remoteSide": "新版本"
     },
     "button": {
       "preview": "预览更新",
@@ -3202,6 +3206,34 @@
       "confirm": "撤销会覆盖更新之后你对这些文件做的修改，且只能撤销一次。"
     }
   },
+  "ModpackLocalChangesModal": {
+    "header": {
+      "title": "本地改动：{{name}}"
+    },
+    "loading": "正在对比本地文件…",
+    "empty": "由整合包管理的文件都与安装时一致",
+    "summary": "{{count}} 个由整合包管理的文件与安装时不同。只比较规范化后的内容，仅换行或时间戳不同的文件不算改动。",
+    "kind": {
+      "modified": "修改",
+      "deleted": "删除",
+      "disabled": "禁用"
+    },
+    "hint": {
+      "deleted": "本地已删除此文件",
+      "disabled": "本地已将此文件禁用（.disabled）"
+    },
+    "noDiff": {
+      "notText": "非文本文件或文件过大，不显示内容差异",
+      "baseMissing": "没有保存安装时的内容，无法显示差异"
+    },
+    "button": {
+      "publish": "发布"
+    },
+    "publishHint": {
+      "noPermission": "需要校内整合包管理权限才能发布",
+      "updateFirst": "线上已有新版本，请先更新再发布"
+    }
+  },
   "InstanceSyncPage": {
     "title": "实例同步与更新",
     "description": "跟随整合包的实例状态，以及校内整合包与推荐",
@@ -3222,7 +3254,6 @@
       "badge": {
         "upToDate": "最新",
         "available": "有更新",
-        "localChanges": "有本地改动",
         "paused": "已暂停",
         "needsRepair": "需修复",
         "waitingLoader": "等待加载器",
@@ -3231,11 +3262,11 @@
       },
       "action": {
         "update": "更新",
-        "publish": "发布",
-        "details": "详情"
+        "details": "详情",
+        "viewChanges": "查看改动",
+        "viewChangesCount": "查看改动（{{count}}）"
       },
       "updateTo": "可更新到 {{latest}}",
-      "changes": "{{count}} 个文件有本地改动",
       "platform": {
         "campus": "校内"
       },

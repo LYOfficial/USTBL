@@ -2,7 +2,9 @@ import {
   Alert,
   AlertIcon,
   Badge,
+  Box,
   Button,
+  ButtonGroup,
   HStack,
   Modal,
   ModalBody,
@@ -13,13 +15,13 @@ import {
   ModalOverlay,
   ModalProps,
   Progress,
-  Select,
   Text,
   VStack,
 } from "@chakra-ui/react";
 import { useRouter } from "next/router";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { DiffFile, DiffHunks, regionHunk } from "@/components/common/diff-view";
 import { useLauncherConfig } from "@/contexts/config";
 import { useGlobalData } from "@/contexts/global-data";
 import { useToast } from "@/contexts/toast";
@@ -186,6 +188,41 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
     [instanceId, toast]
   );
 
+  /** Answer every conflict, block by block where a file has blocks. */
+  const chooseAll = useCallback(
+    (choice: ModpackConflictChoice) => {
+      if (!plan) return;
+      const next: Record<string, ModpackConflictChoice> = {};
+      for (const conflict of plan.conflicts) {
+        if (conflict.hunks.length === 0) {
+          next[conflict.path] = choice;
+        } else {
+          conflict.hunks.forEach((_, index) => {
+            next[`${conflict.path}#${index}`] = choice;
+          });
+        }
+      }
+      setChoices(next);
+    },
+    [plan]
+  );
+
+  const renderChoice = (key: string, choice: ModpackConflictChoice) => (
+    <ButtonGroup size="xs" isAttached variant="outline" flexShrink={0}>
+      {(["keepLocal", "takeRemote"] as const).map((option) => (
+        <Button
+          key={option}
+          colorScheme={choice === option ? primaryColor : undefined}
+          variant={choice === option ? "solid" : "outline"}
+          aria-pressed={choice === option}
+          onClick={() => setChoices((prev) => ({ ...prev, [key]: option }))}
+        >
+          {t(`UpdateModpackModal.choice.${option}`)}
+        </Button>
+      ))}
+    </ButtonGroup>
+  );
+
   const handleResume = useCallback(async () => {
     const response = await ModpackUpdateService.setModpackFollow(
       instanceId,
@@ -322,101 +359,135 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
           </Text>
         )}
         {plan.conflicts.length > 0 && (
-          <VStack align="stretch" spacing={2}>
-            <Text fontWeight="medium">
-              {t("UpdateModpackModal.plan.conflicts", {
-                count: plan.conflicts.length,
-              })}
-            </Text>
-            {plan.conflicts.map((conflict) => (
-              <HStack key={conflict.path} justify="space-between" spacing={3}>
-                <VStack align="start" spacing={0} minW={0}>
-                  <Text fontSize="xs-sm" noOfLines={1} wordBreak="break-all">
-                    {conflict.path}
-                  </Text>
-                  <Text fontSize="xs" className="secondary-text">
-                    {t(`UpdateModpackModal.conflictKind.${conflict.kind}`)}
-                  </Text>
-                </VStack>
-                <Select
-                  size="sm"
-                  w="40%"
-                  value={choices[conflict.path] ?? "keepLocal"}
-                  onChange={(event) =>
-                    setChoices((prev) => ({
-                      ...prev,
-                      [conflict.path]: event.target
-                        .value as ModpackConflictChoice,
-                    }))
-                  }
-                >
-                  <option value="keepLocal">
-                    {t("UpdateModpackModal.choice.keepLocal")}
-                  </option>
-                  <option value="takeRemote">
-                    {t("UpdateModpackModal.choice.takeRemote")}
-                  </option>
-                </Select>
+          <VStack align="stretch" spacing={3}>
+            <HStack justify="space-between" spacing={2}>
+              <Text fontWeight="medium">
+                {t("UpdateModpackModal.plan.conflicts", {
+                  count: plan.conflicts.length,
+                })}
+              </Text>
+              <HStack spacing={1} flexShrink={0}>
                 <Button
                   size="xs"
                   variant="ghost"
-                  onClick={() => revealConflictFile(conflict.path)}
+                  onClick={() => chooseAll("keepLocal")}
                 >
-                  {t("UpdateModpackModal.choice.revealFile")}
+                  {t("UpdateModpackModal.choice.allKeepLocal")}
                 </Button>
-                {conflict.hunks.map((hunk, index) => {
-                  const key = `${conflict.path}#${index}`;
-                  const choice = choices[key] ?? "keepLocal";
-                  return (
-                    <VStack key={key} align="stretch" spacing={1} w="100%">
-                      <Text fontSize="xs" className="secondary-text">
-                        {t("UpdateModpackModal.choice.hunk", {
-                          number: index + 1,
-                          from: hunk.baseStart + 1,
-                          to: hunk.baseEnd,
-                        })}
-                      </Text>
-                      <HStack align="stretch" spacing={1}>
-                        <Button
-                          size="xs"
-                          variant={choice === "keepLocal" ? "solid" : "outline"}
-                          onClick={() =>
-                            setChoices((prev) => ({
-                              ...prev,
-                              [key]: "keepLocal",
-                            }))
-                          }
-                        >
-                          {t("UpdateModpackModal.choice.keepLocal")}
-                        </Button>
-                        <Button
-                          size="xs"
-                          variant={
-                            choice === "takeRemote" ? "solid" : "outline"
-                          }
-                          onClick={() =>
-                            setChoices((prev) => ({
-                              ...prev,
-                              [key]: "takeRemote",
-                            }))
-                          }
-                        >
-                          {t("UpdateModpackModal.choice.takeRemote")}
-                        </Button>
-                      </HStack>
-                      <Text
-                        fontSize="xs"
-                        whiteSpace="pre-wrap"
-                        bg="blackAlpha.50"
-                        p={1}
-                      >
-                        {`${hunk.local.join("\n")}\n→\n${hunk.remote.join("\n")}`}
-                      </Text>
-                    </VStack>
-                  );
-                })}
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  onClick={() => chooseAll("takeRemote")}
+                >
+                  {t("UpdateModpackModal.choice.allTakeRemote")}
+                </Button>
               </HStack>
-            ))}
+            </HStack>
+            {plan.conflicts.map((conflict) => {
+              // A text conflict is answered block by block; anything else as
+              // a whole file. Never both, so each answer has one control.
+              const byHunk = conflict.hunks.length > 0;
+              return (
+                <DiffFile
+                  key={conflict.path}
+                  path={conflict.path}
+                  tags={
+                    <Text
+                      fontSize="xs"
+                      className="secondary-text"
+                      noOfLines={1}
+                    >
+                      {t(`UpdateModpackModal.conflictKind.${conflict.kind}`)}
+                    </Text>
+                  }
+                  actions={
+                    <>
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        onClick={() => revealConflictFile(conflict.path)}
+                      >
+                        {t("UpdateModpackModal.choice.revealFile")}
+                      </Button>
+                      {!byHunk &&
+                        renderChoice(
+                          conflict.path,
+                          choices[conflict.path] ?? "keepLocal"
+                        )}
+                    </>
+                  }
+                >
+                  {byHunk && (
+                    <VStack align="stretch" spacing={0}>
+                      {conflict.hunks.map((hunk, index) => {
+                        const key = `${conflict.path}#${index}`;
+                        const choice = choices[key] ?? "keepLocal";
+                        return (
+                          <VStack
+                            key={key}
+                            align="stretch"
+                            spacing={0}
+                            borderTopWidth={index > 0 ? "1px" : 0}
+                          >
+                            <HStack
+                              justify="space-between"
+                              px={3}
+                              py={1.5}
+                              spacing={2}
+                            >
+                              <Text fontSize="xs" className="secondary-text">
+                                {t("UpdateModpackModal.choice.hunk", {
+                                  number: index + 1,
+                                  from: hunk.baseStart + 1,
+                                  to: Math.max(
+                                    hunk.baseEnd,
+                                    hunk.baseStart + 1
+                                  ),
+                                })}
+                              </Text>
+                              {renderChoice(key, choice)}
+                            </HStack>
+                            {(["keepLocal", "takeRemote"] as const).map(
+                              (side) => (
+                                <Box
+                                  key={side}
+                                  opacity={choice === side ? 1 : 0.55}
+                                >
+                                  <Text
+                                    fontSize="xs"
+                                    fontWeight="medium"
+                                    px={3}
+                                    pt={1}
+                                  >
+                                    {t(
+                                      side === "keepLocal"
+                                        ? "UpdateModpackModal.choice.localSide"
+                                        : "UpdateModpackModal.choice.remoteSide"
+                                    )}
+                                  </Text>
+                                  <DiffHunks
+                                    hideHunkHeaders
+                                    hunks={[
+                                      regionHunk(
+                                        hunk.baseStart + 1,
+                                        hunk.base,
+                                        side === "keepLocal"
+                                          ? hunk.local
+                                          : hunk.remote
+                                      ),
+                                    ]}
+                                  />
+                                </Box>
+                              )
+                            )}
+                          </VStack>
+                        );
+                      })}
+                    </VStack>
+                  )}
+                </DiffFile>
+              );
+            })}
           </VStack>
         )}
       </VStack>
@@ -454,7 +525,12 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
   return (
     <Modal
       scrollBehavior="inside"
-      size={{ base: "lg", lg: "xl" }}
+      // Diffs need the width; the rest of the flow stays compact.
+      size={
+        phase === "planned" && plan && plan.conflicts.length > 0
+          ? { base: "2xl", lg: "4xl" }
+          : { base: "lg", lg: "xl" }
+      }
       autoFocus={false}
       closeOnOverlayClick={!applying}
       closeOnEsc={!applying}
