@@ -23,6 +23,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_opener::reveal_item_in_dir;
 
 const PROGRESS_EVENT: &str = "modpack-update:progress";
 
@@ -333,6 +334,18 @@ pub async fn set_modpack_follow(
     }
   })
   .await
+}
+
+/// Reveal a managed file in the system file manager for external editing.
+#[tauri::command]
+pub fn reveal_modpack_conflict_file(
+  app: AppHandle,
+  instance_id: String,
+  relative_path: String,
+) -> USTBLResult<()> {
+  let instance = current_instance(&app, &instance_id)?;
+  let relative = super::remote::safe_relative_path(&relative_path)?;
+  reveal_item_in_dir(instance.version_path.join(relative)).map_err(crate::error::USTBLError::from)
 }
 
 /// Fetch the new version and compare it with the instance. Changes nothing
