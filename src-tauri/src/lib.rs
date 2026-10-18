@@ -360,6 +360,8 @@ pub async fn run() -> i32 {
       let app_handle = app.handle().clone();
       tauri::async_runtime::spawn(async move {
         refresh_and_update_instances(&app_handle, true).await;
+        // Instance adoption needs the loaded instance list.
+        instance::modpack_publish::job::resume_monitors(&app_handle);
       });
 
       // Refresh all javas

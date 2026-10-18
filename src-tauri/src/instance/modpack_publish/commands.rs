@@ -626,13 +626,14 @@ pub struct UnfinishedPublish {
   pub created_at: i64,
 }
 
-/// Publishes that were interrupted or failed, for the user to continue or give up.
+/// Local records for uploads and platform-side publishes that are still being
+/// monitored or need user attention.
 #[tauri::command]
 pub fn list_campus_modpack_publish_jobs() -> Vec<UnfinishedPublish> {
   JobRecord::list(&jobs_dir())
     .into_iter()
     .map(|record| UnfinishedPublish {
-      running: is_running(&record.id),
+      running: is_running(&record.id) || super::job::is_monitoring(&record.id),
       job_id: record.id,
       instance_id: record.instance_id,
       instance_name: record.instance_name,
@@ -680,6 +681,24 @@ pub async fn discard_campus_modpack_publish(app: AppHandle, job_id: String) -> U
     None,
   )
   .await?;
+  if response.status() == reqwest::StatusCode::CONFLICT {
+    let state = authed_json(
+      &app,
+      reqwest::Method::GET,
+      &format!("/versions/{}/status", record.version_id),
+      None,
+    )
+    .await?;
+    if state.status().is_success() && state.json::<Value>().await?["status"] == "published" {
+      PublishJob {
+        app: app.clone(),
+        uploader: build_ustbl_upload_client(&app, true),
+        record,
+      }
+      .monitor_in_background();
+      return Ok(());
+    }
+  }
   // Already gone counts as dropped; a version being processed cannot be.
   if !response.status().is_success() && response.status() != reqwest::StatusCode::NOT_FOUND {
     return Err(failure(response).await);

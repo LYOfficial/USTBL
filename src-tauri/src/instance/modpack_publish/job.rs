@@ -55,9 +55,48 @@ type Handle = Arc<RwLock<PTaskHandle>>;
 
 /// Jobs that run right now; the rest of the records are waiting for the user.
 static ACTIVE: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static MONITORING: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 pub(super) fn is_running(job_id: &str) -> bool {
   ACTIVE.lock().unwrap().iter().any(|id| id == job_id)
+}
+
+pub(crate) fn resume_monitors(app: &AppHandle) {
+  for record in JobRecord::list(&jobs_dir()) {
+    if record.phase == Phase::Processing {
+      PublishJob {
+        app: app.clone(),
+        uploader: crate::utils::web::build_ustbl_upload_client(app, true),
+        record,
+      }
+      .monitor_in_background();
+    }
+  }
+}
+
+fn monitor_is_running(job_id: &str) -> bool {
+  MONITORING.lock().unwrap().iter().any(|id| id == job_id)
+}
+
+pub(super) fn is_monitoring(job_id: &str) -> bool {
+  monitor_is_running(job_id)
+}
+
+fn take_monitor(job_id: &str) -> Option<MonitorToken> {
+  let mut monitoring = MONITORING.lock().unwrap();
+  if monitoring.iter().any(|id| id == job_id) {
+    return None;
+  }
+  monitoring.push(job_id.to_string());
+  Some(MonitorToken(job_id.to_string()))
+}
+
+struct MonitorToken(String);
+
+impl Drop for MonitorToken {
+  fn drop(&mut self) {
+    MONITORING.lock().unwrap().retain(|id| id != &self.0);
+  }
 }
 
 struct ActiveToken(String);
@@ -234,7 +273,7 @@ impl PublishJob {
       &app,
       monitor.get_new_id(),
       &group,
-      format!("发布版本 {}", self.record.version_number),
+      format!("提交版本 {}", self.record.version_number),
       1,
     );
     let tasks = Tasks {
@@ -265,7 +304,7 @@ impl PublishJob {
     guard.armed = false;
 
     match &result {
-      Ok(_) => JobRecord::remove(&dir, &self.record.id),
+      Ok(_) => {}
       Err(error) => {
         tasks.abandon();
         // Kept, so the user can send it again or give it up.
@@ -277,21 +316,19 @@ impl PublishJob {
     app
       .state::<Pin<Box<TaskMonitor>>>()
       .finish_job_group(&tasks.group, finish_id, result.is_ok());
-    let (outcome, error) = match result {
-      Ok(outcome) => (Some(outcome), None),
-      Err(error) => (None, Some(error.0)),
-    };
-    let _ = app.emit_to(
-      "main",
-      FINISHED_EVENT,
-      PublishFinished {
-        instance_id: self.record.instance_id.clone(),
-        group: tasks.group.clone(),
-        job_id: self.record.id.clone(),
-        outcome,
-        error,
-      },
-    );
+    if let Err(error) = result {
+      let _ = app.emit_to(
+        "main",
+        FINISHED_EVENT,
+        PublishFinished {
+          instance_id: self.record.instance_id.clone(),
+          group: tasks.group.clone(),
+          job_id: self.record.id.clone(),
+          outcome: None,
+          error: Some(error.0),
+        },
+      );
+    }
   }
 
   async fn status(&self) -> USTBLResult<Value> {
@@ -353,106 +390,86 @@ impl PublishJob {
     }
   }
 
-  async fn execute(&mut self, tasks: &Tasks) -> USTBLResult<PublishOutcome> {
-    let mut state = self.status().await?;
-    let mut current = state["status"].as_str().unwrap_or_default().to_string();
+  async fn execute(&mut self, tasks: &Tasks) -> USTBLResult<()> {
+    let started = Instant::now();
+    log::info!(
+      "Modpack publish {} started for version {}",
+      self.record.id,
+      self.record.version_id
+    );
+    let state = self.status().await?;
+    let current = state["status"].as_str().unwrap_or_default().to_string();
+    log::info!(
+      "Modpack publish {} initial status: {} after {:.2}s",
+      self.record.id,
+      current,
+      started.elapsed().as_secs_f64()
+    );
     if current != "published" && current != "processing" {
       if self.record.upload.is_some() {
         let pack = tasks
           .pack
           .as_ref()
           .ok_or_else(|| USTBLError("缺少增量包任务".into()))?;
+        let upload_started = Instant::now();
         if let Err(error) = self.upload_pack(pack, &tasks.group).await {
           pack.write().unwrap().mark_failed(error.0.clone());
           return Err(error);
         }
+        log::info!(
+          "Modpack publish {} upload completed in {:.2}s",
+          self.record.id,
+          upload_started.elapsed().as_secs_f64()
+        );
       }
       tasks.finish.write().unwrap().mark_started();
       self.record.phase = Phase::Processing;
       self.record.error = None;
       self.record.save(&jobs_dir())?;
+      let commit_started = Instant::now();
       if let Err(error) = self.commit().await {
         tasks.finish.write().unwrap().mark_failed(error.0.clone());
         return Err(error);
       }
-      current = "processing".into();
+      log::info!(
+        "Modpack publish {} commit accepted in {:.2}s",
+        self.record.id,
+        commit_started.elapsed().as_secs_f64()
+      );
     } else {
       tasks.finish.write().unwrap().mark_started();
     }
 
-    let mut misses = 0;
-    while current != "published" {
-      match self.poll_status().await? {
-        Some(next) => {
-          misses = 0;
-          state = next;
-        }
-        None => {
-          misses += 1;
-          if misses >= POLL_MISSES {
-            let error = USTBLError(
-              "暂时连不上平台，无法确认处理进度。增量包已送达，稍后可在“未完成的发布”中继续".into(),
-            );
-            tasks.finish.write().unwrap().mark_failed(error.0.clone());
-            return Err(error);
-          }
-          sleep(POLL).await;
-          continue;
-        }
-      }
-      current = state["status"].as_str().unwrap_or_default().to_string();
-      if current == "failed" {
-        let message = state["error"]
-          .as_str()
-          .filter(|text| !text.is_empty())
-          .unwrap_or("平台处理增量包失败");
-        let error = USTBLError(message.to_string());
-        tasks.finish.write().unwrap().mark_failed(error.0.clone());
-        return Err(error);
-      }
-      if current != "published" {
-        sleep(POLL).await;
-      }
-    }
+    // The upload task ends once the platform has accepted the commit. Platform
+    // processing is monitored independently and survives launcher restarts.
+    self.record.phase = Phase::Processing;
+    self.record.error = None;
+    self.record.save(&jobs_dir())?;
     complete(&tasks.finish);
+    log::info!(
+      "Modpack publish {} submitted in {:.2}s; platform processing continues in background",
+      self.record.id,
+      started.elapsed().as_secs_f64()
+    );
+    self.clone_for_monitor().monitor_in_background();
+    Ok(())
+  }
 
-    let files: Vec<LocalFile> = self
-      .record
-      .files
-      .iter()
-      .map(|file| LocalFile {
-        path: file.path.clone(),
-        key: FileKey {
-          sha1: file.sha1.clone(),
-          size: file.size,
-        },
-      })
-      .collect();
-    let slug = state["project_slug"]
-      .as_str()
-      .unwrap_or(&self.record.project_slug)
-      .to_string();
-    let adoption = match instance_of(&self.app, &self.record.instance_id) {
-      Ok(instance) => {
-        adopt_published(
-          &self.app,
-          &instance,
-          &slug,
-          self.record.version_id,
-          &self.record.version_number,
-          &files,
-          self.record.mmc_pack.as_ref(),
-        )
-        .await
-      }
-      // The instance was deleted while the version went out.
-      Err(_) => super::commands::Adoption::RecordFailed,
-    };
-    Ok(PublishOutcome {
-      version_id: self.record.version_id,
-      skipped: self.record.skipped.clone(),
-      adoption,
-    })
+  fn clone_for_monitor(&self) -> Self {
+    Self {
+      app: self.app.clone(),
+      uploader: self.uploader.clone(),
+      record: self.record.clone(),
+    }
+  }
+
+  pub(super) fn monitor_in_background(self) {
+    if monitor_is_running(&self.record.id) {
+      return;
+    }
+    tauri::async_runtime::spawn(async move {
+      monitor_platform(self).await;
+    });
   }
 
   /// A request that never got an answer may still have been queued, so each
@@ -687,6 +704,139 @@ impl PublishJob {
     }
     Err(last)
   }
+}
+
+async fn monitor_platform(job: PublishJob) {
+  let Some(_token) = take_monitor(&job.record.id) else {
+    return;
+  };
+  let started = Instant::now();
+  let mut misses = 0;
+  let mut last_status = String::new();
+  loop {
+    let state = match job.poll_status().await {
+      Ok(Some(state)) => {
+        misses = 0;
+        state
+      }
+      Ok(None) => {
+        misses += 1;
+        log::warn!(
+          "Modpack publish {} status check missed ({}/{})",
+          job.record.id,
+          misses,
+          POLL_MISSES
+        );
+        if misses >= POLL_MISSES {
+          let mut record = job.record.clone();
+          record.phase = Phase::Processing;
+          record.error = Some("暂时无法确认平台处理进度，请稍后重新启动启动器继续".into());
+          let _ = record.save(&jobs_dir());
+          return;
+        }
+        sleep(POLL).await;
+        continue;
+      }
+      Err(error) => {
+        let mut record = job.record.clone();
+        record.phase = Phase::Failed;
+        record.error = Some(error.0.clone());
+        let _ = record.save(&jobs_dir());
+        emit_finished(&job.app, &record, None, Some(error.0));
+        return;
+      }
+    };
+    let status = state["status"].as_str().unwrap_or_default();
+    if status != last_status {
+      log::info!(
+        "Modpack publish {} status changed: {} -> {} after {:.2}s processing",
+        job.record.id,
+        last_status,
+        status,
+        started.elapsed().as_secs_f64()
+      );
+      last_status = status.to_string();
+    }
+    if status == "failed" {
+      let message = state["error"]
+        .as_str()
+        .filter(|text| !text.is_empty())
+        .unwrap_or("平台处理增量包失败")
+        .to_string();
+      let mut record = job.record.clone();
+      record.phase = Phase::Failed;
+      record.error = Some(message.clone());
+      let _ = record.save(&jobs_dir());
+      emit_finished(&job.app, &record, None, Some(message));
+      return;
+    }
+    if status == "published" {
+      let files: Vec<LocalFile> = job
+        .record
+        .files
+        .iter()
+        .map(|file| LocalFile {
+          path: file.path.clone(),
+          key: FileKey {
+            sha1: file.sha1.clone(),
+            size: file.size,
+          },
+        })
+        .collect();
+      let slug = state["project_slug"]
+        .as_str()
+        .unwrap_or(&job.record.project_slug)
+        .to_string();
+      let adoption = match instance_of(&job.app, &job.record.instance_id) {
+        Ok(instance) => {
+          adopt_published(
+            &job.app,
+            &instance,
+            &slug,
+            job.record.version_id,
+            &job.record.version_number,
+            &files,
+            job.record.mmc_pack.as_ref(),
+          )
+          .await
+        }
+        Err(_) => super::commands::Adoption::RecordFailed,
+      };
+      JobRecord::remove(&jobs_dir(), &job.record.id);
+      let outcome = PublishOutcome {
+        version_id: job.record.version_id,
+        skipped: job.record.skipped.clone(),
+        adoption,
+      };
+      log::info!(
+        "Modpack publish {} platform processing completed in {:.2}s",
+        job.record.id,
+        started.elapsed().as_secs_f64()
+      );
+      emit_finished(&job.app, &job.record, Some(outcome), None);
+      return;
+    }
+    sleep(POLL).await;
+  }
+}
+
+fn emit_finished(
+  app: &AppHandle,
+  record: &JobRecord,
+  outcome: Option<PublishOutcome>,
+  error: Option<String>,
+) {
+  let _ = app.emit_to(
+    "main",
+    FINISHED_EVENT,
+    PublishFinished {
+      instance_id: record.instance_id.clone(),
+      group: format!("modpack-publish-monitor: {}", record.version_number),
+      job_id: record.id.clone(),
+      outcome,
+      error,
+    },
+  );
 }
 
 #[cfg(test)]
