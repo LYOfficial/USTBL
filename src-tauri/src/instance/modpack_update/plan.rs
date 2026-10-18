@@ -2,8 +2,10 @@
 
 use super::diff::{collect_local_states, three_way, Diff, FileKey};
 use super::remote::RemoteModpack;
+use super::merge::{merge_text, text_conflicts, TextMergeError};
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::modpack::baseline::ModpackBaseline;
+use crate::instance::helpers::modpack::{base_store, text};
 use sha1::{Digest, Sha1};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -13,6 +15,9 @@ pub struct Prepared {
   /// Identifies this exact comparison. Applying with a different hash means
   /// the instance or the published version moved since the player looked.
   pub plan_hash: String,
+  /// Bytes for automatically merged files, keyed by relative path.
+  pub merged_contents: BTreeMap<String, Vec<u8>>,
+  pub conflict_sources: BTreeMap<String, (Vec<u8>, Vec<u8>, Vec<u8>)>,
 }
 
 fn baseline_keys(baseline: &ModpackBaseline) -> BTreeMap<String, FileKey> {
@@ -61,6 +66,18 @@ pub async fn prepare(
   baseline: &ModpackBaseline,
   remote: &RemoteModpack,
 ) -> USTBLResult<Prepared> {
+  prepare_with_contents(root, baseline, remote, &BTreeMap::new()).await
+}
+
+/// Prepare an update and merge eligible text conflicts when remote bytes are
+/// available. Remote bytes are supplied by the caller because their source may
+/// be an archive, a campus pack, or a download.
+pub async fn prepare_with_contents(
+  root: &Path,
+  baseline: &ModpackBaseline,
+  remote: &RemoteModpack,
+  remote_contents: &BTreeMap<String, Vec<u8>>,
+) -> USTBLResult<Prepared> {
   let baseline_map = baseline_keys(baseline);
   let remote_map = remote.key_map();
   let paths: BTreeSet<String> = baseline_map
@@ -69,13 +86,101 @@ pub async fn prepare(
     .cloned()
     .collect();
   let root = root.to_path_buf();
-  let local = tokio::task::spawn_blocking(move || collect_local_states(&root, &paths))
+  let local_root = root.clone();
+  let local = tokio::task::spawn_blocking(move || collect_local_states(&local_root, &paths))
     .await
     .map_err(|e| USTBLError(e.to_string()))??;
-  let diff = three_way(&baseline_map, &local, &remote_map);
+  let mut local = local;
+  for (path, baseline_key) in &baseline_map {
+    let Some(super::diff::LocalState::Present(local_key)) = local.get(path) else {
+      continue;
+    };
+    if local_key == baseline_key {
+      continue;
+    }
+    let equivalent = base_store::load(&root, &baseline_key.sha1)
+      .ok()
+      .flatten()
+      .and_then(|base| {
+        let local_bytes = std::fs::read(root.join(path)).ok()?;
+        Some(text::normalize_text(path, &base)? == text::normalize_text(path, &local_bytes)?)
+      })
+      .unwrap_or(false);
+    if equivalent {
+      local.insert(
+        path.clone(),
+        super::diff::LocalState::Present(baseline_key.clone()),
+      );
+    }
+  }
+  let mut diff = three_way(&baseline_map, &local, &remote_map);
+  let mut merged_contents = BTreeMap::new();
+  let mut conflict_sources = BTreeMap::new();
+  let mut remaining = Vec::new();
+  for conflict in diff.conflicts {
+      let merged = match (
+      conflict.kind,
+      conflict.baseline.as_ref(),
+      conflict.local.as_ref(),
+      conflict.remote.as_ref(),
+      remote_contents.get(&conflict.path),
+      ) {
+      (super::diff::ConflictKind::ModifiedLocallyChangedRemotely, Some(base), Some(_local_key), Some(remote_key), Some(remote_bytes)) => {
+        let base_bytes = base_store::load(&root, &base.sha1).ok().flatten();
+        let local_bytes = std::fs::read(root.join(&conflict.path)).ok();
+        base_bytes.and_then(|base_bytes| local_bytes.and_then(|local_bytes| {
+          match merge_text(&conflict.path, &base_bytes, &local_bytes, remote_bytes) {
+            Ok(bytes) => Some((remote_key.clone(), bytes)),
+            Err(TextMergeError::Conflict(_)) | Err(TextMergeError::InvalidText) | Err(TextMergeError::InvalidMergedFormat) => None,
+          }
+        }))
+      }
+      _ => None,
+    };
+    if let Some((remote_key, bytes)) = merged {
+      merged_contents.insert(conflict.path.clone(), bytes);
+      diff.auto_merged.push(super::diff::FileChange {
+        path: conflict.path,
+        kind: super::diff::ChangeKind::Update,
+        remote: Some(remote_key),
+        local_size: conflict.local.map(|key| key.size),
+      });
+    } else {
+      if let (
+        super::diff::ConflictKind::ModifiedLocallyChangedRemotely,
+        Some(base),
+        Some(_),
+        Some(_),
+        Some(remote_bytes),
+      ) = (
+        conflict.kind,
+        conflict.baseline.as_ref(),
+        conflict.local.as_ref(),
+        conflict.remote.as_ref(),
+        remote_contents.get(&conflict.path),
+      ) {
+        if let (Some(base_bytes), Ok(local_bytes)) = (
+          base_store::load(&root, &base.sha1).ok().flatten(),
+          std::fs::read(root.join(&conflict.path)),
+        ) {
+          if let Ok(hunks) = text_conflicts(&conflict.path, &base_bytes, &local_bytes, remote_bytes) {
+            let mut conflict = conflict;
+            conflict.hunks = hunks;
+            conflict_sources.insert(conflict.path.clone(), (base_bytes, local_bytes, remote_bytes.clone()));
+            remaining.push(conflict);
+            continue;
+          }
+        }
+      }
+      remaining.push(conflict);
+    }
+  }
+  diff.conflicts = remaining;
   Ok(Prepared {
     plan_hash: plan_hash(remote, &diff),
     diff,
+    merged_contents,
+    conflict_sources,
   })
 }
 
@@ -238,6 +343,32 @@ mod tests {
     .await
     .unwrap();
     assert!(prepared.diff.is_empty());
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn cached_text_baseline_ignores_line_ending_only_local_change() {
+    let root = instance(&[("config/a.toml", "a=1\r\n")]);
+    let baseline = baseline(&[("config/a.toml", "a=1\n")]);
+    let baseline_bytes = b"a=1\n";
+    let sha1 = hex::encode(Sha1::digest(baseline_bytes));
+    std::fs::create_dir_all(crate::instance::helpers::modpack::base_store::base_dir(&root))
+      .unwrap();
+    std::fs::write(
+      crate::instance::helpers::modpack::base_store::base_path(&root, &sha1),
+      baseline_bytes,
+    )
+    .unwrap();
+    assert_eq!(baseline.files[0].sha1, sha1);
+    let prepared = prepare(
+      &root,
+      &baseline,
+      &remote(&[("config/a.toml", "a=2\n")]),
+    )
+    .await
+    .unwrap();
+    assert!(prepared.diff.conflicts.is_empty());
+    assert_eq!(prepared.diff.changes.len(), 1);
     let _ = fs::remove_dir_all(root);
   }
 

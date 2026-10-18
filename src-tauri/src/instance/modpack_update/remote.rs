@@ -15,6 +15,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+pub fn safe_relative_path(path: &str) -> USTBLResult<PathBuf> {
+  let path = PathBuf::from(path);
+  if path.is_absolute() || path.components().any(|component| matches!(component, std::path::Component::ParentDir | std::path::Component::RootDir | std::path::Component::Prefix(_))) {
+    return Err(InstanceError::ModpackUpdateRemoteInvalid.into());
+  }
+  Ok(path)
+}
+
 /// Directory inside an instance that holds the staging area and the journal of
 /// an update in progress. Nothing in it is ever managed by a modpack.
 pub const UPDATE_DIR: &str = ".ustbl-update";

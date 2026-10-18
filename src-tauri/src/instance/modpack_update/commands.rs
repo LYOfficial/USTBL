@@ -1,15 +1,18 @@
 //! Tauri commands for following a modpack: check, plan, apply, recover.
 
 use super::apply::{
-  apply, can_roll_back_last, recover, roll_back_last, Progress, Recovery, UpdateEnv, UpdateRequest,
+  apply, can_roll_back_last, materialize_remote_file, prepare_packs, recover, roll_back_last,
+  Progress, Recovery, UpdateEnv, UpdateRequest,
 };
 use super::diff::{resolve, Conflict, ConflictChoice, FileChange};
-use super::plan::{prepare, requires_reinstall};
+use super::merge::three_way_with_choices;
+use super::plan::{prepare, prepare_with_contents, requires_reinstall};
 use super::sources::{download_param, latest_version, resolve_remote, LatestVersion};
 use crate::error::USTBLResult;
 use crate::instance::commands::switch_mod_loader;
 use crate::instance::helpers::misc::{get_instance_game_config, refresh_and_update_instances};
 use crate::instance::helpers::modpack::baseline::{BaselineLoader, ModpackBaseline};
+use crate::instance::helpers::modpack::text;
 use crate::instance::models::misc::{
   Instance, InstanceError, InstanceOrigin, ModLoader, ModLoaderStatus, ModLoaderType,
 };
@@ -23,6 +26,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_opener::reveal_item_in_dir;
 
 const PROGRESS_EVENT: &str = "modpack-update:progress";
 
@@ -72,6 +76,7 @@ pub struct UpdatePlan {
   pub to_label: String,
   pub changes: Vec<FileChange>,
   pub conflicts: Vec<Conflict>,
+  pub auto_merged: Vec<FileChange>,
   pub loader_change: Option<LoaderChange>,
   /// The new version changes the component chain, so it has to be installed
   /// again. No changes are planned and `apply_modpack_update` refuses.
@@ -335,6 +340,18 @@ pub async fn set_modpack_follow(
   .await
 }
 
+/// Reveal a managed file in the system file manager for external editing.
+#[tauri::command]
+pub fn reveal_modpack_conflict_file(
+  app: AppHandle,
+  instance_id: String,
+  relative_path: String,
+) -> USTBLResult<()> {
+  let instance = current_instance(&app, &instance_id)?;
+  let relative = super::remote::safe_relative_path(&relative_path)?;
+  reveal_item_in_dir(instance.version_path.join(relative)).map_err(crate::error::USTBLError::from)
+}
+
 /// Fetch the new version and compare it with the instance. Changes nothing
 /// except downloading the modpack archive into the update folder.
 #[tauri::command]
@@ -377,13 +394,16 @@ async fn plan_for(
       to_label: remote.label.clone(),
       changes: Vec::new(),
       conflicts: Vec::new(),
+      auto_merged: Vec::new(),
       loader_change: None,
       reinstall_required: true,
       fast_forward: false,
       plan_hash: String::new(),
     });
   }
-  let prepared = prepare(&target.root, baseline, &remote).await?;
+  let first = prepare(&target.root, baseline, &remote).await?;
+  let remote_contents = materialize_text_candidates(app, target, &remote, &first.diff.conflicts).await?;
+  let prepared = prepare_with_contents(&target.root, baseline, &remote, &remote_contents).await?;
   let loader_change = (remote.loader != baseline.loader).then(|| LoaderChange {
     from: baseline.loader.clone(),
     to: remote.loader.clone(),
@@ -393,16 +413,93 @@ async fn plan_for(
     to_version_id: remote.version_id.clone(),
     to_label: remote.label.clone(),
     fast_forward: fast_forward(
-      prepared.diff.changes.len(),
+      prepared.diff.changes.len() + prepared.diff.auto_merged.len(),
       prepared.diff.conflicts.len(),
       loader_change.is_some(),
     ),
     changes: prepared.diff.changes,
     conflicts: prepared.diff.conflicts,
+    auto_merged: prepared.diff.auto_merged,
     loader_change,
     reinstall_required: false,
     plan_hash: prepared.plan_hash,
   })
+}
+
+fn selected_hunk_contents(
+  prepared: &super::plan::Prepared,
+  choices: &mut BTreeMap<String, ConflictChoice>,
+) -> BTreeMap<String, Vec<u8>> {
+  let mut result = prepared.merged_contents.clone();
+  for (path, (base, local, remote)) in &prepared.conflict_sources {
+    let hunk_count = prepared
+      .diff
+      .conflicts
+      .iter()
+      .find(|conflict| conflict.path == *path)
+      .map(|conflict| conflict.hunks.len())
+      .unwrap_or(0);
+    let selected: Vec<usize> = (0..)
+      .take(hunk_count)
+      .filter(|index| choices.get(&format!("{path}#{index}")) == Some(&ConflictChoice::TakeRemote))
+      .collect();
+    if selected.is_empty() {
+      continue;
+    }
+    choices.insert(path.clone(), ConflictChoice::TakeRemote);
+    let lines = |bytes: &[u8]| String::from_utf8_lossy(bytes).replace("\r\n", "\n").replace('\r', "\n").lines().map(str::to_owned).collect::<Vec<_>>();
+    let merged = three_way_with_choices(&lines(base), &lines(local), &lines(remote), &selected);
+    let ending = if local.windows(2).any(|pair| pair == b"\r\n") { "\r\n" } else { "\n" };
+    result.insert(path.clone(), format!("{}{}", merged.join(ending), ending).into_bytes());
+  }
+  result
+}
+
+async fn materialize_text_candidates(
+  app: &AppHandle,
+  target: &Target,
+  remote: &super::remote::RemoteModpack,
+  conflicts: &[Conflict],
+) -> USTBLResult<BTreeMap<String, Vec<u8>>> {
+  let wanted: BTreeMap<_, _> = conflicts
+    .iter()
+    .filter(|conflict| {
+      conflict.kind == super::diff::ConflictKind::ModifiedLocallyChangedRemotely
+        && text::is_text_path(&conflict.path, &[])
+    })
+    .map(|conflict| (conflict.path.as_str(), conflict))
+    .collect();
+  if wanted.is_empty() {
+    return Ok(BTreeMap::new());
+  }
+  let env = AppEnv {
+    app: app.clone(),
+    instance_id: target.instance.id.clone(),
+    label: remote.label.clone(),
+    loader_install_pending: AtomicBool::new(false),
+  };
+  let preview = target.root.join(super::remote::UPDATE_DIR).join("remote-preview");
+  let _ = tokio::fs::remove_dir_all(&preview).await;
+  let mut result = BTreeMap::new();
+  let candidates: Vec<_> = remote
+    .files
+    .iter()
+    .filter(|file| wanted.contains_key(file.path.as_str()))
+    .collect();
+  prepare_packs(&candidates).await?;
+  for file in candidates {
+    if !wanted.contains_key(file.path.as_str()) {
+      continue;
+    }
+    let dest = preview.join(&file.path);
+    materialize_remote_file(&env, dest.clone(), file).await?;
+    let bytes = tokio::fs::read(&dest).await?;
+    if text::is_text_path(&file.path, &bytes) {
+      result.insert(file.path.clone(), bytes);
+    }
+  }
+  let _ = tokio::fs::remove_dir_all(&preview).await;
+  Ok(result)
 }
 
 /// Apply the plan the player confirmed. `choices` answers conflicts by path;
@@ -432,7 +529,9 @@ pub async fn apply_modpack_update(
   if requires_reinstall(&baseline, &remote) {
     return Err(InstanceError::ModpackUpdateReinstallRequired.into());
   }
-  let prepared = prepare(&target.root, &baseline, &remote).await?;
+  let first = prepare(&target.root, &baseline, &remote).await?;
+  let remote_contents = materialize_text_candidates(&app, &target, &remote, &first.diff.conflicts).await?;
+  let prepared = prepare_with_contents(&target.root, &baseline, &remote, &remote_contents).await?;
   if prepared.plan_hash != plan_hash {
     return Err(InstanceError::ModpackUpdateStale.into());
   }
@@ -444,16 +543,19 @@ pub async fn apply_modpack_update(
     loader_install_pending: AtomicBool::new(false),
   };
   let version_id = remote.version_id.clone();
+  let mut apply_choices = choices.clone();
+  let merged_contents = selected_hunk_contents(&prepared, &mut apply_choices);
   let result = apply(
     &env,
     UpdateRequest {
       root: target.root.clone(),
       instance_name: target.instance.name.clone(),
-      operations: resolve(&prepared.diff, &choices),
+      operations: resolve(&prepared.diff, &apply_choices),
       remote,
       origin: target.origin.clone(),
       previous_loader: baseline.loader.clone(),
       components: baseline.component_refs(),
+      merged_contents,
     },
   )
   .await;

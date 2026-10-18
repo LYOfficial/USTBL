@@ -8,6 +8,7 @@
 //! remote one.
 
 use crate::instance::helpers::modpack::baseline::hash_file;
+use super::merge::MergeConflict;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
@@ -75,6 +76,7 @@ pub struct Conflict {
   pub baseline: Option<FileKey>,
   pub local: Option<FileKey>,
   pub remote: Option<FileKey>,
+  pub hunks: Vec<MergeConflict>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Default, Deserialize, Serialize)]
@@ -82,6 +84,8 @@ pub struct Conflict {
 pub struct Diff {
   pub changes: Vec<FileChange>,
   pub conflicts: Vec<Conflict>,
+  /// Text files whose local and remote edits were merged automatically.
+  pub auto_merged: Vec<FileChange>,
   /// Paths whose local content already equals the new version.
   pub already_current: Vec<String>,
 }
@@ -125,6 +129,7 @@ pub fn three_way(
       baseline: b.cloned(),
       local: local_key.clone(),
       remote: r.cloned(),
+      hunks: Vec::new(),
     };
     let write = |kind, remote: &FileKey| FileChange {
       path: path.clone(),
@@ -191,6 +196,7 @@ pub fn resolve(diff: &Diff, choices: &BTreeMap<String, ConflictChoice>) -> Vec<O
   let mut operations: Vec<Operation> = diff
     .changes
     .iter()
+    .chain(diff.auto_merged.iter())
     .map(|change| Operation {
       path: change.path.clone(),
       write: change.remote.clone(),
