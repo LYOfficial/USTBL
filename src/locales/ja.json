@@ -2614,7 +2614,11 @@
       },
       "exportModpack": {
         "error": {
-          "title": "Export failed"
+          "title": "Export failed",
+          "description": {
+            "MODPACK_EXPORT_COMPONENT_INSTANCE": "Component-profile instances can only be exported as MultiMC",
+            "MODPACK_EXPORT_PROFILE_MISSING": "This instance was imported by an older version and lacks the component data needed for export. Re-import the modpack and try again"
+          }
         }
       }
     },
@@ -2637,6 +2641,50 @@
         "success": "ファイルの削除に成功",
         "error": {
           "title": "ファイルの削除に失敗"
+        }
+      }
+    },
+    "ipv6 acceleration": {
+      "status": {
+        "success": "Operation completed",
+        "error": {
+          "title": "IPv6 operation failed",
+          "description": {}
+        }
+      },
+      "install": {
+        "success": "Operation completed",
+        "error": {
+          "title": "IPv6 operation failed",
+          "description": {}
+        }
+      },
+      "start": {
+        "success": "Operation completed",
+        "error": {
+          "title": "IPv6 operation failed",
+          "description": {}
+        }
+      },
+      "stop": {
+        "success": "Operation completed",
+        "error": {
+          "title": "IPv6 operation failed",
+          "description": {}
+        }
+      },
+      "nodes": {
+        "success": "Operation completed",
+        "error": {
+          "title": "IPv6 operation failed",
+          "description": {}
+        }
+      },
+      "select": {
+        "success": "Operation completed",
+        "error": {
+          "title": "IPv6 operation failed",
+          "description": {}
         }
       }
     }
@@ -2810,7 +2858,7 @@
     },
     "notice": {
       "title": "Note",
-      "description": "有効にすると Windows の Hosts を CDN アドレスに更新します。停止すると USTBL が管理するエントリを削除します。"
+      "description": "GitHub サイトへのアクセスに vUSTB プロキシを使用します。接続と認証の成功後に Windows のプロキシ設定を変更し、停止時に元の設定に戻します。"
     },
     "toast": {
       "started": "Acceleration started",
@@ -2824,7 +2872,31 @@
       "title": "ノード接続性",
       "test": "接続をテスト",
       "empty": "加速ノードをテストすると遅延が表示されます。",
-      "failed": "利用不可"
+      "failed": "利用不可",
+      "proxy": "テスト経路：現在の高速化プロキシ",
+      "direct": "テスト経路：高速化を使わない直接接続"
+    },
+    "ipv6": {
+      "title": "IPv6 無料通信",
+      "current": "WARP IPv6 接続",
+      "description": "IPv6 経由で Cloudflare WARP に接続し、TUN でアプリの通信を転送します。",
+      "running": "実行中",
+      "stopped": "停止中",
+      "unsupported": "Windows x64 または ARM64 が必要です。",
+      "administrator": "TUN には管理者権限が必要です。USTBL を終了して管理者として起動してください。",
+      "working": "処理中です。ダウンロードと接続には時間がかかる場合があります。",
+      "install": "コアを取得",
+      "start": "IPv6 開始",
+      "stop": "IPv6 停止",
+      "bypass": "学内通信の除外",
+      "bypassDescription": "1 行にドメインまたは CIDR を入力します。開始時に保存し、変更は再起動後に反映されます。",
+      "nodes": "接続先",
+      "nodesDescription": "28 の IPv6 接続先。開始後に遅延を測定できます。空欄は未測定または接続不可です。",
+      "auto": "自動選択",
+      "refresh": "更新",
+      "test": "遅延を測定",
+      "notice": "利用条件",
+      "noticeDescription": "USTB-Student または USTB-V6 で認証してください。USTB_Wi-Fi は非対応です。利用可能なパブリック IPv6 が必要です。除外した通信は通常の料金が適用されます。終了時に TUN を停止します。無料通信は学内の方針に依存します。"
     }
   },
   "MessagesPage": {
@@ -2881,7 +2953,8 @@
     "tooltip": {
       "exportFormat": {
         "Modrinth": "Smaller package size; required mods are downloaded from a manifest during import.",
-        "MultiMC": "Widely supported by major launchers; packaged as a complete instance."
+        "MultiMC": "Widely supported by major launchers; packaged as a complete instance.",
+        "MultiMCComponentOnly": "This instance was imported from a MultiMC component profile, so it can only be exported as MultiMC. Its components, patches and local libraries are kept as they were."
       }
     }
   }

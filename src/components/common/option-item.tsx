@@ -195,8 +195,10 @@ export const OptionItemGroup: React.FC<OptionItemGroupProps> = ({
 
   function isOptionItemProps(item: any): item is OptionItemProps {
     return (
-      (item as OptionItemProps)?.title != null &&
-      (item as OptionItemProps)?.children != null
+      item !== null &&
+      typeof item === "object" &&
+      !React.isValidElement(item) &&
+      "title" in item
     );
   }
 

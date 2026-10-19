@@ -3,7 +3,7 @@ use super::commands::{ResourceAccelerationLatency, ResourceAccelerationStatus};
 use super::system_proxy::{enable_local_proxy, restore_proxy, SystemProxySnapshot};
 use crate::error::{USTBLError, USTBLResult};
 use std::time::Duration;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tokio::sync::watch;
 
 const GITHUB_PROGRESS_HOSTS: [&str; 16] = [
@@ -32,6 +32,7 @@ pub struct ResourceAccelerationService {
   started_at: Option<u64>,
   browser_proxy: Option<LocalBrowserProxy>,
   system_proxy: Option<SystemProxySnapshot>,
+  recovery_path: Option<std::path::PathBuf>,
 }
 
 impl Default for ResourceAccelerationService {
@@ -43,6 +44,7 @@ impl Default for ResourceAccelerationService {
       started_at: None,
       browser_proxy: None,
       system_proxy: None,
+      recovery_path: None,
     }
   }
 }
@@ -61,7 +63,7 @@ impl ResourceAccelerationService {
 
   pub async fn start(
     &mut self,
-    _app: &AppHandle,
+    app: &AppHandle,
     github_enabled: bool,
   ) -> USTBLResult<ResourceAccelerationStatus> {
     if !github_enabled {
@@ -76,9 +78,14 @@ impl ResourceAccelerationService {
     let browser_proxy = LocalBrowserProxy::start()
       .await
       .map_err(|error| USTBLError(format!("启动本地浏览器代理失败: {error}")))?;
+    let recovery_path = app
+      .path()
+      .app_local_data_dir()?
+      .join("acceleration-proxy.json");
     let system_proxy = match enable_local_proxy(
       super::browser_proxy::LOCAL_PROXY_HOST,
       super::browser_proxy::LOCAL_PROXY_PORT,
+      &recovery_path,
     ) {
       Ok(snapshot) => snapshot,
       Err(error) => {
@@ -94,6 +101,7 @@ impl ResourceAccelerationService {
     }));
     self.browser_proxy = Some(browser_proxy);
     self.system_proxy = Some(system_proxy);
+    self.recovery_path = Some(recovery_path);
     self.github_enabled = github_enabled;
     self.started_at = Some(unix_millis());
     log::info!("Resource acceleration started in browser proxy mode");
@@ -101,11 +109,15 @@ impl ResourceAccelerationService {
   }
 
   pub async fn stop(&mut self) -> USTBLResult<ResourceAccelerationStatus> {
+    if let Some(snapshot) = self.system_proxy.as_ref() {
+      restore_proxy(snapshot).map_err(|error| USTBLError(error.to_string()))?;
+      self.system_proxy = None;
+      if let Some(path) = self.recovery_path.take() {
+        let _ = std::fs::remove_file(path);
+      }
+    }
     if let Some(proxy) = self.browser_proxy.take() {
       proxy.stop().await;
-    }
-    if let Some(snapshot) = self.system_proxy.take() {
-      restore_proxy(snapshot).map_err(|error| USTBLError(error.to_string()))?;
     }
     if let Some(stop) = self.stop.take() {
       let _ = stop.send(true);
@@ -120,39 +132,61 @@ impl ResourceAccelerationService {
   }
 }
 
-pub async fn test_latency(github: bool) -> Vec<ResourceAccelerationLatency> {
+pub async fn test_latency(github: bool, running: bool) -> Vec<ResourceAccelerationLatency> {
   let mut hosts = Vec::new();
   if github {
     hosts.extend(GITHUB_PROGRESS_HOSTS);
   }
-  let client = reqwest::Client::builder()
-    .timeout(Duration::from_secs(8))
-    .build();
-  let Ok(client) = client else {
-    return hosts
-      .into_iter()
-      .map(|host| ResourceAccelerationLatency {
-        host: host.to_string(),
-        latency_ms: None,
-        available: false,
-      })
-      .collect();
+  // 检测明确使用当前加速通道，避免环境代理覆盖检测路径。
+  let mut builder = reqwest::Client::builder()
+    .no_proxy()
+    .timeout(Duration::from_secs(15));
+  if running {
+    builder = builder.proxy(
+      reqwest::Proxy::all(format!(
+        "http://{}:{}",
+        super::browser_proxy::LOCAL_PROXY_HOST,
+        super::browser_proxy::LOCAL_PROXY_PORT
+      ))
+      .unwrap(),
+    );
+  }
+  let client = match builder.build() {
+    Ok(client) => client,
+    Err(error) => {
+      return hosts
+        .into_iter()
+        .map(|host| ResourceAccelerationLatency {
+          host: host.to_string(),
+          latency_ms: None,
+          available: false,
+          error: Some(error.to_string()),
+        })
+        .collect();
+    }
   };
   let mut tasks = Vec::with_capacity(hosts.len());
   for host in hosts {
     let client = client.clone();
     tasks.push(tokio::spawn(async move {
       let started = std::time::Instant::now();
-      let available = client
-        .head(format!("https://{host}/"))
-        .send()
-        .await
-        .map(|_| true)
-        .unwrap_or(false);
+      let result = client.head(format!("https://{host}/")).send().await;
+      let available = result.is_ok();
+      let error = result.err().map(|error| {
+        use std::error::Error;
+        format!(
+          "{error}: {}",
+          error
+            .source()
+            .map(|source| source.to_string())
+            .unwrap_or_default()
+        )
+      });
       ResourceAccelerationLatency {
         host: host.to_string(),
         latency_ms: available.then(|| started.elapsed().as_millis() as u64),
         available,
+        error,
       }
     }));
   }

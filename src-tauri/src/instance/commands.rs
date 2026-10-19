@@ -12,8 +12,11 @@ use crate::instance::helpers::misc::{
   get_instance_game_config, get_instance_subdir_path_by_id, get_instance_subdir_paths,
   refresh_and_update_instances, unify_instance_name,
 };
+use crate::instance::helpers::modpack::baseline::{
+  hash_existing_files, hash_file, BaselineFile, BaselineLoader, ModpackBaseline,
+};
 use crate::instance::helpers::modpack::export::{
-  collect_modrinth_files, create_modpack_zip, generate_modrinth_manifest,
+  build_component_export, collect_modrinth_files, create_modpack_zip, generate_modrinth_manifest,
   generate_multimc_instance_cfg, generate_multimc_manifest, list_files, validate_export_options,
   ExportFormat, ExportModpackOptions,
 };
@@ -21,6 +24,9 @@ use crate::instance::helpers::modpack::misc::{
   extract_overrides, get_download_params, ModpackMetaInfo,
 };
 use crate::instance::helpers::modpack::multimc::profile::ResolvedMultiMc;
+use crate::instance::helpers::modpack::multimc::snapshot::{
+  is_component_instance, ComponentSnapshot,
+};
 use crate::instance::helpers::mods::common::{
   compress_icon, get_mod_info_from_dir, get_mod_info_from_jar,
 };
@@ -37,9 +43,9 @@ use crate::instance::helpers::server::{
 };
 use crate::instance::helpers::world::{load_level_data_from_nbt, load_world_info_from_dir};
 use crate::instance::models::misc::{
-  Instance, InstanceError, InstanceSubdirType, InstanceSummary, LocalModInfo, ModLoader,
-  ModLoaderStatus, ModLoaderType, ModpackFileList, OptiFine, ResourcePackInfo, SchematicInfo,
-  ScreenshotInfo, ShaderPackInfo,
+  Instance, InstanceError, InstanceOrigin, InstanceSubdirType, InstanceSummary, LocalModInfo,
+  ModLoader, ModLoaderStatus, ModLoaderType, ModpackFileList, ModpackOriginInput, OptiFine,
+  ResourcePackInfo, SchematicInfo, ScreenshotInfo, ShaderPackInfo,
 };
 use crate::instance::models::world::base::WorldInfo;
 use crate::instance::models::world::level::LevelData;
@@ -944,6 +950,42 @@ pub fn create_launch_desktop_shortcut(
   Ok(())
 }
 
+/// Accept the origin claimed by the download entry only when it is provably the
+/// modpack file being imported: the archive must match the SHA-1 the platform
+/// published, and a component profile (which cannot be followed) never gets one.
+async fn verify_origin(
+  input: Option<ModpackOriginInput>,
+  modpack_path: Option<&String>,
+  is_component_profile: bool,
+  game_version: &str,
+  loader_type: ModLoaderType,
+) -> Option<InstanceOrigin> {
+  let input = input?;
+  let path = PathBuf::from(modpack_path?);
+  if is_component_profile {
+    log::warn!("Dropping modpack origin: component profiles cannot be followed");
+    return None;
+  }
+  let expected = input.expected_sha1.trim().to_lowercase();
+  let actual = tokio::task::spawn_blocking(move || hash_file(&path))
+    .await
+    .ok()?
+    .ok()?
+    .0;
+  if expected.is_empty() || expected != actual {
+    log::warn!("Dropping modpack origin: archive SHA-1 does not match the published one");
+    return None;
+  }
+  Some(InstanceOrigin {
+    platform: input.platform,
+    project_id: input.project_id,
+    version_id: input.version_id,
+    game_version: game_version.to_string(),
+    loader_type,
+    follow: true,
+  })
+}
+
 #[tauri::command]
 pub async fn create_instance(
   app: AppHandle,
@@ -957,6 +999,7 @@ pub async fn create_instance(
   modpack_path: Option<String>,
   mut is_install_fabric_api: Option<bool>,
   modpack_version: Option<String>,
+  origin: Option<ModpackOriginInput>,
 ) -> USTBLResult<()> {
   let client = app.state::<reqwest::Client>();
   let launcher_config_state = app.state::<Mutex<LauncherConfig>>();
@@ -995,6 +1038,15 @@ pub async fn create_instance(
     ));
   }
 
+  let origin = verify_origin(
+    origin,
+    modpack_path.as_ref(),
+    component_import.is_some(),
+    &game.id,
+    mod_loader.loader_type,
+  )
+  .await;
+
   let optifine_info = optifine.as_ref().map(|info| OptiFine {
     filename: info.filename.clone(),
     version: format!("{}_{}", info.r#type, info.patch),
@@ -1028,14 +1080,20 @@ pub async fn create_instance(
     use_spec_game_config: false,
     spec_game_config: None,
     modpack_version,
+    origin,
   };
 
   if component_import.is_some() {
     instance.mod_loader.status = ModLoaderStatus::Installed;
+  }
+  // A followable instance owns its files, so it must not share a game directory.
+  if component_import.is_some() || instance.origin.is_some() {
     let mut config = get_global_game_config(&app);
-    config.version_isolation = true;
-    instance.use_spec_game_config = true;
-    instance.spec_game_config = Some(config);
+    if component_import.is_some() || !config.version_isolation {
+      config.version_isolation = true;
+      instance.use_spec_game_config = true;
+      instance.spec_game_config = Some(config);
+    }
   }
 
   // Download version info, retrying through both official and mirror routes.
@@ -1203,9 +1261,39 @@ pub async fn create_instance(
   }
 
   // If modpack path is provided, install it
+  let mut baseline_files = Vec::<BaselineFile>::new();
   if let Some(file) = &modpack_file {
-    task_params.extend(get_download_params(&app, file, &version_path).await?);
-    extract_overrides(file, &version_path)?;
+    let downloads = get_download_params(&app, file, &version_path).await?;
+    // Downloaded files are recorded from the manifest: their hash and size are
+    // known before the transfer finishes.
+    for download in &downloads {
+      if let (Some(sha1), Some(size), Ok(relative)) = (
+        &download.param.sha1,
+        download.size,
+        download.param.dest.strip_prefix(&version_path),
+      ) {
+        baseline_files.push(BaselineFile {
+          path: relative.to_string_lossy().into_owned(),
+          sha1: sha1.clone(),
+          size,
+        });
+      }
+    }
+    task_params.extend(
+      downloads
+        .into_iter()
+        .map(|download| PTaskParam::Download(download.param)),
+    );
+
+    let overrides = extract_overrides(file, &version_path)?;
+    if instance.origin.is_some() {
+      let root = version_path.clone();
+      let hashed = tokio::task::spawn_blocking(move || hash_existing_files(&root, &overrides))
+        .await
+        .map_err(|e| crate::error::USTBLError(e.to_string()))??;
+      // Listed last so an override wins over a download of the same path.
+      baseline_files.extend(hashed);
+    }
   }
 
   schedule_progressive_task_group(
@@ -1246,6 +1334,19 @@ pub async fn create_instance(
     .save_json_cfg()
     .await
     .map_err(|_| InstanceError::FileCreationFailed)?;
+  if let Some(origin) = &instance.origin {
+    ModpackBaseline::build(
+      origin,
+      BaselineLoader {
+        loader_type: instance.mod_loader.loader_type,
+        version: instance.mod_loader.version.clone(),
+      },
+      baseline_files,
+    )
+    .save(&version_path)
+    .await
+    .map_err(|_| InstanceError::FileCreationFailed)?;
+  }
 
   dir_guard.commit(); // disarm the cleanup guard on success
   Ok(())
@@ -1560,6 +1661,7 @@ pub async fn export_modpack(
   if selected_files.is_empty() {
     return Err(InstanceError::ModpackManifestParseError.into());
   }
+  let mut raw_files = Vec::new();
   let (prefix, overrides, extras) = match options.format {
     ExportFormat::Modrinth => {
       let mut manifest = generate_modrinth_manifest(&instance, &options)?;
@@ -1579,6 +1681,20 @@ pub async fn export_modpack(
         vec![("modrinth.index.json".to_string(), json)],
       )
     }
+    ExportFormat::MultiMC if is_component_instance(&instance.version_path) => {
+      // An imported component profile is written back from what it declared.
+      let snapshot = ComponentSnapshot::load(&instance.version_path)
+        .await
+        .map_err(|_| InstanceError::ModpackExportProfileMissing)?
+        .ok_or(InstanceError::ModpackExportProfileMissing)?;
+      let libraries_dir =
+        get_instance_subdir_paths(&app, &instance, &[&InstanceSubdirType::Libraries])
+          .ok_or(InstanceError::InstanceNotFoundByID)?
+          .remove(0);
+      let export = build_component_export(&snapshot, &options, &libraries_dir)?;
+      raw_files = export.libraries;
+      (".minecraft".to_string(), selected_files, export.entries)
+    }
     ExportFormat::MultiMC => {
       let manifest = generate_multimc_manifest(&instance, &options)?;
       let json = serde_json::to_string_pretty(&manifest)
@@ -1597,6 +1713,58 @@ pub async fn export_modpack(
       )
     }
   };
-  create_modpack_zip(&save_path, &prefix, overrides, extras).await?;
+  create_modpack_zip(&save_path, &prefix, overrides, extras, raw_files).await?;
   Ok(())
+}
+
+#[cfg(test)]
+mod origin_tests {
+  use super::*;
+  use crate::instance::models::misc::OriginPlatform;
+  use std::io::Write;
+
+  fn input(sha1: &str) -> ModpackOriginInput {
+    ModpackOriginInput {
+      platform: OriginPlatform::Modrinth,
+      project_id: "p".into(),
+      version_id: "v".into(),
+      expected_sha1: sha1.into(),
+    }
+  }
+
+  fn archive() -> (PathBuf, String) {
+    let path = std::env::temp_dir().join(format!("ustbl-origin-{}.mrpack", uuid::Uuid::new_v4()));
+    fs::File::create(&path).unwrap().write_all(b"abc").unwrap();
+    // SHA-1 of "abc"
+    (path, "a9993e364706816aba3e25717850c26c9cd0d89d".into())
+  }
+
+  #[tokio::test]
+  async fn origin_is_kept_only_when_the_archive_matches_the_published_sha1() {
+    let (path, sha1) = archive();
+    let path_str = path.to_string_lossy().to_string();
+    let verify = |input, component| {
+      verify_origin(
+        input,
+        Some(&path_str),
+        component,
+        "1.21.1",
+        ModLoaderType::NeoForge,
+      )
+    };
+
+    let kept = verify(Some(input(&sha1.to_uppercase())), false)
+      .await
+      .unwrap();
+    assert_eq!(
+      (kept.game_version.as_str(), kept.loader_type),
+      ("1.21.1", ModLoaderType::NeoForge)
+    );
+    assert!(kept.follow);
+    assert!(verify(Some(input("deadbeef")), false).await.is_none());
+    assert!(verify(Some(input("")), false).await.is_none());
+    assert!(verify(Some(input(&sha1)), true).await.is_none());
+    assert!(verify(None, false).await.is_none());
+    let _ = fs::remove_file(path);
+  }
 }

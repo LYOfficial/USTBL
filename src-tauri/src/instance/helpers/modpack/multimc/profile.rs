@@ -5,6 +5,9 @@
 //! 76d35af5b92201d6db827c5a01d9e7caac5ddcaa for `libraries`/`+libraries` merging.
 //! No loader-name or mod-name heuristics belong in the resolver.
 
+use super::snapshot::{
+  ComponentSnapshot, LocalLibrary, COMPONENTS_FILE_NAME, SNAPSHOT_FILE_NAME, SNAPSHOT_SCHEMA,
+};
 use super::{ModpackManifest, MultiMcManifest};
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::client_json::*;
@@ -13,7 +16,7 @@ use crate::utils::web::fetch_json_with_fallbacks;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha1::{Digest, Sha1};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Component, Path};
@@ -217,6 +220,11 @@ pub struct ResolvedMultiMc {
   patches: Vec<Patch>,
   base: String,
   cfg: HashMap<String, String>,
+  /// Patch files the pack shipped, as written, by component uid.
+  local_patches: BTreeMap<String, Value>,
+  /// `mmc-pack.json` exactly as shipped, so component flags the typed manifest
+  /// does not model (`important`, `dependencyOnly`, ...) are not lost.
+  mmc_pack: Value,
 }
 
 impl ResolvedMultiMc {
@@ -243,6 +251,7 @@ impl ResolvedMultiMc {
     }
     let mut pending = Vec::new();
     let mut patches: Vec<Patch> = Vec::new();
+    let mut local_patches = BTreeMap::new();
     let mut seen = HashSet::new();
     for c in &manifest.components {
       if !seen.insert(c.uid.clone()) {
@@ -261,8 +270,12 @@ impl ResolvedMultiMc {
       let (uid, requested) = &pending[index];
       identifier(uid)?;
       let local = format!("{}patches/{uid}.json", manifest.base_path);
+      let mut shipped = None;
       let patch: Patch = if archive.index_for_name(&local).is_some() {
-        serde_json::from_slice(&read_entry(&mut archive, &local, 4 * 1024 * 1024)?)?
+        let raw: Value =
+          serde_json::from_slice(&read_entry(&mut archive, &local, 4 * 1024 * 1024)?)?;
+        shipped = Some(raw.clone());
+        serde_json::from_value(raw)?
       } else {
         let version = requested
           .as_ref()
@@ -298,15 +311,25 @@ impl ResolvedMultiMc {
           pending.push((dep.uid.clone(), version));
         }
       }
+      if let Some(raw) = shipped {
+        local_patches.insert(patch.uid.clone(), raw);
+      }
       patches.push(patch);
       index += 1;
     }
     let patches = order_patches(patches)?;
+    let mmc_pack: Value = serde_json::from_slice(&read_entry(
+      &mut archive,
+      &format!("{}mmc-pack.json", manifest.base_path),
+      4 * 1024 * 1024,
+    )?)?;
     let mut result = Self {
       client: McClientInfo::default(),
       patches,
       base: manifest.base_path,
       cfg: manifest.cfg,
+      local_patches,
+      mmc_pack,
     };
     result.client = result.compose()?;
     Ok(Some(result))
@@ -445,14 +468,27 @@ impl ResolvedMultiMc {
     let mut normal = Vec::new();
     let mut maven = Vec::new();
     let mut main = None;
+    let mut local_libraries = Vec::new();
     for patch in &self.patches {
       for raw in patch.libraries.iter().chain(&patch.extra_libraries) {
-        if let Some(lib) = normalize_library(raw, &mut archive, &self.base, libraries)? {
+        if let Some(lib) = normalize_library(
+          raw,
+          &mut archive,
+          &self.base,
+          libraries,
+          &mut local_libraries,
+        )? {
           normal.push(lib);
         }
       }
       for raw in &patch.maven_files {
-        if let Some(lib) = normalize_library(raw, &mut archive, &self.base, libraries)? {
+        if let Some(lib) = normalize_library(
+          raw,
+          &mut archive,
+          &self.base,
+          libraries,
+          &mut local_libraries,
+        )? {
           if let Some(artifact) = lib.downloads.and_then(|d| d.artifact) {
             maven.push(artifact);
           }
@@ -464,10 +500,16 @@ impl ResolvedMultiMc {
     }
     self.client.libraries = merge_library_lists(&normal, &[]);
     let raw = main.ok_or_else(|| invalid("missing mainJar"))?;
-    let main = normalize_library(&raw, &mut archive, &self.base, libraries)?
-      .and_then(|l| l.downloads)
-      .and_then(|d| d.artifact)
-      .ok_or_else(|| invalid("missing mainJar artifact"))?;
+    let main = normalize_library(
+      &raw,
+      &mut archive,
+      &self.base,
+      libraries,
+      &mut local_libraries,
+    )?
+    .and_then(|l| l.downloads)
+    .and_then(|d| d.artifact)
+    .ok_or_else(|| invalid("missing mainJar artifact"))?;
     if main.url.is_empty() {
       fs::create_dir_all(instance)?;
       fs::copy(
@@ -487,8 +529,25 @@ impl ResolvedMultiMc {
     add_wrapper_arguments(&mut self.client)?;
     fs::create_dir_all(instance)?;
     fs::write(
-      instance.join("ustbl-multimc-components.json"),
+      instance.join(COMPONENTS_FILE_NAME),
       serde_json::to_vec_pretty(&self.patches)?,
+    )?;
+    // What the pack declared besides the resolved patches. None of it is applied
+    // again on launch; it is kept so the pack can be exported without loss.
+    let snapshot = ComponentSnapshot {
+      schema: SNAPSHOT_SCHEMA,
+      mmc_pack: self.mmc_pack.clone(),
+      instance_cfg: self
+        .cfg
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect(),
+      local_patches: self.local_patches.clone(),
+      local_libraries,
+    };
+    fs::write(
+      instance.join(SNAPSHOT_FILE_NAME),
+      serde_json::to_vec_pretty(&snapshot)?,
     )?;
     Ok(())
   }
@@ -603,6 +662,7 @@ fn normalize_library(
   archive: &mut ZipArchive<&File>,
   base: &str,
   libraries: &Path,
+  local_libraries: &mut Vec<LocalLibrary>,
 ) -> USTBLResult<Option<LibrariesValue>> {
   let mut lib: LibrariesValue = serde_json::from_value(raw.clone())?;
   if lib.name.is_empty() {
@@ -644,6 +704,13 @@ fn normalize_library(
     let target = libraries.join(&path);
     fs::create_dir_all(target.parent().unwrap())?;
     fs::write(&target, &bytes)?;
+    let entry = LocalLibrary {
+      filename: filename.to_string(),
+      path: path.clone(),
+    };
+    if !local_libraries.contains(&entry) {
+      local_libraries.push(entry);
+    }
     lib.downloads = Some(LibrariesDownloads {
       artifact: Some(DownloadsArtifact {
         path,

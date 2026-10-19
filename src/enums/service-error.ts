@@ -43,6 +43,8 @@ export enum InstanceError {
   ProcessorExecutionFailed = "PROCESSOR_EXECUTION_FAILED",
   SemaphoreAcquireFailed = "SEMAPHORE_ACQUIRE_FAILED",
   LoaderInstallerNotFound = "LOADER_INSTALLER_NOT_FOUND",
+  ModpackExportComponentInstance = "MODPACK_EXPORT_COMPONENT_INSTANCE",
+  ModpackExportProfileMissing = "MODPACK_EXPORT_PROFILE_MISSING",
 }
 
 export enum ConfigServiceError {

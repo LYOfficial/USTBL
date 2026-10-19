@@ -38,6 +38,7 @@ export interface OtherResourceSearchRes {
 
 export interface OtherResourceFileInfo {
   resourceId: string;
+  fileId: string; // Modrinth version id / CurseForge file id
   name: string;
   releaseType: string;
   downloads: number;

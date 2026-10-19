@@ -532,6 +532,7 @@ impl From<&CurseForgeFile> for OtherResourceFileInfo {
 
     Self {
       resource_id: file.mod_id.to_string(),
+      file_id: file.id.to_string(),
       name: if file.display_name.is_empty() {
         file.file_name.clone()
       } else {

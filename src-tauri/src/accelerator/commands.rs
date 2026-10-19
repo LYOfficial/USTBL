@@ -21,6 +21,7 @@ pub struct ResourceAccelerationLatency {
   pub host: String,
   pub latency_ms: Option<u64>,
   pub available: bool,
+  pub error: Option<String>,
 }
 
 #[tauri::command]
@@ -54,7 +55,10 @@ pub async fn retrieve_resource_acceleration_status(
 
 #[tauri::command]
 pub async fn test_resource_acceleration_latency(
+  app: AppHandle,
   github_enabled: bool,
 ) -> USTBLResult<Vec<ResourceAccelerationLatency>> {
-  Ok(super::service::test_latency(github_enabled).await)
+  let service = app.state::<Mutex<ResourceAccelerationService>>();
+  let running = service.lock().await.status().running;
+  Ok(super::service::test_latency(github_enabled, running).await)
 }

@@ -3,5 +3,8 @@
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
-  app_lib::run().await;
+  let exit_code = app_lib::run().await;
+  #[cfg(debug_assertions)]
+  eprintln!("Launcher event loop returned {exit_code}");
+  std::process::exit(exit_code);
 }

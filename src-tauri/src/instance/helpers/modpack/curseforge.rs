@@ -12,7 +12,7 @@ use tauri_plugin_http::reqwest;
 use zip::ZipArchive;
 
 use crate::error::{USTBLError, USTBLResult};
-use crate::instance::helpers::modpack::misc::{ModpackManifest, ModpackMetaInfo};
+use crate::instance::helpers::modpack::misc::{ModpackDownload, ModpackManifest, ModpackMetaInfo};
 use crate::instance::models::misc::{InstanceError, ModLoader, ModLoaderType};
 use crate::launcher_config::models::LauncherConfig;
 use crate::resource::helpers::curseforge::misc::has_official_api_key;
@@ -21,7 +21,6 @@ use crate::resource::helpers::mcim::{
 };
 use crate::resource::models::OtherResourceSource;
 use crate::tasks::download::DownloadParam;
-use crate::tasks::PTaskParam;
 use std::sync::Mutex;
 
 lazy_static! {
@@ -136,6 +135,7 @@ structstruck::strike! {
     pub data: struct {
       pub download_url: Option<String>,
       pub file_name: String,
+      pub file_length: Option<u64>,
       pub hashes: Option<Vec<pub struct {
         pub value: String,
         pub algo: u64,
@@ -226,7 +226,7 @@ impl ModpackManifest for CurseForgeManifest {
     &self,
     app: &AppHandle,
     instance_path: &Path,
-  ) -> USTBLResult<Vec<PTaskParam>> {
+  ) -> USTBLResult<Vec<ModpackDownload>> {
     let client = app.state::<reqwest::Client>();
     let instance_path = instance_path.to_path_buf();
     // Resolved once so each file lookup does not have to re-read the config.
@@ -269,35 +269,38 @@ impl ModpackManifest for CurseForgeManifest {
           .and_then(|hs| hs.iter().find(|h| h.algo == 1))
           .map(|h| h.value.clone());
 
-        let task_param = PTaskParam::Download(DownloadParam {
-          src: url::Url::parse(&download_url).map_err(|_| InstanceError::InvalidSourcePath)?,
-          sha1,
-          dest: instance_path
-            .join(match class_id {
-              Some(12) | Some(6945) => "resourcepacks",
-              Some(6552) => "shaderpacks",
-              _ => "mods",
-            })
-            .join(&file_manifest.data.file_name),
-          filename: Some(file_manifest.data.file_name.clone()),
-          custom_headers: None,
-          transfer_options: Default::default(),
-        });
+        let download = ModpackDownload {
+          param: DownloadParam {
+            src: url::Url::parse(&download_url).map_err(|_| InstanceError::InvalidSourcePath)?,
+            sha1,
+            dest: instance_path
+              .join(match class_id {
+                Some(12) | Some(6945) => "resourcepacks",
+                Some(6552) => "shaderpacks",
+                _ => "mods",
+              })
+              .join(&file_manifest.data.file_name),
+            filename: Some(file_manifest.data.file_name.clone()),
+            custom_headers: None,
+            transfer_options: Default::default(),
+          },
+          size: file_manifest.data.file_length,
+        };
 
-        Ok::<PTaskParam, USTBLError>(task_param)
+        Ok::<ModpackDownload, USTBLError>(download)
       }
     });
 
     let results = futures::future::join_all(tasks).await;
 
-    let mut task_params = Vec::new();
+    let mut downloads = Vec::new();
     for result in results {
-      task_params.push(result?);
+      downloads.push(result?);
     }
-    Ok(task_params)
+    Ok(downloads)
   }
 
-  fn get_overrides_path(&self) -> String {
-    self.overrides.clone()
+  fn get_overrides_paths(&self) -> Vec<String> {
+    vec![self.overrides.clone()]
   }
 }

@@ -2614,7 +2614,11 @@
       },
       "exportModpack": {
         "error": {
-          "title": "Export failed"
+          "title": "Export failed",
+          "description": {
+            "MODPACK_EXPORT_COMPONENT_INSTANCE": "Component-profile instances can only be exported as MultiMC",
+            "MODPACK_EXPORT_PROFILE_MISSING": "This instance was imported by an older version and lacks the component data needed for export. Re-import the modpack and try again"
+          }
         }
       }
     },
@@ -2637,6 +2641,50 @@
         "success": "刪除檔案成功",
         "error": {
           "title": "刪除檔案失敗"
+        }
+      }
+    },
+    "ipv6 acceleration": {
+      "status": {
+        "success": "操作完成",
+        "error": {
+          "title": "IPv6 免流操作失败",
+          "description": {}
+        }
+      },
+      "install": {
+        "success": "操作完成",
+        "error": {
+          "title": "IPv6 免流操作失败",
+          "description": {}
+        }
+      },
+      "start": {
+        "success": "操作完成",
+        "error": {
+          "title": "IPv6 免流操作失败",
+          "description": {}
+        }
+      },
+      "stop": {
+        "success": "操作完成",
+        "error": {
+          "title": "IPv6 免流操作失败",
+          "description": {}
+        }
+      },
+      "nodes": {
+        "success": "操作完成",
+        "error": {
+          "title": "IPv6 免流操作失败",
+          "description": {}
+        }
+      },
+      "select": {
+        "success": "操作完成",
+        "error": {
+          "title": "IPv6 免流操作失败",
+          "description": {}
         }
       }
     }
@@ -2810,7 +2858,7 @@
     },
     "notice": {
       "title": "Note",
-      "description": "開啟後更新 Windows Hosts 到 CDN 位址；停止加速後會移除 USTBL 管理的 Hosts 條目。"
+      "description": "開啟後透過 vUSTB GitHub 代理存取網站；連線與驗證通過後才接管 Windows 代理，停止後恢復原設定。"
     },
     "toast": {
       "started": "Acceleration started",
@@ -2824,7 +2872,31 @@
       "title": "節點連線性",
       "test": "測試連線",
       "empty": "測試加速節點後顯示延遲。",
-      "failed": "無法存取"
+      "failed": "無法存取",
+      "proxy": "檢測路徑：目前加速代理",
+      "direct": "檢測路徑：直接連線，不經過加速代理"
+    },
+    "ipv6": {
+      "title": "IPv6 免流",
+      "current": "WARP IPv6 通道",
+      "description": "透過 IPv6 接入 Cloudflare WARP，以 TUN 轉發應用流量。",
+      "running": "執行中",
+      "stopped": "已停止",
+      "unsupported": "需要 Windows x64 或 ARM64 系統。",
+      "administrator": "TUN 需要管理員權限，請退出 USTBL 後以管理員身分執行。",
+      "working": "正在處理，下載核心和建立通道可能需要一些時間。",
+      "install": "下載核心",
+      "start": "啟動免流",
+      "stop": "停止免流",
+      "bypass": "繞過校園網",
+      "bypassDescription": "每行一個網域或 CIDR，啟動時儲存；修改後需要重新啟動免流。",
+      "nodes": "接入點",
+      "nodesDescription": "共 28 個 IPv6 接入點，啟動後可測試延遲；空白延遲表示尚無結果或無法連線。",
+      "auto": "自動選擇",
+      "refresh": "重新整理",
+      "test": "測試延遲",
+      "notice": "使用條件",
+      "noticeDescription": "請先連接 USTB-Student 或 USTB-V6 並完成認證，USTB_Wi-Fi 不支援免流。需要可用公共 IPv6；繞過流量按原網路規則計費。退出時關閉 TUN，實際免流取決於校園網政策。"
     }
   },
   "MessagesPage": {
@@ -2881,7 +2953,8 @@
     "tooltip": {
       "exportFormat": {
         "Modrinth": "Smaller package size; required mods are downloaded from a manifest during import.",
-        "MultiMC": "Widely supported by major launchers; packaged as a complete instance."
+        "MultiMC": "Widely supported by major launchers; packaged as a complete instance.",
+        "MultiMCComponentOnly": "This instance was imported from a MultiMC component profile, so it can only be exported as MultiMC. Its components, patches and local libraries are kept as they were."
       }
     }
   }

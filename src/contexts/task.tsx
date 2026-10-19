@@ -30,6 +30,7 @@ import {
 import { ConfigService } from "@/services/config";
 import { InstanceService } from "@/services/instance";
 import { TaskService } from "@/services/task";
+import { takePendingModpackOrigin } from "@/utils/modpack-origin";
 
 interface TaskContextType {
   tasks: TaskGroupDesc[];
@@ -511,8 +512,10 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
                   (t) => t.taskGroup === payload.taskGroup
                 );
                 if (group && group.taskDescs.length > 0) {
+                  const dest = group.taskDescs[0].payload.dest;
                   openSharedModal("import-modpack", {
-                    path: group.taskDescs[0].payload.dest,
+                    path: dest,
+                    origin: takePendingModpackOrigin(dest),
                   });
                 }
                 break;

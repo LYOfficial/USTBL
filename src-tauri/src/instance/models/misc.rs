@@ -1,5 +1,6 @@
 use crate::instance::constants::INSTANCE_CFG_FILE_NAME;
 use crate::instance::helpers::game_version::{compare_game_versions, get_major_game_version};
+use crate::instance::helpers::modpack::multimc::snapshot::is_component_instance;
 use crate::launcher_config::models::GameConfig;
 use crate::storage::{load_json_async, save_json_async};
 use crate::utils::image::ImageWrapper;
@@ -79,6 +80,51 @@ pub enum ModLoaderStatus {
   Installed,
 }
 
+/// Where an instance's modpack was obtained from.
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OriginPlatform {
+  Modrinth,
+  CurseForge,
+  Campus,
+}
+
+fn default_follow() -> bool {
+  true
+}
+
+/// Optional identity of an instance installed from a platform modpack.
+///
+/// The (platform, project, version) triple is written by the entry that
+/// installed the instance, never inferred. It deliberately carries no instance
+/// id, name or path, so renaming or moving an instance does not affect it.
+#[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceOrigin {
+  pub platform: OriginPlatform,
+  pub project_id: String,
+  /// Modrinth version id / CurseForge file id / campus immutable version id.
+  pub version_id: String,
+  /// The two fixed attributes of a modpack line.
+  pub game_version: String,
+  pub loader_type: ModLoaderType,
+  /// The user may pause following without losing the identity.
+  #[serde(default = "default_follow")]
+  pub follow: bool,
+}
+
+/// Origin claimed by a download entry, verified against the modpack file before
+/// it is accepted as an [`InstanceOrigin`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModpackOriginInput {
+  pub platform: OriginPlatform,
+  pub project_id: String,
+  pub version_id: String,
+  /// SHA-1 of the modpack archive published by the platform.
+  pub expected_sha1: String,
+}
+
 structstruck::strike! {
   #[strikethrough[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize, Default)]]
   #[strikethrough[serde(rename_all = "camelCase", default)]]
@@ -103,6 +149,7 @@ structstruck::strike! {
     // if use_spec_game_config is false, this field is ignored
     pub spec_game_config: Option<GameConfig>,
     pub modpack_version: Option<String>,
+    pub origin: Option<InstanceOrigin>,
   }
 }
 
@@ -141,6 +188,9 @@ pub struct InstanceSummary {
   pub use_spec_game_config: bool,
   pub is_version_isolated: bool,
   pub modpack_version: Option<String>,
+  /// Imported from a MultiMC component profile; such an instance can only be
+  /// exported as MultiMC.
+  pub is_component_profile: bool,
 }
 
 impl InstanceSummary {
@@ -170,6 +220,7 @@ impl InstanceSummary {
       use_spec_game_config: instance.use_spec_game_config,
       is_version_isolated,
       modpack_version: instance.modpack_version.clone(),
+      is_component_profile: is_component_instance(&instance.version_path),
     }
   }
 }
@@ -277,6 +328,8 @@ pub enum InstanceError {
   ProcessorExecutionFailed,
   SemaphoreAcquireFailed,
   LoaderInstallerNotFound,
+  ModpackExportComponentInstance,
+  ModpackExportProfileMissing,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize, Default)]
@@ -294,4 +347,31 @@ impl std::error::Error for InstanceError {}
 pub struct ModpackFileList {
   pub all: Vec<String>,
   pub unchecked: Vec<String>,
+}
+
+#[cfg(test)]
+mod origin_tests {
+  use super::*;
+
+  #[test]
+  fn instance_without_origin_loads_and_origin_round_trips_in_camel_case() {
+    let legacy: Instance = serde_json::from_str(r#"{"name":"old"}"#).unwrap();
+    assert!(legacy.origin.is_none());
+
+    let origin: InstanceOrigin = serde_json::from_str(
+      r#"{"platform":"modrinth","projectId":"p","versionId":"v","gameVersion":"1.21.1","loaderType":"NeoForge"}"#,
+    )
+    .unwrap();
+    assert!(origin.follow, "follow defaults to true");
+    assert_eq!(origin.platform, OriginPlatform::Modrinth);
+
+    let instance = Instance {
+      origin: Some(origin.clone()),
+      ..Default::default()
+    };
+    let json = serde_json::to_value(&instance).unwrap();
+    assert_eq!(json["origin"]["projectId"], "p");
+    let back: Instance = serde_json::from_value(json).unwrap();
+    assert_eq!(back.origin, Some(origin));
+  }
 }

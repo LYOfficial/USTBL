@@ -19,6 +19,15 @@
 
 前端仅作为静态资源构建到 `out/`；Tauri 在开发时启动 Next.js，在生产构建时将静态资源打包进应用。
 
+### 前端模块边界
+
+- `src/pages/_app.tsx` 负责国际化初始化和入口组装。`components/special/launcher-providers.tsx` 管理全局 Provider 顺序，托盘窗口只挂载 Chakra；`layouts/page-layout.tsx` 使用静态布局映射，实例详情页切换标签时保留布局与 Context。
+- `hooks/webview-behavior.ts` 管理 WebView 键盘和菜单事件，卸载时移除监听。
+- 资源加速页与 IPv6 设置组件负责展示；`hooks/resource-acceleration.ts` 和 `hooks/ipv6-acceleration.ts` 分别管理状态、操作和轮询。Service 负责 Tauri 通信，原生进程、凭据、权限和网络恢复留在 Rust。
+- `utils/subscription.ts` 处理晚到的异步监听注册和清理；`utils/polling.ts` 在每轮请求完成后安排下一轮，防止慢请求积压。加速 hook 使用操作版本拒绝过期响应，轮询不覆盖用户正在编辑的绕过规则。
+
+详见 [资源加速验证说明](resource-acceleration.md)。
+
 ## 仓库结构
 
 | 路径                        | 说明                                                        |

@@ -1,3 +1,4 @@
+pub mod baseline;
 pub mod curseforge;
 pub mod export;
 pub mod misc;
