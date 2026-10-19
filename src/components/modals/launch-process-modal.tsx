@@ -233,6 +233,21 @@ const LaunchProcessModal: React.FC<LaunchProcessModal> = ({
     ]
   );
 
+  // The last step hands the game process over to the user. Closing the modal at that
+  // point must only dismiss it: `cancelLaunchProcess` would kill the running game.
+  const handleCloseModal = useCallback(() => {
+    if (activeStep >= launchProcessSteps.length) {
+      props.onClose();
+    } else {
+      handleCloseModalWithCancel();
+    }
+  }, [
+    activeStep,
+    launchProcessSteps.length,
+    handleCloseModalWithCancel,
+    props,
+  ]);
+
   useEffect(() => {
     if (!selectedPlayer) {
       toast({
@@ -286,7 +301,7 @@ const LaunchProcessModal: React.FC<LaunchProcessModal> = ({
       closeOnEsc={false}
       closeOnOverlayClick={false}
       {...props}
-      onClose={handleCloseModalWithCancel}
+      onClose={handleCloseModal}
     >
       <ModalOverlay />
       <ModalContent>
@@ -341,7 +356,7 @@ const LaunchProcessModal: React.FC<LaunchProcessModal> = ({
           </Stepper>
         </ModalBody>
         <ModalFooter>
-          <Button variant="ghost" onClick={handleCloseModalWithCancel}>
+          <Button variant="ghost" onClick={handleCloseModal}>
             {t("General.cancel")}
           </Button>
         </ModalFooter>

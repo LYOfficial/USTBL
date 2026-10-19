@@ -62,3 +62,10 @@ next-env.d.ts
 # SJMCL
 /SJMCL-main
 /artifacts
+
+# local toolchain and scratch space (never commit)
+/.rust-setup/
+/.tmp-*/
+*.zip
+/BEIKEserver/
+/.server/

@@ -374,7 +374,32 @@ pub async fn launch_game(
     crate::account::helpers::vustb_presence::track_game_stopped(id);
     return Err(error);
   }
-  let _ = rx.recv();
+
+  // Wait until the game signals that it has started (see `READY_FLAG`).
+  //
+  // This must NOT block forever: the signal only fires when the game prints one of
+  // the known readiness markers on stdout. Modded loaders are free to change their
+  // console format, and if none of the markers ever appear the "waiting for game to
+  // launch" modal stays on screen with no way out. Wait with a bounded timeout and
+  // treat a timeout as "started anyway" — the process is alive at this point, so
+  // dismissing the modal is the correct behaviour.
+  const GAME_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+  let ready_rx = tokio::task::spawn_blocking(move || rx.recv_timeout(GAME_READY_TIMEOUT)).await;
+  match ready_rx {
+    Ok(Ok(())) => {}
+    Ok(Err(mpsc::RecvTimeoutError::Timeout)) => {
+      log::warn!(
+        "Game did not print a readiness marker within {}s; assuming it started.",
+        GAME_READY_TIMEOUT.as_secs()
+      );
+    }
+    Ok(Err(mpsc::RecvTimeoutError::Disconnected)) => {
+      log::warn!("Game process ended before reporting readiness.");
+    }
+    Err(error) => {
+      log::warn!("Failed to wait for game readiness: {error}");
+    }
+  }
 
   if game_config.launcher_visibility != LauncherVisiablity::Always {
     let _ = app
