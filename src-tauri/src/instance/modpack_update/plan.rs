@@ -504,6 +504,23 @@ mod tests {
     baseline(&[("mods/a.jar", "a1")]).with_components(components_of_mmc_pack(snapshot_pack))
   }
 
+  #[tokio::test]
+  async fn recovered_base_enables_conflict_blocks() {
+    let root = std::env::temp_dir().join(format!("ustbl-base-plan-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(root.join("config")).unwrap();
+    fs::write(root.join("config/a.properties"), "key=local\n").unwrap();
+    let installed = baseline(&[("config/a.properties", "key=base\n")]);
+    let remote = remote(&[("config/a.properties", "key=remote\n")]);
+    let contents = BTreeMap::from([("config/a.properties".into(), b"key=remote\n".to_vec())]);
+    let missing = prepare_with_contents(&root, &installed, &remote, &contents).await.unwrap();
+    assert!(missing.diff.conflicts[0].hunks.is_empty());
+    base_store::store(&root, &installed.files[0], b"key=base\n").unwrap();
+    let recovered = prepare_with_contents(&root, &installed, &remote, &contents).await.unwrap();
+    assert_eq!(recovered.diff.conflicts[0].hunks.len(), 1);
+    assert_eq!(recovered.diff.conflicts[0].hunks[0].base, vec!["key=base"]);
+    let _ = fs::remove_dir_all(root);
+  }
+
   fn chain_of(pack: &serde_json::Value) -> Option<Vec<ComponentRef>> {
     Some(components_of_mmc_pack(pack))
   }

@@ -473,6 +473,7 @@ async fn plan_for(
     });
   }
   let first = prepare(&target.root, baseline, &remote).await?;
+  recover_base_copies(app, target, baseline, &first.diff.conflicts).await;
   let remote_contents = materialize_text_candidates(app, target, &remote, &first.diff.conflicts).await?;
   let prepared = prepare_with_contents(&target.root, baseline, &remote, &remote_contents).await?;
   let loader_change = (remote.loader != baseline.loader).then(|| LoaderChange {
@@ -495,6 +496,78 @@ async fn plan_for(
     reinstall_required: false,
     plan_hash: prepared.plan_hash,
   })
+}
+
+/// Fetch the installed version's copy of conflicting text files whose cached
+/// base is missing, so the conflict can be resolved block by block. Campus
+/// packs only; best effort, a failure leaves whole-file choices.
+async fn recover_base_copies(
+  app: &AppHandle,
+  target: &Target,
+  baseline: &ModpackBaseline,
+  conflicts: &[Conflict],
+) {
+  use crate::instance::helpers::modpack::base_store;
+  use crate::instance::models::misc::OriginPlatform;
+  if target.origin.platform != OriginPlatform::Campus || is_fresh(&target.origin) {
+    return;
+  }
+  let wanted: Vec<_> = baseline
+    .files
+    .iter()
+    .filter(|file| {
+      text::is_text_path(&file.path, &[])
+        && conflicts.iter().any(|c| c.path == file.path)
+        && base_store::load(&target.root, &file.sha1).ok().flatten().is_none()
+    })
+    .collect();
+  if wanted.is_empty() {
+    return;
+  }
+  let attempt = async {
+    let remote = super::sources::campus_base_remote(
+      app,
+      &target.origin,
+      &target.root,
+      &target.instance.name,
+    )
+    .await?;
+    let env = AppEnv {
+      app: app.clone(),
+      instance_id: target.instance.id.clone(),
+      label: remote.label.clone(),
+      loader: remote.loader.clone(),
+      loader_install_pending: AtomicBool::new(false),
+    };
+    let preview = target
+      .root
+      .join(super::remote::UPDATE_DIR)
+      .join(format!("base-recovery-{}", uuid::Uuid::new_v4()));
+    let files: Vec<_> = remote
+      .files
+      .iter()
+      .filter(|f| wanted.iter().any(|b| b.path == f.path && b.sha1 == f.key.sha1))
+      .collect();
+    let result = async {
+      prepare_packs(&files).await?;
+      for file in files {
+        let dest = preview.join(&file.path);
+        materialize_remote_file(&env, dest.clone(), file).await?;
+        let bytes = tokio::fs::read(dest).await?;
+        if let Some(base) = wanted.iter().find(|b| b.path == file.path) {
+          base_store::store(&target.root, base, &bytes)?;
+        }
+      }
+      Ok::<_, crate::error::USTBLError>(())
+    }
+    .await;
+    let _ = tokio::fs::remove_dir_all(preview).await;
+    result
+  }
+  .await;
+  if let Err(error) = attempt {
+    log::warn!("cannot recover modpack text baseline: {error:?}");
+  }
 }
 
 fn selected_hunk_contents(
@@ -609,6 +682,7 @@ pub async fn apply_modpack_update(
     baseline.component_refs()
   };
   let first = prepare(&target.root, &baseline, &remote).await?;
+  recover_base_copies(&app, &target, &baseline, &first.diff.conflicts).await;
   let remote_contents = materialize_text_candidates(&app, &target, &remote, &first.diff.conflicts).await?;
   let prepared = prepare_with_contents(&target.root, &baseline, &remote, &remote_contents).await?;
   if prepared.plan_hash != plan_hash {

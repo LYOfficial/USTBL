@@ -508,6 +508,27 @@ async fn campus_get<T: serde::de::DeserializeOwned>(
   Ok(Some(response.error_for_status()?.json().await?))
 }
 
+pub async fn campus_base_remote(
+  app: &AppHandle,
+  origin: &InstanceOrigin,
+  root: &Path,
+  name: &str,
+) -> USTBLResult<RemoteModpack> {
+  let id: i64 = origin
+    .version_id
+    .parse()
+    .map_err(|_| InstanceError::ModpackUpdateRemoteInvalid)?;
+  let version = campus_get::<CampusVersion>(app, &format!("/versions/{id}"))
+    .await?
+    .ok_or(InstanceError::ModpackUpdatePackUnavailable)?;
+  let latest = LatestVersion {
+    version_id: origin.version_id.clone(),
+    label: version.version_number.clone(),
+    payload: Payload::Campus(Box::new(version)),
+  };
+  resolve_remote(app, origin, root, name, &latest).await
+}
+
 /// The newest version of the followed line, or `None` when there is nothing
 /// newer than the current one. Cheap: no archive is downloaded.
 pub async fn latest_version(
