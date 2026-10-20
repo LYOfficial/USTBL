@@ -17,6 +17,7 @@ import SpotlightSearchModal from "@/components/modals/spotlight-search-modal";
 import UpdateModpackModal from "@/components/modals/update-modpack-modal";
 import VustbAnnouncementModal from "@/components/modals/vustb-announcement-modal";
 import VustbFriendsModal from "@/components/modals/vustb-friends-modal";
+import VustbLoginRequiredModal from "@/components/modals/vustb-login-required-modal";
 import { SharedModalContextProvider } from "@/contexts/shared-modal";
 import { useSharedModals } from "@/contexts/shared-modal";
 
@@ -55,6 +56,7 @@ const SharedModals: React.FC<{ children: React.ReactNode }> = ({
     "update-modpack": UpdateModpackModal,
     "vustb-announcement": VustbAnnouncementModal,
     "vustb-friends": VustbFriendsModal,
+    "vustb-login-required": VustbLoginRequiredModal,
   };
 
   return (

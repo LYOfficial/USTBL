@@ -53,6 +53,13 @@
         }
       }
     },
+    "disclaimer": {
+      "title": "Clause de non-responsabilité",
+      "software": {
+        "title": "Champ d'utilisation et interprétation",
+        "description": "Ce logiciel a été développé par l'atelier voxel métavers de l'Université des sciences et technologies de Pékin pour le projet Pixel Beike. Il est destiné à l'usage interne des étudiants de l'USTB à des fins d'apprentissage et de recherche scientifique. Il ne fournit aucun service de paiement, de recharge ou de jeu payant. Les utilisateurs doivent respecter les règles de l'université, les lois applicables et les règles du serveur, et assument la responsabilité de leur utilisation du logiciel et de ses conséquences. L'atelier voxel métavers de l'USTB et l'équipe de développement USTBL détiennent le droit final d'interprétation de cette clause et des sujets liés au logiciel."
+      }
+    },
     "legalInfo": {
       "title": "Informations légales",
       "settings": {
@@ -70,6 +77,12 @@
         }
       }
     }
+  },
+  "VustbAccessGate": {
+    "title": "Connectez-vous à votre compte Pixel Beike",
+    "description": "Un compte Pixel Beike est requis pour utiliser les instances, les téléchargements et le lancement des jeux. Les pages Découvrir, Comptes et les pages sans lien avec le jeu restent accessibles.",
+    "error": "Impossible de vérifier l'état du compte Pixel Beike. Veuillez réessayer plus tard.",
+    "goToAccounts": "Ouvrir Comptes pour se connecter"
   },
   "AccountsPage": {
     "button": {

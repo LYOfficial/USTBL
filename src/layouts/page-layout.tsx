@@ -30,14 +30,10 @@ export default function PageLayout({
   const layouts =
     routeLayouts.find(({ prefix }) => pathname.startsWith(prefix))?.layouts ||
     [];
-  return (
-    <MainLayout>
-      {layouts.reduceRight(
-        (content, Layout) => (
-          <Layout>{content}</Layout>
-        ),
-        children
-      )}
-    </MainLayout>
+  const page = layouts.reduceRight(
+    (content, Layout) => <Layout>{content}</Layout>,
+    children
   );
+
+  return <MainLayout>{page}</MainLayout>;
 }

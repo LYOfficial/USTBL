@@ -1,4 +1,14 @@
-import { Button, HStack, Switch, Text } from "@chakra-ui/react";
+import {
+  Button,
+  Center,
+  HStack,
+  Spinner,
+  Switch,
+  Text,
+  VStack,
+} from "@chakra-ui/react";
+import { useRouter } from "next/router";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   OptionItemGroup,
@@ -10,12 +20,19 @@ import {
 } from "@/components/settings/acceleration-feedback";
 import Ipv6AccelerationSettings from "@/components/settings/ipv6-acceleration";
 import { useLauncherConfig } from "@/contexts/config";
+import { useSharedModals } from "@/contexts/shared-modal";
 import { useResourceAcceleration } from "@/hooks/resource-acceleration";
+import { AccountService } from "@/services/account";
 
 const ResourceAccelerationSettingsPage = () => {
   const { t } = useTranslation();
+  const router = useRouter();
   const { config } = useLauncherConfig();
   const primaryColor = config.appearance.theme.primaryColor;
+  const { requireVustbAccount } = useSharedModals();
+  const [accountState, setAccountState] = useState<
+    "loading" | "authenticated" | "unauthenticated"
+  >("loading");
   const {
     githubEnabled,
     setGithubEnabled,
@@ -28,6 +45,45 @@ const ResourceAccelerationSettingsPage = () => {
     toggle,
     testLatency,
   } = useResourceAcceleration();
+
+  useEffect(() => {
+    let disposed = false;
+    void AccountService.retrieveVustbAccount().then((response) => {
+      if (disposed) return;
+      setAccountState(
+        response.status === "success" && response.data
+          ? "authenticated"
+          : "unauthenticated"
+      );
+    });
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  if (accountState === "loading") {
+    return (
+      <Center minH="240px">
+        <Spinner />
+      </Center>
+    );
+  }
+
+  if (accountState === "unauthenticated") {
+    return (
+      <Center minH="240px" px={6}>
+        <VStack spacing={4} maxW="520px" textAlign="center">
+          <Text>{t("VustbAccessGate.description")}</Text>
+          <Button
+            colorScheme={primaryColor}
+            onClick={() => void router.push("/accounts")}
+          >
+            {t("VustbAccessGate.goToAccounts")}
+          </Button>
+        </VStack>
+      </Center>
+    );
+  }
 
   const groups: OptionItemGroupProps[] = [
     {
@@ -43,7 +99,11 @@ const ResourceAccelerationSettingsPage = () => {
               colorScheme={primaryColor}
               isChecked={githubEnabled}
               isDisabled={status.running || loading}
-              onChange={(event) => setGithubEnabled(event.target.checked)}
+              onChange={(event) =>
+                requireVustbAccount(() =>
+                  setGithubEnabled(event.target.checked)
+                )
+              }
             />
           ),
         },
@@ -65,7 +125,7 @@ const ResourceAccelerationSettingsPage = () => {
                 size="xs"
                 colorScheme={primaryColor}
                 isLoading={loading}
-                onClick={toggle}
+                onClick={() => requireVustbAccount(toggle)}
                 isDisabled={
                   loading ||
                   latencyLoading ||
@@ -109,7 +169,7 @@ const ResourceAccelerationSettingsPage = () => {
               variant="outline"
               isLoading={latencyLoading}
               isDisabled={loading}
-              onClick={testLatency}
+              onClick={() => requireVustbAccount(testLatency)}
             >
               {t("ResourceAccelerationSettingsPage.latency.test")}
             </Button>

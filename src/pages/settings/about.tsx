@@ -50,6 +50,15 @@ const AboutSettingsPage = () => {
         },
       ],
     },
+    {
+      title: t("AboutSettingsPage.disclaimer.title"),
+      items: [
+        {
+          title: t("AboutSettingsPage.disclaimer.software.title"),
+          description: t("AboutSettingsPage.disclaimer.software.description"),
+        },
+      ],
+    },
   ];
 
   return (

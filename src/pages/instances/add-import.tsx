@@ -25,7 +25,7 @@ import { useSharedModals } from "@/contexts/shared-modal";
 const AddAndImportInstancePage = () => {
   const { t } = useTranslation();
   const router = useRouter();
-  const { openSharedModal } = useSharedModals();
+  const { openSharedModal, requireVustbAccount } = useSharedModals();
 
   const {
     isOpen: isCreateInstanceModalOpen,
@@ -43,24 +43,22 @@ const AddAndImportInstancePage = () => {
     onClose: onCloseDownloadModpackModal,
   } = useDisclosure();
   const handleImportModpackFromDisk = async () => {
-    let filePath = await open({
-      multiple: false,
-      filters: [
-        {
-          name: t("General.dialog.filterName.modpack"),
-          extensions: ["zip", "mrpack"],
-        },
-      ],
-    });
-    if (filePath) {
-      openSharedModal("import-modpack", {
-        path: filePath,
+    requireVustbAccount(async () => {
+      const filePath = await open({
+        multiple: false,
+        filters: [
+          {
+            name: t("General.dialog.filterName.modpack"),
+            extensions: ["zip", "mrpack"],
+          },
+        ],
       });
-    }
+      if (filePath) openSharedModal("import-modpack", { path: filePath });
+    });
   };
 
   const addAndImportOptions: Record<string, () => void> = {
-    new: onOpenCreateInstanceModal,
+    new: () => requireVustbAccount(onOpenCreateInstanceModal),
     modpack: onOpenModpackMenu,
     campusModpack: () => router.push("/instances/sync"),
     manageDirs: () => router.push("/settings/global-game"),
@@ -78,7 +76,7 @@ const AddAndImportInstancePage = () => {
       icon: LuCloudDownload,
       label: t("AddAndImportInstancePage.modpackOperations.download"),
       onClick: () => {
-        onOpenDownloadModpackModal();
+        requireVustbAccount(onOpenDownloadModpackModal);
       },
     },
   ];

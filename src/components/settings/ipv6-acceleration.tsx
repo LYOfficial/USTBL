@@ -9,11 +9,13 @@ import {
 import { useTranslation } from "react-i18next";
 import { OptionItemGroup } from "@/components/common/option-item";
 import { useLauncherConfig } from "@/contexts/config";
+import { useSharedModals } from "@/contexts/shared-modal";
 import { useIpv6Acceleration } from "@/hooks/ipv6-acceleration";
 
 export default function Ipv6AccelerationSettings() {
   const { t } = useTranslation();
   const { config } = useLauncherConfig();
+  const { requireVustbAccount } = useSharedModals();
   const {
     status,
     busy,
@@ -65,7 +67,7 @@ export default function Ipv6AccelerationSettings() {
                   size="xs"
                   isLoading={busy}
                   isDisabled={!status.supported || busy}
-                  onClick={install}
+                  onClick={() => requireVustbAccount(install)}
                 >
                   {t(`${key}.install`)}
                 </Button>
@@ -80,7 +82,7 @@ export default function Ipv6AccelerationSettings() {
                   busy ||
                   (!status.running && (!status.installed || !status.elevated))
                 }
-                onClick={toggle}
+                onClick={() => requireVustbAccount(toggle)}
               >
                 {t(`${key}.${status?.running ? "stop" : "start"}`)}
               </Button>
@@ -115,7 +117,9 @@ export default function Ipv6AccelerationSettings() {
                 value={selected}
                 aria-label={t(`${key}.nodes`)}
                 isDisabled={!status?.running || busy}
-                onChange={(event) => selectNode(event.target.value)}
+                onChange={(event) =>
+                  requireVustbAccount(() => selectNode(event.target.value))
+                }
               >
                 {nodes.length === 0 && (
                   <option value="Auto">{t(`${key}.auto`)}</option>
@@ -132,7 +136,7 @@ export default function Ipv6AccelerationSettings() {
                   size="xs"
                   variant="outline"
                   isDisabled={!status?.running || busy}
-                  onClick={() => refreshNodes()}
+                  onClick={() => requireVustbAccount(() => refreshNodes())}
                 >
                   {t(`${key}.refresh`)}
                 </Button>
@@ -140,7 +144,7 @@ export default function Ipv6AccelerationSettings() {
                   size="xs"
                   variant="outline"
                   isDisabled={!status?.running || busy}
-                  onClick={() => refreshNodes(true)}
+                  onClick={() => requireVustbAccount(() => refreshNodes(true))}
                 >
                   {t(`${key}.test`)}
                 </Button>

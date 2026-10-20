@@ -53,6 +53,13 @@
         }
       }
     },
+    "disclaimer": {
+      "title": "Software Disclaimer",
+      "software": {
+        "title": "Scope of Use and Interpretation",
+        "description": "This software was developed by the Metaverse Voxel Workshop of the University of Science and Technology Beijing for the Pixel Beike project and is intended for internal use by USTB students for learning and scientific research. It does not provide paid, recharge, or in-game purchase services. Users must follow university rules, applicable laws, and server rules, and are responsible for their own use of the software and its consequences. The Metaverse Voxel Workshop of USTB and the USTBL development team reserve the final right to interpret this disclaimer and matters related to the software."
+      }
+    },
     "legalInfo": {
       "title": "Legal Notices",
       "settings": {
@@ -70,6 +77,12 @@
         }
       }
     }
+  },
+  "VustbAccessGate": {
+    "title": "Log in to your Pixel Beike account",
+    "description": "A Pixel Beike account is required to use game instances, game downloads, and game launching. The Discover page, Accounts page, and unrelated pages remain available.",
+    "error": "The Pixel Beike account status could not be checked. Please try again later.",
+    "goToAccounts": "Open Accounts to log in"
   },
   "AccountsPage": {
     "button": {

@@ -19,6 +19,7 @@ import InstallCampusModpackModal from "@/components/modals/install-campus-modpac
 import { InstanceLedger, ledgerRowId } from "@/components/sync/instance-ledger";
 import { useLauncherConfig } from "@/contexts/config";
 import { useGlobalData } from "@/contexts/global-data";
+import { useSharedModals } from "@/contexts/shared-modal";
 import { useTaskContext } from "@/contexts/task";
 import { useToast } from "@/contexts/toast";
 import {
@@ -64,6 +65,7 @@ const CampusPlatformSection: React.FC<CampusPlatformSectionProps> = ({
 }) => {
   const { t } = useTranslation();
   const toast = useToast();
+  const { requireVustbAccount } = useSharedModals();
   const { handleScheduleProgressiveTaskGroup } = useTaskContext();
   const { config } = useLauncherConfig();
   const primaryColor = config.appearance.theme.primaryColor;
@@ -104,7 +106,7 @@ const CampusPlatformSection: React.FC<CampusPlatformSectionProps> = ({
    * game version and loader, through the same download-then-import flow as any
    * other modpack download.
    */
-  const handleInstallExternal = useCallback(
+  const handleInstallExternalAllowed = useCallback(
     async (rec: CampusModpackRecommendation) => {
       if (!rec.projectRef || !rec.gameVersion) return;
       setDownloadingExternal(true);
@@ -194,6 +196,16 @@ const CampusPlatformSection: React.FC<CampusPlatformSectionProps> = ({
     [handleScheduleProgressiveTaskGroup, t, toast]
   );
 
+  const handleInstallExternal = useCallback(
+    async (rec: CampusModpackRecommendation) => {
+      if (!rec.projectRef || !rec.gameVersion) return;
+      requireVustbAccount(() => {
+        void handleInstallExternalAllowed(rec);
+      });
+    },
+    [handleInstallExternalAllowed, requireVustbAccount]
+  );
+
   const describeLine = useCallback(
     (line: CampusModpackLine) =>
       [
@@ -211,7 +223,7 @@ const CampusPlatformSection: React.FC<CampusPlatformSectionProps> = ({
     line: CampusModpackLine
   ) => {
     setSelected({ project, line });
-    installModal.onOpen();
+    requireVustbAccount(installModal.onOpen);
   };
 
   /** Marks a line that already has a local instance; click jumps to its row. */
