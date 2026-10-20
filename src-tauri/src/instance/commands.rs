@@ -23,7 +23,7 @@ use crate::instance::helpers::modpack::export::{
   ExportFormat, ExportModpackOptions,
 };
 use crate::instance::helpers::modpack::misc::{
-  extract_overrides, get_download_params, ModpackMetaInfo,
+  extract_overrides, get_download_params, retain_non_overridden_downloads, ModpackMetaInfo,
 };
 use crate::instance::helpers::modpack::multimc::profile::ResolvedMultiMc;
 use crate::instance::helpers::modpack::multimc::snapshot::{
@@ -1277,7 +1277,11 @@ pub async fn create_instance(
   // If modpack path is provided, install it
   let mut baseline_files = Vec::<BaselineFile>::new();
   if let Some(file) = &modpack_file {
-    let downloads = get_download_params(&app, file, &version_path).await?;
+    let mut downloads = get_download_params(&app, file, &version_path).await?;
+    let overrides = extract_overrides(file, &version_path)?;
+    // Overrides are the final layer of the pack. Do not schedule a download
+    // that would overwrite one after its baseline was recorded.
+    retain_non_overridden_downloads(&mut downloads, &version_path, &overrides);
     // Downloaded files are recorded from the manifest: their hash and size are
     // known before the transfer finishes.
     for download in &downloads {
@@ -1299,7 +1303,6 @@ pub async fn create_instance(
         .map(|download| PTaskParam::Download(download.param)),
     );
 
-    let overrides = extract_overrides(file, &version_path)?;
     if instance.origin.is_some() {
       let root = version_path.clone();
       let hashed = tokio::task::spawn_blocking(move || hash_existing_files(&root, &overrides))
