@@ -174,18 +174,58 @@ fn hunks(base: &[String], changed: &[String]) -> Vec<Hunk> {
   result
 }
 
-fn overlaps_or_touches(a: &Hunk, b: &Hunk) -> bool {
-  a.base_start <= b.base_end && b.base_start <= a.base_end
-    || a.base_end == b.base_start
-    || b.base_end == a.base_start
+struct EditGroup {
+  start: usize,
+  end: usize,
+  local: Vec<Hunk>,
+  remote: Vec<Hunk>,
 }
 
-/// What `base[start..end]` reads as once `edit`, which lies inside it, is applied.
-fn region(base: &[String], edit: &Hunk, start: usize, end: usize) -> Vec<String> {
-  let mut lines = base[start..edit.base_start].to_vec();
-  lines.extend(edit.replacement.iter().cloned());
-  lines.extend_from_slice(&base[edit.base_end..end]);
-  lines
+impl EditGroup {
+  fn conflicting(&self) -> bool {
+    !self.local.is_empty() && !self.remote.is_empty() && self.local != self.remote
+  }
+}
+
+/// Connected ranges form one answerable conflict, including adjacency.
+fn edit_groups(base: &[String], local: &[String], remote: &[String]) -> Vec<EditGroup> {
+  let mut edits: Vec<_> = hunks(base, local)
+    .into_iter()
+    .map(|h| (h, false))
+    .chain(hunks(base, remote).into_iter().map(|h| (h, true)))
+    .collect();
+  edits.sort_by_key(|(h, _)| (h.base_start, h.base_end));
+  let mut groups: Vec<EditGroup> = Vec::new();
+  for (edit, remote) in edits {
+    if !groups.last().is_some_and(|g| edit.base_start <= g.end) {
+      groups.push(EditGroup {
+        start: edit.base_start,
+        end: edit.base_end,
+        local: vec![],
+        remote: vec![],
+      });
+    }
+    let group = groups.last_mut().unwrap();
+    group.end = group.end.max(edit.base_end);
+    if remote {
+      group.remote.push(edit);
+    } else {
+      group.local.push(edit);
+    }
+  }
+  groups
+}
+
+fn region(base: &[String], edits: &[Hunk], start: usize, end: usize) -> Vec<String> {
+  let relative: Vec<_> = edits
+    .iter()
+    .map(|h| Hunk {
+      base_start: h.base_start - start,
+      base_end: h.base_end - start,
+      replacement: h.replacement.clone(),
+    })
+    .collect();
+  apply_hunks(&base[start..end], &relative)
 }
 
 fn apply_hunks(base: &[String], edits: &[Hunk]) -> Vec<String> {
@@ -202,36 +242,23 @@ fn apply_hunks(base: &[String], edits: &[Hunk]) -> Vec<String> {
 
 /// Merge local and remote edits. Adjacent edits are intentionally conflicts.
 pub fn three_way(base: &[String], local: &[String], remote: &[String]) -> MergeResult {
-  let local_hunks = hunks(base, local);
-  let remote_hunks = hunks(base, remote);
   let mut conflicts = Vec::new();
   let mut accepted = Vec::new();
-  for local_edit in &local_hunks {
-    for remote_edit in &remote_hunks {
-      if overlaps_or_touches(local_edit, remote_edit) {
-        if local_edit == remote_edit {
-          accepted.push(local_edit.clone());
-        } else {
-          let start = local_edit.base_start.min(remote_edit.base_start);
-          let end = local_edit.base_end.max(remote_edit.base_end);
-          conflicts.push(MergeConflict {
-            base_start: start,
-            base_end: end,
-            base: base[start..end].to_vec(),
-            local: region(base, local_edit, start, end),
-            remote: region(base, remote_edit, start, end),
-          });
-        }
-      }
-    }
-  }
-  for edit in local_hunks.iter().chain(remote_hunks.iter()) {
-    let touched = conflicts.iter().any(|conflict| {
-      edit.base_start >= conflict.base_start && edit.base_end <= conflict.base_end
-    });
-    let duplicate = accepted.iter().any(|known: &Hunk| known == edit);
-    if !touched && !duplicate {
-      accepted.push(edit.clone());
+  for group in edit_groups(base, local, remote) {
+    if group.conflicting() {
+      conflicts.push(MergeConflict {
+        base_start: group.start,
+        base_end: group.end,
+        base: base[group.start..group.end].to_vec(),
+        local: region(base, &group.local, group.start, group.end),
+        remote: region(base, &group.remote, group.start, group.end),
+      });
+    } else {
+      accepted.extend(if group.local.is_empty() {
+        group.remote
+      } else {
+        group.local
+      });
     }
   }
   accepted.sort_by_key(|edit| (edit.base_start, edit.base_end));
@@ -246,32 +273,53 @@ pub fn three_way_with_choices(
   remote: &[String],
   remote_hunks: &[usize],
 ) -> Vec<String> {
-  let local_hunks = hunks(base, local);
-  let remote_hunks_all = hunks(base, remote);
   let mut accepted = Vec::new();
   let mut conflict_index = 0usize;
-  for local_edit in &local_hunks {
-    for remote_edit in &remote_hunks_all {
-      if overlaps_or_touches(local_edit, remote_edit) && local_edit != remote_edit {
-        if remote_hunks.contains(&conflict_index) {
-          accepted.push(remote_edit.clone());
-        } else {
-          accepted.push(local_edit.clone());
-        }
-        conflict_index += 1;
-      }
-    }
-  }
-  for edit in local_hunks.iter().chain(remote_hunks_all.iter()) {
-    if !accepted.iter().any(|known: &Hunk| known == edit) {
-      let conflicting = accepted.iter().any(|known| overlaps_or_touches(known, edit));
-      if !conflicting {
-        accepted.push(edit.clone());
-      }
-    }
+  for group in edit_groups(base, local, remote) {
+    let take_remote = if group.conflicting() {
+      let selected = remote_hunks.contains(&conflict_index);
+      conflict_index += 1;
+      selected
+    } else {
+      group.local.is_empty()
+    };
+    accepted.extend(if take_remote {
+      group.remote
+    } else {
+      group.local
+    });
   }
   accepted.sort_by_key(|edit| (edit.base_start, edit.base_end));
   apply_hunks(base, &accepted)
+}
+
+pub fn merge_with_choices(
+  path: &str,
+  base: &[u8],
+  local: &[u8],
+  remote: &[u8],
+  selected: &[usize],
+) -> Result<Vec<u8>, TextMergeError> {
+  let parse = |bytes: &[u8]| -> Result<Vec<String>, TextMergeError> {
+    let text = std::str::from_utf8(bytes).map_err(|_| TextMergeError::InvalidText)?;
+    if !valid_format(path, text) {
+      return Err(TextMergeError::InvalidText);
+    }
+    Ok(
+      text
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .lines()
+        .map(str::to_owned)
+        .collect(),
+    )
+  };
+  let merged = three_way_with_choices(&parse(base)?, &parse(local)?, &parse(remote)?, selected);
+  let output = merged.join("\n") + "\n";
+  if !valid_format(path, &output) {
+    return Err(TextMergeError::InvalidMergedFormat);
+  }
+  Ok(output.replace('\n', line_ending(local)).into_bytes())
 }
 
 #[cfg(test)]
@@ -280,6 +328,37 @@ mod tests {
 
   fn lines(value: &str) -> Vec<String> {
     value.lines().map(str::to_string).collect()
+  }
+
+  #[test]
+  fn bridged_edits_form_one_complete_conflict() {
+    let base = lines("a\nb\nc\nd\ne\nf\ng");
+    let local = lines("a\nX\nY\nZ\ne\nf\ng");
+    let remote = lines("a\nB\nc\nD\ne\nf\nG");
+    let result = three_way(&base, &local, &remote);
+    assert_eq!(result.conflicts.len(), 1);
+    assert_eq!(result.conflicts[0].remote, lines("B\nc\nD"));
+    assert_eq!(
+      three_way_with_choices(&base, &local, &remote, &[]),
+      lines("a\nX\nY\nZ\ne\nf\nG")
+    );
+    assert_eq!(three_way_with_choices(&base, &local, &remote, &[0]), remote);
+  }
+
+  #[test]
+  fn selected_merge_validates_the_combined_format() {
+    // Each side is valid TOML, but combining their independent additions duplicates a key.
+    let base = b"a=0\n# gap\nb=0\n";
+    let local = b"a=0\nx=1\n# gap\nb=0\n";
+    let remote = b"a=0\n# gap\nb=0\nx=2\n";
+    assert_eq!(
+      merge_with_choices("a.toml", base, local, remote, &[]),
+      Err(TextMergeError::InvalidMergedFormat)
+    );
+    assert_eq!(
+      merge_with_choices("a.txt", b"a\r\n", b"b\r\n", b"c\n", &[0]).unwrap(),
+      b"c\r\n"
+    );
   }
 
   #[test]

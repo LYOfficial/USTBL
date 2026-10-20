@@ -2664,7 +2664,8 @@
             "MODPACK_UPDATE_RUNNING": "游戏正在运行，请先关闭游戏再更新整合包",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的组件链，无法就地更新，请重新安装",
             "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线",
-            "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试"
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试",
+            "MODPACK_UPDATE_MERGE_INVALID": "按块选择后配置文件的格式无效，请调整选择后重试"
           }
         }
       },
@@ -2697,7 +2698,8 @@
             "MODPACK_UPDATE_RUNNING": "游戏正在运行，请先关闭游戏再更新整合包",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的组件链，无法就地更新，请重新安装",
             "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线",
-            "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试"
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试",
+            "MODPACK_UPDATE_MERGE_INVALID": "按块选择后配置文件的格式无效，请调整选择后重试"
           }
         }
       },
@@ -2726,7 +2728,8 @@
             "MODPACK_UPDATE_RUNNING": "游戏正在运行，请先关闭游戏再更新整合包",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的组件链，无法就地更新，请重新安装",
             "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线",
-            "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试"
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试",
+            "MODPACK_UPDATE_MERGE_INVALID": "按块选择后配置文件的格式无效，请调整选择后重试"
           }
         }
       },
@@ -3222,7 +3225,8 @@
       "MODPACK_UPDATE_UNSUPPORTED": "该实例缺少可用的安装记录或未开启版本隔离",
       "MODPACK_UPDATE_NOT_ISOLATED": "该实例没有开启版本隔离，无法安全对比更新。请在实例设置中开启后重试",
       "MODPACK_UPDATE_BASELINE_MISSING": "该实例缺少整合包的安装记录或记录已损坏，无法对比更新",
-      "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试"
+      "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试",
+      "MODPACK_UPDATE_MERGE_INVALID": "按块选择后配置文件的格式无效，请调整选择后重试"
     },
     "rollback": {
       "hint": "可以撤销上一次整合包更新，把文件和加载器恢复成更新前的样子。",

@@ -2664,7 +2664,8 @@
             "MODPACK_UPDATE_RUNNING": "ゲームが実行中です。Modパックを更新する前に閉じてください",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "新しいバージョンはコンポーネント構成を変更するため、そのまま更新できません。再インストールしてください",
             "MODPACK_UPDATE_LINE_GONE": "プラットフォームにこのモッドパックのラインはもうありません",
-            "MODPACK_UPDATE_PACK_UNAVAILABLE": "このバージョンのファイルはプラットフォーム上で一時的に利用できません。しばらくしてからやり直してください"
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "このバージョンのファイルはプラットフォーム上で一時的に利用できません。しばらくしてからやり直してください",
+            "MODPACK_UPDATE_MERGE_INVALID": "選択したブロックでは設定形式が無効になります。選択を変更して再試行してください"
           }
         }
       },
@@ -2697,7 +2698,8 @@
             "MODPACK_UPDATE_RUNNING": "ゲームが実行中です。Modパックを更新する前に閉じてください",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "新しいバージョンはコンポーネント構成を変更するため、そのまま更新できません。再インストールしてください",
             "MODPACK_UPDATE_LINE_GONE": "プラットフォームにこのモッドパックのラインはもうありません",
-            "MODPACK_UPDATE_PACK_UNAVAILABLE": "このバージョンのファイルはプラットフォーム上で一時的に利用できません。しばらくしてからやり直してください"
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "このバージョンのファイルはプラットフォーム上で一時的に利用できません。しばらくしてからやり直してください",
+            "MODPACK_UPDATE_MERGE_INVALID": "選択したブロックでは設定形式が無効になります。選択を変更して再試行してください"
           }
         }
       },
@@ -2726,7 +2728,8 @@
             "MODPACK_UPDATE_RUNNING": "ゲームが実行中です。Modパックを更新する前に閉じてください",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "新しいバージョンはコンポーネント構成を変更するため、そのまま更新できません。再インストールしてください",
             "MODPACK_UPDATE_LINE_GONE": "プラットフォームにこのモッドパックのラインはもうありません",
-            "MODPACK_UPDATE_PACK_UNAVAILABLE": "このバージョンのファイルはプラットフォーム上で一時的に利用できません。しばらくしてからやり直してください"
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "このバージョンのファイルはプラットフォーム上で一時的に利用できません。しばらくしてからやり直してください",
+            "MODPACK_UPDATE_MERGE_INVALID": "選択したブロックでは設定形式が無効になります。選択を変更して再試行してください"
           }
         }
       },
@@ -3222,7 +3225,8 @@
       "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスには利用できるインストール記録がないか、バージョン分離が無効です",
       "MODPACK_UPDATE_NOT_ISOLATED": "このインスタンスはバージョン分離が無効のため、安全に比較できません。インスタンス設定で有効にして再試行してください",
       "MODPACK_UPDATE_BASELINE_MISSING": "このインスタンスにはモッドパックのインストール記録がないか、記録が破損しているため比較できません",
-      "MODPACK_UPDATE_PACK_UNAVAILABLE": "このバージョンのファイルはプラットフォーム上で一時的に利用できません。しばらくしてからやり直してください"
+      "MODPACK_UPDATE_PACK_UNAVAILABLE": "このバージョンのファイルはプラットフォーム上で一時的に利用できません。しばらくしてからやり直してください",
+      "MODPACK_UPDATE_MERGE_INVALID": "選択したブロックでは設定形式が無効になります。選択を変更して再試行してください"
     },
     "rollback": {
       "hint": "前回のモッドパック更新を取り消し、ファイルとローダーを更新前の状態に戻せます。",

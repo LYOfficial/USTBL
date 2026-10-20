@@ -2664,7 +2664,8 @@
             "MODPACK_UPDATE_RUNNING": "Le jeu est en cours d’exécution ; fermez-le avant de mettre à jour le pack de mods",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "Cette version modifie la chaîne de composants du pack et ne peut pas être appliquée sur place ; réinstallez-la",
             "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack",
-            "MODPACK_UPDATE_PACK_UNAVAILABLE": "Les fichiers de cette version sont momentanément indisponibles sur la plateforme. Réessayez plus tard"
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "Les fichiers de cette version sont momentanément indisponibles sur la plateforme. Réessayez plus tard",
+            "MODPACK_UPDATE_MERGE_INVALID": "Les blocs sélectionnés produisent une configuration invalide. Modifiez vos choix et réessayez"
           }
         }
       },
@@ -2697,7 +2698,8 @@
             "MODPACK_UPDATE_RUNNING": "Le jeu est en cours d’exécution ; fermez-le avant de mettre à jour le pack de mods",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "Cette version modifie la chaîne de composants du pack et ne peut pas être appliquée sur place ; réinstallez-la",
             "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack",
-            "MODPACK_UPDATE_PACK_UNAVAILABLE": "Les fichiers de cette version sont momentanément indisponibles sur la plateforme. Réessayez plus tard"
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "Les fichiers de cette version sont momentanément indisponibles sur la plateforme. Réessayez plus tard",
+            "MODPACK_UPDATE_MERGE_INVALID": "Les blocs sélectionnés produisent une configuration invalide. Modifiez vos choix et réessayez"
           }
         }
       },
@@ -2726,7 +2728,8 @@
             "MODPACK_UPDATE_RUNNING": "Le jeu est en cours d’exécution ; fermez-le avant de mettre à jour le pack de mods",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "Cette version modifie la chaîne de composants du pack et ne peut pas être appliquée sur place ; réinstallez-la",
             "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack",
-            "MODPACK_UPDATE_PACK_UNAVAILABLE": "Les fichiers de cette version sont momentanément indisponibles sur la plateforme. Réessayez plus tard"
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "Les fichiers de cette version sont momentanément indisponibles sur la plateforme. Réessayez plus tard",
+            "MODPACK_UPDATE_MERGE_INVALID": "Les blocs sélectionnés produisent une configuration invalide. Modifiez vos choix et réessayez"
           }
         }
       },
@@ -3222,7 +3225,8 @@
       "MODPACK_UPDATE_UNSUPPORTED": "Cette instance n'a pas d'enregistrement d'installation utilisable ou l'isolation de version est désactivée",
       "MODPACK_UPDATE_NOT_ISOLATED": "L'isolation de version est désactivée pour cette instance, la comparaison n'est pas sûre. Activez-la dans les paramètres de l'instance puis réessayez",
       "MODPACK_UPDATE_BASELINE_MISSING": "Cette instance n'a pas d'enregistrement d'installation du pack, ou il est endommagé ; comparaison impossible",
-      "MODPACK_UPDATE_PACK_UNAVAILABLE": "Les fichiers de cette version sont momentanément indisponibles sur la plateforme. Réessayez plus tard"
+      "MODPACK_UPDATE_PACK_UNAVAILABLE": "Les fichiers de cette version sont momentanément indisponibles sur la plateforme. Réessayez plus tard",
+      "MODPACK_UPDATE_MERGE_INVALID": "Les blocs sélectionnés produisent une configuration invalide. Modifiez vos choix et réessayez"
     },
     "rollback": {
       "hint": "Vous pouvez annuler la dernière mise à jour du pack et rétablir fichiers et chargeur comme avant.",

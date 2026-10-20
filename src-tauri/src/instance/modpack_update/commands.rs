@@ -9,7 +9,7 @@ use super::plan::{
   count_local_changes, local_changes, prepare, prepare_with_contents, requires_reinstall,
   LocalChange,
 };
-use super::merge::three_way_with_choices;
+use super::merge::merge_with_choices;
 use super::remote::ComponentPack;
 use super::restore::restore_component_profile;
 use super::sources::{download_param, latest_version, resolve_remote, LatestVersion};
@@ -500,7 +500,7 @@ async fn plan_for(
 fn selected_hunk_contents(
   prepared: &super::plan::Prepared,
   choices: &mut BTreeMap<String, ConflictChoice>,
-) -> BTreeMap<String, Vec<u8>> {
+) -> USTBLResult<BTreeMap<String, Vec<u8>>> {
   let mut result = prepared.merged_contents.clone();
   for (path, (base, local, remote)) in &prepared.conflict_sources {
     let hunk_count = prepared
@@ -514,16 +514,15 @@ fn selected_hunk_contents(
       .take(hunk_count)
       .filter(|index| choices.get(&format!("{path}#{index}")) == Some(&ConflictChoice::TakeRemote))
       .collect();
-    if selected.is_empty() {
+    if hunk_count == 0 {
       continue;
     }
     choices.insert(path.clone(), ConflictChoice::TakeRemote);
-    let lines = |bytes: &[u8]| String::from_utf8_lossy(bytes).replace("\r\n", "\n").replace('\r', "\n").lines().map(str::to_owned).collect::<Vec<_>>();
-    let merged = three_way_with_choices(&lines(base), &lines(local), &lines(remote), &selected);
-    let ending = if local.windows(2).any(|pair| pair == b"\r\n") { "\r\n" } else { "\n" };
-    result.insert(path.clone(), format!("{}{}", merged.join(ending), ending).into_bytes());
+    let merged = merge_with_choices(path, base, local, remote, &selected)
+      .map_err(|_| InstanceError::ModpackUpdateMergeInvalid)?;
+    result.insert(path.clone(), merged);
   }
-  result
+  Ok(result)
 }
 
 async fn materialize_text_candidates(
@@ -625,7 +624,7 @@ pub async fn apply_modpack_update(
   };
   let version_id = remote.version_id.clone();
   let mut apply_choices = choices.clone();
-  let merged_contents = selected_hunk_contents(&prepared, &mut apply_choices);
+  let merged_contents = selected_hunk_contents(&prepared, &mut apply_choices)?;
   let result = apply(
     &env,
     UpdateRequest {

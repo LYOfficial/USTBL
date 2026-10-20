@@ -47,6 +47,7 @@ export enum InstanceError {
   ModpackExportProfileMissing = "MODPACK_EXPORT_PROFILE_MISSING",
   ModpackUpdateBusy = "MODPACK_UPDATE_BUSY",
   ModpackUpdateVerifyFailed = "MODPACK_UPDATE_VERIFY_FAILED",
+  ModpackUpdateMergeInvalid = "MODPACK_UPDATE_MERGE_INVALID",
   ModpackUpdateStale = "MODPACK_UPDATE_STALE",
   ModpackUpdateRemoteInvalid = "MODPACK_UPDATE_REMOTE_INVALID",
   ModpackUpdateLineMismatch = "MODPACK_UPDATE_LINE_MISMATCH",

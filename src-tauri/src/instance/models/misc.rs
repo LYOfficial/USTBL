@@ -335,6 +335,7 @@ pub enum InstanceError {
   ModpackExportProfileMissing,
   ModpackUpdateBusy,
   ModpackUpdateVerifyFailed,
+  ModpackUpdateMergeInvalid,
   ModpackUpdateStale,
   ModpackUpdateRemoteInvalid,
   ModpackUpdateLineMismatch,

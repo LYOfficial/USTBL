@@ -2664,7 +2664,8 @@
             "MODPACK_UPDATE_RUNNING": "遊戲正在執行，請先關閉遊戲再更新整合包",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的組件鏈，無法就地更新，請重新安裝",
             "MODPACK_UPDATE_LINE_GONE": "平台上已不存在該整合包的這條線",
-            "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暫時取不到此版本所需的檔案，請稍後重試"
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暫時取不到此版本所需的檔案，請稍後重試",
+            "MODPACK_UPDATE_MERGE_INVALID": "按區塊選擇後設定檔的格式無效，請調整選擇後重試"
           }
         }
       },
@@ -2697,7 +2698,8 @@
             "MODPACK_UPDATE_RUNNING": "遊戲正在執行，請先關閉遊戲再更新整合包",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的組件鏈，無法就地更新，請重新安裝",
             "MODPACK_UPDATE_LINE_GONE": "平台上已不存在該整合包的這條線",
-            "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暫時取不到此版本所需的檔案，請稍後重試"
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暫時取不到此版本所需的檔案，請稍後重試",
+            "MODPACK_UPDATE_MERGE_INVALID": "按區塊選擇後設定檔的格式無效，請調整選擇後重試"
           }
         }
       },
@@ -2726,7 +2728,8 @@
             "MODPACK_UPDATE_RUNNING": "遊戲正在執行，請先關閉遊戲再更新整合包",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的組件鏈，無法就地更新，請重新安裝",
             "MODPACK_UPDATE_LINE_GONE": "平台上已不存在該整合包的這條線",
-            "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暫時取不到此版本所需的檔案，請稍後重試"
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暫時取不到此版本所需的檔案，請稍後重試",
+            "MODPACK_UPDATE_MERGE_INVALID": "按區塊選擇後設定檔的格式無效，請調整選擇後重試"
           }
         }
       },
@@ -3222,7 +3225,8 @@
       "MODPACK_UPDATE_UNSUPPORTED": "該實例缺少可用的安裝記錄或未開啟版本隔離",
       "MODPACK_UPDATE_NOT_ISOLATED": "該實例沒有開啟版本隔離，無法安全比對更新。請在實例設定中開啟後重試",
       "MODPACK_UPDATE_BASELINE_MISSING": "該實例缺少整合包的安裝記錄或記錄已損壞，無法比對更新",
-      "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暫時取不到此版本所需的檔案，請稍後重試"
+      "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暫時取不到此版本所需的檔案，請稍後重試",
+      "MODPACK_UPDATE_MERGE_INVALID": "按區塊選擇後設定檔的格式無效，請調整選擇後重試"
     },
     "rollback": {
       "hint": "可以撤銷上一次整合包更新，把檔案和載入器恢復成更新前的樣子。",
