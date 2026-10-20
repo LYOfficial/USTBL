@@ -53,11 +53,51 @@ pub struct ModpackBaseline {
   pub schema: u32,
   pub origin: BaselineOrigin,
   pub loader: BaselineLoader,
-  /// Reserved for component-chain packs; always `None` for Modrinth/CurseForge.
+  /// The component chain of a component-profile pack, as a list of
+  /// [`ComponentRef`] sorted by uid. `None` for Modrinth/CurseForge packs.
   #[serde(default)]
   pub components: Option<Value>,
   pub files: Vec<BaselineFile>,
   pub content_hash: String,
+}
+
+/// One entry of a component chain. Only what decides whether two chains are the
+/// same is kept; display names and flags are not part of the identity.
+#[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
+pub struct ComponentRef {
+  pub uid: String,
+  #[serde(default)]
+  pub version: String,
+}
+
+/// Canonical form of a component chain: sorted by uid, one entry per uid (the
+/// last one wins), so equal chains compare equal whatever order they were listed in.
+pub fn canonical_components(
+  components: impl IntoIterator<Item = ComponentRef>,
+) -> Vec<ComponentRef> {
+  let by_uid: BTreeMap<String, ComponentRef> = components
+    .into_iter()
+    .map(|component| (component.uid.clone(), component))
+    .collect();
+  by_uid.into_values().collect()
+}
+
+/// The component chain declared by a `mmc-pack.json` document.
+pub fn components_of_mmc_pack(pack: &Value) -> Vec<ComponentRef> {
+  let entries = pack
+    .get("components")
+    .and_then(Value::as_array)
+    .map(Vec::as_slice)
+    .unwrap_or_default();
+  canonical_components(entries.iter().filter_map(|entry| {
+    let uid = entry.get("uid")?.as_str()?.to_string();
+    let version = entry
+      .get("version")
+      .and_then(Value::as_str)
+      .unwrap_or_default()
+      .to_string();
+    Some(ComponentRef { uid, version })
+  }))
 }
 
 /// Normalize a relative path to the form stored in the baseline.
@@ -151,6 +191,23 @@ impl ModpackBaseline {
       files,
       content_hash,
     }
+  }
+
+  /// Record the component chain of a component-profile pack.
+  pub fn with_components(mut self, components: Vec<ComponentRef>) -> Self {
+    let value = serde_json::to_value(canonical_components(components))
+      .expect("component refs serialize to JSON");
+    self.content_hash = compute_content_hash(&self.loader, Some(&value), &self.files);
+    self.components = Some(value);
+    self
+  }
+
+  /// The recorded component chain, `None` when the pack has none.
+  pub fn component_refs(&self) -> Option<Vec<ComponentRef>> {
+    let value = self.components.clone()?;
+    serde_json::from_value::<Vec<ComponentRef>>(value)
+      .ok()
+      .map(canonical_components)
   }
 
   /// Whether the baseline and the instance config describe the same identity.
@@ -249,6 +306,56 @@ mod tests {
       baseline.content_hash,
       compute_content_hash(&baseline.loader, None, &baseline.files)
     );
+  }
+
+  #[test]
+  fn component_chain_comes_from_the_mmc_pack_and_ignores_order_and_labels() {
+    let pack = serde_json::json!({
+      "formatVersion": 1,
+      "components": [
+        {"uid": "net.minecraftforge", "version": "10.13.4.1614", "cachedName": "Forge"},
+        {"uid": "net.minecraft", "version": "1.7.10", "important": true},
+        {"cachedName": "no uid"},
+        {"uid": "org.lwjgl"}
+      ]
+    });
+    let refs = components_of_mmc_pack(&pack);
+    let expected = |uid: &str, version: &str| ComponentRef {
+      uid: uid.into(),
+      version: version.into(),
+    };
+    assert_eq!(
+      refs,
+      vec![
+        expected("net.minecraft", "1.7.10"),
+        expected("net.minecraftforge", "10.13.4.1614"),
+        expected("org.lwjgl", ""),
+      ]
+    );
+    let mut reversed = refs.clone();
+    reversed.reverse();
+    assert_eq!(canonical_components(reversed), refs);
+    assert!(components_of_mmc_pack(&serde_json::json!({})).is_empty());
+  }
+
+  #[test]
+  fn recorded_components_survive_a_round_trip_and_change_the_content_hash() {
+    let plain = ModpackBaseline::build(&origin(), loader("0.16.0"), vec![file("a", "aa", 1)]);
+    assert!(plain.components.is_none() && plain.component_refs().is_none());
+    let chain = vec![ComponentRef {
+      uid: "net.minecraft".into(),
+      version: "1.7.10".into(),
+    }];
+    let with = plain.clone().with_components(chain.clone());
+    assert_eq!(with.component_refs(), Some(chain));
+    assert_ne!(with.content_hash, plain.content_hash);
+    assert_eq!(
+      with.content_hash,
+      compute_content_hash(&with.loader, with.components.as_ref(), &with.files)
+    );
+    let parsed: ModpackBaseline =
+      serde_json::from_str(&serde_json::to_string(&with).unwrap()).unwrap();
+    assert_eq!(parsed, with);
   }
 
   #[test]
