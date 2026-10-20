@@ -173,7 +173,7 @@ fn emit_update_progress(
 }
 
 /// 前端隐藏入口之外仍校验角色，并由平台使用 Bearer 令牌再次鉴权。
-fn ensure_minecraft_manager(app: &AppHandle) -> USTBLResult<()> {
+pub(crate) fn ensure_minecraft_manager(app: &AppHandle) -> USTBLResult<()> {
   let binding = app.state::<Mutex<AccountInfo>>();
   let account_state = binding.lock()?;
   let user_group = account_state

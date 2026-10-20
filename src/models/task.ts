@@ -1,5 +1,6 @@
 export enum TaskTypeEnums {
   Download = "download",
+  Upload = "upload",
 }
 
 export type TaskType = `${TaskTypeEnums}`;
@@ -35,7 +36,13 @@ export interface DownloadTaskPayload {
   transferOptions?: DownloadTransferOptions;
 }
 
-export type TaskPayload = DownloadTaskPayload;
+/** An upload the launcher runs itself; it only ever appears on the list. */
+export interface UploadTaskPayload {
+  taskType: TaskTypeEnums.Upload;
+  filename: string;
+}
+
+export type TaskPayload = DownloadTaskPayload | UploadTaskPayload;
 
 export enum TaskDescStatusEnums {
   Stopped = "Stopped",

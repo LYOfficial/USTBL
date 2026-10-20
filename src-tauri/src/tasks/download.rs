@@ -155,6 +155,7 @@ impl DownloadTask {
   ) -> Self {
     let param = match &desc.payload {
       PTaskParam::Download(param) => param.clone(),
+      PTaskParam::Upload(_) => unreachable!("an upload is not a download"),
     };
 
     let cache_dir = retrieve_launcher_config(app_handle.clone())

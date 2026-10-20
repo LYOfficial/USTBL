@@ -338,6 +338,7 @@ pub enum InstanceError {
   ModpackUpdateUnsupported,
   ModpackUpdateRunning,
   ModpackUpdateReinstallRequired,
+  ModpackPublishStale,
   ModpackUpdateLineGone,
   ModpackUpdatePackUnavailable,
 }

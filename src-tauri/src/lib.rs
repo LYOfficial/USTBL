@@ -184,6 +184,12 @@ pub async fn run() -> i32 {
       instance::modpack_update::commands::prepare_modpack_update,
       instance::modpack_update::commands::apply_modpack_update,
       instance::modpack_update::commands::recover_modpack_update,
+      instance::modpack_publish::commands::list_campus_modpack_projects,
+      instance::modpack_publish::commands::list_campus_modpack_publish_jobs,
+      instance::modpack_publish::commands::resume_campus_modpack_publish,
+      instance::modpack_publish::commands::discard_campus_modpack_publish,
+      instance::modpack_publish::commands::publish_campus_modpack,
+      instance::modpack_publish::commands::fetch_campus_modpack_previous_paths,
       instance::modpack_update::commands::reveal_modpack_conflict_file,
       instance::modpack_update::commands::set_modpack_follow,
       instance::modpack_update::commands::rollback_modpack_update,
@@ -364,6 +370,8 @@ pub async fn run() -> i32 {
       let app_handle = app.handle().clone();
       tauri::async_runtime::spawn(async move {
         refresh_and_update_instances(&app_handle, true).await;
+        // Instance adoption needs the loaded instance list.
+        instance::modpack_publish::job::resume_monitors(&app_handle);
       });
 
       // Refresh all javas

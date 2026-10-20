@@ -36,10 +36,27 @@ use url::Url;
 /// let client = build_ustbl_client(&app, true);
 /// ```
 pub fn build_ustbl_client(app: &AppHandle, use_proxy: bool) -> Client {
+  build_client(app, use_proxy, Some(Duration::from_secs(30)))
+}
+
+/// Like [`build_ustbl_client`] but without the read timeout, for requests that
+/// send a large body.
+///
+/// reqwest starts the read timer when the request goes out and only resets it
+/// on a read, so an upload that takes longer than the timeout fails with a
+/// timeout error even while bytes are still flowing. The server may also take a
+/// while to answer after the last byte (it relays the file to cloud storage).
+pub fn build_ustbl_upload_client(app: &AppHandle, use_proxy: bool) -> Client {
+  build_client(app, use_proxy, None)
+}
+
+fn build_client(app: &AppHandle, use_proxy: bool, read_timeout: Option<Duration>) -> Client {
   let mut builder = ClientBuilder::new()
     .connect_timeout(Duration::from_secs(10))
-    .read_timeout(Duration::from_secs(30))
     .tcp_keepalive(Duration::from_secs(10));
+  if let Some(timeout) = read_timeout {
+    builder = builder.read_timeout(timeout);
+  }
 
   if let Ok(config) = app.state::<Mutex<LauncherConfig>>().lock() {
     // According to the User-Agent requirements of mozilla and BMCLAPI, the User-Agent is set to start with ${NAME}/${VERSION}

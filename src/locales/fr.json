@@ -657,6 +657,16 @@
   },
   "DownloadTasksPage": {
     "title": "Tâches de téléchargement en cours",
+    "unfinishedPublish": {
+      "title": "Publications inachevées",
+      "phase": {
+        "uploading": "Envoi interrompu, reprise possible",
+        "processing": "Traitement en cours sur la plateforme",
+        "failed": "Échec de la publication"
+      },
+      "resume": "Reprendre",
+      "discard": "Abandonner"
+    },
     "button": {
       "settings": "Paramètres de téléchargement",
       "pause": "Pause",
@@ -686,7 +696,8 @@
       "neoforge-libraries": "Bibliothèques d'exécution de NeoForge ",
       "forge-libraries": "Bibliothèques d'exécution de Forge",
       "launcher-update": "Mettre à jour le lanceur",
-      "mojang-java": "Java {{param}} fonctionne"
+      "mojang-java": "Java {{param}} fonctionne",
+      "modpack-publish": "Publication du modpack {{param}}"
     }
   },
   "Editable": {
@@ -1280,7 +1291,8 @@
       "createShortcut": "Créer un raccourci de lancement",
       "exportModPack": "Exporter en tant que modpack",
       "star": "Mettre en favori cette instance",
-      "unstar": "Retirer des favoris"
+      "unstar": "Retirer des favoris",
+      "publishModPack": "Publier dans les modpacks du campus"
     },
     "instanceTabList": {
       "overview": "Aperçu",
@@ -2630,6 +2642,28 @@
         "error": {
           "title": "Échec de la liste des fichiers"
         }
+      },
+      "listCampusModpackProjects": {
+        "success": "Modpacks du campus chargés",
+        "error": {
+          "title": "Échec du chargement des modpacks du campus"
+        }
+      },
+      "createCampusModpackProject": {
+        "success": "Projet créé",
+        "error": {
+          "title": "Échec de la création du projet"
+        }
+      },
+      "publishCampusModpack": {
+        "success": "Modpack publié",
+        "error": {
+          "title": "Échec de la publication",
+          "description": {
+            "MODPACK_PUBLISH_STALE": "Cette ligne a été mise à jour par quelqu'un d'autre pendant la publication ; rechargez et réessayez",
+            "MODPACK_UPDATE_UNSUPPORTED": "Cette instance n'a pas de chargeur de mods pris en charge et ne peut pas être publiée"
+          }
+        }
       }
     },
     "task": {
@@ -2966,6 +3000,61 @@
         "MultiMC": "Compatible avec les principaux lanceurs ; exporté comme une instance complète.",
         "MultiMCComponentOnly": "Cette instance provient d’un profil de composants MultiMC : elle ne peut être exportée qu’au format MultiMC, avec ses composants, correctifs et bibliothèques locales conservés."
       }
+    }
+  },
+  "PublishModpackModal": {
+    "header": {
+      "title": "Publier {{param}} dans les modpacks du campus"
+    },
+    "label": {
+      "project": "Projet",
+      "target": "Publier vers",
+      "newProject": "Nouveau projet",
+      "projectName": "Nom du projet",
+      "summary": "Résumé",
+      "version": "Version",
+      "versionNumber": "Numéro de version",
+      "changelog": "Journal des modifications",
+      "includedFiles": "Fichiers inclus"
+    },
+    "button": {
+      "publish": "Publier"
+    },
+    "error": {
+      "invalidVersion": "Veuillez saisir un numéro de version valide",
+      "noFileSelected": "Veuillez sélectionner au moins un fichier",
+      "invalidProject": "Veuillez compléter les informations du projet"
+    },
+    "errorMessage": {
+      "name": {
+        "error-1": "Le nom ne peut pas être vide",
+        "error-2": "Le nom est trop long (128 caractères max)"
+      },
+      "summary": {
+        "error-1": "Le résumé est trop long (512 caractères max)"
+      },
+      "version": {
+        "error-1": "Le numéro de version ne peut pas être vide",
+        "error-2": "Le numéro de version est trop long (64 caractères max)"
+      },
+      "changelog": {
+        "error-1": "Le journal est trop long (20000 caractères max)"
+      }
+    },
+    "stage": {
+      "hashing": "Vérification des fichiers ({{done}}/{{total}})",
+      "packing": "Création du paquet des nouveautés"
+    },
+    "skipped": "{{count}} fichier(s) exclu(s) (mods désactivés ou fichiers du lanceur)",
+    "adoption": {
+      "keptOther": "L'instance suit déjà un autre pack ou une autre ligne ; son enregistrement de source est inchangé.",
+      "notIsolated": "L'isolation de version est désactivée pour cette instance ; elle n'a pas été liée à ce pack.",
+      "localChanged": "Des fichiers locaux ont changé pendant l'envoi ; l'instance n'a pas été liée à cette version.",
+      "recordFailed": "La version est publiée, mais l'instance n'a pas pu y être liée. La prochaine vérification comparera normalement."
+    },
+    "started": {
+      "title": "Envoi démarré",
+      "description": "L'envoi continue en arrière-plan. Suivez-le sur la page des téléchargements."
     }
   }
 }

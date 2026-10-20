@@ -657,6 +657,16 @@
   },
   "DownloadTasksPage": {
     "title": "ダウンロードタスク",
+    "unfinishedPublish": {
+      "title": "未完了の公開",
+      "phase": {
+        "uploading": "アップロードが中断されました。続行できます",
+        "processing": "プラットフォームで処理中です",
+        "failed": "公開に失敗しました"
+      },
+      "resume": "続行",
+      "discard": "破棄"
+    },
     "button": {
       "settings": "ダウンロード設定",
       "pause": "一時停止",
@@ -686,7 +696,8 @@
       "neoforge-libraries": "NeoForge ランタイムライブラリ",
       "forge-libraries": "Forge ランタイムライブラリ",
       "launcher-update": "ランチャーを更新",
-      "mojang-java": "Java {{param}} ランタイム"
+      "mojang-java": "Java {{param}} ランタイム",
+      "modpack-publish": "モッドパックを公開 {{param}}"
     }
   },
   "Editable": {
@@ -1280,7 +1291,8 @@
       "createShortcut": "起動ショートカットを作成",
       "exportModPack": "モッドパックエクスポート",
       "star": "このインスタンスをスター",
-      "unstar": "このインスタンスを非スター"
+      "unstar": "このインスタンスを非スター",
+      "publishModPack": "キャンパスModパックに公開"
     },
     "instanceTabList": {
       "overview": "概要",
@@ -2630,6 +2642,28 @@
             "MODPACK_UPDATE_PACK_UNAVAILABLE": "このバージョンのファイルはプラットフォーム上で一時的に利用できません。しばらくしてからやり直してください"
           }
         }
+      },
+      "listCampusModpackProjects": {
+        "success": "キャンパスModパックを読み込みました",
+        "error": {
+          "title": "キャンパスModパックの読み込みに失敗しました"
+        }
+      },
+      "createCampusModpackProject": {
+        "success": "プロジェクトを作成しました",
+        "error": {
+          "title": "プロジェクトの作成に失敗しました"
+        }
+      },
+      "publishCampusModpack": {
+        "success": "Modパックを公開しました",
+        "error": {
+          "title": "公開に失敗しました",
+          "description": {
+            "MODPACK_PUBLISH_STALE": "公開中に他のユーザーがこのラインを更新しました。再読み込みしてからやり直してください",
+            "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスには対応するModローダーがないため公開できません"
+          }
+        }
       }
     },
     "task": {
@@ -2966,6 +3000,61 @@
         "MultiMC": "Widely supported by major launchers; packaged as a complete instance.",
         "MultiMCComponentOnly": "This instance was imported from a MultiMC component profile, so it can only be exported as MultiMC. Its components, patches and local libraries are kept as they were."
       }
+    }
+  },
+  "PublishModpackModal": {
+    "header": {
+      "title": "{{param}} をキャンパスModパックに公開"
+    },
+    "label": {
+      "project": "プロジェクト",
+      "target": "公開先",
+      "newProject": "新規プロジェクト",
+      "projectName": "プロジェクト名",
+      "summary": "概要",
+      "version": "バージョン",
+      "versionNumber": "バージョン番号",
+      "changelog": "更新履歴",
+      "includedFiles": "含めるファイル"
+    },
+    "button": {
+      "publish": "公開"
+    },
+    "error": {
+      "invalidVersion": "有効なバージョン番号を入力してください",
+      "noFileSelected": "ファイルを1つ以上選択してください",
+      "invalidProject": "プロジェクト情報を入力してください"
+    },
+    "errorMessage": {
+      "name": {
+        "error-1": "名前を入力してください",
+        "error-2": "名前が長すぎます（最大128文字）"
+      },
+      "summary": {
+        "error-1": "概要が長すぎます（最大512文字）"
+      },
+      "version": {
+        "error-1": "バージョン番号を入力してください",
+        "error-2": "バージョン番号が長すぎます（最大64文字）"
+      },
+      "changelog": {
+        "error-1": "更新履歴が長すぎます（最大20000文字）"
+      }
+    },
+    "stage": {
+      "hashing": "ファイルを確認中（{{done}}/{{total}}）",
+      "packing": "新しい内容をパック中"
+    },
+    "skipped": "{{count}} 個のファイルを除外しました（無効化されたModやランチャーのファイル）",
+    "adoption": {
+      "keptOther": "このインスタンスは既に別のモッドパックまたはラインを追従しているため、ソース記録は変更しませんでした。",
+      "notIsolated": "このインスタンスはバージョン分離が無効のため、このモッドパックには関連付けませんでした。",
+      "localChanged": "アップロード中にローカルファイルが変更されたため、このバージョンには関連付けませんでした。",
+      "recordFailed": "バージョンは公開されましたが、インスタンスとの関連付けを記録できませんでした。次回の確認では通常どおり比較します。"
+    },
+    "started": {
+      "title": "アップロードを開始しました",
+      "description": "バックグラウンドで続行します。進行状況はダウンロードページで確認できます。"
     }
   }
 }
