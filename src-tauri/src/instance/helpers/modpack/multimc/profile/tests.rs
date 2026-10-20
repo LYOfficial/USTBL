@@ -162,6 +162,87 @@ async fn local_components_resolve_offline_and_round_trip_with_ordered_classpath(
   }
 }
 
+/// A pack restored from its published snapshot, with files fetched one by one,
+/// must resolve to the same profile as the archive it was published from.
+#[tokio::test]
+async fn a_snapshot_restores_the_same_profile_as_its_archive() {
+  let temp = Temp::new();
+  let file = archive(&temp, ".minecraft");
+  let client = reqwest::Client::builder().no_proxy().build().unwrap();
+  let mut imported = ResolvedMultiMc::from_archive(&client, &file)
+    .await
+    .unwrap()
+    .unwrap();
+  imported.client.id = "imported".into();
+  imported
+    .materialize(&file, &temp.0.join("libraries"), &temp.0.join("imported"))
+    .unwrap();
+  let snapshot: ComponentSnapshot =
+    serde_json::from_slice(&fs::read(temp.0.join("imported").join(SNAPSHOT_FILE_NAME)).unwrap())
+      .unwrap();
+
+  // What a campus version carries: patches and libraries as plain files.
+  let mut staged = StagedFiles::default();
+  let files = temp.0.join("staged");
+  fs::create_dir_all(&files).unwrap();
+  for (uid, raw) in &snapshot.local_patches {
+    let path = files.join(format!("{uid}.json"));
+    fs::write(&path, serde_json::to_vec(raw).unwrap()).unwrap();
+    staged.files.insert(format!("patches/{uid}.json"), path);
+  }
+  for library in &snapshot.local_libraries {
+    let path = files.join(&library.filename);
+    fs::write(
+      &path,
+      fs::read(temp.0.join("libraries").join(&library.path)).unwrap(),
+    )
+    .unwrap();
+    staged
+      .files
+      .insert(format!("libraries/{}", library.filename), path);
+  }
+  let components: Vec<super::super::MultiMcComponent> =
+    serde_json::from_value(snapshot.mmc_pack["components"].clone()).unwrap();
+  let cfg: HashMap<String, String> = snapshot
+    .instance_cfg
+    .iter()
+    .map(|(k, v)| (k.clone(), v.clone()))
+    .collect();
+  let mut restored = ResolvedMultiMc::resolve(
+    &client,
+    &components,
+    1,
+    String::new(),
+    cfg,
+    snapshot.mmc_pack.clone(),
+    &mut staged,
+  )
+  .await
+  .unwrap();
+  restored.client.id = "imported".into();
+  restored
+    .materialize_from(
+      &mut staged,
+      &temp.0.join("libraries-2"),
+      &temp.0.join("restored"),
+    )
+    .unwrap();
+
+  assert_eq!(restored.client.main_class, imported.client.main_class);
+  let names = |info: &McClientInfo| -> Vec<String> {
+    info.libraries.iter().map(|l| l.name.clone()).collect()
+  };
+  assert_eq!(names(&restored.client), names(&imported.client));
+  assert!(temp.0.join("restored/imported.jar").is_file());
+  // The restored instance can be exported again without loss.
+  let again: ComponentSnapshot =
+    serde_json::from_slice(&fs::read(temp.0.join("restored").join(SNAPSHOT_FILE_NAME)).unwrap())
+      .unwrap();
+  assert_eq!(again.mmc_pack, snapshot.mmc_pack);
+  assert_eq!(again.local_patches, snapshot.local_patches);
+  assert_eq!(again.local_libraries, snapshot.local_libraries);
+}
+
 #[tokio::test]
 async fn corrupt_multimc_is_not_silently_treated_as_a_standard_pack() {
   let temp = Temp::new();
@@ -183,13 +264,11 @@ async fn corrupt_multimc_is_not_silently_treated_as_a_standard_pack() {
 fn last_matching_library_rule_wins() {
   let temp = Temp::new();
   let file = archive(&temp, ".minecraft");
-  let mut zip = ZipArchive::new(&file).unwrap();
+  let mut zip = ZipFiles::new(&file, "pack/").unwrap();
   let raw = serde_json::json!({"name":"test:excluded:1", "rules":[{"action":"allow"},{"action":"disallow","os":{"name":host_os()}}]});
-  assert!(
-    normalize_library(&raw, &mut zip, "pack/", &temp.0, &mut Vec::new())
-      .unwrap()
-      .is_none()
-  );
+  assert!(normalize_library(&raw, &mut zip, &temp.0, &mut Vec::new())
+    .unwrap()
+    .is_none());
 }
 
 #[tokio::test]
@@ -273,9 +352,9 @@ async fn natives_obey_exclusions_and_order_and_propagate_errors() {
 fn declared_download_path_and_absolute_url_are_preserved() {
   let temp = Temp::new();
   let file = archive(&temp, ".minecraft");
-  let mut zip = ZipArchive::new(&file).unwrap();
+  let mut zip = ZipFiles::new(&file, "pack/").unwrap();
   let raw = serde_json::json!({"name":"test:dependency:1", "MMC-absoluteUrl":"https://example.invalid/custom.jar", "downloads":{"artifact":{"path":"custom/dependency.jar"}}});
-  let lib = normalize_library(&raw, &mut zip, "pack/", &temp.0, &mut Vec::new())
+  let lib = normalize_library(&raw, &mut zip, &temp.0, &mut Vec::new())
     .unwrap()
     .unwrap();
   let artifact = lib.downloads.unwrap().artifact.unwrap();

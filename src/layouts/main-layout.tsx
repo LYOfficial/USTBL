@@ -15,7 +15,6 @@ import DevToolbar from "@/components/dev/dev-toolbar";
 import StarUsModal from "@/components/modals/star-us-modal";
 import UnavailableExePathAlertDialog from "@/components/modals/unavailable-exe-path-alert-dialog";
 import WelcomeAndTermsModal from "@/components/modals/welcome-and-terms-modal";
-import SharedInstanceStartupNotifier from "@/components/special/shared-instance-startup-notifier";
 import WindowTitleBar from "@/components/window-title-bar";
 import { useLauncherConfig } from "@/contexts/config";
 import { isDev } from "@/utils/env";
@@ -246,7 +245,8 @@ const MainLayout = ({ children }: MainLayoutProps) => {
         ) : (
           <AdvancedCard
             level="back"
-            h="100%"
+            flex="1"
+            minH={0}
             overflow="auto"
             mt={1}
             mb={4}
@@ -265,7 +265,6 @@ const MainLayout = ({ children }: MainLayoutProps) => {
           isOpen={isUnavailableExePathAlertDialogOpen}
           onClose={onUnavailableExePathAlertDialogClose}
         />
-        <SharedInstanceStartupNotifier />
 
         {isDev && <DevToolbar />}
       </Flex>

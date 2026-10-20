@@ -8,11 +8,14 @@
 
 use super::diff::{Operation, DISABLED_SUFFIX};
 use super::packs::PackSession;
-use super::remote::{FileSource, RemoteFile, RemoteModpack, UPDATE_DIR};
+use super::remote::{ComponentPack, FileSource, RemoteFile, RemoteModpack, UPDATE_DIR};
 use crate::error::USTBLResult;
 use crate::instance::helpers::modpack::base_store;
 use crate::instance::helpers::modpack::baseline::{
   hash_file, BaselineLoader, ComponentRef, ModpackBaseline, BASELINE_FILE_NAME,
+};
+use crate::instance::helpers::modpack::multimc::snapshot::{
+  COMPONENTS_FILE_NAME, SNAPSHOT_FILE_NAME,
 };
 use crate::instance::models::misc::{InstanceError, InstanceOrigin};
 use crate::tasks::download::DownloadParam;
@@ -36,6 +39,11 @@ fn update_dir(root: &Path) -> PathBuf {
 
 fn staging_dir(root: &Path) -> PathBuf {
   update_dir(root).join("staging")
+}
+
+/// Where the files of a component pack are fetched to.
+fn components_dir(root: &Path) -> PathBuf {
+  update_dir(root).join("components")
 }
 
 fn backup_dir(root: &Path) -> PathBuf {
@@ -109,6 +117,10 @@ pub trait UpdateEnv: Send + Sync {
   /// Switch the instance to another loader version. Runs after the journal is
   /// written, so the instance files it rewrites are restored on failure.
   async fn switch_loader(&self, loader: &BaselineLoader) -> USTBLResult<()>;
+  /// Rebuild the component profile (client json, libraries, launch arguments)
+  /// from the pack files fetched into `staged`. Same journal guarantee as
+  /// `switch_loader`: the instance files it rewrites are restored on failure.
+  async fn restore_components(&self, pack: &ComponentPack, staged: &Path) -> USTBLResult<()>;
   /// Point the instance at the new version once its files are in place.
   async fn commit_origin(&self, version_id: &str) -> USTBLResult<()>;
   fn report(&self, progress: Progress);
@@ -123,6 +135,9 @@ pub struct UpdateRequest {
   pub previous_loader: BaselineLoader,
   /// Component chain recorded in the new baseline.
   pub components: Option<Vec<ComponentRef>>,
+  /// Install the remote version's component profile into an instance that has
+  /// none. Takes the place of the loader switch.
+  pub restore_components: bool,
   /// Content for automatically merged text files. Other operations fetch the
   /// remote file through its normal source.
   pub merged_contents: BTreeMap<String, Vec<u8>>,
@@ -198,12 +213,20 @@ fn remove_file_if_exists(path: &Path) -> io::Result<()> {
   }
 }
 
-fn meta_files(instance_name: &str) -> Vec<String> {
-  vec![
+fn meta_files(instance_name: &str, restoring_components: bool) -> Vec<String> {
+  let mut names = vec![
     BASELINE_FILE_NAME.to_string(),
     INSTANCE_CONFIG_FILE.to_string(),
     format!("{instance_name}.json"),
-  ]
+  ];
+  if restoring_components {
+    names.extend([
+      format!("{instance_name}.jar"),
+      COMPONENTS_FILE_NAME.to_string(),
+      SNAPSHOT_FILE_NAME.to_string(),
+    ]);
+  }
+  names
 }
 
 fn disabled_path(path: &str) -> String {
@@ -250,6 +273,7 @@ fn roll_back_from(root: &Path, backup: &Path, journal: &Journal) -> io::Result<(
 /// Drop the staging area and keep this update's backup for the next one.
 fn finish_cleanup(root: &Path, keep_backup: bool) {
   let _ = fs::remove_dir_all(staging_dir(root));
+  let _ = fs::remove_dir_all(components_dir(root));
   let _ = fs::remove_dir_all(update_dir(root).join("remote"));
   if keep_backup && backup_dir(root).exists() {
     let _ = fs::remove_dir_all(last_backup_dir(root));
@@ -296,6 +320,7 @@ pub fn recover(root: &Path) -> USTBLResult<Recovery> {
 fn recover_locked(root: &Path) -> USTBLResult<Recovery> {
   let Some(journal) = read_journal(root).map_err(io_error)? else {
     let _ = fs::remove_dir_all(staging_dir(root));
+    let _ = fs::remove_dir_all(components_dir(root));
     return Ok(Recovery::Nothing);
   };
   match journal.state {
@@ -344,16 +369,7 @@ pub async fn prepare_packs(files: &[&RemoteFile]) -> USTBLResult<()> {
   Ok(())
 }
 
-async fn stage_file(env: &dyn UpdateEnv, root: &Path, file: &RemoteFile) -> USTBLResult<()> {
-  materialize_remote_file(env, staging_dir(root).join(&file.path), file).await
-}
-
-/// Fetch a remote file to `dest` and check it against its key.
-pub async fn materialize_remote_file(
-  env: &dyn UpdateEnv,
-  dest: PathBuf,
-  file: &RemoteFile,
-) -> USTBLResult<()> {
+async fn stage_file(env: &dyn UpdateEnv, dest: PathBuf, file: &RemoteFile) -> USTBLResult<()> {
   match &file.source {
     FileSource::Download(param) => {
       let mut param = (**param).clone();
@@ -379,6 +395,14 @@ pub async fn materialize_remote_file(
     return Err(InstanceError::ModpackUpdateVerifyFailed.into());
   }
   Ok(())
+}
+
+pub async fn materialize_remote_file(
+  env: &dyn UpdateEnv,
+  dest: PathBuf,
+  file: &RemoteFile,
+) -> USTBLResult<()> {
+  stage_file(env, dest, file).await
 }
 
 /// Move originals aside and put the staged files in place.
@@ -448,6 +472,7 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
 
   // Phase 1: fetch and verify everything into staging.
   let _ = fs::remove_dir_all(staging_dir(root));
+  let _ = fs::remove_dir_all(components_dir(root));
   let to_fetch: Vec<&RemoteFile> = request
     .operations
     .iter()
@@ -469,12 +494,32 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
       return Err(InstanceError::ModpackUpdateStale.into());
     }
   }
-  // Merged text files are written from the plan, not fetched.
-  let to_fetch: Vec<&RemoteFile> = to_fetch
+  let mut to_fetch: Vec<(&RemoteFile, PathBuf)> = to_fetch
     .into_iter()
     .filter(|file| !request.merged_contents.contains_key(&file.path))
+    .map(|file| (file, staging_dir(root).join(&file.path)))
     .collect();
-  prepare_packs(&to_fetch).await?;
+  let pack = if request.restore_components {
+    Some(
+      request
+        .remote
+        .component_pack
+        .as_ref()
+        .ok_or(InstanceError::ModpackUpdateRemoteInvalid)?,
+    )
+  } else {
+    None
+  };
+  if let Some(pack) = pack {
+    to_fetch.extend(
+      pack
+        .files
+        .iter()
+        .map(|file| (file, components_dir(root).join(&file.path))),
+    );
+  }
+  let wanted: Vec<&RemoteFile> = to_fetch.iter().map(|(file, _)| *file).collect();
+  prepare_packs(&wanted).await?;
   let total = to_fetch.len();
   env.report(Progress {
     stage: Stage::Fetching,
@@ -488,8 +533,10 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
   let mut running = FuturesUnordered::new();
   loop {
     while running.len() < FETCH_CONCURRENCY {
-      let Some(file) = pending.next() else { break };
-      running.push(stage_file(env, root, file));
+      let Some((file, dest)) = pending.next() else {
+        break;
+      };
+      running.push(stage_file(env, dest, file));
     }
     let Some(result) = running.next().await else {
       break;
@@ -530,8 +577,11 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
     })
     .collect();
   fs::create_dir_all(backup_dir(root)).map_err(io_error)?;
-  let (meta_present, meta_absent) =
-    save_meta_backup(root, &meta_files(&request.instance_name)).map_err(io_error)?;
+  let (meta_present, meta_absent) = save_meta_backup(
+    root,
+    &meta_files(&request.instance_name, request.restore_components),
+  )
+  .map_err(io_error)?;
   let mut journal = Journal {
     schema: JOURNAL_SCHEMA,
     state: JournalState::Committing,
@@ -545,7 +595,10 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
 
   // Phase 3: loader, files, baseline, identity. Any failure undoes all of it.
   let outcome = async {
-    if request.remote.loader != request.previous_loader {
+    if let Some(pack) = pack {
+      // The chain carries the loader, so there is no separate switch.
+      env.restore_components(pack, &components_dir(root)).await?;
+    } else if request.remote.loader != request.previous_loader {
       env.switch_loader(&request.remote.loader).await?;
     }
     let (root_owned, operations, snapshot) =
@@ -679,6 +732,7 @@ mod tests {
     fail_url: Option<String>,
     fail_commit: bool,
     switched: Mutex<Vec<String>>,
+    restored: Mutex<Vec<String>>,
     committed: Mutex<Vec<String>>,
     root: PathBuf,
   }
@@ -697,6 +751,19 @@ mod tests {
     async fn switch_loader(&self, loader: &BaselineLoader) -> USTBLResult<()> {
       self.switched.lock().unwrap().push(loader.version.clone());
       fs::write(self.root.join("ustblcfg.json"), "switched").unwrap();
+      Ok(())
+    }
+    async fn restore_components(&self, pack: &ComponentPack, staged: &Path) -> USTBLResult<()> {
+      for file in &pack.files {
+        let bytes = fs::read(staged.join(&file.path)).unwrap();
+        self.restored.lock().unwrap().push(format!(
+          "{}={}",
+          file.path,
+          String::from_utf8(bytes).unwrap()
+        ));
+      }
+      fs::write(self.root.join("pack.json"), "client-restored").unwrap();
+      fs::write(self.root.join("pack.jar"), "jar-restored").unwrap();
       Ok(())
     }
     async fn commit_origin(&self, version_id: &str) -> USTBLResult<()> {
@@ -754,11 +821,13 @@ mod tests {
         game_version: "1.21.1".into(),
         loader: loader(new_loader),
         components: None,
+        component_pack: None,
         files,
       },
       origin: origin("1"),
       previous_loader: loader("0.15.0"),
       components: None,
+      restore_components: false,
       merged_contents: BTreeMap::new(),
     }
   }
@@ -777,6 +846,56 @@ mod tests {
       write: None,
       clear_disabled: false,
     }
+  }
+
+  fn with_component_pack(request: &mut UpdateRequest, env: &mut FakeEnv) {
+    let patch = url_file("patches/com.example.json", "patch-bytes", env);
+    request.remote.component_pack = Some(ComponentPack {
+      mmc_pack: serde_json::json!({ "components": [], "formatVersion": 1 }),
+      instance_cfg: BTreeMap::new(),
+      files: vec![patch],
+    });
+    request.restore_components = true;
+  }
+
+  #[tokio::test]
+  async fn a_component_pack_is_fetched_and_restored_instead_of_switching_the_loader() {
+    let root = setup();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let mut update = request(&root, Vec::new(), Vec::new(), "0.16.0");
+    with_component_pack(&mut update, &mut env);
+
+    apply(&env, update).await.unwrap();
+
+    assert_eq!(
+      env.restored.lock().unwrap().as_slice(),
+      ["patches/com.example.json=patch-bytes"]
+    );
+    assert!(env.switched.lock().unwrap().is_empty());
+    assert_eq!(root.read("pack.json").as_deref(), Some("client-restored"));
+    assert!(!root.0.join(UPDATE_DIR).join("components").exists());
+  }
+
+  #[tokio::test]
+  async fn a_failed_restore_commit_puts_the_client_files_back() {
+    let root = setup();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      fail_commit: true,
+      ..Default::default()
+    };
+    let mut update = request(&root, Vec::new(), Vec::new(), "0.16.0");
+    with_component_pack(&mut update, &mut env);
+
+    assert!(apply(&env, update).await.is_err());
+
+    assert_eq!(root.read("pack.json").as_deref(), Some("client-v1"));
+    // The jar did not exist before, so it must not be left behind.
+    assert_eq!(root.read("pack.jar"), None);
+    assert!(!journal_path(&root.0).exists());
   }
 
   #[tokio::test]

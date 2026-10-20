@@ -62,7 +62,7 @@ const AddAndImportInstancePage = () => {
   const addAndImportOptions: Record<string, () => void> = {
     new: onOpenCreateInstanceModal,
     modpack: onOpenModpackMenu,
-    campusModpack: () => router.push("/discover/install-modpack?tab=campus"),
+    campusModpack: () => router.push("/instances/sync"),
     manageDirs: () => router.push("/settings/global-game"),
   };
 

@@ -31,7 +31,7 @@ export interface VustbAccount {
   playerId: string;
 }
 
-// Groups allowed to manage shared instances and campus modpacks.
+// Groups allowed to manage campus modpacks.
 const MANAGER_GROUPS = new Set([
   "super_admin",
   "admin",

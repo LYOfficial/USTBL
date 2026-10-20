@@ -6,7 +6,7 @@
 
 use super::diff::FileKey;
 use super::packs::{AppTransport, PackSession};
-use super::remote::{FileSource, RemoteFile, RemoteModpack, UPDATE_DIR};
+use super::remote::{ComponentPack, FileSource, RemoteFile, RemoteModpack, UPDATE_DIR};
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::modpack::baseline::{
   components_of_mmc_pack, hash_file, normalize_relative_path, BaselineLoader,
@@ -20,7 +20,7 @@ use crate::resource::models::{
 use crate::tasks::download::{DownloadParam, DownloadTransferOptions};
 use serde::Deserialize;
 use sha1::{Digest, Sha1};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -202,6 +202,55 @@ fn is_sha1(value: &str) -> bool {
   value.len() == 40 && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+/// A patch or library of a component profile. Like every other file it is an
+/// object in the platform's packs.
+fn pack_file(
+  name: String,
+  blob: &str,
+  size: u64,
+  packs: &Arc<PackSession>,
+) -> USTBLResult<RemoteFile> {
+  if !is_sha1(blob) {
+    return Err(InstanceError::ModpackUpdateRemoteInvalid.into());
+  }
+  Ok(RemoteFile {
+    path: name,
+    source: FileSource::Pack(packs.clone()),
+    key: FileKey {
+      sha1: blob.to_lowercase(),
+      size,
+    },
+  })
+}
+
+fn component_pack(
+  components: &CampusComponents,
+  packs: &Arc<PackSession>,
+) -> USTBLResult<ComponentPack> {
+  let mut files = Vec::new();
+  for patch in &components.patches {
+    files.push(pack_file(
+      format!("patches/{}.json", patch.uid),
+      &patch.blob,
+      patch.size,
+      packs,
+    )?);
+  }
+  for library in &components.libraries {
+    files.push(pack_file(
+      library.path.clone(),
+      &library.blob,
+      library.size,
+      packs,
+    )?);
+  }
+  Ok(ComponentPack {
+    mmc_pack: components.mmc_pack.clone(),
+    instance_cfg: components.instance_cfg.clone(),
+    files,
+  })
+}
+
 /// Turn a campus version into the platform independent description. Files the
 /// client does not use are left out; files in packs are read through `packs`.
 pub fn campus_remote(
@@ -242,6 +291,12 @@ pub fn campus_remote(
       .components
       .as_ref()
       .map(|components| components_of_mmc_pack(&components.mmc_pack)),
+    component_pack: version
+      .manifest
+      .components
+      .as_ref()
+      .map(|components| component_pack(components, packs))
+      .transpose()?,
     files,
   })
 }
@@ -348,6 +403,7 @@ pub async fn remote_from_archive(
       version: loader_version,
     },
     components: None,
+    component_pack: None,
     files: merge_files(downloads, overrides),
   })
 }
@@ -358,12 +414,53 @@ fn remote_dir(root: &Path) -> PathBuf {
   root.join(UPDATE_DIR).join("remote")
 }
 
+#[derive(Deserialize)]
+struct CampusLocation {
+  url: String,
+  method: String,
+  #[serde(default)]
+  headers: HashMap<String, String>,
+}
+
+/// Blobs and bundles are not served by the platform itself. It answers with the
+/// cloud address plus signed request headers that stop working after a few
+/// minutes. Returns the endpoint that hands those out for such a URL.
+fn campus_location_url(src: &str) -> Option<String> {
+  let rest = src.strip_prefix(CAMPUS_API)?.strip_prefix('/')?;
+  let is_object =
+    rest.starts_with("blobs/") || (rest.starts_with("versions/") && rest.ends_with("/bundle"));
+  is_object.then(|| format!("{src}/location"))
+}
+
+/// Swap a campus object URL for the cloud address just before downloading, so
+/// the signature is fresh however long the queue ahead of it took.
+async fn resolve_campus_location(app: &AppHandle, param: &mut DownloadParam) -> USTBLResult<()> {
+  let Some(endpoint) = campus_location_url(param.src.as_str()) else {
+    return Ok(());
+  };
+  let client = app.state::<reqwest::Client>();
+  let location: CampusLocation = client
+    .get(endpoint)
+    .send()
+    .await?
+    .error_for_status()?
+    .json()
+    .await?;
+  if !location.method.eq_ignore_ascii_case("GET") || !location.url.starts_with("https://") {
+    return Err(InstanceError::ModpackUpdateRemoteInvalid.into());
+  }
+  param.src = Url::parse(&location.url).map_err(|_| InstanceError::ModpackUpdateRemoteInvalid)?;
+  param.custom_headers = Some(location.headers);
+  Ok(())
+}
+
 /// Run one download to completion. Used for archives and staged files, which
 /// are needed right away rather than queued as a background group.
 pub async fn download_param(app: &AppHandle, mut param: DownloadParam) -> USTBLResult<()> {
   use crate::tasks::{download::DownloadTask, monitor::TaskMonitor};
   use std::{pin::Pin, time::Duration};
 
+  resolve_campus_location(app, &mut param).await?;
   if param.filename.is_none() {
     param.filename = param
       .dest
@@ -514,6 +611,22 @@ pub async fn resolve_remote(
 mod tests {
   use super::*;
   use std::io::Write;
+
+  #[test]
+  fn only_campus_blobs_and_bundles_are_located() {
+    assert_eq!(
+      campus_location_url(&format!("{CAMPUS_API}/blobs/abc")).as_deref(),
+      Some("https://www.ustb.world/api/modpacks/blobs/abc/location")
+    );
+    assert_eq!(
+      campus_location_url(&format!("{CAMPUS_API}/versions/7/bundle")).as_deref(),
+      Some("https://www.ustb.world/api/modpacks/versions/7/bundle/location")
+    );
+    assert!(campus_location_url(&format!("{CAMPUS_API}/projects")).is_none());
+    assert!(campus_location_url(&format!("{CAMPUS_API}/versions/7")).is_none());
+    assert!(campus_location_url("https://cdn.example/blobs/abc").is_none());
+    assert!(campus_location_url("https://www.ustb.world/api/modpacksx/blobs/a").is_none());
+  }
 
   fn item(id: &str, date: &str, loader: Option<&str>) -> OtherResourceFileInfo {
     OtherResourceFileInfo {

@@ -17,8 +17,8 @@ import {
   LuBoxes,
   LuCirclePlus,
   LuFolder,
+  LuRefreshCw,
   LuSettings,
-  LuShare2,
 } from "react-icons/lu";
 import NavMenu from "@/components/common/nav-menu";
 import SelectableButton from "@/components/common/selectable-button";
@@ -107,14 +107,14 @@ const InstancesLayout: React.FC<InstancesLayoutProps> = ({ children }) => {
               <SelectableButton
                 size="sm"
                 onClick={() => {
-                  router.push("/instances/shared");
+                  router.push("/instances/sync");
                 }}
-                isSelected={router.asPath === "/instances/shared"}
+                isSelected={router.asPath === "/instances/sync"}
               >
                 <HStack spacing={2} overflow="hidden">
-                  <Icon as={LuShare2} />
+                  <Icon as={LuRefreshCw} />
                   <Text fontSize="sm" className="ellipsis-text">
-                    共享实例
+                    {t("InstanceSyncPage.title")}
                   </Text>
                 </HStack>
               </SelectableButton>

@@ -9,6 +9,7 @@ use super::record::{
   RECORD_SCHEMA,
 };
 use crate::account::helpers::vustb;
+use crate::account::models::AccountInfo;
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::misc::{get_instance_game_config, get_instance_subdir_paths};
 use crate::instance::helpers::modpack::baseline::{
@@ -24,7 +25,6 @@ use crate::instance::models::misc::{
 use crate::instance::modpack_update::commands::store_instance;
 use crate::instance::modpack_update::diff::FileKey;
 use crate::instance::modpack_update::sources::{loader_slug, CAMPUS_API};
-use crate::instance::shared::ensure_minecraft_manager as ensure_manager;
 use crate::utils::web::build_ustbl_upload_client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -36,6 +36,26 @@ use tauri::{AppHandle, Emitter, Manager};
 
 /// Hashes sent per request when asking which the platform lacks.
 const MISSING_BATCH: usize = 5000;
+
+/// The UI hides publishing from other accounts, but the role is checked here too;
+/// the platform authenticates the bearer token again.
+fn ensure_manager(app: &AppHandle) -> USTBLResult<()> {
+  let binding = app.state::<Mutex<AccountInfo>>();
+  let account_state = binding.lock()?;
+  let user_group = account_state
+    .vustb_account
+    .as_ref()
+    .map(|account| account.user_group.as_str())
+    .ok_or_else(|| USTBLError("请先登录像素北科账号".to_string()))?;
+  if matches!(
+    user_group,
+    "super_admin" | "admin" | "platform_manager" | "server_manager"
+  ) {
+    Ok(())
+  } else {
+    Err(USTBLError("当前像素北科账号没有整合包管理权限".to_string()))
+  }
+}
 
 const PROGRESS_EVENT: &str = "modpack-publish:progress";
 
@@ -57,6 +77,31 @@ pub struct CampusProject {
   pub name: String,
   pub summary: String,
   pub lines: Vec<CampusLine>,
+}
+
+fn campus_platform() -> String {
+  "campus".into()
+}
+
+/// What a recommend slot currently points at: a campus line, or a project on
+/// another platform (then only `project_ref` is set).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+pub struct CampusRecommendation {
+  pub slot: String,
+  #[serde(default = "campus_platform")]
+  pub platform: String,
+  #[serde(default)]
+  pub project: Option<CampusProject>,
+  #[serde(default, rename(serialize = "line"))]
+  pub version: Option<CampusLine>,
+  #[serde(default)]
+  pub project_ref: Option<String>,
+  /// The line of that project the launcher installs.
+  #[serde(default)]
+  pub game_version: Option<String>,
+  #[serde(default)]
+  pub loader_type: Option<String>,
 }
 
 /// The upload is under way; the task group shows how it goes.
@@ -251,6 +296,26 @@ pub struct NewProject {
   pub name: String,
   #[serde(default)]
   pub summary: String,
+}
+
+/// `None` when nothing is recommended in the slot (or the slot does not exist).
+#[tauri::command]
+pub async fn fetch_campus_modpack_recommendation(
+  app: AppHandle,
+  slot: String,
+) -> USTBLResult<Option<CampusRecommendation>> {
+  let client = app.state::<reqwest::Client>();
+  let response = client
+    .get(format!("{CAMPUS_API}/recommend/{slot}"))
+    .send()
+    .await?;
+  if response.status() == reqwest::StatusCode::NOT_FOUND {
+    return Ok(None);
+  }
+  if !response.status().is_success() {
+    return Err(failure(response).await);
+  }
+  Ok(Some(response.json().await?))
 }
 
 /// The hashes among `hashes` the platform holds no content for.
@@ -821,5 +886,44 @@ mod tests {
       "gtnh",
       LegacyForge
     ));
+  }
+
+  #[test]
+  fn a_recommendation_keeps_the_project_and_the_recommended_line() {
+    let body = serde_json::json!({
+      "slot": "recommended",
+      "project": {
+        "id": 1, "slug": "gtnh", "name": "GTNH", "summary": "",
+        "lines": [{ "id": 7, "game_version": "1.7.10", "loader_type": "forge",
+                    "loader_version": "10.13.4.1614", "version_number": "2.8.0" }]
+      },
+      "version": { "id": 7, "project_id": 1, "game_version": "1.7.10", "loader_type": "forge",
+                   "loader_version": "10.13.4.1614", "version_number": "2.8.0",
+                   "changelog": "", "manifest": {} }
+    });
+    let parsed: CampusRecommendation = serde_json::from_value(body).unwrap();
+    let out = serde_json::to_value(&parsed).unwrap();
+    assert_eq!(out["slot"], "recommended");
+    assert_eq!(out["platform"], "campus");
+    assert_eq!(out["project"]["slug"], "gtnh");
+    assert_eq!(out["line"]["gameVersion"], "1.7.10");
+    assert_eq!(out["line"]["versionNumber"], "2.8.0");
+  }
+
+  #[test]
+  fn a_recommendation_can_point_at_another_platform() {
+    let body = serde_json::json!({
+      "slot": "recommended", "platform": "modrinth", "project_ref": "UCpApD3P",
+      "game_version": "1.21.11", "loader_type": "fabric",
+      "project": null, "version": null
+    });
+    let parsed: CampusRecommendation = serde_json::from_value(body).unwrap();
+    let out = serde_json::to_value(&parsed).unwrap();
+    assert_eq!(out["platform"], "modrinth");
+    assert_eq!(out["projectRef"], "UCpApD3P");
+    assert_eq!(out["gameVersion"], "1.21.11");
+    assert_eq!(out["loaderType"], "fabric");
+    assert!(out["project"].is_null());
+    assert!(out["line"].is_null());
   }
 }

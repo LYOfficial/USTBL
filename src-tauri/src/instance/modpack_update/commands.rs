@@ -5,8 +5,13 @@ use super::apply::{
   Progress, Recovery, UpdateEnv, UpdateRequest,
 };
 use super::diff::{resolve, Conflict, ConflictChoice, FileChange};
+use super::plan::{
+  count_local_changes, local_changes, prepare, prepare_with_contents, requires_reinstall,
+  LocalChange,
+};
 use super::merge::three_way_with_choices;
-use super::plan::{prepare, prepare_with_contents, requires_reinstall};
+use super::remote::ComponentPack;
+use super::restore::restore_component_profile;
 use super::sources::{download_param, latest_version, resolve_remote, LatestVersion};
 use crate::error::USTBLResult;
 use crate::instance::commands::switch_mod_loader;
@@ -22,7 +27,7 @@ use crate::tasks::download::DownloadParam;
 use async_trait::async_trait;
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
@@ -38,9 +43,15 @@ pub enum CheckStatus {
   /// The player paused following; nothing is checked.
   Paused,
   /// Version isolation is off or the baseline is unusable, so the instance
-  /// cannot be compared safely.
+  /// cannot be compared safely. `reason` says which.
   NeedsRepair,
+  /// The loader of the instance is not installed yet (a first install or an
+  /// update is still finishing it), so nothing is compared.
+  WaitingLoader,
   UpToDate,
+  /// Up to date, but managed files were changed here. Only reported when the
+  /// caller asked for the local scan.
+  LocalChanges,
   Available,
   /// The platform could not be asked; `reason` carries the error code.
   Unknown,
@@ -59,6 +70,8 @@ pub struct UpdateCheck {
   pub reason: Option<String>,
   /// The previous update left a backup that can still be rolled back.
   pub can_roll_back: bool,
+  /// How many managed files differ from the install; set by the local scan.
+  pub local_changes: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -151,9 +164,9 @@ fn ensure_not_running(app: &AppHandle, instance_id: &str) -> USTBLResult<()> {
 async fn load_baseline(target: &Target) -> USTBLResult<ModpackBaseline> {
   let baseline = ModpackBaseline::load(&target.root)
     .await
-    .map_err(|_| InstanceError::ModpackUpdateUnsupported)?;
+    .map_err(|_| InstanceError::ModpackUpdateBaselineMissing)?;
   if !baseline.is_consistent_with(&target.origin) {
-    return Err(InstanceError::ModpackUpdateUnsupported.into());
+    return Err(InstanceError::ModpackUpdateBaselineMissing.into());
   }
   Ok(baseline)
 }
@@ -178,6 +191,8 @@ struct AppEnv {
   app: AppHandle,
   instance_id: String,
   label: String,
+  /// The loader of the version being installed.
+  loader: BaselineLoader,
   loader_install_pending: AtomicBool,
 }
 
@@ -226,6 +241,22 @@ impl UpdateEnv for AppEnv {
     Ok(())
   }
 
+  async fn restore_components(&self, pack: &ComponentPack, staged: &Path) -> USTBLResult<()> {
+    let instance = current_instance(&self.app, &self.instance_id)?;
+    restore_component_profile(&self.app, &instance, &self.loader, pack, staged).await?;
+    // The chain carries the loader, so the instance counts as installed.
+    let loader = self.loader.clone();
+    store_instance(&self.app, &self.instance_id, |instance| {
+      instance.mod_loader = ModLoader {
+        loader_type: loader.loader_type,
+        version: loader.version,
+        status: ModLoaderStatus::Installed,
+        branch: None,
+      };
+    })
+    .await
+  }
+
   async fn commit_origin(&self, version_id: &str) -> USTBLResult<()> {
     store_instance(&self.app, &self.instance_id, |instance| {
       if let Some(origin) = instance.origin.as_mut() {
@@ -257,11 +288,16 @@ fn check_of(status: CheckStatus, target: &Target) -> UpdateCheck {
     latest_label: None,
     reason: None,
     can_roll_back: can_roll_back_last(&target.root),
+    local_changes: None,
   }
 }
 
 #[tauri::command]
-pub async fn check_modpack_update(app: AppHandle, instance_id: String) -> USTBLResult<UpdateCheck> {
+pub async fn check_modpack_update(
+  app: AppHandle,
+  instance_id: String,
+  scan_local: Option<bool>,
+) -> USTBLResult<UpdateCheck> {
   let Some(target) = target(&app, &instance_id)? else {
     return Ok(UpdateCheck {
       status: CheckStatus::NotFollowing,
@@ -271,6 +307,7 @@ pub async fn check_modpack_update(app: AppHandle, instance_id: String) -> USTBLR
       latest_label: None,
       reason: None,
       can_roll_back: false,
+      local_changes: None,
     });
   };
   if !target.origin.follow {
@@ -278,29 +315,46 @@ pub async fn check_modpack_update(app: AppHandle, instance_id: String) -> USTBLR
   }
   if !get_instance_game_config(&app, &target.instance).version_isolation {
     return Ok(UpdateCheck {
-      reason: Some(InstanceError::ModpackUpdateUnsupported.to_string()),
+      reason: Some(InstanceError::ModpackUpdateNotIsolated.to_string()),
       ..check_of(CheckStatus::NeedsRepair, &target)
     });
   }
-  if let Err(err) = load_baseline(&target).await {
-    return Ok(UpdateCheck {
-      reason: Some(err.0),
-      ..check_of(CheckStatus::NeedsRepair, &target)
-    });
+  let baseline = match load_baseline(&target).await {
+    Ok(baseline) => baseline,
+    Err(err) => {
+      return Ok(UpdateCheck {
+        reason: Some(err.0),
+        ..check_of(CheckStatus::NeedsRepair, &target)
+      })
+    }
+  };
+  if target.instance.mod_loader.status != ModLoaderStatus::Installed {
+    return Ok(check_of(CheckStatus::WaitingLoader, &target));
   }
   match latest_version(&app, &target.origin).await {
-    Ok(latest) => Ok(UpdateCheck {
-      latest_version_id: latest.as_ref().map(|v| v.version_id.clone()),
-      latest_label: latest.as_ref().map(|v| v.label.clone()),
-      ..check_of(
-        if latest.is_some() {
-          CheckStatus::Available
-        } else {
-          CheckStatus::UpToDate
-        },
-        &target,
-      )
+    // The status stays `Available`; the count rides along so the local
+    // edits can be shown next to the update.
+    Ok(Some(latest)) => Ok(UpdateCheck {
+      latest_version_id: Some(latest.version_id),
+      latest_label: Some(latest.label),
+      local_changes: if scan_local == Some(true) {
+        Some(count_local_changes(&target.root, &baseline).await?)
+      } else {
+        None
+      },
+      ..check_of(CheckStatus::Available, &target)
     }),
+    Ok(None) => {
+      let mut check = check_of(CheckStatus::UpToDate, &target);
+      if scan_local == Some(true) {
+        let changed = count_local_changes(&target.root, &baseline).await?;
+        check.local_changes = Some(changed);
+        if changed > 0 {
+          check.status = CheckStatus::LocalChanges;
+        }
+      }
+      Ok(check)
+    }
     Err(err) => Ok(UpdateCheck {
       reason: Some(err.0),
       ..check_of(CheckStatus::Unknown, &target)
@@ -340,6 +394,18 @@ pub async fn set_modpack_follow(
   .await
 }
 
+/// The managed files changed here since the modpack installed them, with
+/// line diffs for text files. Works offline: only the local record is used.
+#[tauri::command]
+pub async fn list_modpack_local_changes(
+  app: AppHandle,
+  instance_id: String,
+) -> USTBLResult<Vec<LocalChange>> {
+  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let baseline = load_baseline(&target).await?;
+  local_changes(&target.root, &baseline, true).await
+}
+
 /// Reveal a managed file in the system file manager for external editing.
 #[tauri::command]
 pub fn reveal_modpack_conflict_file(
@@ -369,6 +435,11 @@ pub async fn prepare_modpack_update(
   plan_for(&app, &target, &baseline, &latest).await
 }
 
+/// An instance created for a modpack that has not installed a version yet.
+fn is_fresh(origin: &InstanceOrigin) -> bool {
+  origin.version_id.is_empty()
+}
+
 fn fast_forward(changes: usize, conflicts: usize, loader_change: bool) -> bool {
   changes == 0 && conflicts == 0 && !loader_change
 }
@@ -387,7 +458,7 @@ async fn plan_for(
     latest,
   )
   .await?;
-  if requires_reinstall(baseline, &remote) {
+  if requires_reinstall(baseline, &remote, is_fresh(&target.origin)) {
     return Ok(UpdatePlan {
       from_version_id: target.origin.version_id.clone(),
       to_version_id: remote.version_id.clone(),
@@ -476,6 +547,7 @@ async fn materialize_text_candidates(
     app: app.clone(),
     instance_id: target.instance.id.clone(),
     label: remote.label.clone(),
+    loader: remote.loader.clone(),
     loader_install_pending: AtomicBool::new(false),
   };
   let preview = target.root.join(super::remote::UPDATE_DIR).join("remote-preview");
@@ -526,9 +598,17 @@ pub async fn apply_modpack_update(
     &latest,
   )
   .await?;
-  if requires_reinstall(&baseline, &remote) {
+  let fresh = is_fresh(&target.origin);
+  if requires_reinstall(&baseline, &remote, fresh) {
     return Err(InstanceError::ModpackUpdateReinstallRequired.into());
   }
+  // A fresh instance has no chain yet; the engine restores the version's own.
+  let restore_components = fresh && remote.component_pack.is_some();
+  let components = if restore_components {
+    remote.components.clone()
+  } else {
+    baseline.component_refs()
+  };
   let first = prepare(&target.root, &baseline, &remote).await?;
   let remote_contents = materialize_text_candidates(&app, &target, &remote, &first.diff.conflicts).await?;
   let prepared = prepare_with_contents(&target.root, &baseline, &remote, &remote_contents).await?;
@@ -540,6 +620,7 @@ pub async fn apply_modpack_update(
     app: app.clone(),
     instance_id: instance_id.clone(),
     label: remote.label.clone(),
+    loader: remote.loader.clone(),
     loader_install_pending: AtomicBool::new(false),
   };
   let version_id = remote.version_id.clone();
@@ -554,7 +635,8 @@ pub async fn apply_modpack_update(
       remote,
       origin: target.origin.clone(),
       previous_loader: baseline.loader.clone(),
-      components: baseline.component_refs(),
+      components,
+      restore_components,
       merged_contents,
     },
   )
@@ -568,6 +650,31 @@ pub async fn apply_modpack_update(
     version_id,
     loader_install_pending: env.loader_install_pending.load(Ordering::SeqCst),
   })
+}
+
+/// Install the files of a campus modpack into the empty instance created for it.
+///
+/// Installing is the degenerate update: the baseline is empty, so everything the
+/// version lists is an addition. Files the instance already holds (such as an
+/// options file written at creation) are replaced by the modpack's own, because
+/// a fresh install should reproduce the published content.
+#[tauri::command]
+pub async fn install_campus_modpack(
+  app: AppHandle,
+  instance_id: String,
+) -> USTBLResult<UpdateOutcome> {
+  // The instance was created moments ago; make sure the app knows it.
+  refresh_and_update_instances(&app, false).await;
+  let plan = prepare_modpack_update(app.clone(), instance_id.clone()).await?;
+  if plan.reinstall_required {
+    return Err(InstanceError::ModpackUpdateReinstallRequired.into());
+  }
+  let choices = plan
+    .conflicts
+    .iter()
+    .map(|conflict| (conflict.path.clone(), ConflictChoice::TakeRemote))
+    .collect();
+  apply_modpack_update(app, instance_id, plan.plan_hash, choices).await
 }
 
 /// Undo or finish an update that was interrupted. Returns whether anything

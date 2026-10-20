@@ -1,7 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
+  CampusInstallOutcome,
+  CampusInstallProgress,
   CampusModpackProject,
+  CampusModpackRecommendation,
   CampusNewProject,
   CampusPublishFinished,
   CampusPublishProgress,
@@ -17,6 +20,35 @@ export class CampusModpackService {
     InvokeResponse<CampusModpackProject[]>
   > {
     return await invoke("list_campus_modpack_projects");
+  }
+
+  @responseHandler("instance")
+  static async fetchCampusModpackRecommendation(
+    slot: string
+  ): Promise<InvokeResponse<CampusModpackRecommendation | null>> {
+    return await invoke("fetch_campus_modpack_recommendation", { slot });
+  }
+
+  /**
+   * Install the files of a campus modpack into the empty instance created for it.
+   */
+  @responseHandler("instance")
+  static async installCampusModpack(
+    instanceId: string
+  ): Promise<InvokeResponse<CampusInstallOutcome>> {
+    return await invoke("install_campus_modpack", { instanceId });
+  }
+
+  static onInstallProgress(
+    callback: (payload: CampusInstallProgress) => void
+  ): () => void {
+    const unlisten = getCurrentWebview().listen<CampusInstallProgress>(
+      "modpack-update:progress",
+      (event) => callback(event.payload)
+    );
+    return () => {
+      unlisten.then((removeListener) => removeListener());
+    };
   }
 
   /**

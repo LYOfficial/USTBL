@@ -49,7 +49,7 @@ export interface CampusNewProject {
   summary: string;
 }
 
-/** A publish that was interrupted or failed and can be continued or given up. */
+/** A local publish record that can survive launcher restarts. */
 export interface CampusUnfinishedPublish {
   jobId: string;
   instanceId: string;
@@ -70,4 +70,32 @@ export interface CampusPublishFinished {
   outcome?: CampusPublishOutcome;
   /** Error code or message when the publish failed. */
   error?: string;
+}
+
+export interface CampusModpackRecommendation {
+  slot: string;
+  /** `campus`, or the platform of the project the slot points at. */
+  platform: string;
+  /** Set for a campus line. */
+  project: CampusModpackProject | null;
+  line: CampusModpackLine | null;
+  /** Set for a project on another platform. */
+  projectRef: string | null;
+  /** Which line of that project to install. */
+  gameVersion: string | null;
+  loaderType: string | null;
+}
+
+export type CampusInstallStage = "fetching" | "applying" | "finalizing";
+
+export interface CampusInstallProgress {
+  instanceId: string;
+  stage: CampusInstallStage;
+  done: number;
+  total: number;
+}
+
+export interface CampusInstallOutcome {
+  versionId: string;
+  loaderInstallPending: boolean;
 }

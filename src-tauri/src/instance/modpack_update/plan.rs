@@ -1,8 +1,10 @@
 //! Comparing an instance with the version it is being updated to.
 
-use super::diff::{collect_local_states, three_way, Diff, FileKey};
+use super::diff::{collect_local_states, three_way, Diff, FileKey, LocalState};
 use super::remote::RemoteModpack;
 use super::merge::{merge_text, text_conflicts, TextMergeError};
+use super::text_diff::{unified_diff, DiffHunk, CONTEXT_LINES};
+use serde::Serialize;
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::modpack::baseline::ModpackBaseline;
 use crate::instance::helpers::modpack::{base_store, text};
@@ -53,11 +55,134 @@ pub fn plan_hash(remote: &RemoteModpack, diff: &Diff) -> String {
 /// chain different from the one the instance was installed with, or declares one
 /// for an instance that has none, must be installed again. A new version
 /// without a chain never forces a reinstall.
-pub fn requires_reinstall(baseline: &ModpackBaseline, remote: &RemoteModpack) -> bool {
+///
+/// An instance that was created for the modpack and has not installed any
+/// version yet (`fresh`) is the exception: it has nothing to lose, and the
+/// engine restores the chain into it.
+pub fn requires_reinstall(baseline: &ModpackBaseline, remote: &RemoteModpack, fresh: bool) -> bool {
   let Some(wanted) = &remote.components else {
     return false;
   };
+  if fresh && remote.component_pack.is_some() {
+    return false;
+  }
   baseline.component_refs().as_ref() != Some(wanted)
+}
+
+/// How many files the modpack manages differ from what it installed. A file the
+/// player switched off counts, since that is a deliberate local change.
+pub async fn count_local_changes(root: &Path, baseline: &ModpackBaseline) -> USTBLResult<usize> {
+  Ok(local_changes(root, baseline, false).await?.len())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LocalChangeKind {
+  Modified,
+  Deleted,
+  Disabled,
+}
+
+/// Why a modified file comes without a line diff.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NoDiffReason {
+  /// Not a text file the launcher compares by line (or too large).
+  NotText,
+  /// The installed text was not kept, so there is nothing to compare with.
+  BaseMissing,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalChange {
+  pub path: String,
+  pub kind: LocalChangeKind,
+  pub baseline: FileKey,
+  pub local: Option<FileKey>,
+  /// Line diff of the normalized texts, installed → local.
+  pub hunks: Option<Vec<DiffHunk>>,
+  pub no_diff: Option<NoDiffReason>,
+}
+
+fn diff_lines(text: &str) -> Vec<String> {
+  text.lines().map(str::to_owned).collect()
+}
+
+/// Managed files that differ from what the modpack installed, by path. Text
+/// files that only differ in normalized-away noise are not changes. With
+/// `with_diff` each modified text file carries its line diff.
+pub async fn local_changes(
+  root: &Path,
+  baseline: &ModpackBaseline,
+  with_diff: bool,
+) -> USTBLResult<Vec<LocalChange>> {
+  let keys = baseline_keys(baseline);
+  let root = root.to_path_buf();
+  tokio::task::spawn_blocking(move || {
+    let paths: BTreeSet<String> = keys.keys().cloned().collect();
+    let local = collect_local_states(&root, &paths)?;
+    let mut changes = Vec::new();
+    for (path, key) in keys {
+      let local_key = match local.get(&path) {
+        Some(LocalState::Present(local_key)) if *local_key == key => continue,
+        Some(LocalState::Present(local_key)) => local_key.clone(),
+        Some(LocalState::Disabled(local_key)) => {
+          changes.push(LocalChange {
+            path,
+            kind: LocalChangeKind::Disabled,
+            baseline: key,
+            local: Some(local_key.clone()),
+            hunks: None,
+            no_diff: None,
+          });
+          continue;
+        }
+        _ => {
+          changes.push(LocalChange {
+            path,
+            kind: LocalChangeKind::Deleted,
+            baseline: key,
+            local: None,
+            hunks: None,
+            no_diff: None,
+          });
+          continue;
+        }
+      };
+      let local_bytes = std::fs::read(root.join(&path))?;
+      let local_text = text::normalize_text(&path, &local_bytes);
+      let base_text = match &local_text {
+        Some(_) => base_store::load(&root, &key.sha1)
+          .ok()
+          .flatten()
+          .and_then(|base| text::normalize_text(&path, &base)),
+        None => None,
+      };
+      let (hunks, no_diff) = match (base_text, local_text) {
+        (Some(base), Some(local)) if base == local => continue,
+        (Some(base), Some(local)) => (
+          with_diff.then(|| {
+            unified_diff(&diff_lines(&base), &diff_lines(&local), CONTEXT_LINES)
+          }),
+          None,
+        ),
+        (None, Some(_)) => (None, Some(NoDiffReason::BaseMissing)),
+        _ => (None, Some(NoDiffReason::NotText)),
+      };
+      changes.push(LocalChange {
+        path,
+        kind: LocalChangeKind::Modified,
+        baseline: key,
+        local: Some(local_key),
+        hunks,
+        no_diff,
+      });
+    }
+    Ok::<_, USTBLError>(changes)
+  })
+  .await
+  .map_err(|e| USTBLError(e.to_string()))?
 }
 
 /// Hash the files both versions care about and compare the three states.
@@ -240,6 +365,7 @@ mod tests {
       game_version: "1.21.1".into(),
       loader: loader(),
       components: None,
+      component_pack: None,
       files: files
         .iter()
         .map(|(path, content)| RemoteFile {
@@ -398,7 +524,7 @@ mod tests {
     let mut remote = remote(&[("mods/a.jar", "a2")]);
 
     remote.components = chain_of(&gtnh_pack("10.13.4.1615"));
-    assert!(requires_reinstall(&installed, &remote));
+    assert!(requires_reinstall(&installed, &remote, false));
 
     let mut extra = gtnh_pack("10.13.4.1614");
     extra["components"]
@@ -406,7 +532,7 @@ mod tests {
       .unwrap()
       .push(serde_json::json!({"uid": "org.lwjgl3", "version": "3.3.1"}));
     remote.components = chain_of(&extra);
-    assert!(requires_reinstall(&installed, &remote));
+    assert!(requires_reinstall(&installed, &remote, false));
   }
 
   #[test]
@@ -421,18 +547,105 @@ mod tests {
         {"uid": "net.minecraft", "version": "1.7.10", "cachedName": "Minecraft"},
       ]
     }));
-    assert!(!requires_reinstall(&installed, &remote));
+    assert!(!requires_reinstall(&installed, &remote, false));
 
     remote.components = None;
-    assert!(!requires_reinstall(&installed, &remote));
+    assert!(!requires_reinstall(&installed, &remote, false));
   }
 
   #[test]
   fn a_chain_for_an_instance_without_one_requires_a_reinstall() {
     let plain = baseline(&[("mods/a.jar", "a1")]);
     let mut remote = remote(&[("mods/a.jar", "a2")]);
-    assert!(!requires_reinstall(&plain, &remote));
+    assert!(!requires_reinstall(&plain, &remote, false));
     remote.components = chain_of(&gtnh_pack("10.13.4.1614"));
-    assert!(requires_reinstall(&plain, &remote));
+    assert!(requires_reinstall(&plain, &remote, false));
+  }
+
+  #[tokio::test]
+  async fn only_managed_files_that_differ_count_as_local_changes() {
+    let root = std::env::temp_dir().join(format!("ustbl-plan-test-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(root.join("mods")).unwrap();
+    fs::write(root.join("mods/same.jar"), "same").unwrap();
+    fs::write(root.join("mods/edited.jar"), "edited-by-player").unwrap();
+    fs::write(root.join("mods/off.jar.disabled"), "off").unwrap();
+    // Not listed in the baseline, so not the modpack's business.
+    fs::write(root.join("mods/mine.jar"), "mine").unwrap();
+    let installed = baseline(&[
+      ("mods/same.jar", "same"),
+      ("mods/edited.jar", "original"),
+      ("mods/off.jar", "off"),
+      ("mods/gone.jar", "gone"),
+    ]);
+
+    // edited, switched off, deleted
+    assert_eq!(count_local_changes(&root, &installed).await.unwrap(), 3);
+    let clean = baseline(&[("mods/same.jar", "same")]);
+    assert_eq!(count_local_changes(&root, &clean).await.unwrap(), 0);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn local_change_count_ignores_cached_text_formatting_noise() {
+    let root = instance(&[("config/a.toml", "a=1\r\n")]);
+    let baseline_bytes = b"a=1\n";
+    let baseline_sha1 = hex::encode(Sha1::digest(baseline_bytes));
+    let baseline = baseline(&[("config/a.toml", "a=1\n")]);
+    fs::create_dir_all(crate::instance::helpers::modpack::base_store::base_dir(&root)).unwrap();
+    fs::write(
+      crate::instance::helpers::modpack::base_store::base_path(&root, &baseline_sha1),
+      baseline_bytes,
+    )
+    .unwrap();
+    assert_eq!(count_local_changes(&root, &baseline).await.unwrap(), 0);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn local_changes_list_kinds_and_text_diffs() {
+    let root = instance(&[
+      ("config/a.toml", "a=1\r\nb=3\r\n"),
+      ("config/b.toml", "x=1\n"),
+      ("mods/a.jar", "changed"),
+    ]);
+    let base_text = b"a=1\nb=2\n";
+    let base_sha1 = hex::encode(Sha1::digest(base_text));
+    fs::create_dir_all(crate::instance::helpers::modpack::base_store::base_dir(&root)).unwrap();
+    fs::write(
+      crate::instance::helpers::modpack::base_store::base_path(&root, &base_sha1),
+      base_text,
+    )
+    .unwrap();
+    let installed = baseline(&[
+      ("config/a.toml", "a=1\nb=2\n"),
+      // No kept copy of the installed text.
+      ("config/b.toml", "x=0\n"),
+      ("mods/a.jar", "original"),
+      ("mods/gone.jar", "gone"),
+    ]);
+
+    let changes = local_changes(&root, &installed, true).await.unwrap();
+    let by_path: BTreeMap<_, _> = changes.iter().map(|c| (c.path.as_str(), c)).collect();
+    assert_eq!(by_path.len(), 4);
+
+    let text = by_path["config/a.toml"];
+    assert_eq!(text.kind, LocalChangeKind::Modified);
+    let hunks = text.hunks.as_ref().unwrap();
+    let rendered: Vec<String> = hunks[0]
+      .lines
+      .iter()
+      .map(|line| format!("{:?}:{}", line.kind, line.text))
+      .collect();
+    assert_eq!(rendered, ["Context:a=1", "Delete:b=2", "Add:b=3"]);
+
+    assert_eq!(by_path["config/b.toml"].no_diff, Some(NoDiffReason::BaseMissing));
+    assert_eq!(by_path["mods/a.jar"].no_diff, Some(NoDiffReason::NotText));
+    assert_eq!(by_path["mods/gone.jar"].kind, LocalChangeKind::Deleted);
+
+    // Without diffs the same files are listed, only lighter.
+    let light = local_changes(&root, &installed, false).await.unwrap();
+    assert_eq!(light.len(), 4);
+    assert!(light.iter().all(|change| change.hunks.is_none()));
+    let _ = fs::remove_dir_all(root);
   }
 }
