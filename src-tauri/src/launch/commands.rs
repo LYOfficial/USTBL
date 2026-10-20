@@ -6,6 +6,7 @@ use crate::error::USTBLResult;
 use crate::instance::helpers::client_json::{replace_native_libraries, McClientInfo};
 use crate::instance::helpers::misc::{get_instance_game_config, get_instance_subdir_paths};
 use crate::instance::models::misc::{Instance, InstanceError, InstanceSubdirType, ModLoaderStatus};
+use crate::instance::modpack_update::apply::UpdateGuard;
 use crate::launch::helpers::command_generator::{
   export_full_launch_command, generate_launch_command, LaunchCommand,
 };
@@ -98,14 +99,19 @@ pub async fn select_suitable_jre(
 
   let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
   let mut launching = launching_queue_state.lock()?;
-  launching.push(LaunchingState {
-    id: timestamp,
-    game_config,
-    client_info,
-    selected_java,
-    selected_instance: instance,
-    ..LaunchingState::default()
-  });
+  // Checked under the update registry lock, so an update cannot start between
+  // this check and the queue entry it guards.
+  let root = instance.version_path.clone();
+  UpdateGuard::while_idle(&root, || {
+    launching.push(LaunchingState {
+      id: timestamp,
+      game_config,
+      client_info,
+      selected_java,
+      selected_instance: instance,
+      ..LaunchingState::default()
+    })
+  })?;
 
   Ok(())
 }

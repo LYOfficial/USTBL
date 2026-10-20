@@ -1,8 +1,8 @@
 //! Tauri commands for following a modpack: check, plan, apply, recover.
 
 use super::apply::{
-  apply, can_roll_back_last, materialize_remote_file, prepare_packs, recover, roll_back_last,
-  Progress, Recovery, UpdateEnv, UpdateRequest,
+  apply, can_roll_back_last, materialize_remote_file, prepare_packs, recover_checked,
+  roll_back_last_checked, Progress, Recovery, UpdateEnv, UpdateRequest,
 };
 use super::diff::{resolve, Conflict, ConflictChoice, FileChange};
 use super::plan::{
@@ -198,6 +198,9 @@ struct AppEnv {
 
 #[async_trait]
 impl UpdateEnv for AppEnv {
+  fn ensure_not_running(&self) -> USTBLResult<()> {
+    ensure_not_running(&self.app, &self.instance_id)
+  }
   async fn fetch(&self, param: DownloadParam) -> USTBLResult<()> {
     download_param(&self.app, param).await
   }
@@ -368,9 +371,12 @@ pub async fn rollback_modpack_update(app: AppHandle, instance_id: String) -> UST
   let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   ensure_not_running(&app, &instance_id)?;
   let root = target.root.clone();
-  let done = tokio::task::spawn_blocking(move || roll_back_last(&root))
-    .await
-    .map_err(|e| crate::error::USTBLError(e.to_string()))??;
+  let check_app = app.clone();
+  let done = tokio::task::spawn_blocking(move || {
+    roll_back_last_checked(&root, || ensure_not_running(&check_app, &instance_id))
+  })
+  .await
+  .map_err(|e| crate::error::USTBLError(e.to_string()))??;
   if done {
     refresh_and_update_instances(&app, false).await;
   }
@@ -428,7 +434,7 @@ pub async fn prepare_modpack_update(
   let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   ensure_not_running(&app, &instance_id)?;
   let baseline = load_baseline(&target).await?;
-  recover(&target.root)?;
+  recover_checked(&target.root, || ensure_not_running(&app, &instance_id))?;
   let latest = latest_version(&app, &target.origin)
     .await?
     .ok_or(InstanceError::ModpackUpdateStale)?;
@@ -658,7 +664,7 @@ pub async fn apply_modpack_update(
   let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   ensure_not_running(&app, &instance_id)?;
   let baseline = load_baseline(&target).await?;
-  recover(&target.root)?;
+  recover_checked(&target.root, || ensure_not_running(&app, &instance_id))?;
   let latest = latest_version(&app, &target.origin)
     .await?
     .ok_or(InstanceError::ModpackUpdateStale)?;
@@ -756,9 +762,12 @@ pub async fn install_campus_modpack(
 pub async fn recover_modpack_update(app: AppHandle, instance_id: String) -> USTBLResult<bool> {
   let instance = current_instance(&app, &instance_id)?;
   let root = instance.version_path.clone();
-  let outcome = tokio::task::spawn_blocking(move || recover(&root))
-    .await
-    .map_err(|e| crate::error::USTBLError(e.to_string()))??;
+  let check_app = app.clone();
+  let outcome = tokio::task::spawn_blocking(move || {
+    recover_checked(&root, || ensure_not_running(&check_app, &instance_id))
+  })
+  .await
+  .map_err(|e| crate::error::USTBLError(e.to_string()))??;
   if outcome == Recovery::RolledBack {
     refresh_and_update_instances(&app, false).await;
   }
