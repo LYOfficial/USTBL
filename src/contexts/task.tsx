@@ -26,10 +26,17 @@ import {
   TaskDescStatusEnums,
   TaskGroupDesc,
   TaskParam,
+  TaskPayload,
+  TaskTypeEnums,
 } from "@/models/task";
+import { CampusModpackService } from "@/services/campus-modpack";
 import { ConfigService } from "@/services/config";
 import { InstanceService } from "@/services/instance";
 import { TaskService } from "@/services/task";
+import {
+  runCampusInstall,
+  takePendingCampusInstall,
+} from "@/utils/campus-install";
 import { takePendingModpackOrigin } from "@/utils/modpack-origin";
 
 interface TaskContextType {
@@ -259,19 +266,24 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
                   //   `Task ${payload.id} already exists in group ${payload.taskGroup}`
                   // );
                 } else if (
+                  destOf(
+                    (payload.event as CreatedPTaskEventStatus).desc.payload
+                  ) !== undefined &&
                   group.taskDescs.some(
                     (t) =>
-                      t.payload.dest ===
-                      (payload.event as CreatedPTaskEventStatus).desc.payload
-                        .dest
+                      destOf(t.payload) ===
+                      destOf(
+                        (payload.event as CreatedPTaskEventStatus).desc.payload
+                      )
                   )
                 ) {
                   // It' a retrial task emitted from the backend
                   group.taskDescs = group.taskDescs.map((t) => {
                     if (
-                      t.payload.dest ===
-                      (payload.event as CreatedPTaskEventStatus).desc.payload
-                        .dest
+                      destOf(t.payload) ===
+                      destOf(
+                        (payload.event as CreatedPTaskEventStatus).desc.payload
+                      )
                     ) {
                       t = (payload.event as CreatedPTaskEventStatus).desc;
                     }
@@ -431,27 +443,40 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
 
           const { name, version } = parseTaskGroup(payload.taskGroup);
 
-          toast({
-            status:
-              payload.event === GTaskEventStatusEnums.Failed
-                ? "error"
-                : "success",
-            title: t(
-              `Services.task.onTaskGroupUpdate.status.${payload.event}`,
-              {
-                param: t(`DownloadTasksPage.task.${name}`, {
-                  param: version || "",
-                }),
-              }
-            ),
-          });
+          // Publishing reports its own result when it ends.
+          if (name !== "modpack-publish")
+            toast({
+              status:
+                payload.event === GTaskEventStatusEnums.Failed
+                  ? "error"
+                  : "success",
+              title: t(
+                `Services.task.onTaskGroupUpdate.status.${payload.event}`,
+                {
+                  param: t(`DownloadTasksPage.task.${name}`, {
+                    param: version || "",
+                  }),
+                }
+              ),
+            });
 
           if (payload.event === GTaskEventStatusEnums.Completed) {
             switch (name) {
               case "game-client":
-              case "change-mod-loader":
+              case "change-mod-loader": {
                 getInstanceList(true);
+                // A campus modpack install waits for its client to be ready
+                const campusInstall =
+                  name === "game-client" && version
+                    ? takePendingCampusInstall(version)
+                    : undefined;
+                if (campusInstall) {
+                  runCampusInstall(campusInstall, toast, t, () =>
+                    getInstanceList(true)
+                  );
+                }
                 break;
+              }
               case "forge-libraries":
               case "neoforge-libraries":
               case "optifine-libraries":
@@ -512,7 +537,7 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
                   (t) => t.taskGroup === payload.taskGroup
                 );
                 if (group && group.taskDescs.length > 0) {
-                  const dest = group.taskDescs[0].payload.dest;
+                  const dest = destOf(group.taskDescs[0].payload) ?? "";
                   openSharedModal("import-modpack", {
                     path: dest,
                     origin: takePendingModpackOrigin(dest),
@@ -565,6 +590,37 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
     openSharedModal,
   ]);
 
+  // A publish runs in the background; this is where its result is told.
+  useEffect(() => {
+    return CampusModpackService.onPublishFinished((payload) => {
+      if (payload.error !== undefined) {
+        toast({
+          title: t("Services.instance.publishCampusModpack.error.title"),
+          description: t(
+            `Services.instance.publishCampusModpack.error.description.${payload.error}`,
+            { defaultValue: payload.error }
+          ),
+          status: "error",
+        });
+        return;
+      }
+      const adoption = payload.outcome?.adoption;
+      if (adoption === "followed") getInstanceList(true);
+      const skipped = payload.outcome?.skipped.length ?? 0;
+      const notes = [
+        skipped > 0 ? t("PublishModpackModal.skipped", { count: skipped }) : "",
+        adoption && adoption !== "followed"
+          ? t(`PublishModpackModal.adoption.${adoption}`)
+          : "",
+      ].filter(Boolean);
+      toast({
+        title: t("Services.instance.publishCampusModpack.success"),
+        description: notes.length > 0 ? notes.join(" ") : undefined,
+        status: "success",
+      });
+    });
+  }, [getInstanceList, t, toast]);
+
   useEffect(() => {
     if (!tasks || !tasks.length) setGeneralPercent(undefined);
     else {
@@ -608,6 +664,10 @@ export const useTaskContext = (): TaskContextType => {
   }
   return context;
 };
+
+/** Where a download writes to; other kinds of task have no destination. */
+export const destOf = (payload: TaskPayload): string | undefined =>
+  payload.taskType === TaskTypeEnums.Download ? payload.dest : undefined;
 
 export const parseTaskGroup = (
   taskGroup: string

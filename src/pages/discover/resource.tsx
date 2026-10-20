@@ -5,7 +5,7 @@ const ResourcePage = () => {
   const router = useRouter();
 
   useEffect(() => {
-    router.replace("/discover/install-modpack");
+    router.replace("/discover/home");
   }, [router]);
 
   return null;

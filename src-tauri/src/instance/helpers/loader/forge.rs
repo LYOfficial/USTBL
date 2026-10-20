@@ -16,7 +16,7 @@ use crate::instance::helpers::loader::common::add_library_entry;
 use crate::instance::helpers::misc::get_instance_subdir_paths;
 use crate::instance::models::misc::{Instance, InstanceError, InstanceSubdirType, ModLoader};
 use crate::launch::helpers::file_validator::convert_library_name_to_path;
-use crate::resource::helpers::misc::{convert_url_to_target_source, get_download_api};
+use crate::resource::helpers::misc::{download_with_source_fallbacks, get_download_api};
 use crate::resource::models::{ResourceType, SourceType};
 use crate::tasks::commands::schedule_progressive_task_group;
 use crate::tasks::download::DownloadParam;
@@ -292,21 +292,22 @@ pub async fn download_forge_libraries(
         continue;
       }
 
+      let (src, transfer_options) = download_with_source_fallbacks(
+        &Url::parse(url)?,
+        &[
+          ResourceType::ForgeMaven,
+          ResourceType::ForgeMavenNew,
+          ResourceType::Libraries,
+        ],
+        priority,
+      )?;
       task_params.push(PTaskParam::Download(DownloadParam {
-        src: convert_url_to_target_source(
-          &Url::parse(url)?,
-          &[
-            ResourceType::ForgeMaven,
-            ResourceType::ForgeMavenNew,
-            ResourceType::Libraries,
-          ],
-          &priority[0],
-        )?,
+        src,
         dest: lib_dir.join(&convert_library_name_to_path(name, None)?),
         filename: None,
         sha1: None,
         custom_headers: None,
-        transfer_options: Default::default(),
+        transfer_options,
       }));
     }
 
@@ -350,21 +351,22 @@ pub async fn download_forge_libraries(
       }
 
       let rel = convert_library_name_to_path(&name.to_string(), None)?;
+      let (src, transfer_options) = download_with_source_fallbacks(
+        &Url::parse(url)?,
+        &[
+          ResourceType::ForgeMaven,
+          ResourceType::ForgeMavenNew,
+          ResourceType::Libraries,
+        ],
+        priority,
+      )?;
       task_params.push(PTaskParam::Download(DownloadParam {
-        src: convert_url_to_target_source(
-          &Url::parse(url)?,
-          &[
-            ResourceType::ForgeMaven,
-            ResourceType::ForgeMavenNew,
-            ResourceType::Libraries,
-          ],
-          &priority[0],
-        )?,
+        src,
         dest: lib_dir.join(&rel),
         filename: None,
         sha1: None,
         custom_headers: None,
-        transfer_options: Default::default(),
+        transfer_options,
       }));
     }
   } else {
@@ -423,14 +425,14 @@ pub async fn download_forge_libraries(
       };
 
       let rel = convert_library_name_to_path(&name, None)?;
-      let src = convert_url_to_target_source(
+      let (src, transfer_options) = download_with_source_fallbacks(
         &url.join(&rel)?,
         &[
           ResourceType::ForgeMaven,
           ResourceType::ForgeMavenNew,
           ResourceType::Libraries,
         ],
-        &priority[0],
+        priority,
       )?;
       task_params.push(PTaskParam::Download(DownloadParam {
         src,
@@ -438,7 +440,7 @@ pub async fn download_forge_libraries(
         filename: None,
         sha1: None,
         custom_headers: None,
-        transfer_options: Default::default(),
+        transfer_options,
       }));
     }
     client_info.patches.push(new_patch);
@@ -447,6 +449,7 @@ pub async fn download_forge_libraries(
   let mut seen = std::collections::HashSet::new();
   task_params.retain(|param| match param {
     PTaskParam::Download(dp) => seen.insert(dp.dest.clone()),
+    PTaskParam::Upload(_) => true,
   });
 
   schedule_progressive_task_group(

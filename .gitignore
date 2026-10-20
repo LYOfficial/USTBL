@@ -69,3 +69,6 @@ next-env.d.ts
 *.zip
 /BEIKEserver/
 /.server/
+
+# Doc
+TODO.md

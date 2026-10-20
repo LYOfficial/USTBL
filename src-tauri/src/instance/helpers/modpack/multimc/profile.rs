@@ -110,6 +110,66 @@ fn read_entry(archive: &mut ZipArchive<&File>, name: &str, limit: u64) -> USTBLR
   Ok(bytes)
 }
 
+/// Where a pack's own files come from. Names are relative to the pack root,
+/// e.g. `patches/<uid>.json` or `libraries/<file>`.
+pub trait PackFiles {
+  fn exists(&mut self, name: &str) -> bool;
+  fn read(&mut self, name: &str, limit: u64) -> USTBLResult<Vec<u8>>;
+}
+
+/// A pack that arrived as a MultiMC archive; `base` is its root folder in the zip.
+pub struct ZipFiles<'a> {
+  archive: ZipArchive<&'a File>,
+  base: String,
+}
+
+impl<'a> ZipFiles<'a> {
+  pub fn new(file: &'a File, base: &str) -> USTBLResult<Self> {
+    Ok(Self {
+      archive: ZipArchive::new(file)?,
+      base: base.to_string(),
+    })
+  }
+}
+
+impl PackFiles for ZipFiles<'_> {
+  fn exists(&mut self, name: &str) -> bool {
+    self
+      .archive
+      .index_for_name(&format!("{}{name}", self.base))
+      .is_some()
+  }
+
+  fn read(&mut self, name: &str, limit: u64) -> USTBLResult<Vec<u8>> {
+    read_entry(&mut self.archive, &format!("{}{name}", self.base), limit)
+  }
+}
+
+/// A pack whose files were fetched one by one into a folder. Maps pack-relative
+/// names to the files that hold them.
+#[derive(Default)]
+pub struct StagedFiles {
+  pub files: HashMap<String, std::path::PathBuf>,
+}
+
+impl PackFiles for StagedFiles {
+  fn exists(&mut self, name: &str) -> bool {
+    self.files.contains_key(name)
+  }
+
+  fn read(&mut self, name: &str, limit: u64) -> USTBLResult<Vec<u8>> {
+    safe_relative(name)?;
+    let path = self
+      .files
+      .get(name)
+      .ok_or_else(|| invalid(format!("missing pack file: {name}")))?;
+    if fs::metadata(path)?.len() > limit {
+      return Err(invalid("pack file exceeds size limit"));
+    }
+    Ok(fs::read(path)?)
+  }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Requirement {
@@ -231,7 +291,7 @@ impl ResolvedMultiMc {
   /// Returns None only when the archive is not MultiMC. Malformed MultiMC input
   /// is an error, not permission to drop its custom components.
   pub async fn from_archive(client: &reqwest::Client, file: &File) -> USTBLResult<Option<Self>> {
-    let mut archive = ZipArchive::new(file)?;
+    let archive = ZipArchive::new(file)?;
     if !archive
       .file_names()
       .any(|n| n == "mmc-pack.json" || n.ends_with("/mmc-pack.json"))
@@ -246,14 +306,40 @@ impl ResolvedMultiMc {
       return Ok(None);
     }
     let manifest = MultiMcManifest::from_archive(file)?;
-    if manifest.format_version != 1 || manifest.components.is_empty() {
+    let mut files = ZipFiles::new(file, &manifest.base_path)?;
+    let mmc_pack: Value = serde_json::from_slice(&files.read("mmc-pack.json", 4 * 1024 * 1024)?)?;
+    Self::resolve(
+      client,
+      &manifest.components,
+      manifest.format_version,
+      manifest.base_path,
+      manifest.cfg,
+      mmc_pack,
+      &mut files,
+    )
+    .await
+    .map(Some)
+  }
+
+  /// Resolves a component chain from its declaration plus whatever pack files
+  /// exist; components without a shipped patch come from the metadata service.
+  pub async fn resolve(
+    client: &reqwest::Client,
+    components: &[super::MultiMcComponent],
+    format_version: u64,
+    base: String,
+    cfg: HashMap<String, String>,
+    mmc_pack: Value,
+    files: &mut (dyn PackFiles + Send),
+  ) -> USTBLResult<Self> {
+    if format_version != 1 || components.is_empty() {
       return Err(invalid("unsupported or empty manifest"));
     }
     let mut pending = Vec::new();
     let mut patches: Vec<Patch> = Vec::new();
     let mut local_patches = BTreeMap::new();
     let mut seen = HashSet::new();
-    for c in &manifest.components {
+    for c in components {
       if !seen.insert(c.uid.clone()) {
         return Err(invalid(format!("duplicate component {}", c.uid)));
       }
@@ -269,11 +355,10 @@ impl ResolvedMultiMc {
       }
       let (uid, requested) = &pending[index];
       identifier(uid)?;
-      let local = format!("{}patches/{uid}.json", manifest.base_path);
+      let local = format!("patches/{uid}.json");
       let mut shipped = None;
-      let patch: Patch = if archive.index_for_name(&local).is_some() {
-        let raw: Value =
-          serde_json::from_slice(&read_entry(&mut archive, &local, 4 * 1024 * 1024)?)?;
+      let patch: Patch = if files.exists(&local) {
+        let raw: Value = serde_json::from_slice(&files.read(&local, 4 * 1024 * 1024)?)?;
         shipped = Some(raw.clone());
         serde_json::from_value(raw)?
       } else {
@@ -318,21 +403,16 @@ impl ResolvedMultiMc {
       index += 1;
     }
     let patches = order_patches(patches)?;
-    let mmc_pack: Value = serde_json::from_slice(&read_entry(
-      &mut archive,
-      &format!("{}mmc-pack.json", manifest.base_path),
-      4 * 1024 * 1024,
-    )?)?;
     let mut result = Self {
       client: McClientInfo::default(),
       patches,
-      base: manifest.base_path,
-      cfg: manifest.cfg,
+      base,
+      cfg,
       local_patches,
       mmc_pack,
     };
     result.client = result.compose()?;
-    Ok(Some(result))
+    Ok(result)
   }
 
   fn compose(&self) -> USTBLResult<McClientInfo> {
@@ -464,31 +544,29 @@ impl ResolvedMultiMc {
   /// Materialize local artifacts once, then reuse USTBL's normal validator and
   /// resumable downloader. Never add Maven-only files to the classpath.
   pub fn materialize(&mut self, file: &File, libraries: &Path, instance: &Path) -> USTBLResult<()> {
-    let mut archive = ZipArchive::new(file)?;
+    let mut files = ZipFiles::new(file, &self.base)?;
+    self.materialize_from(&mut files, libraries, instance)
+  }
+
+  /// Same as `materialize`, for a pack whose files are not in one archive.
+  pub fn materialize_from(
+    &mut self,
+    files: &mut (dyn PackFiles + Send),
+    libraries: &Path,
+    instance: &Path,
+  ) -> USTBLResult<()> {
     let mut normal = Vec::new();
     let mut maven = Vec::new();
     let mut main = None;
     let mut local_libraries = Vec::new();
     for patch in &self.patches {
       for raw in patch.libraries.iter().chain(&patch.extra_libraries) {
-        if let Some(lib) = normalize_library(
-          raw,
-          &mut archive,
-          &self.base,
-          libraries,
-          &mut local_libraries,
-        )? {
+        if let Some(lib) = normalize_library(raw, files, libraries, &mut local_libraries)? {
           normal.push(lib);
         }
       }
       for raw in &patch.maven_files {
-        if let Some(lib) = normalize_library(
-          raw,
-          &mut archive,
-          &self.base,
-          libraries,
-          &mut local_libraries,
-        )? {
+        if let Some(lib) = normalize_library(raw, files, libraries, &mut local_libraries)? {
           if let Some(artifact) = lib.downloads.and_then(|d| d.artifact) {
             maven.push(artifact);
           }
@@ -500,16 +578,10 @@ impl ResolvedMultiMc {
     }
     self.client.libraries = merge_library_lists(&normal, &[]);
     let raw = main.ok_or_else(|| invalid("missing mainJar"))?;
-    let main = normalize_library(
-      &raw,
-      &mut archive,
-      &self.base,
-      libraries,
-      &mut local_libraries,
-    )?
-    .and_then(|l| l.downloads)
-    .and_then(|d| d.artifact)
-    .ok_or_else(|| invalid("missing mainJar artifact"))?;
+    let main = normalize_library(&raw, files, libraries, &mut local_libraries)?
+      .and_then(|l| l.downloads)
+      .and_then(|d| d.artifact)
+      .ok_or_else(|| invalid("missing mainJar artifact"))?;
     if main.url.is_empty() {
       fs::create_dir_all(instance)?;
       fs::copy(
@@ -659,8 +731,7 @@ fn rule_matches(rule: &InstructionRule) -> USTBLResult<bool> {
 
 fn normalize_library(
   raw: &Value,
-  archive: &mut ZipArchive<&File>,
-  base: &str,
+  files: &mut dyn PackFiles,
   libraries: &Path,
   local_libraries: &mut Vec<LocalLibrary>,
 ) -> USTBLResult<Option<LibrariesValue>> {
@@ -694,11 +765,7 @@ fn normalize_library(
       .and_then(Value::as_str)
       .unwrap_or(rel.rsplit('/').next().unwrap());
     safe_relative(filename)?;
-    let bytes = read_entry(
-      archive,
-      &format!("{base}libraries/{filename}"),
-      256 * 1024 * 1024,
-    )?;
+    let bytes = files.read(&format!("libraries/{filename}"), 256 * 1024 * 1024)?;
     let sha1 = hex::encode(Sha1::digest(&bytes));
     let path = format!("ustbl-local/{sha1}/{}", rel.rsplit('/').next().unwrap());
     let target = libraries.join(&path);

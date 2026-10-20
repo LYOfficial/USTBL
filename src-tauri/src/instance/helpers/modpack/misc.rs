@@ -8,7 +8,7 @@ use crate::resource::models::OtherResourceSource;
 use crate::tasks::download::DownloadParam;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::fs;
 use std::fs::File;
 use std::path::Path;
@@ -40,9 +40,21 @@ pub struct ModpackDownload {
   pub size: Option<u64>,
 }
 
-type ManifestBox = Box<dyn ModpackManifest + Send + Sync>;
+pub(crate) type ManifestBox = Box<dyn ModpackManifest + Send + Sync>;
 type Parser = Box<dyn Fn(&File) -> USTBLResult<ManifestBox> + Send + Sync>;
 
+/// The manifest of a modpack published on Modrinth or CurseForge. MultiMC
+/// archives are deliberately not accepted: a component chain cannot be updated
+/// file by file.
+pub(crate) fn parse_platform_manifest(file: &File) -> USTBLResult<ManifestBox> {
+  if let Ok(manifest) = CurseForgeManifest::from_archive(file) {
+    return Ok(Box::new(manifest));
+  }
+  if let Ok(manifest) = ModrinthManifest::from_archive(file) {
+    return Ok(Box::new(manifest));
+  }
+  Err(InstanceError::ModpackManifestParseError.into())
+}
 fn get_parsers() -> Vec<Parser> {
   vec![
     Box::new(|f| {
@@ -127,12 +139,49 @@ pub async fn get_download_params(
   Err(InstanceError::ModpackManifestParseError.into())
 }
 
-/// Extract the modpack's override directories into the instance and return the
-/// relative paths (using `/`) of the files that exist afterwards.
+/// Files the modpack's override directories would put into the instance, as
+/// relative path (using `/`) to archive entry name.
 ///
 /// Directories are layered in the order the format defines, so a later layer
 /// replaces files of an earlier one. `server-overrides/` of the Modrinth format
-/// is deliberately never extracted: it only applies to servers.
+/// is deliberately never listed: it only applies to servers.
+pub fn list_override_entries(
+  file: &File,
+  overrides_paths: &[String],
+  instance_name: &str,
+) -> USTBLResult<BTreeMap<String, String>> {
+  let mut archive = ZipArchive::new(file)?;
+  let mut found = BTreeMap::new();
+
+  for overrides_path in overrides_paths {
+    let prefix = format!("{}/", overrides_path.trim_end_matches('/'));
+    for i in 0..archive.len() {
+      let entry = archive.by_index(i)?;
+      let relative = match entry.name().strip_prefix(&prefix) {
+        Some(relative) if !relative.is_empty() && !entry.is_dir() => relative.to_string(),
+        _ => continue,
+      };
+      super::multimc::profile::safe_relative(&relative)?;
+      if entry.unix_mode().is_some_and(|m| m & 0o170000 == 0o120000) {
+        return Err(crate::error::USTBLError(
+          "Modpack symlinks are not supported".into(),
+        ));
+      }
+      // An override must not replace launcher-owned metadata at the instance root.
+      if is_launcher_metadata_path(&relative, instance_name) {
+        continue;
+      }
+      if !entry.is_file() {
+        continue;
+      }
+      found.insert(relative, entry.name().to_string());
+    }
+  }
+  Ok(found)
+}
+
+/// Extract the modpack's override directories into the instance and return the
+/// relative paths (using `/`) of the files that exist afterwards.
 pub fn extract_overrides(file: &File, instance_path: &Path) -> USTBLResult<Vec<String>> {
   let overrides_paths = get_parsers()
     .into_iter()
@@ -144,45 +193,22 @@ pub fn extract_overrides(file: &File, instance_path: &Path) -> USTBLResult<Vec<S
     .unwrap_or_default()
     .to_string_lossy()
     .to_string();
+  let entries = list_override_entries(file, &overrides_paths, &instance_name)?;
   let mut archive = ZipArchive::new(file)?;
-  let mut extracted = BTreeSet::new();
 
-  for overrides_path in overrides_paths {
-    let prefix = format!("{}/", overrides_path.trim_end_matches('/'));
-    for i in 0..archive.len() {
-      let mut entry = archive.by_index(i)?;
-      let relative = match entry.name().strip_prefix(&prefix) {
-        Some(relative) if !relative.is_empty() && !entry.is_dir() => relative.to_string(),
-        _ => continue,
-      };
-      let relative_path = super::multimc::profile::safe_relative(&relative)?.to_path_buf();
-      if entry.unix_mode().is_some_and(|m| m & 0o170000 == 0o120000) {
-        return Err(crate::error::USTBLError(
-          "Modpack symlinks are not supported".into(),
-        ));
+  for (relative, entry_name) in &entries {
+    let mut entry = archive.by_name(entry_name)?;
+    let outpath = instance_path.join(super::multimc::profile::safe_relative(relative)?);
+    if let Some(parent) = outpath.parent() {
+      if !parent.exists() {
+        fs::create_dir_all(parent)?;
       }
-      // An override must not replace launcher-owned metadata at the instance root.
-      if is_launcher_metadata_path(&relative, &instance_name) {
-        continue;
-      }
-      if !entry.is_file() {
-        continue;
-      }
-
-      let outpath = instance_path.join(relative_path);
-      if let Some(parent) = outpath.parent() {
-        if !parent.exists() {
-          fs::create_dir_all(parent)?;
-        }
-      }
-      let mut outfile = File::create(&outpath)?;
-      std::io::copy(&mut entry, &mut outfile)?;
-      extracted.insert(relative);
     }
+    let mut outfile = File::create(&outpath)?;
+    std::io::copy(&mut entry, &mut outfile)?;
   }
-  Ok(extracted.into_iter().collect())
+  Ok(entries.into_keys().collect())
 }
-
 #[cfg(test)]
 mod tests {
   use super::*;

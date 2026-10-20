@@ -135,7 +135,10 @@ async fn parse_json_response<T: DeserializeOwned>(
     log::error!(
       "vUSTB account request failed: endpoint={endpoint}, status={}, body={}",
       status,
-      value.as_ref().map(serde_json::Value::to_string).unwrap_or_default()
+      value
+        .as_ref()
+        .map(serde_json::Value::to_string)
+        .unwrap_or_default()
     );
     return Err(response_error(status, value));
   }
@@ -284,20 +287,43 @@ where
   F: Fn(&reqwest::Client, &str) -> RequestBuilder,
 {
   let client = app.state::<reqwest::Client>();
+  send_authenticated_with(app, &client, build_request).await
+}
+
+/// [`send_authenticated`] with a caller-provided client, e.g. one without the
+/// read timeout for large uploads.
+pub async fn send_authenticated_with<F>(
+  app: &AppHandle,
+  client: &reqwest::Client,
+  build_request: F,
+) -> USTBLResult<reqwest::Response>
+where
+  F: Fn(&reqwest::Client, &str) -> RequestBuilder,
+{
   let current = stored_tokens(app)?;
-  let response = build_request(&client, &current.access_token)
+  let response = build_request(client, &current.access_token)
     .send()
     .await
-    .map_err(|_| AccountError::NetworkError)?;
+    .map_err(network_error)?;
   if response.status() != reqwest::StatusCode::UNAUTHORIZED {
     return Ok(response);
   }
 
   let refreshed = refresh_session_after(app, Some(&current.access_token)).await?;
-  build_request(&client, &refreshed.access_token)
+  build_request(client, &refreshed.access_token)
     .send()
     .await
-    .map_err(|_| AccountError::NetworkError.into())
+    .map_err(|error| network_error(error).into())
+}
+
+/// The user sees one "network error"; the log keeps what actually failed.
+fn network_error(error: reqwest::Error) -> AccountError {
+  log::warn!(
+    "VUSTB request failed (timeout: {}, connect: {}): {error:?}",
+    error.is_timeout(),
+    error.is_connect()
+  );
+  AccountError::NetworkError
 }
 
 async fn get_authenticated<T: DeserializeOwned>(app: &AppHandle, endpoint: &str) -> USTBLResult<T> {

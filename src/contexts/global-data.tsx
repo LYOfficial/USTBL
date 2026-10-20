@@ -3,6 +3,7 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
 } from "react";
 import { useLauncherConfig } from "@/contexts/config";
@@ -14,9 +15,11 @@ import {
 } from "@/hooks/get-state";
 import { AuthServer, Player } from "@/models/account";
 import { InstanceSummary } from "@/models/instance/misc";
+import { ModpackUpdateCheck } from "@/models/modpack-update";
 import { GameClientResourceInfo } from "@/models/resource";
 import { AccountService } from "@/services/account";
 import { InstanceService } from "@/services/instance";
+import { ModpackUpdateService } from "@/services/modpack-update";
 import { ResourceService } from "@/services/resource";
 
 interface GlobalDataContextType {
@@ -29,6 +32,13 @@ interface GlobalDataContextType {
     sync?: boolean
   ) => Promise<GameClientResourceInfo[] | GetStateFlag | undefined>;
   isGameVersionListLoading: boolean;
+  /** Latest modpack update check per followed instance, by instance id. */
+  modpackChecks: Record<string, ModpackUpdateCheck>;
+  /** Check one instance and remember the result. */
+  checkModpackUpdate: (
+    instanceId: string,
+    scanLocal?: boolean
+  ) => Promise<ModpackUpdateCheck>;
 }
 
 // for frontend-only state update
@@ -62,6 +72,44 @@ export const GlobalDataContextProvider: React.FC<{
   const [authServerList, setAuthServerList] = useState<AuthServer[]>();
   const [gameVersionList, setGameVersionList] =
     useState<GameClientResourceInfo[]>();
+
+  const [modpackChecks, setModpackChecks] = useState<
+    Record<string, ModpackUpdateCheck>
+  >({});
+  const startupChecked = useRef(false);
+
+  const checkModpackUpdate = useCallback(
+    async (instanceId: string, scanLocal = false) => {
+      const response = await ModpackUpdateService.checkModpackUpdate(
+        instanceId,
+        scanLocal
+      );
+      const check: ModpackUpdateCheck =
+        response.status === "success"
+          ? response.data
+          : {
+              status: "unknown",
+              follow: true,
+              reason: response.details,
+              canRollBack: false,
+            };
+      setModpackChecks((current) => ({ ...current, [instanceId]: check }));
+      return check;
+    },
+    []
+  );
+
+  // Once per launch, look for updates of every followed instance. One at a
+  // time, so a slow platform does not pile up requests.
+  useEffect(() => {
+    if (!instanceList || startupChecked.current) return;
+    startupChecked.current = true;
+    (async () => {
+      for (const instance of instanceList) {
+        if (instance.origin) await checkModpackUpdate(instance.id);
+      }
+    })();
+  }, [instanceList, checkModpackUpdate]);
 
   useEffect(() => {
     return InstanceService.onPlayTimeUpdated(({ instanceId, playTime }) => {
@@ -174,6 +222,8 @@ export const GlobalDataContextProvider: React.FC<{
         getAuthServerList,
         getGameVersionList,
         isGameVersionListLoading,
+        modpackChecks,
+        checkModpackUpdate,
       }}
     >
       <GlobalDataDispatchContext.Provider

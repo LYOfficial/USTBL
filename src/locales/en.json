@@ -98,7 +98,7 @@
       },
       "campusModpack": {
         "title": "Install USTB Modpack",
-        "description": "Open Discover to install the Pixel USTB campus modpack"
+        "description": "Install USTB campus modpacks from Instance Sync & Updates"
       },
       "manageDirs": {
         "title": "Manage Game Directories",
@@ -263,17 +263,6 @@
     },
     "sortBy": "Sort by",
     "title": "All Instances"
-  },
-  "SharedInstanceStartupNotifier": {
-    "update": {
-      "title": "Shared instance {{name}} has updates",
-      "description": "Click to go to sync."
-    },
-    "bind": {
-      "title": "Shared instance {{name}} has not been synced",
-      "description": "Click to bind and sync it.",
-      "ignore": "Ignore"
-    }
   },
   "AppearanceSettingsPage": {
     "theme": {
@@ -506,9 +495,6 @@
       "home": "Home",
       "community-news": "Community",
       "minecraft-news": "Minecraft News",
-      "install-modpack": "Install Modpack",
-      "original-modpack": "Original Modpack",
-      "campus-modpack": "Campus Modpack",
       "modpack": "Modpacks",
       "mod": "Mods",
       "world": "Worlds",
@@ -516,22 +502,6 @@
       "shader": "Shader Packs",
       "datapack": "Data Packs",
       "messages": "消息"
-    }
-  },
-  "InstallModpackPage": {
-    "xplus": {
-      "description": "Only the latest published version for each game version is kept. Minecraft {{version}} is recommended by default.",
-      "loadFailed": "Modrinth version list failed to load, using recommended version.",
-      "downloadStarted": "Started downloading {{version}}",
-      "downloadDescription": "Modpack installation will start automatically after download."
-    },
-    "campus": {
-      "title": "Campus Modpack",
-      "description": "Campus modpack resources from USTB Anyshare cloud drive.",
-      "loadFailed": "Campus modpack list failed to load: {{error}}",
-      "downloadStarted": "Started downloading {{name}}",
-      "downloadDescription": "Modpack installation will start automatically after download.",
-      "downloadFailed": "Download failed"
     }
   },
   "DiscoverSourcesPage": {
@@ -657,6 +627,16 @@
   },
   "DownloadTasksPage": {
     "title": "Download Tasks",
+    "unfinishedPublish": {
+      "title": "Unfinished publishes",
+      "phase": {
+        "uploading": "Upload interrupted, can be continued",
+        "processing": "The platform is processing it",
+        "failed": "Publish failed"
+      },
+      "resume": "Continue",
+      "discard": "Discard"
+    },
     "button": {
       "settings": "Download Settings",
       "pause": "Pause",
@@ -686,7 +666,8 @@
       "neoforge-libraries": "NeoForge Libraries",
       "forge-libraries": "Forge Libraries",
       "launcher-update": "Update Launcher",
-      "mojang-java": "Java {{param}} Runtime"
+      "mojang-java": "Java {{param}} Runtime",
+      "modpack-publish": "Publish modpack {{param}}"
     }
   },
   "Editable": {
@@ -1280,7 +1261,10 @@
       "createShortcut": "Create Launch Shortcut",
       "exportModPack": "Export as Modpack",
       "star": "Star this instance",
-      "unstar": "Unstar"
+      "unstar": "Unstar",
+      "publishModPack": "Publish to Campus Modpacks",
+      "updateModpack": "Update modpack",
+      "updateModpackAvailable": "Update modpack (new version)"
     },
     "instanceTabList": {
       "overview": "Overview",
@@ -2620,6 +2604,118 @@
             "MODPACK_EXPORT_PROFILE_MISSING": "This instance was imported by an older version and lacks the component data needed for export. Re-import the modpack and try again"
           }
         }
+      },
+      "listCampusModpackProjects": {
+        "success": "Loaded campus modpacks",
+        "error": {
+          "title": "Failed to load campus modpacks"
+        }
+      },
+      "createCampusModpackProject": {
+        "success": "Project created",
+        "error": {
+          "title": "Failed to create project"
+        }
+      },
+      "publishCampusModpack": {
+        "success": "Modpack published",
+        "error": {
+          "title": "Publish failed",
+          "description": {
+            "MODPACK_PUBLISH_STALE": "This line was updated by someone else while you were publishing; reload and try again",
+            "MODPACK_UPDATE_UNSUPPORTED": "This instance has no supported mod loader and cannot be published"
+          }
+        }
+      },
+      "installCampusModpack": {
+        "success": "Modpack installed",
+        "error": {
+          "title": "Failed to install modpack",
+          "description": {
+            "MODPACK_UPDATE_BUSY": "This modpack is already being updated",
+            "MODPACK_UPDATE_VERIFY_FAILED": "A downloaded file failed verification; the instance was not changed",
+            "MODPACK_UPDATE_STALE": "Local files changed after the check; check for updates again",
+            "MODPACK_UPDATE_REMOTE_INVALID": "The new version file list is invalid; the update was refused",
+            "MODPACK_UPDATE_LINE_MISMATCH": "The new version is for a different game version or mod loader than this instance",
+            "MODPACK_UPDATE_UNSUPPORTED": "This instance cannot be updated automatically",
+            "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "This version changes the modpack's component chain and cannot be applied in place; install it again",
+            "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "The files of this version are temporarily unavailable on the platform. Try again later"
+          }
+        }
+      },
+      "fetchCampusModpackRecommendation": {
+        "success": "Recommended modpack loaded",
+        "error": {
+          "title": "Failed to load the recommended modpack"
+        }
+      },
+      "prepareCampusComponentPack": {
+        "error": {
+          "title": "Failed to prepare the component-chain modpack"
+        }
+      },
+      "checkModpackUpdate": {
+        "error": {
+          "title": "Failed to check for modpack updates"
+        }
+      },
+      "prepareModpackUpdate": {
+        "error": {
+          "title": "Failed to compare the new modpack version",
+          "description": {
+            "MODPACK_UPDATE_BUSY": "This modpack is already being updated",
+            "MODPACK_UPDATE_VERIFY_FAILED": "A downloaded file failed verification; the instance was not changed",
+            "MODPACK_UPDATE_STALE": "Local files changed after the check; check for updates again",
+            "MODPACK_UPDATE_REMOTE_INVALID": "The new version file list is invalid; the update was refused",
+            "MODPACK_UPDATE_LINE_MISMATCH": "The new version is for a different game version or mod loader than this instance",
+            "MODPACK_UPDATE_UNSUPPORTED": "This instance cannot be updated automatically",
+            "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "This version changes the modpack's component chain and cannot be applied in place; install it again",
+            "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "The files of this version are temporarily unavailable on the platform. Try again later"
+          }
+        }
+      },
+      "recoverModpackUpdate": {
+        "error": {
+          "title": "Failed to recover the interrupted modpack update"
+        }
+      },
+      "setModpackFollow": {
+        "success": "Follow setting updated",
+        "error": {
+          "title": "Failed to update the follow setting"
+        }
+      },
+      "applyModpackUpdate": {
+        "success": "Modpack updated",
+        "error": {
+          "title": "Modpack update failed",
+          "description": {
+            "MODPACK_UPDATE_BUSY": "This modpack is already being updated",
+            "MODPACK_UPDATE_VERIFY_FAILED": "A downloaded file failed verification; the instance was not changed",
+            "MODPACK_UPDATE_STALE": "Local files changed after the check; check for updates again",
+            "MODPACK_UPDATE_REMOTE_INVALID": "The new version file list is invalid; the update was refused",
+            "MODPACK_UPDATE_LINE_MISMATCH": "The new version is for a different game version or mod loader than this instance",
+            "MODPACK_UPDATE_UNSUPPORTED": "This instance cannot be updated automatically",
+            "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "This version changes the modpack's component chain and cannot be applied in place; install it again",
+            "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "The files of this version are temporarily unavailable on the platform. Try again later"
+          }
+        }
+      },
+      "rollbackModpackUpdate": {
+        "success": "Last update undone",
+        "error": {
+          "title": "Failed to undo the last update",
+          "description": {
+            "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack",
+            "MODPACK_UPDATE_UNSUPPORTED": "This instance cannot be updated automatically"
+          }
+        }
       }
     },
     "task": {
@@ -2686,6 +2782,14 @@
           "title": "IPv6 operation failed",
           "description": {}
         }
+      }
+    },
+    "campusInstall": {
+      "installing": "Installing {{name}}",
+      "stage": {
+        "fetching": "Downloading files {{done}}/{{total}}",
+        "applying": "Writing files {{done}}/{{total}}",
+        "finalizing": "Finishing up"
       }
     }
   },
@@ -2956,6 +3060,218 @@
         "MultiMC": "Widely supported by major launchers; packaged as a complete instance.",
         "MultiMCComponentOnly": "This instance was imported from a MultiMC component profile, so it can only be exported as MultiMC. Its components, patches and local libraries are kept as they were."
       }
+    }
+  },
+  "PublishModpackModal": {
+    "header": {
+      "title": "Publish {{param}} to Campus Modpacks"
+    },
+    "label": {
+      "project": "Project",
+      "target": "Publish To",
+      "newProject": "New project",
+      "projectName": "Project Name",
+      "summary": "Summary",
+      "version": "Version",
+      "versionNumber": "Version Number",
+      "changelog": "Changelog",
+      "includedFiles": "Included Files"
+    },
+    "button": {
+      "publish": "Publish"
+    },
+    "error": {
+      "invalidVersion": "Please enter a valid version number",
+      "noFileSelected": "Please select at least one file",
+      "invalidProject": "Please complete the project information"
+    },
+    "errorMessage": {
+      "name": {
+        "error-1": "Name cannot be empty",
+        "error-2": "Name is too long (max 128 characters)"
+      },
+      "summary": {
+        "error-1": "Summary is too long (max 512 characters)"
+      },
+      "version": {
+        "error-1": "Version number cannot be empty",
+        "error-2": "Version number is too long (max 64 characters)"
+      },
+      "changelog": {
+        "error-1": "Changelog is too long (max 20000 characters)"
+      }
+    },
+    "stage": {
+      "hashing": "Checking files ({{done}}/{{total}})",
+      "packing": "Packing new content"
+    },
+    "skipped": "{{count}} file(s) were left out (disabled mods or launcher files)",
+    "adoption": {
+      "keptOther": "The instance already follows another modpack or line, so its source record was left alone.",
+      "notIsolated": "Version isolation is off for this instance, so it was not linked to this modpack.",
+      "localChanged": "Local files changed during upload, so the instance was not linked to this version.",
+      "recordFailed": "The version was published, but the instance could not be linked to it. The next check compares as usual."
+    },
+    "started": {
+      "title": "Upload started",
+      "description": "It continues in the background. Follow it on the Downloads page."
+    }
+  },
+  "InstallCampusModpackModal": {
+    "header": {
+      "title": "Install Campus Modpack"
+    },
+    "label": {
+      "gameVersion": "Game Version",
+      "modLoader": "Mod Loader",
+      "modpackVersion": "Modpack Version",
+      "modpackInfo": "Modpack Info"
+    },
+    "button": {
+      "install": "Install"
+    },
+    "error": {
+      "loaderUnavailable": "Mod loader {{loader}} {{version}} is unavailable, cannot install"
+    }
+  },
+  "UpdateModpackModal": {
+    "header": {
+      "title": "Update modpack: {{name}}"
+    },
+    "status": {
+      "checking": "Checking for updates…",
+      "planning": "Comparing the new version with local files…",
+      "applying": "Updating the modpack. Do not close the launcher…",
+      "available": "New version available: {{latest}}",
+      "upToDate": "Already up to date",
+      "paused": "Following this modpack is paused",
+      "notFollowing": "This instance does not follow a modpack",
+      "needsRepair": "This instance cannot be compared for updates until it is repaired",
+      "unknown": "Could not get update information. Try again later",
+      "waitingLoader": "Waiting for the mod loader to finish installing before checking for updates",
+      "localChanges": "You changed {{count}} file(s) managed by the modpack; the update will ask about each"
+    },
+    "label": {
+      "current": "Current version: {{current}}"
+    },
+    "plan": {
+      "summary": "Will update to {{latest}}",
+      "fastForward": "Local files already match {{latest}}; only the recorded version needs syncing",
+      "add": "{{count}} added",
+      "update": "{{count}} updated",
+      "delete": "{{count}} removed",
+      "loaderChange": "Mod loader will change from {{from}} to {{to}}",
+      "conflicts": "{{count}} files conflict with local changes. Choose what to do (local is kept by default)",
+      "autoMerged": "{{count}} configuration files were merged automatically",
+      "reinstallRequired": "{{latest}} changes the modpack's component chain and cannot be applied in place. Install the modpack again"
+    },
+    "conflictKind": {
+      "modifiedLocallyChangedRemotely": "You edited it and the new version changed it",
+      "modifiedLocallyRemovedRemotely": "You edited it and the new version no longer ships it",
+      "deletedLocallyChangedRemotely": "You deleted it and the new version changed it",
+      "unmanagedFileInTheWay": "A file that is not part of the modpack is in the way",
+      "disabledLocally": "You disabled it and the new version touches it"
+    },
+    "choice": {
+      "keepLocal": "Keep local",
+      "takeRemote": "Use new version",
+      "revealFile": "Show in folder",
+      "hunk": "Conflict {{number}} (baseline lines {{from}}-{{to}})",
+      "allKeepLocal": "Keep all local",
+      "allTakeRemote": "Use new version for all",
+      "localSide": "Local",
+      "remoteSide": "New version"
+    },
+    "button": {
+      "preview": "Preview update",
+      "apply": "Update",
+      "sync": "Sync version record",
+      "resume": "Resume following",
+      "retry": "Retry",
+      "rollback": "Undo last update",
+      "confirmRollback": "Confirm undo"
+    },
+    "toast": {
+      "loaderPending": "The mod loader needs to be installed again. See the downloads page"
+    },
+    "reason": {
+      "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack",
+      "MODPACK_UPDATE_UNSUPPORTED": "This instance has no usable install record or version isolation is off",
+      "MODPACK_UPDATE_NOT_ISOLATED": "Version isolation is off for this instance, so it cannot be compared safely. Turn it on in the instance settings and retry",
+      "MODPACK_UPDATE_BASELINE_MISSING": "This instance has no install record for the modpack, or the record is damaged, so it cannot be compared",
+      "MODPACK_UPDATE_PACK_UNAVAILABLE": "The files of this version are temporarily unavailable on the platform. Try again later"
+    },
+    "rollback": {
+      "hint": "You can undo the last modpack update and restore files and loader as they were before it.",
+      "confirm": "Undoing overwrites changes you made to these files since the update, and works only once."
+    }
+  },
+  "ModpackLocalChangesModal": {
+    "header": {
+      "title": "Local changes: {{name}}"
+    },
+    "loading": "Comparing local files…",
+    "empty": "All files managed by the modpack match the install",
+    "summary": "{{count}} files managed by the modpack differ from the install. Contents are compared after normalization; files that only differ in line endings or timestamps are not counted.",
+    "kind": {
+      "modified": "Modified",
+      "deleted": "Deleted",
+      "disabled": "Disabled"
+    },
+    "hint": {
+      "deleted": "This file was deleted locally",
+      "disabled": "This file was disabled locally (.disabled)"
+    },
+    "noDiff": {
+      "notText": "Not a text file or too large; contents are not compared",
+      "baseMissing": "The installed content was not kept, so no diff can be shown"
+    },
+    "button": {
+      "publish": "Publish"
+    },
+    "publishHint": {
+      "noPermission": "Publishing requires campus modpack management permission",
+      "updateFirst": "A newer version is online. Update before publishing"
+    }
+  },
+  "InstanceSyncPage": {
+    "title": "Instance Sync & Updates",
+    "description": "Instances that follow a modpack, plus campus modpacks and recommendations",
+    "platform": {
+      "title": "Campus Modpacks",
+      "description": "Modpacks published by campus maintainers. Installed instances can follow new versions.",
+      "recommended": "Recommended",
+      "vanilla": "Vanilla",
+      "onOtherPlatform": "Hosted on {{platform}}",
+      "openOriginal": "View",
+      "noVersion": "This project has no modpack version for {{gameVersion}} ({{loader}})",
+      "downloadStarted": "Started downloading {{version}}",
+      "downloadDescription": "The modpack installation starts once the download finishes."
+    },
+    "ledger": {
+      "title": "My modpack instances",
+      "checkAll": "Check all",
+      "badge": {
+        "upToDate": "Up to date",
+        "available": "Update available",
+        "paused": "Paused",
+        "needsRepair": "Needs repair",
+        "waitingLoader": "Waiting for loader",
+        "unknown": "Check failed",
+        "notChecked": "Not checked"
+      },
+      "action": {
+        "update": "Update",
+        "details": "Details",
+        "viewChanges": "View changes",
+        "viewChangesCount": "View changes ({{count}})"
+      },
+      "updateTo": "Update to {{latest}}",
+      "platform": {
+        "campus": "Campus"
+      },
+      "installed": "Installed",
+      "installedHint": "{{count}} matching instance(s) on this device, click to view"
     }
   }
 }

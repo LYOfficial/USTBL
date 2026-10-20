@@ -1,7 +1,7 @@
 import { Button, HStack, Icon, Text, VStack } from "@chakra-ui/react";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { useRouter } from "next/router";
-import React, { useCallback } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { IconType } from "react-icons";
 import { FaRegStar, FaStar } from "react-icons/fa6";
@@ -14,20 +14,25 @@ import {
   LuPackage,
   LuPackagePlus,
   LuPlay,
+  LuRefreshCw,
   LuSettings,
   LuSquareLibrary,
   LuSquarePlus,
+  LuUpload,
 } from "react-icons/lu";
 import { CommonIconButton } from "@/components/common/common-icon-button";
 import NavMenu from "@/components/common/nav-menu";
 import { Section } from "@/components/common/section";
 import { useLauncherConfig } from "@/contexts/config";
+import { useGlobalData } from "@/contexts/global-data";
 import {
   InstanceContextProvider,
   useInstanceSharedData,
 } from "@/contexts/instance";
 import { useSharedModals } from "@/contexts/shared-modal";
 import { useToast } from "@/contexts/toast";
+import { VustbAccount, isVustbManager } from "@/models/vustb";
+import { AccountService } from "@/services/account";
 import { InstanceService } from "@/services/instance";
 
 const InstanceDetailsLayout: React.FC<{ children: React.ReactNode }> = ({
@@ -52,9 +57,25 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
   const instanceId = Array.isArray(id) ? id[0] : id;
 
   const { summary, handleUpdateInstanceConfig } = useInstanceSharedData();
+  const { modpackChecks, checkModpackUpdate } = useGlobalData();
   const { config } = useLauncherConfig();
   const primaryColor = config.appearance.theme.primaryColor;
   const navBarType = config.general.functionality.instancesNavType;
+
+  const [vustbAccount, setVustbAccount] = useState<VustbAccount | null>(null);
+
+  useEffect(() => {
+    AccountService.retrieveVustbAccount().then((response) => {
+      if (response.status === "success") setVustbAccount(response.data);
+    });
+  }, []);
+
+  // Opening the details of a followed instance is one of the moments to look
+  // for a new version of its modpack.
+  const followedId = summary?.origin ? summary.id : undefined;
+  useEffect(() => {
+    if (followedId) checkModpackUpdate(followedId);
+  }, [followedId, checkModpackUpdate]);
 
   const handleCreateLaunchDesktopShortcut = useCallback(
     (instanceId: string) => {
@@ -127,6 +148,42 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
         }
       },
     },
+    ...(summary?.origin
+      ? [
+          {
+            icon: LuRefreshCw,
+            label: t(
+              modpackChecks[summary.id]?.status === "available"
+                ? "InstanceDetailsLayout.secMenu.updateModpackAvailable"
+                : "InstanceDetailsLayout.secMenu.updateModpack"
+            ),
+            danger: false,
+            onClick: () => {
+              openSharedModal("update-modpack", {
+                instanceId: summary.id,
+                instanceName: summary.name,
+              });
+            },
+          },
+        ]
+      : []),
+    ...(isVustbManager(vustbAccount)
+      ? [
+          {
+            icon: LuUpload,
+            label: t("InstanceDetailsLayout.secMenu.publishModPack"),
+            danger: false,
+            onClick: () => {
+              if (summary) {
+                openSharedModal("publish-modpack", {
+                  instanceId: summary.id,
+                  instanceName: summary.name,
+                });
+              }
+            },
+          },
+        ]
+      : []),
     {
       icon: "delete",
       label: t("InstanceMenu.label.delete"),

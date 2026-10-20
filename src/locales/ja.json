@@ -98,7 +98,7 @@
       },
       "campusModpack": {
         "title": "北京科技大学モッドパックをインストール",
-        "description": "発見ページから Pixel USTB の学内モッドパックをインストール"
+        "description": "「インスタンスの同期と更新」から校内モッドパックをインストール"
       },
       "manageDirs": {
         "title": "ゲームディレクトリ管理",
@@ -263,17 +263,6 @@
     },
     "sortBy": "並べ替え方法",
     "title": "すべてのインスタンス"
-  },
-  "SharedInstanceStartupNotifier": {
-    "update": {
-      "title": "共有インスタンス {{name}} に更新があります",
-      "description": "クリックして同期します。"
-    },
-    "bind": {
-      "title": "未同期の共有インスタンス {{name}} があります",
-      "description": "クリックして紐付けて同期します。",
-      "ignore": "無視"
-    }
   },
   "AppearanceSettingsPage": {
     "theme": {
@@ -506,9 +495,6 @@
       "home": "ホーム",
       "community-news": "コミュニティ",
       "minecraft-news": "Minecraft ニュース",
-      "install-modpack": "Modpack をインストール",
-      "original-modpack": "オリジナル Modpack",
-      "campus-modpack": "学内 Modpack",
       "modpack": "Modpack",
       "mod": "Mod",
       "world": "ワールド",
@@ -516,22 +502,6 @@
       "shader": "シェーダーパック",
       "datapack": "データパック",
       "messages": "消息"
-    }
-  },
-  "InstallModpackPage": {
-    "xplus": {
-      "description": "各ゲームバージョンでは最新の公開版のみを提供します。標準では Minecraft {{version}} を推奨します。",
-      "loadFailed": "Modrinth のバージョン一覧を読み込めなかったため、推奨バージョンを使用します。",
-      "downloadStarted": "{{version}} のダウンロードを開始しました",
-      "downloadDescription": "ダウンロード完了後、Modpack のインストールが自動的に開始されます。"
-    },
-    "campus": {
-      "title": "学内 Modpack",
-      "description": "北京科技大学 Anyshare クラウドの学内 Modpack リソースです。",
-      "loadFailed": "学内 Modpack 一覧を読み込めませんでした：{{error}}",
-      "downloadStarted": "{{name}} のダウンロードを開始しました",
-      "downloadDescription": "ダウンロード完了後、Modpack のインストールが自動的に開始されます。",
-      "downloadFailed": "ダウンロードに失敗しました"
     }
   },
   "DiscoverSourcesPage": {
@@ -657,6 +627,16 @@
   },
   "DownloadTasksPage": {
     "title": "ダウンロードタスク",
+    "unfinishedPublish": {
+      "title": "未完了の公開",
+      "phase": {
+        "uploading": "アップロードが中断されました。続行できます",
+        "processing": "プラットフォームで処理中です",
+        "failed": "公開に失敗しました"
+      },
+      "resume": "続行",
+      "discard": "破棄"
+    },
     "button": {
       "settings": "ダウンロード設定",
       "pause": "一時停止",
@@ -686,7 +666,8 @@
       "neoforge-libraries": "NeoForge ランタイムライブラリ",
       "forge-libraries": "Forge ランタイムライブラリ",
       "launcher-update": "ランチャーを更新",
-      "mojang-java": "Java {{param}} ランタイム"
+      "mojang-java": "Java {{param}} ランタイム",
+      "modpack-publish": "モッドパックを公開 {{param}}"
     }
   },
   "Editable": {
@@ -1280,7 +1261,10 @@
       "createShortcut": "起動ショートカットを作成",
       "exportModPack": "モッドパックエクスポート",
       "star": "このインスタンスをスター",
-      "unstar": "このインスタンスを非スター"
+      "unstar": "このインスタンスを非スター",
+      "publishModPack": "キャンパスModパックに公開",
+      "updateModpack": "モッドパックを更新",
+      "updateModpackAvailable": "モッドパックを更新（新バージョンあり）"
     },
     "instanceTabList": {
       "overview": "概要",
@@ -2620,6 +2604,118 @@
             "MODPACK_EXPORT_PROFILE_MISSING": "This instance was imported by an older version and lacks the component data needed for export. Re-import the modpack and try again"
           }
         }
+      },
+      "listCampusModpackProjects": {
+        "success": "キャンパスModパックを読み込みました",
+        "error": {
+          "title": "キャンパスModパックの読み込みに失敗しました"
+        }
+      },
+      "createCampusModpackProject": {
+        "success": "プロジェクトを作成しました",
+        "error": {
+          "title": "プロジェクトの作成に失敗しました"
+        }
+      },
+      "publishCampusModpack": {
+        "success": "Modパックを公開しました",
+        "error": {
+          "title": "公開に失敗しました",
+          "description": {
+            "MODPACK_PUBLISH_STALE": "公開中に他のユーザーがこのラインを更新しました。再読み込みしてからやり直してください",
+            "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスには対応するModローダーがないため公開できません"
+          }
+        }
+      },
+      "installCampusModpack": {
+        "success": "Modpack をインストールしました",
+        "error": {
+          "title": "Modpack のインストールに失敗しました",
+          "description": {
+            "MODPACK_UPDATE_BUSY": "このModパックは更新中です",
+            "MODPACK_UPDATE_VERIFY_FAILED": "ダウンロードしたファイルの検証に失敗しました。インスタンスは変更されていません",
+            "MODPACK_UPDATE_STALE": "確認後にローカルファイルが変更されました。もう一度更新を確認してください",
+            "MODPACK_UPDATE_REMOTE_INVALID": "新しいバージョンのファイル一覧が無効なため、更新を拒否しました",
+            "MODPACK_UPDATE_LINE_MISMATCH": "新しいバージョンのゲームバージョンまたはModローダーがこのインスタンスと異なります",
+            "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスは自動更新できません",
+            "MODPACK_UPDATE_RUNNING": "ゲームが実行中です。Modパックを更新する前に閉じてください",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "新しいバージョンはコンポーネント構成を変更するため、そのまま更新できません。再インストールしてください",
+            "MODPACK_UPDATE_LINE_GONE": "プラットフォームにこのモッドパックのラインはもうありません",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "このバージョンのファイルはプラットフォーム上で一時的に利用できません。しばらくしてからやり直してください"
+          }
+        }
+      },
+      "fetchCampusModpackRecommendation": {
+        "success": "おすすめ Modpack を読み込みました",
+        "error": {
+          "title": "おすすめ Modpack の読み込みに失敗しました"
+        }
+      },
+      "prepareCampusComponentPack": {
+        "error": {
+          "title": "コンポーネント構成のモッドパックを準備できませんでした"
+        }
+      },
+      "checkModpackUpdate": {
+        "error": {
+          "title": "モッドパックの更新確認に失敗しました"
+        }
+      },
+      "prepareModpackUpdate": {
+        "error": {
+          "title": "新しいバージョンを比較できませんでした",
+          "description": {
+            "MODPACK_UPDATE_BUSY": "このModパックは更新中です",
+            "MODPACK_UPDATE_VERIFY_FAILED": "ダウンロードしたファイルの検証に失敗しました。インスタンスは変更されていません",
+            "MODPACK_UPDATE_STALE": "確認後にローカルファイルが変更されました。もう一度更新を確認してください",
+            "MODPACK_UPDATE_REMOTE_INVALID": "新しいバージョンのファイル一覧が無効なため、更新を拒否しました",
+            "MODPACK_UPDATE_LINE_MISMATCH": "新しいバージョンのゲームバージョンまたはModローダーがこのインスタンスと異なります",
+            "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスは自動更新できません",
+            "MODPACK_UPDATE_RUNNING": "ゲームが実行中です。Modパックを更新する前に閉じてください",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "新しいバージョンはコンポーネント構成を変更するため、そのまま更新できません。再インストールしてください",
+            "MODPACK_UPDATE_LINE_GONE": "プラットフォームにこのモッドパックのラインはもうありません",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "このバージョンのファイルはプラットフォーム上で一時的に利用できません。しばらくしてからやり直してください"
+          }
+        }
+      },
+      "recoverModpackUpdate": {
+        "error": {
+          "title": "中断された更新の復旧に失敗しました"
+        }
+      },
+      "setModpackFollow": {
+        "success": "追従設定を更新しました",
+        "error": {
+          "title": "追従設定の更新に失敗しました"
+        }
+      },
+      "applyModpackUpdate": {
+        "success": "モッドパックを更新しました",
+        "error": {
+          "title": "モッドパックの更新に失敗しました",
+          "description": {
+            "MODPACK_UPDATE_BUSY": "このModパックは更新中です",
+            "MODPACK_UPDATE_VERIFY_FAILED": "ダウンロードしたファイルの検証に失敗しました。インスタンスは変更されていません",
+            "MODPACK_UPDATE_STALE": "確認後にローカルファイルが変更されました。もう一度更新を確認してください",
+            "MODPACK_UPDATE_REMOTE_INVALID": "新しいバージョンのファイル一覧が無効なため、更新を拒否しました",
+            "MODPACK_UPDATE_LINE_MISMATCH": "新しいバージョンのゲームバージョンまたはModローダーがこのインスタンスと異なります",
+            "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスは自動更新できません",
+            "MODPACK_UPDATE_RUNNING": "ゲームが実行中です。Modパックを更新する前に閉じてください",
+            "MODPACK_UPDATE_REINSTALL_REQUIRED": "新しいバージョンはコンポーネント構成を変更するため、そのまま更新できません。再インストールしてください",
+            "MODPACK_UPDATE_LINE_GONE": "プラットフォームにこのモッドパックのラインはもうありません",
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "このバージョンのファイルはプラットフォーム上で一時的に利用できません。しばらくしてからやり直してください"
+          }
+        }
+      },
+      "rollbackModpackUpdate": {
+        "success": "前回の更新を取り消しました",
+        "error": {
+          "title": "前回の更新の取り消しに失敗しました",
+          "description": {
+            "MODPACK_UPDATE_RUNNING": "ゲームが実行中です。Modパックを更新する前に閉じてください",
+            "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスは自動更新できません"
+          }
+        }
       }
     },
     "task": {
@@ -2686,6 +2782,14 @@
           "title": "IPv6 operation failed",
           "description": {}
         }
+      }
+    },
+    "campusInstall": {
+      "installing": "{{name}} をインストール中",
+      "stage": {
+        "fetching": "ファイルをダウンロード中 {{done}}/{{total}}",
+        "applying": "ファイルを書き込み中 {{done}}/{{total}}",
+        "finalizing": "仕上げ中"
       }
     }
   },
@@ -2956,6 +3060,218 @@
         "MultiMC": "Widely supported by major launchers; packaged as a complete instance.",
         "MultiMCComponentOnly": "This instance was imported from a MultiMC component profile, so it can only be exported as MultiMC. Its components, patches and local libraries are kept as they were."
       }
+    }
+  },
+  "PublishModpackModal": {
+    "header": {
+      "title": "{{param}} をキャンパスModパックに公開"
+    },
+    "label": {
+      "project": "プロジェクト",
+      "target": "公開先",
+      "newProject": "新規プロジェクト",
+      "projectName": "プロジェクト名",
+      "summary": "概要",
+      "version": "バージョン",
+      "versionNumber": "バージョン番号",
+      "changelog": "更新履歴",
+      "includedFiles": "含めるファイル"
+    },
+    "button": {
+      "publish": "公開"
+    },
+    "error": {
+      "invalidVersion": "有効なバージョン番号を入力してください",
+      "noFileSelected": "ファイルを1つ以上選択してください",
+      "invalidProject": "プロジェクト情報を入力してください"
+    },
+    "errorMessage": {
+      "name": {
+        "error-1": "名前を入力してください",
+        "error-2": "名前が長すぎます（最大128文字）"
+      },
+      "summary": {
+        "error-1": "概要が長すぎます（最大512文字）"
+      },
+      "version": {
+        "error-1": "バージョン番号を入力してください",
+        "error-2": "バージョン番号が長すぎます（最大64文字）"
+      },
+      "changelog": {
+        "error-1": "更新履歴が長すぎます（最大20000文字）"
+      }
+    },
+    "stage": {
+      "hashing": "ファイルを確認中（{{done}}/{{total}}）",
+      "packing": "新しい内容をパック中"
+    },
+    "skipped": "{{count}} 個のファイルを除外しました（無効化されたModやランチャーのファイル）",
+    "adoption": {
+      "keptOther": "このインスタンスは既に別のモッドパックまたはラインを追従しているため、ソース記録は変更しませんでした。",
+      "notIsolated": "このインスタンスはバージョン分離が無効のため、このモッドパックには関連付けませんでした。",
+      "localChanged": "アップロード中にローカルファイルが変更されたため、このバージョンには関連付けませんでした。",
+      "recordFailed": "バージョンは公開されましたが、インスタンスとの関連付けを記録できませんでした。次回の確認では通常どおり比較します。"
+    },
+    "started": {
+      "title": "アップロードを開始しました",
+      "description": "バックグラウンドで続行します。進行状況はダウンロードページで確認できます。"
+    }
+  },
+  "InstallCampusModpackModal": {
+    "header": {
+      "title": "学内 Modpack をインストール"
+    },
+    "label": {
+      "gameVersion": "ゲームバージョン",
+      "modLoader": "Mod ローダー",
+      "modpackVersion": "Modpack バージョン",
+      "modpackInfo": "Modpack 情報"
+    },
+    "button": {
+      "install": "インストール"
+    },
+    "error": {
+      "loaderUnavailable": "Mod ローダー {{loader}} {{version}} が見つからないため、インストールできません"
+    }
+  },
+  "UpdateModpackModal": {
+    "header": {
+      "title": "モッドパックを更新：{{name}}"
+    },
+    "status": {
+      "checking": "更新を確認しています…",
+      "planning": "新しいバージョンとローカルファイルを比較しています…",
+      "applying": "モッドパックを更新しています。ランチャーを閉じないでください…",
+      "available": "新しいバージョンがあります：{{latest}}",
+      "upToDate": "最新です",
+      "paused": "このモッドパックの追従は一時停止中です",
+      "notFollowing": "このインスタンスは追従するモッドパックに関連付けられていません",
+      "needsRepair": "このインスタンスは修復するまで更新を比較できません",
+      "unknown": "更新情報を取得できませんでした。後でもう一度お試しください",
+      "waitingLoader": "MODローダーのインストール完了を待っています。完了後に更新を確認します",
+      "localChanges": "モッドパックが管理するファイルを {{count}} 件変更しています。更新時に個別に確認します"
+    },
+    "label": {
+      "current": "現在のバージョン：{{current}}"
+    },
+    "plan": {
+      "summary": "{{latest}} に更新します",
+      "fastForward": "ローカルファイルは既に {{latest}} と一致しています。バージョン記録のみ同期します",
+      "add": "追加 {{count}}",
+      "update": "更新 {{count}}",
+      "delete": "削除 {{count}}",
+      "loaderChange": "MODローダーを {{from}} から {{to}} に切り替えます",
+      "conflicts": "{{count}} 個のファイルがローカルの変更と競合しています。処理を選択してください（既定はローカルを保持）",
+      "autoMerged": "{{count}} 個の設定ファイルを自動的にマージしました",
+      "reinstallRequired": "{{latest}} はコンポーネント構成を変更するため、そのまま更新できません。モッドパックを再インストールしてください"
+    },
+    "conflictKind": {
+      "modifiedLocallyChangedRemotely": "あなたが編集し、新バージョンでも変更されています",
+      "modifiedLocallyRemovedRemotely": "あなたが編集し、新バージョンには含まれません",
+      "deletedLocallyChangedRemotely": "あなたが削除し、新バージョンで変更されています",
+      "unmanagedFileInTheWay": "モッドパック外の同名ファイルがあります",
+      "disabledLocally": "あなたが無効化し、新バージョンも関係しています"
+    },
+    "choice": {
+      "keepLocal": "ローカルを保持",
+      "takeRemote": "新バージョンを使用",
+      "revealFile": "フォルダーに表示",
+      "hunk": "競合 {{number}}（ベースライン {{from}}-{{to}} 行）",
+      "allKeepLocal": "すべてローカルを保持",
+      "allTakeRemote": "すべて新しいバージョンを使用",
+      "localSide": "ローカル",
+      "remoteSide": "新しいバージョン"
+    },
+    "button": {
+      "preview": "更新をプレビュー",
+      "apply": "更新する",
+      "sync": "バージョン記録を同期",
+      "resume": "追従を再開",
+      "retry": "再試行",
+      "rollback": "前回の更新を取り消す",
+      "confirmRollback": "取り消しを確定"
+    },
+    "toast": {
+      "loaderPending": "MODローダーの再インストールが必要です。ダウンロードページをご確認ください"
+    },
+    "reason": {
+      "MODPACK_UPDATE_LINE_GONE": "プラットフォームにこのモッドパックのラインはもうありません",
+      "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスには利用できるインストール記録がないか、バージョン分離が無効です",
+      "MODPACK_UPDATE_NOT_ISOLATED": "このインスタンスはバージョン分離が無効のため、安全に比較できません。インスタンス設定で有効にして再試行してください",
+      "MODPACK_UPDATE_BASELINE_MISSING": "このインスタンスにはモッドパックのインストール記録がないか、記録が破損しているため比較できません",
+      "MODPACK_UPDATE_PACK_UNAVAILABLE": "このバージョンのファイルはプラットフォーム上で一時的に利用できません。しばらくしてからやり直してください"
+    },
+    "rollback": {
+      "hint": "前回のモッドパック更新を取り消し、ファイルとローダーを更新前の状態に戻せます。",
+      "confirm": "取り消すと、更新後にこれらのファイルへ加えた変更は上書きされます。1 回だけ実行できます。"
+    }
+  },
+  "ModpackLocalChangesModal": {
+    "header": {
+      "title": "ローカルの変更：{{name}}"
+    },
+    "loading": "ローカルファイルを比較しています…",
+    "empty": "モッドパックが管理するファイルはすべてインストール時と同じです",
+    "summary": "モッドパックが管理する {{count}} 個のファイルがインストール時と異なります。正規化した内容で比較し、改行やタイムスタンプだけが異なるファイルは数えません。",
+    "kind": {
+      "modified": "変更",
+      "deleted": "削除",
+      "disabled": "無効"
+    },
+    "hint": {
+      "deleted": "このファイルはローカルで削除されました",
+      "disabled": "このファイルはローカルで無効化されています（.disabled）"
+    },
+    "noDiff": {
+      "notText": "テキストファイルではないか大きすぎるため、内容の差分は表示しません",
+      "baseMissing": "インストール時の内容が保存されていないため、差分を表示できません"
+    },
+    "button": {
+      "publish": "公開"
+    },
+    "publishHint": {
+      "noPermission": "公開には学内モッドパックの管理権限が必要です",
+      "updateFirst": "新しいバージョンが公開されています。先に更新してください"
+    }
+  },
+  "InstanceSyncPage": {
+    "title": "インスタンスの同期と更新",
+    "description": "モッドパックを追従するインスタンスの状態と、校内モッドパック・おすすめ",
+    "platform": {
+      "title": "学内 Modpack",
+      "description": "学内の管理者が公開した Modpack です。インストール後は新しいバージョンに追従できます。",
+      "recommended": "おすすめ",
+      "vanilla": "バニラ",
+      "onOtherPlatform": "{{platform}} で提供されています",
+      "openOriginal": "表示",
+      "noVersion": "このプロジェクトには {{gameVersion}}（{{loader}}）向けのモッドパックバージョンがありません",
+      "downloadStarted": "{{version}} のダウンロードを開始しました",
+      "downloadDescription": "ダウンロード完了後、モッドパックのインストールが自動で始まります。"
+    },
+    "ledger": {
+      "title": "モッドパックのインスタンス",
+      "checkAll": "すべて確認",
+      "badge": {
+        "upToDate": "最新",
+        "available": "更新あり",
+        "paused": "一時停止中",
+        "needsRepair": "要修復",
+        "waitingLoader": "ローダー待ち",
+        "unknown": "確認に失敗",
+        "notChecked": "未確認"
+      },
+      "action": {
+        "update": "更新",
+        "details": "詳細",
+        "viewChanges": "変更を表示",
+        "viewChangesCount": "変更を表示（{{count}}）"
+      },
+      "updateTo": "{{latest}} に更新できます",
+      "platform": {
+        "campus": "校内"
+      },
+      "installed": "インストール済み",
+      "installedHint": "この端末に該当するインスタンスが {{count}} 件あります。クリックで表示"
     }
   }
 }
