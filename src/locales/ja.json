@@ -2624,6 +2624,12 @@
           "title": "キャンパスModパックの読み込みに失敗しました"
         }
       },
+      "deleteCampusModpackProject": {
+        "success": "キャンパスModパックを削除しました",
+        "error": {
+          "title": "キャンパスModパックの削除に失敗しました"
+        }
+      },
       "createCampusModpackProject": {
         "success": "プロジェクトを作成しました",
         "error": {
@@ -3263,7 +3269,12 @@
       "openOriginal": "表示",
       "noVersion": "このプロジェクトには {{gameVersion}}（{{loader}}）向けのモッドパックバージョンがありません",
       "downloadStarted": "{{version}} のダウンロードを開始しました",
-      "downloadDescription": "ダウンロード完了後、モッドパックのインストールが自動で始まります。"
+      "downloadDescription": "ダウンロード完了後、モッドパックのインストールが自動で始まります。",
+      "delete": "Modパックを削除",
+      "deleteDialog": {
+        "title": "キャンパスModパックを削除",
+        "content": "キャンパスプラットフォームから「{{name}}」を削除しますか？すべてのバージョンラインと過去のバージョンが削除され、元に戻せません。インストール済みのインスタンスはローカルファイルを保持しますが、更新を確認できなくなります。"
+      }
     },
     "ledger": {
       "title": "モッドパックのインスタンス",

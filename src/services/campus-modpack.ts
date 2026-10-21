@@ -22,6 +22,17 @@ export class CampusModpackService {
     return await invoke("list_campus_modpack_projects");
   }
 
+  /**
+   * Remove a campus modpack (every line and version) from the platform.
+   * Administrators only.
+   */
+  @responseHandler("instance")
+  static async deleteCampusModpackProject(
+    project: string
+  ): Promise<InvokeResponse<null>> {
+    return await invoke("delete_campus_modpack_project", { project });
+  }
+
   @responseHandler("instance")
   static async fetchCampusModpackRecommendation(
     slot: string

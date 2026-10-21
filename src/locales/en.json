@@ -2624,6 +2624,12 @@
           "title": "Failed to load campus modpacks"
         }
       },
+      "deleteCampusModpackProject": {
+        "success": "Deleted the campus modpack",
+        "error": {
+          "title": "Failed to delete the campus modpack"
+        }
+      },
       "createCampusModpackProject": {
         "success": "Project created",
         "error": {
@@ -3263,7 +3269,12 @@
       "openOriginal": "View",
       "noVersion": "This project has no modpack version for {{gameVersion}} ({{loader}})",
       "downloadStarted": "Started downloading {{version}}",
-      "downloadDescription": "The modpack installation starts once the download finishes."
+      "downloadDescription": "The modpack installation starts once the download finishes.",
+      "delete": "Delete modpack",
+      "deleteDialog": {
+        "title": "Delete campus modpack",
+        "content": "Delete \"{{name}}\" from the campus platform? All of its lines and versions are removed and cannot be restored. Installed instances keep their local files but can no longer check for updates."
+      }
     },
     "ledger": {
       "title": "My modpack instances",

@@ -61,6 +61,22 @@ fn ensure_manager(app: &AppHandle) -> USTBLResult<()> {
   }
 }
 
+/// Deleting a whole modpack is for administrators; the platform checks again.
+fn ensure_admin(app: &AppHandle) -> USTBLResult<()> {
+  let binding = app.state::<Mutex<AccountInfo>>();
+  let account_state = binding.lock()?;
+  let user_group = account_state
+    .vustb_account
+    .as_ref()
+    .map(|account| account.user_group.as_str())
+    .ok_or_else(|| USTBLError("请先登录像素北科账号".to_string()))?;
+  if matches!(user_group, "super_admin" | "admin") {
+    Ok(())
+  } else {
+    Err(USTBLError("只有管理员可以删除校内整合包".to_string()))
+  }
+}
+
 const PROGRESS_EVENT: &str = "modpack-publish:progress";
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -243,6 +259,25 @@ pub async fn list_campus_modpack_projects(app: AppHandle) -> USTBLResult<Vec<Cam
     return Err(failure(response).await);
   }
   Ok(response.json().await?)
+}
+
+/// Remove a campus modpack with every line and version from the platform.
+/// Local instances keep their files; their next update check reports the line
+/// as gone.
+#[tauri::command]
+pub async fn delete_campus_modpack_project(app: AppHandle, project: String) -> USTBLResult<()> {
+  ensure_admin(&app)?;
+  let response = authed_json(
+    &app,
+    reqwest::Method::DELETE,
+    &format!("/projects/{}", urlencoding::encode(&project)),
+    None,
+  )
+  .await?;
+  if !response.status().is_success() {
+    return Err(failure(response).await);
+  }
+  Ok(())
 }
 
 fn hash_selection(root: &Path, selected: &[String]) -> USTBLResult<Vec<LocalFile>> {

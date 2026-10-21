@@ -2624,6 +2624,12 @@
           "title": "Échec du chargement des modpacks du campus"
         }
       },
+      "deleteCampusModpackProject": {
+        "success": "Modpack du campus supprimé",
+        "error": {
+          "title": "Échec de la suppression du modpack du campus"
+        }
+      },
       "createCampusModpackProject": {
         "success": "Projet créé",
         "error": {
@@ -3263,7 +3269,12 @@
       "openOriginal": "Voir",
       "noVersion": "Ce projet n'a pas de version de pack pour {{gameVersion}} ({{loader}})",
       "downloadStarted": "Téléchargement de {{version}} lancé",
-      "downloadDescription": "L'installation du pack démarre à la fin du téléchargement."
+      "downloadDescription": "L'installation du pack démarre à la fin du téléchargement.",
+      "delete": "Supprimer le modpack",
+      "deleteDialog": {
+        "title": "Supprimer le modpack du campus",
+        "content": "Supprimer « {{name}} » de la plateforme du campus ? Toutes ses lignes et versions seront supprimées définitivement. Les instances installées gardent leurs fichiers locaux mais ne pourront plus vérifier les mises à jour."
+      }
     },
     "ledger": {
       "title": "Mes instances de packs",

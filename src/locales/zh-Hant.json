@@ -2624,6 +2624,12 @@
           "title": "載入校園整合包失敗"
         }
       },
+      "deleteCampusModpackProject": {
+        "success": "已刪除校內整合包",
+        "error": {
+          "title": "刪除校內整合包失敗"
+        }
+      },
       "createCampusModpackProject": {
         "success": "專案已建立",
         "error": {
@@ -3263,7 +3269,12 @@
       "openOriginal": "查看",
       "noVersion": "該專案沒有適用於 {{gameVersion}}（{{loader}}）的整合包版本",
       "downloadStarted": "已開始下載 {{version}}",
-      "downloadDescription": "下載完成後會自動進入整合包安裝流程。"
+      "downloadDescription": "下載完成後會自動進入整合包安裝流程。",
+      "delete": "刪除整合包",
+      "deleteDialog": {
+        "title": "刪除校內整合包",
+        "content": "確定從校內平台刪除「{{name}}」嗎？它的所有版本線和歷史版本都會被刪除，無法復原。已安裝的實例保留本機檔案，但無法再檢查更新。"
+      }
     },
     "ledger": {
       "title": "我的整合包實例",
