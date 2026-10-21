@@ -48,6 +48,19 @@ const LOADER_BY_SLUG: Record<string, ModLoaderType> = {
   neoforge: ModLoaderType.NeoForge,
 };
 
+// Mirrors `canonical_loader_version` in the backend: versions published by
+// older launchers may spell NeoForge as "neoforge-26.1.2.87", while the loader
+// lists use "26.1.2.87".
+const canonicalLoaderVersion = (
+  loaderType: ModLoaderType | undefined,
+  version: string
+): string => {
+  const trimmed = version.trim();
+  if (loaderType === ModLoaderType.NeoForge && trimmed.startsWith("neoforge-"))
+    return trimmed.slice("neoforge-".length);
+  return trimmed;
+};
+
 const InstallCampusModpackModal: React.FC<InstallCampusModpackModalProps> = ({
   project,
   line,
@@ -61,6 +74,7 @@ const InstallCampusModpackModal: React.FC<InstallCampusModpackModalProps> = ({
   const { onClose } = modalProps;
 
   const loaderType = LOADER_BY_SLUG[line.loaderType];
+  const loaderVersion = canonicalLoaderVersion(loaderType, line.loaderVersion);
 
   const [name, setName] = useState(sanitizeFileName(project.name));
   const [description, setDescription] = useState(project.summary);
@@ -85,14 +99,14 @@ const InstallCampusModpackModal: React.FC<InstallCampusModpackModalProps> = ({
         children:
           loaderType === ModLoaderType.Unknown
             ? "-"
-            : `${line.loaderType} ${line.loaderVersion}`,
+            : `${line.loaderType} ${loaderVersion}`,
       },
       {
         title: t("InstallCampusModpackModal.label.modpackVersion"),
         children: line.versionNumber,
       },
     ],
-    [line, loaderType, t]
+    [line, loaderType, loaderVersion, t]
   );
 
   const handleInstall = useCallback(async () => {
@@ -126,13 +140,13 @@ const InstallCampusModpackModal: React.FC<InstallCampusModpackModalProps> = ({
           return;
         }
         const found = loaderResp.data.find(
-          (item) => item.version === line.loaderVersion
+          (item) => item.version === loaderVersion
         );
         if (!found) {
           toast({
             title: t("InstallCampusModpackModal.error.loaderUnavailable", {
               loader: line.loaderType,
-              version: line.loaderVersion,
+              version: loaderVersion,
             }),
             status: "error",
           });
@@ -184,6 +198,7 @@ const InstallCampusModpackModal: React.FC<InstallCampusModpackModalProps> = ({
     iconSrc,
     line,
     loaderType,
+    loaderVersion,
     name,
     onClose,
     project,

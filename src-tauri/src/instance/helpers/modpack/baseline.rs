@@ -37,6 +37,32 @@ pub struct BaselineLoader {
   pub version: String,
 }
 
+impl BaselineLoader {
+  /// Whether both sides name the same loader build, ignoring spelling
+  /// differences such as the `neoforge-` prefix.
+  pub fn same_build(&self, other: &BaselineLoader) -> bool {
+    self.loader_type == other.loader_type
+      && canonical_loader_version(self.loader_type, &self.version)
+        == canonical_loader_version(other.loader_type, &other.version)
+  }
+}
+
+/// The loader version as the loader version lists spell it.
+///
+/// Instances detected from some version JSONs carry NeoForge versions as
+/// `neoforge-26.1.2.87`, while the lists (and therefore installation) use
+/// `26.1.2.87`. Other loaders are returned unchanged.
+pub fn canonical_loader_version(loader_type: ModLoaderType, version: &str) -> String {
+  let version = version.trim();
+  match loader_type {
+    ModLoaderType::NeoForge => version
+      .strip_prefix("neoforge-")
+      .unwrap_or(version)
+      .to_string(),
+    _ => version.to_string(),
+  }
+}
+
 /// A file managed by the modpack. `path` is relative to the instance directory
 /// and always uses `/`.
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
@@ -285,6 +311,29 @@ mod tests {
       base,
       compute_content_hash(&loader("0.16.0"), None, &resized)
     );
+  }
+
+  #[test]
+  fn loader_builds_compare_without_the_neoforge_prefix() {
+    let neoforge = |version: &str| BaselineLoader {
+      loader_type: ModLoaderType::NeoForge,
+      version: version.into(),
+    };
+    assert_eq!(
+      canonical_loader_version(ModLoaderType::NeoForge, "neoforge-26.1.2.87"),
+      "26.1.2.87"
+    );
+    assert_eq!(
+      canonical_loader_version(ModLoaderType::NeoForge, "21.10.0-beta"),
+      "21.10.0-beta"
+    );
+    assert_eq!(
+      canonical_loader_version(ModLoaderType::Fabric, "neoforge-0.16.0"),
+      "neoforge-0.16.0"
+    );
+    assert!(neoforge("neoforge-26.1.2.87").same_build(&neoforge("26.1.2.87")));
+    assert!(!neoforge("26.1.2.87").same_build(&neoforge("26.1.2.88")));
+    assert!(!loader("26.1.2.87").same_build(&neoforge("26.1.2.87")));
   }
 
   #[test]

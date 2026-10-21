@@ -13,7 +13,8 @@ use crate::account::models::AccountInfo;
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::misc::{get_instance_game_config, get_instance_subdir_paths};
 use crate::instance::helpers::modpack::baseline::{
-  components_of_mmc_pack, hash_file, BaselineFile, BaselineLoader, ModpackBaseline,
+  canonical_loader_version, components_of_mmc_pack, hash_file, BaselineFile, BaselineLoader,
+  ModpackBaseline,
 };
 use crate::instance::helpers::modpack::multimc::profile::safe_relative;
 use crate::instance::helpers::modpack::multimc::snapshot::{
@@ -523,7 +524,10 @@ async fn prepare(
       "new_project": new_project.as_ref().map(|new| json!({ "name": new.name, "summary": new.summary })),
       "game_version": instance.version,
       "loader_type": loader_type,
-      "loader_version": instance.mod_loader.version,
+      "loader_version": canonical_loader_version(
+        instance.mod_loader.loader_type,
+        &instance.mod_loader.version
+      ),
       "version_number": version_number,
       "changelog": changelog,
       "parent_version_id": parent_version_id,
@@ -796,7 +800,7 @@ async fn try_adopt(
     &origin,
     BaselineLoader {
       loader_type,
-      version: instance.mod_loader.version.clone(),
+      version: canonical_loader_version(loader_type, &instance.mod_loader.version),
     },
     expected
       .into_iter()
