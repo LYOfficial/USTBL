@@ -598,7 +598,7 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
     if let Some(pack) = pack {
       // The chain carries the loader, so there is no separate switch.
       env.restore_components(pack, &components_dir(root)).await?;
-    } else if !request.remote.loader.same_build(&request.previous_loader) {
+    } else if request.remote.loader != request.previous_loader {
       env.switch_loader(&request.remote.loader).await?;
     }
     let (root_owned, operations, snapshot) =

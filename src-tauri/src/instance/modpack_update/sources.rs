@@ -9,8 +9,7 @@ use super::packs::{AppTransport, PackSession};
 use super::remote::{ComponentPack, FileSource, RemoteFile, RemoteModpack, UPDATE_DIR};
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::modpack::baseline::{
-  canonical_loader_version, components_of_mmc_pack, hash_file, normalize_relative_path,
-  BaselineLoader,
+  components_of_mmc_pack, hash_file, normalize_relative_path, BaselineLoader,
 };
 use crate::instance::helpers::modpack::misc::{list_override_entries, parse_platform_manifest};
 use crate::instance::models::misc::{InstanceError, InstanceOrigin, ModLoaderType, OriginPlatform};
@@ -285,9 +284,7 @@ pub fn campus_remote(
     game_version: version.game_version.clone(),
     loader: BaselineLoader {
       loader_type,
-      // Versions published before the publisher normalized it may still
-      // carry a prefix the loader lists do not know.
-      version: canonical_loader_version(loader_type, &version.loader_version),
+      version: version.loader_version.clone(),
     },
     components: version
       .manifest
@@ -768,14 +765,6 @@ mod tests {
       FileSource::Pack(found) => assert!(Arc::ptr_eq(found, &packs)),
       other => panic!("{other:?}"),
     }
-  }
-
-  #[test]
-  fn campus_loader_version_drops_the_neoforge_prefix() {
-    let mut version = campus(serde_json::json!([]));
-    version.loader_version = "neoforge-26.1.2.87".into();
-    let remote = campus_remote(&version, &session()).unwrap();
-    assert_eq!(remote.loader.version, "26.1.2.87");
   }
 
   #[test]

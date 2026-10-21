@@ -475,7 +475,7 @@ async fn plan_for(
   let first = prepare(&target.root, baseline, &remote).await?;
   let remote_contents = materialize_text_candidates(app, target, &remote, &first.diff.conflicts).await?;
   let prepared = prepare_with_contents(&target.root, baseline, &remote, &remote_contents).await?;
-  let loader_change = (!remote.loader.same_build(&baseline.loader)).then(|| LoaderChange {
+  let loader_change = (remote.loader != baseline.loader).then(|| LoaderChange {
     from: baseline.loader.clone(),
     to: remote.loader.clone(),
   });
