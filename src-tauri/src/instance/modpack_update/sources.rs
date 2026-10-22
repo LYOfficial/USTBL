@@ -596,7 +596,7 @@ pub async fn resolve_remote(
       remote_from_archive(app, &path, root, instance_name, origin, latest).await?
     }
     Payload::Campus(version) => {
-      let packs = PackSession::new(AppTransport::new(app.clone()), version.id, dir.clone());
+      let packs = PackSession::new(AppTransport::new(app.clone()), version.id);
       campus_remote(version, &packs)?
     }
   };
@@ -708,7 +708,6 @@ mod tests {
     async fn locate(
       &self,
       _: i64,
-      _: crate::instance::modpack_update::packs::LocateMode,
       _: &[String],
     ) -> Result<
       crate::instance::modpack_update::packs::Located,
@@ -725,17 +724,10 @@ mod tests {
     ) -> Result<(), crate::instance::modpack_update::packs::TransportError> {
       unreachable!()
     }
-    async fn download(
-      &self,
-      _: &crate::instance::modpack_update::packs::PackLocation,
-      _: &Path,
-    ) -> Result<(), crate::instance::modpack_update::packs::TransportError> {
-      unreachable!()
-    }
   }
 
   fn session() -> Arc<PackSession> {
-    PackSession::new(Arc::new(NoTransport), 7, PathBuf::new())
+    PackSession::new(Arc::new(NoTransport), 7)
   }
 
   #[test]
