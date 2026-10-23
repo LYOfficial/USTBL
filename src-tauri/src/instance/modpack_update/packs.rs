@@ -14,8 +14,9 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::fmt;
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
@@ -30,6 +31,14 @@ const ATTEMPTS: usize = 3;
 /// Re-asking where a pack is, after the signature ran out, happens this often
 /// for one file before giving up.
 const RELOCATIONS: usize = 2;
+
+/// Two entries in one pack are read with a single Range request when the gap
+/// between them is at most this many bytes. Set to 0 to read every entry on
+/// its own, the way the launcher always did, for a before/after comparison.
+pub const MERGE_GAP: u64 = 64 * 1024;
+/// A merged read never spans more than this many bytes of the pack.
+/// Set to 0 to disable merging.
+pub const MERGE_SPAN: u64 = 8 * 1024 * 1024;
 
 /// Where and how to fetch one pack. `headers` must be sent verbatim.
 #[derive(Debug, Clone, Deserialize)]
@@ -114,11 +123,39 @@ struct State {
   generation: u64,
 }
 
+/// One file a batch fetch is asked to produce.
+pub struct PackFetch {
+  pub sha1: String,
+  pub dest: PathBuf,
+}
+
+/// Counters behind the info line logged at the end of an install or update.
+#[derive(Default)]
+pub struct PackStats {
+  /// Range requests actually sent.
+  pub requests: AtomicU64,
+  /// Bytes those requests asked for.
+  pub bytes: AtomicU64,
+  /// Requests that covered more than one entry.
+  pub merged: AtomicU64,
+}
+
+impl PackStats {
+  fn record(&self, entries: usize, bytes: u64) {
+    self.requests.fetch_add(1, Ordering::Relaxed);
+    self.bytes.fetch_add(bytes, Ordering::Relaxed);
+    if entries > 1 {
+      self.merged.fetch_add(1, Ordering::Relaxed);
+    }
+  }
+}
+
 /// The files of one campus version that live in packs.
 pub struct PackSession {
   transport: Arc<dyn PackTransport>,
   version_id: i64,
   state: tokio::sync::Mutex<State>,
+  stats: PackStats,
 }
 
 impl fmt::Debug for PackSession {
@@ -139,6 +176,7 @@ impl PackSession {
         wanted: Vec::new(),
         generation: 0,
       }),
+      stats: PackStats::default(),
     })
   }
 
@@ -195,6 +233,7 @@ impl PackSession {
         .await
       {
         Ok(()) => {
+          self.stats.record(1, entry.compressed_size);
           let (entry, dest) = (*entry, dest.to_path_buf());
           return tokio::task::spawn_blocking(move || {
             let result = decode_entry(&raw, &entry, &dest);
@@ -227,6 +266,171 @@ impl PackSession {
     state.generation += 1;
     Ok(())
   }
+
+  /// Put every file of `batch` in place. Entries that sit close together in
+  /// the same pack are read with one Range request; anything else is read on
+  /// its own. A merged read is retried like a single read when the signature
+  /// runs out; if it still fails the group falls back to reading each file
+  /// by itself so one bad entry cannot drag the rest down.
+  pub async fn fetch_batch(&self, batch: &[PackFetch]) -> USTBLResult<()> {
+    if batch.len() == 1 {
+      return self.fetch(&batch[0].sha1, &batch[0].dest).await;
+    }
+    let (located, generation) = {
+      let state = self.state.lock().await;
+      match &state.located {
+        None => return Err(InstanceError::ModpackUpdateRemoteInvalid.into()),
+        Some(located) => (located.clone(), state.generation),
+      }
+    };
+    let mut items: Vec<(EntryLocation, &PackFetch)> = Vec::with_capacity(batch.len());
+    for item in batch {
+      let entry = located
+        .entries
+        .get(&item.sha1)
+        .copied()
+        .ok_or(InstanceError::ModpackUpdateRemoteInvalid)?;
+      items.push((entry, item));
+    }
+    items.sort_by_key(|(entry, _)| (entry.pack, entry.data_offset));
+
+    // Split into merged reads: one pack at a time, a gap of more than
+    // MERGE_GAP or a span of more than MERGE_SPAN starts a new group. Either
+    // threshold being 0 disables merging, reading every entry on its own.
+    let mut from = 0;
+    while from < items.len() {
+      let mut to = from + 1;
+      while to < items.len() && MERGE_GAP > 0 && MERGE_SPAN > 0 {
+        let (prev, next) = (items[to - 1].0, items[to].0);
+        let gap = next
+          .data_offset
+          .saturating_sub(prev.data_offset + prev.compressed_size);
+        let span = next.data_offset + next.compressed_size - items[from].0.data_offset;
+        if next.pack != prev.pack || gap > MERGE_GAP || span > MERGE_SPAN {
+          break;
+        }
+        to += 1;
+      }
+      self.fetch_group(&items[from..to], generation).await?;
+      from = to;
+    }
+    Ok(())
+  }
+
+  /// Read one group of entries. A group of one goes through the single-file
+  /// path; anything larger is one merged Range request.
+  async fn fetch_group(
+    &self,
+    group: &[(EntryLocation, &PackFetch)],
+    generation: u64,
+  ) -> USTBLResult<()> {
+    if group.len() == 1 {
+      let item = group[0].1;
+      return self.fetch(&item.sha1, &item.dest).await;
+    }
+    let mut relocations = 0;
+    let mut generation = generation;
+    loop {
+      let located = {
+        let state = self.state.lock().await;
+        if relocations > 0 {
+          generation = state.generation;
+        }
+        match &state.located {
+          None => return Err(InstanceError::ModpackUpdateRemoteInvalid.into()),
+          Some(located) => located.clone(),
+        }
+      };
+      let start = group[0].0.data_offset;
+      let span = group[group.len() - 1].0.data_offset + group[group.len() - 1].0.compressed_size
+        - start;
+      let pack = located
+        .packs
+        .iter()
+        .find(|pack| pack.id == group[0].0.pack)
+        .ok_or(InstanceError::ModpackUpdateRemoteInvalid)?;
+      // The merged read lands next to the first entry, under a name the
+      // per-entry pieces cannot collide with (`raw_path` of each dest).
+      let mut name = group[0].1.dest.file_name().unwrap_or_default().to_os_string();
+      name.push(".pack-merged");
+      let raw = group[0].1.dest.with_file_name(name);
+      match self.transport.read_range(pack, start, span, &raw).await {
+        Ok(()) => {
+          self.stats.record(group.len(), span);
+          let pieces: Vec<(EntryLocation, PathBuf)> = group
+            .iter()
+            .map(|(entry, item)| (*entry, item.dest.clone()))
+            .collect();
+          let decoded = tokio::task::spawn_blocking(move || {
+            let outcome: USTBLResult<()> = pieces
+              .iter()
+              .try_for_each(|(entry, dest)| split_entry(&raw, start, entry, dest));
+            let _ = fs::remove_file(&raw);
+            outcome
+          })
+          .await
+          .map_err(|e| USTBLError(e.to_string()))?;
+          match decoded {
+            Ok(()) => return Ok(()),
+            Err(error) => return self.fall_back(group, error).await,
+          }
+        }
+        Err(TransportError::Expired) if relocations < RELOCATIONS => {
+          relocations += 1;
+          self.relocate(generation).await?;
+        }
+        Err(error) => {
+          let _ = fs::remove_file(&raw);
+          return self.fall_back(group, error.into()).await;
+        }
+      }
+    }
+  }
+
+  /// A merged read failed; read every file of the group on its own instead.
+  async fn fall_back(
+    &self,
+    group: &[(EntryLocation, &PackFetch)],
+    error: USTBLError,
+  ) -> USTBLResult<()> {
+    log::warn!(
+      "merged read of {} pack entries failed ({error:?}); reading them one by one",
+      group.len()
+    );
+    for (_, item) in group {
+      self.fetch(&item.sha1, &item.dest).await?;
+    }
+    Ok(())
+  }
+
+  /// Counters behind the install/update info line.
+  pub fn stats(&self) -> &PackStats {
+    &self.stats
+  }
+}
+
+/// Cut one entry out of a merged read: copy its slice of `raw` (which starts
+/// at pack offset `start`) into a temporary file, then decode it like a
+/// single read would.
+fn split_entry(raw: &Path, start: u64, entry: &EntryLocation, dest: &Path) -> USTBLResult<()> {
+  let piece = raw_path(dest);
+  let result = (|| -> USTBLResult<()> {
+    let mut input = File::open(raw)?;
+    input.seek(SeekFrom::Start(entry.data_offset - start))?;
+    let mut taken = input.take(entry.compressed_size);
+    if let Some(parent) = piece.parent() {
+      fs::create_dir_all(parent)?;
+    }
+    let mut out = File::create(&piece)?;
+    let copied = std::io::copy(&mut taken, &mut out)?;
+    if copied != entry.compressed_size {
+      return Err(InstanceError::ModpackUpdateVerifyFailed.into());
+    }
+    drop(out);
+    decode_entry(&piece, entry, dest)
+  })();
+  let _ = fs::remove_file(&piece);
+  result
 }
 
 fn raw_path(dest: &Path) -> PathBuf {
@@ -600,10 +804,12 @@ mod tests {
     }
   }
 
-  fn session(fake: Fake) -> (Arc<PackSession>, Arc<Fake>, PathBuf) {
-    let fake = Arc::new(fake);
+  fn session<T: PackTransport + 'static>(
+    transport: T,
+  ) -> (Arc<PackSession>, Arc<T>, PathBuf) {
+    let transport = Arc::new(transport);
     let work = temp("work");
-    (PackSession::new(fake.clone(), 3), fake, work)
+    (PackSession::new(transport.clone(), 3), transport, work)
   }
 
   #[tokio::test]
@@ -742,6 +948,297 @@ mod tests {
     assert!(session.fetch("aa", &work.join("a")).await.is_err());
     session.prepare(&["aa".into()]).await.unwrap();
     assert!(session.fetch("zz", &work.join("z")).await.is_err());
+    let _ = fs::remove_dir_all(work);
+  }
+
+  /// Range requests the fake got, as (pack, start, length).
+  fn ranges(calls: &[String]) -> Vec<(i64, u64, u64)> {
+    calls
+      .iter()
+      .filter(|call| call.starts_with("range"))
+      .map(|call| {
+        let mut parts = call.split([':', '+']);
+        parts.next();
+        let pack = parts.next().unwrap().parse().unwrap();
+        let start = parts.next().unwrap().parse().unwrap();
+        let length = parts.next().unwrap().parse().unwrap();
+        (pack, start, length)
+      })
+      .collect()
+  }
+
+  #[tokio::test]
+  async fn neighbouring_entries_share_one_range_request() {
+    let fake = Fake::new(&[
+      ("aa", b"alpha alpha alpha"),
+      ("bb", b"beta beta"),
+      ("cc", b"gamma"),
+    ]);
+    let (session, fake, work) = session(fake);
+    let all: Vec<String> = ["aa", "bb", "cc"].map(String::from).into();
+    session.prepare(&all).await.unwrap();
+
+    let batch: Vec<PackFetch> = ["aa", "bb", "cc"]
+      .iter()
+      .map(|sha1| PackFetch {
+        sha1: sha1.to_string(),
+        dest: work.join(format!("out/{sha1}")),
+      })
+      .collect();
+    session.fetch_batch(&batch).await.unwrap();
+
+    // All three entries sit back to back in pack 7, so one request covers
+    // the whole span from the first to the last byte.
+    let ranges = ranges(&fake.calls());
+    assert_eq!(ranges.len(), 1);
+    assert_eq!(ranges[0].0, 7);
+    assert_eq!(ranges[0].1, 0);
+    let span = ranges[0].2;
+    let entries: Vec<u64> = ["aa", "bb", "cc"]
+      .iter()
+      .map(|sha1| fake.entries[*sha1].compressed_size)
+      .collect();
+    assert_eq!(span, entries.iter().sum::<u64>());
+    for sha1 in ["aa", "bb", "cc"] {
+      let data = match sha1 {
+        "aa" => b"alpha alpha alpha".as_slice(),
+        "bb" => b"beta beta".as_slice(),
+        _ => b"gamma".as_slice(),
+      };
+      assert_eq!(fs::read(work.join(format!("out/{sha1}"))).unwrap(), data);
+    }
+    let stats = session.stats();
+    assert_eq!(stats.requests.load(Ordering::Relaxed), 1);
+    assert_eq!(stats.bytes.load(Ordering::Relaxed), span);
+    assert_eq!(stats.merged.load(Ordering::Relaxed), 1);
+    let _ = fs::remove_dir_all(work);
+  }
+
+  #[tokio::test]
+  async fn entries_from_different_packs_are_not_merged() {
+    let fake = Fake::chain(&[
+      (1, &[("aa", b"alpha alpha alpha"), ("bb", b"beta")]),
+      (4, &[("cc", b"gamma gamma")]),
+      (9, &[("dd", b"delta")]),
+    ]);
+    let (session, fake, work) = session(fake);
+    let all: Vec<String> = ["dd", "bb", "aa", "cc"].map(String::from).into();
+    session.prepare(&all).await.unwrap();
+    let batch: Vec<PackFetch> = ["aa", "bb", "cc", "dd"]
+      .iter()
+      .map(|sha1| PackFetch {
+        sha1: sha1.to_string(),
+        dest: work.join(format!("out/{sha1}")),
+      })
+      .collect();
+    session.fetch_batch(&batch).await.unwrap();
+
+    // aa and bb sit together in pack 1 and share one request; the other two
+    // packs are read on their own.
+    let ranges = ranges(&fake.calls());
+    assert_eq!(ranges.len(), 3);
+    assert_eq!(ranges.iter().filter(|(pack, _, _)| *pack == 1).count(), 1);
+    assert_eq!(ranges.iter().filter(|(pack, _, _)| *pack == 4).count(), 1);
+    assert_eq!(ranges.iter().filter(|(pack, _, _)| *pack == 9).count(), 1);
+    for (sha1, data) in [
+      ("aa", b"alpha alpha alpha".as_slice()),
+      ("bb", b"beta".as_slice()),
+      ("cc", b"gamma gamma".as_slice()),
+      ("dd", b"delta".as_slice()),
+    ] {
+      assert_eq!(fs::read(work.join(format!("out/{sha1}"))).unwrap(), data);
+    }
+    let _ = fs::remove_dir_all(work);
+  }
+
+  /// A pack with `paddings[i]` extra bytes inserted between entry i and
+  /// entry i+1, so the gaps can be steered around MERGE_GAP.
+  struct Spaced {
+    packs: HashMap<i64, Vec<u8>>,
+    entries: HashMap<String, EntryLocation>,
+    calls: Mutex<Vec<String>>,
+    corrupt: Mutex<Option<String>>,
+  }
+
+  impl Spaced {
+    fn new(files: &[(&str, &[u8])], paddings: &[usize]) -> Self {
+      let mut pack = Vec::new();
+      let mut entries = HashMap::new();
+      for (index, (name, data)) in files.iter().enumerate() {
+        let compressed = deflate(data);
+        entries.insert(
+          name.to_string(),
+          EntryLocation {
+            pack: 7,
+            data_offset: pack.len() as u64,
+            compress_type: DEFLATED,
+            compressed_size: compressed.len() as u64,
+            size: data.len() as u64,
+            crc32: crc(data),
+          },
+        );
+        pack.extend(compressed);
+        if let Some(padding) = paddings.get(index) {
+          pack.extend(vec![0u8; *padding]);
+        }
+      }
+      Self {
+        packs: HashMap::from([(7, pack)]),
+        entries,
+        calls: Mutex::default(),
+        corrupt: Mutex::new(None),
+      }
+    }
+
+    fn calls(&self) -> Vec<String> {
+      self.calls.lock().unwrap().clone()
+    }
+  }
+
+  #[async_trait]
+  impl PackTransport for Spaced {
+    async fn locate(&self, _version_id: i64, sha1s: &[String]) -> Result<Located, TransportError> {
+      self.calls.lock().unwrap().push("locate".into());
+      let entries: HashMap<String, EntryLocation> = sha1s
+        .iter()
+        .map(|sha1| (sha1.clone(), self.entries[sha1]))
+        .collect();
+      Ok(Located {
+        packs: vec![location(7)],
+        entries,
+      })
+    }
+
+    async fn read_range(
+      &self,
+      pack: &PackLocation,
+      start: u64,
+      length: u64,
+      dest: &Path,
+    ) -> Result<(), TransportError> {
+      self
+        .calls
+        .lock()
+        .unwrap()
+        .push(format!("range:{}:{start}+{length}", pack.id));
+      let mut bytes = self.packs[&pack.id][start as usize..(start + length) as usize].to_vec();
+      if let Some(name) = self.corrupt.lock().unwrap().clone() {
+        // Ruin the named entry's slice of this read.
+        let entry = self.entries[&name];
+        if start <= entry.data_offset && entry.data_offset < start + length {
+          let at = (entry.data_offset - start) as usize;
+          bytes[at] = bytes[at].wrapping_add(1);
+        }
+      }
+      fs::create_dir_all(dest.parent().unwrap()).unwrap();
+      fs::write(dest, &bytes).unwrap();
+      Ok(())
+    }
+  }
+
+  #[tokio::test]
+  async fn a_gap_over_the_threshold_splits_the_read() {
+    let spaced = Spaced::new(
+      &[("aa", b"alpha"), ("bb", b"beta"), ("cc", b"gamma")],
+      &[(MERGE_GAP as usize) + 1, 0],
+    );
+    let (session, fake, work) = session(spaced);
+    let all: Vec<String> = ["aa", "bb", "cc"].map(String::from).into();
+    session.prepare(&all).await.unwrap();
+    let batch: Vec<PackFetch> = ["aa", "bb", "cc"]
+      .iter()
+      .map(|sha1| PackFetch {
+        sha1: sha1.to_string(),
+        dest: work.join(format!("out/{sha1}")),
+      })
+      .collect();
+    session.fetch_batch(&batch).await.unwrap();
+
+    // The gap after aa is too wide: aa is read alone, bb and cc share one.
+    let ranges = ranges(&fake.calls());
+    assert_eq!(ranges.len(), 2);
+    assert_eq!(ranges[0].1, 0);
+    let second = fake.entries["bb"].data_offset;
+    assert_eq!(ranges[1].1, second);
+    for (sha1, data) in [
+      ("aa", b"alpha".as_slice()),
+      ("bb", b"beta".as_slice()),
+      ("cc", b"gamma".as_slice()),
+    ] {
+      assert_eq!(fs::read(work.join(format!("out/{sha1}"))).unwrap(), data);
+    }
+    let _ = fs::remove_dir_all(work);
+  }
+
+  #[tokio::test]
+  async fn a_bad_entry_in_a_merged_read_sends_the_group_back_to_single_reads() {
+    let spaced = Spaced::new(&[("aa", b"alpha"), ("bb", b"beta")], &[0]);
+    *spaced.corrupt.lock().unwrap() = Some("bb".into());
+    let (session, fake, work) = session(spaced);
+    session
+      .prepare(&["aa".into(), "bb".into()])
+      .await
+      .unwrap();
+    let batch = [
+      PackFetch {
+        sha1: "aa".into(),
+        dest: work.join("out/aa"),
+      },
+      PackFetch {
+        sha1: "bb".into(),
+        dest: work.join("out/bb"),
+      },
+    ];
+
+    let error = session.fetch_batch(&batch).await.unwrap_err();
+
+    // The merged read decodes fine into aa, but bb is corrupt, so the group
+    // falls back to single reads; the corrupt entry then fails on its own.
+    assert_eq!(
+      error,
+      USTBLError::from(InstanceError::ModpackUpdateVerifyFailed)
+    );
+    let ranges = ranges(&fake.calls());
+    // One merged read, then one single read per entry.
+    assert_eq!(ranges.len(), 3);
+    assert_eq!(ranges[0].0, 7);
+    assert!(ranges[0].2 > fake.entries["aa"].compressed_size);
+    assert_eq!(ranges[1].2, fake.entries["aa"].compressed_size);
+    assert_eq!(ranges[2].2, fake.entries["bb"].compressed_size);
+    let _ = fs::remove_dir_all(work);
+  }
+
+  #[tokio::test]
+  async fn an_expired_signature_relocates_before_the_merged_read_succeeds() {
+    let mut fake = Fake::new(&[("aa", b"alpha alpha"), ("bb", b"beta beta")]);
+    *fake.expire.get_mut().unwrap() = 1;
+    let (session, fake, work) = session(fake);
+    session
+      .prepare(&["aa".into(), "bb".into()])
+      .await
+      .unwrap();
+    let batch = [
+      PackFetch {
+        sha1: "aa".into(),
+        dest: work.join("out/aa"),
+      },
+      PackFetch {
+        sha1: "bb".into(),
+        dest: work.join("out/bb"),
+      },
+    ];
+    session.fetch_batch(&batch).await.unwrap();
+
+    // One locate up front, one more after the expired merged read; the
+    // retried merged read covers both entries in one request.
+    let calls = fake.calls();
+    assert_eq!(calls.iter().filter(|c| *c == "locate").count(), 2);
+    let ranges = ranges(&calls);
+    assert_eq!(ranges.len(), 2);
+    assert_eq!(ranges[0], ranges[1]);
+    assert!(ranges[0].2 > fake.entries["aa"].compressed_size);
+    assert_eq!(fs::read(work.join("out/aa")).unwrap(), b"alpha alpha");
+    assert_eq!(fs::read(work.join("out/bb")).unwrap(), b"beta beta");
     let _ = fs::remove_dir_all(work);
   }
 }
