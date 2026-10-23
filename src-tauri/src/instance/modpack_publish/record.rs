@@ -12,7 +12,7 @@ use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const RECORD_SCHEMA: u32 = 1;
+pub const RECORD_SCHEMA: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -65,12 +65,17 @@ pub struct RecordedPack {
   pub size: u64,
 }
 
+/// §9.1's exact persisted shape. Concurrency is not part of it: it is a live,
+/// server-tunable value (§14.1) handed down fresh by `POST /versions` and by
+/// `GET /uploads/{id}` on resume, not a fact about the upload worth freezing
+/// into the record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordedUpload {
   pub id: String,
-  pub chunk_size: u64,
-  pub chunk_count: u32,
+  pub part_size: u64,
+  pub part_count: u32,
+  pub generation: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -215,8 +220,9 @@ mod tests {
       }),
       upload: Some(RecordedUpload {
         id: "u1".into(),
-        chunk_size: 8,
-        chunk_count: 2,
+        part_size: 8,
+        part_count: 2,
+        generation: 1,
       }),
     }
   }
@@ -233,7 +239,7 @@ mod tests {
 
     let loaded = JobRecord::load(&dir, "old").unwrap();
     assert_eq!(loaded.version_id, 7);
-    assert_eq!(loaded.upload.unwrap().chunk_count, 2);
+    assert_eq!(loaded.upload.unwrap().part_count, 2);
     let ids: Vec<_> = JobRecord::list(&dir).into_iter().map(|r| r.id).collect();
     assert_eq!(ids, ["old", "new"]);
     let _ = fs::remove_dir_all(dir);
@@ -270,6 +276,19 @@ mod tests {
     let mut foreign = record("foreign", 1);
     foreign.schema = RECORD_SCHEMA + 1;
     foreign.save(&dir).unwrap();
+    assert!(JobRecord::list(&dir).is_empty());
+    let _ = fs::remove_dir_all(dir);
+  }
+
+  /// Schema 1 (v2's chunk-based record) is not read back; a publish on an old
+  /// record must fail outright and tell the user to start over.
+  #[test]
+  fn an_old_schema_record_fails_outright_instead_of_being_read_as_the_new_shape() {
+    let dir = dir();
+    let mut old = record("old-shape", 1);
+    old.schema = 1;
+    old.save(&dir).unwrap();
+    assert!(JobRecord::load(&dir, "old-shape").is_err());
     assert!(JobRecord::list(&dir).is_empty());
     let _ = fs::remove_dir_all(dir);
   }
