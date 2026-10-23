@@ -39,17 +39,6 @@ pub fn build_ustbl_client(app: &AppHandle, use_proxy: bool) -> Client {
   build_client(app, use_proxy, Some(Duration::from_secs(30)))
 }
 
-/// Like [`build_ustbl_client`] but without the read timeout, for requests that
-/// send a large body.
-///
-/// reqwest starts the read timer when the request goes out and only resets it
-/// on a read, so an upload that takes longer than the timeout fails with a
-/// timeout error even while bytes are still flowing. The server may also take a
-/// while to answer after the last byte (it relays the file to cloud storage).
-pub fn build_ustbl_upload_client(app: &AppHandle, use_proxy: bool) -> Client {
-  build_client(app, use_proxy, None)
-}
-
 fn build_client(app: &AppHandle, use_proxy: bool, read_timeout: Option<Duration>) -> Client {
   let mut builder = ClientBuilder::new()
     .connect_timeout(Duration::from_secs(10))
@@ -75,6 +64,39 @@ fn build_client(app: &AppHandle, use_proxy: bool, read_timeout: Option<Duration>
         ProxyType::Socks => format!("socks5h://{}:{}", proxy_cfg.host, proxy_cfg.port),
       };
 
+      if let Ok(proxy) = Proxy::all(&proxy_url) {
+        builder = builder.proxy(proxy);
+      }
+    }
+  }
+
+  builder.build().unwrap_or_else(|_| Client::new())
+}
+
+/// Builds the client that PUTs pack parts straight to the cloud drive's signed
+/// URLs (§13.2).
+///
+/// Deliberately independent from [`build_ustbl_client`]: it carries no
+/// default headers (so a bearer token can never leak into a
+/// request against this client by accident), follows no redirects (a redirect
+/// to an unexpected host would otherwise carry the signed headers with it),
+/// and only ever connects over https. One client is shared by every part PUT
+/// of a job so they reuse the same connection pool.
+pub fn build_part_upload_client(app: &AppHandle) -> Client {
+  let mut builder = ClientBuilder::new()
+    .connect_timeout(Duration::from_secs(10))
+    .tcp_keepalive(Duration::from_secs(10))
+    .read_timeout(Duration::from_secs(600))
+    .redirect(tauri_plugin_http::reqwest::redirect::Policy::none())
+    .https_only(true);
+
+  if let Ok(config) = app.state::<Mutex<LauncherConfig>>().lock() {
+    if config.download.proxy.enabled {
+      let proxy_cfg = &config.download.proxy;
+      let proxy_url = match proxy_cfg.selected_type {
+        ProxyType::Http => format!("http://{}:{}", proxy_cfg.host, proxy_cfg.port),
+        ProxyType::Socks => format!("socks5h://{}:{}", proxy_cfg.host, proxy_cfg.port),
+      };
       if let Ok(proxy) = Proxy::all(&proxy_url) {
         builder = builder.proxy(proxy);
       }

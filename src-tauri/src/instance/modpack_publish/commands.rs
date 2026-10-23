@@ -26,7 +26,7 @@ use crate::instance::models::misc::{
 use crate::instance::modpack_update::commands::store_instance;
 use crate::instance::modpack_update::diff::FileKey;
 use crate::instance::modpack_update::sources::{loader_slug, CAMPUS_API};
-use crate::utils::web::build_ustbl_upload_client;
+use crate::utils::web::build_part_upload_client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -37,6 +37,9 @@ use tauri::{AppHandle, Emitter, Manager};
 
 /// Hashes sent per request when asking which the platform lacks.
 const MISSING_BATCH: usize = 5000;
+/// Part concurrency used on resume, when the record (§9.1) carries none and
+/// there is no fresh `POST /versions` response to read it from (§14.1).
+pub(super) const DEFAULT_PART_CONCURRENCY: usize = 3;
 
 /// The UI hides publishing from other accounts, but the role is checked here too;
 /// the platform authenticates the bearer token again.
@@ -170,16 +173,13 @@ fn report(app: &AppHandle, instance_id: &str, stage: Stage, done: usize, total: 
 }
 
 /// The server explains refusals in `detail`; pass that on instead of a bare
-/// status code. Conflicts also carry a machine readable `code`.
-pub(super) async fn failure_code(response: reqwest::Response) -> (Option<String>, USTBLError) {
+/// status code. Conflicts also carry a machine readable `code`, and some
+/// (such as `UPLOAD_RESTARTED`) carry further fields next to `code`/`message`.
+pub(super) async fn failure_detail(response: reqwest::Response) -> (Option<Value>, USTBLError) {
   let status = response.status();
   let body = response.json::<Value>().await.ok();
-  let detail = body.as_ref().and_then(|body| body.get("detail"));
-  let code = detail
-    .and_then(|detail| detail.get("code"))
-    .and_then(Value::as_str)
-    .map(str::to_string);
-  let message = match detail {
+  let detail = body.and_then(|body| body.get("detail").cloned());
+  let message = match &detail {
     Some(Value::String(text)) => Some(text.clone()),
     Some(other) => other
       .get("message")
@@ -188,9 +188,19 @@ pub(super) async fn failure_code(response: reqwest::Response) -> (Option<String>
     None => None,
   };
   (
-    code,
+    detail,
     USTBLError(message.unwrap_or_else(|| format!("HTTP {status}"))),
   )
+}
+
+pub(super) async fn failure_code(response: reqwest::Response) -> (Option<String>, USTBLError) {
+  let (detail, error) = failure_detail(response).await;
+  let code = detail
+    .as_ref()
+    .and_then(|detail| detail.get("code"))
+    .and_then(Value::as_str)
+    .map(str::to_string);
+  (code, error)
 }
 
 pub(super) async fn failure(response: reqwest::Response) -> USTBLError {
@@ -380,22 +390,24 @@ pub async fn publish_campus_modpack(
     files,
   )
   .await;
-  let record = match prepared {
-    Ok(record) => record,
+  let (record, concurrency) = match prepared {
+    Ok(result) => result,
     Err(error) => {
       JobRecord::remove(&dir, &job_id);
       return Err(error);
     }
   };
 
-  // Big uploads outlast the shared client's read timeout.
-  let uploader = build_ustbl_upload_client(&app, true);
+  // A client of its own, with none of the launcher's auth or redirect
+  // behavior, since it talks straight to the cloud drive's signed URLs.
+  let uploader = build_part_upload_client(&app);
   let version_id = record.version_id;
   // From here on the upload runs in the background, on the task list.
   let started = PublishJob {
     app: app.clone(),
     uploader,
     record,
+    concurrency,
   }
   .start();
   match started {
@@ -434,7 +446,7 @@ async fn prepare(
   version_number: String,
   changelog: String,
   files: Vec<String>,
-) -> USTBLResult<JobRecord> {
+) -> USTBLResult<(JobRecord, usize)> {
   let instance = instance_of(app, instance_id)?;
   let root = instance.version_path.clone();
   let loader_type =
@@ -551,10 +563,16 @@ async fn prepare(
   let upload = body["upload"].as_object().and_then(|upload| {
     Some(RecordedUpload {
       id: upload.get("id")?.as_str()?.to_string(),
-      chunk_size: upload.get("chunk_size")?.as_u64()?,
-      chunk_count: u32::try_from(upload.get("chunk_count")?.as_u64()?).ok()?,
+      part_size: upload.get("part_size")?.as_u64()?,
+      part_count: u32::try_from(upload.get("part_count")?.as_u64()?).ok()?,
+      generation: u32::try_from(upload.get("generation")?.as_u64()?).ok()?,
     })
   });
+  // §14.1: the server's call, fresh for this run; not part of the persisted
+  // record (§9.1), so a resumed job falls back to the suggested default.
+  let concurrency = body["upload"]["concurrency"]
+    .as_u64()
+    .map_or(DEFAULT_PART_CONCURRENCY, |n| n as usize);
   let slug = body["project_slug"]
     .as_str()
     .or(project.as_deref())
@@ -607,7 +625,7 @@ async fn prepare(
     .await;
     return Err(error);
   }
-  Ok(record)
+  Ok((record, concurrency))
 }
 
 /// A pack was promised but the platform opened no session for it.
@@ -658,11 +676,12 @@ pub async fn resume_campus_modpack_publish(
 ) -> USTBLResult<PublishStarted> {
   ensure_manager(&app)?;
   let record = JobRecord::load(&jobs_dir(), &job_id)?;
-  let uploader = build_ustbl_upload_client(&app, true);
+  let uploader = build_part_upload_client(&app);
   let group = PublishJob {
     app,
     uploader,
     record,
+    concurrency: DEFAULT_PART_CONCURRENCY,
   }
   .start()?;
   Ok(PublishStarted { group, job_id })
@@ -696,8 +715,9 @@ pub async fn discard_campus_modpack_publish(app: AppHandle, job_id: String) -> U
     if state.status().is_success() && state.json::<Value>().await?["status"] == "published" {
       PublishJob {
         app: app.clone(),
-        uploader: build_ustbl_upload_client(&app, true),
+        uploader: build_part_upload_client(&app),
         record,
+        concurrency: DEFAULT_PART_CONCURRENCY,
       }
       .monitor_in_background();
       return Ok(());
