@@ -10,9 +10,12 @@ use super::manifest::PackObject;
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::modpack::baseline::hash_file;
 use sha1::{Digest, Sha1};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
+use std::time::SystemTime;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, DateTime, HasZipMetadata, ZipArchive, ZipWriter};
 
@@ -137,6 +140,45 @@ pub fn build_pack(objects: &[PackObject], dest: &Path) -> USTBLResult<BuiltPack>
 
   let (sha1, size) = hash_file(dest)?;
   Ok(BuiltPack { sha1, size })
+}
+
+/// Checks a pack against the rules `build_pack` guarantees and the server's
+/// verify step relies on (§5.2, §8.2): entries sit back to back in sorted,
+/// unique-name order with the central directory immediately after the last
+/// one and no trailing comment; no entry is encrypted, uses a data
+/// descriptor, or is compressed with anything but STORED/DEFLATE; each entry
+/// decompresses to the sha1 its name promises and the CRC32 the central
+/// directory records; data offsets follow from the local header length
+/// The packs this process has already run the self-check on, keyed by path.
+/// `ensure_pack` consults this before reading a pack back: a pack that was
+/// just built and verified here does not need the second read, while a pack
+/// resumed from disk after a restart (never marked) always gets it.
+static VERIFIED_PACKS: LazyLock<Mutex<HashMap<PathBuf, (u64, SystemTime)>>> =
+  LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Remember that this process verified the pack at `path` with this size and
+/// modification time.
+pub fn mark_verified(path: &Path, size: u64, modified: SystemTime) {
+  if let Ok(mut packs) = VERIFIED_PACKS.lock() {
+    packs.insert(path.to_path_buf(), (size, modified));
+  }
+}
+
+/// Whether the file at `path` is still exactly what this process verified:
+/// same size, same modification time. A missing entry (a pack from an
+/// earlier run) or any change answers no.
+pub fn is_verified(path: &Path) -> bool {
+  let Ok(meta) = std::fs::metadata(path) else {
+    return false;
+  };
+  let Ok(modified) = meta.modified() else {
+    return false;
+  };
+  VERIFIED_PACKS
+    .lock()
+    .ok()
+    .and_then(|packs| packs.get(path).copied())
+    .is_some_and(|marked| marked == (meta.len(), modified))
 }
 
 /// Checks a pack against the rules `build_pack` guarantees and the server's
@@ -534,6 +576,44 @@ mod tests {
     let objects = vec![object(&root, "a", b"before", false)];
     fs::write(&objects[0].path, b"after").unwrap();
     assert!(build_pack(&objects, &root.join("p.zip")).is_err());
+    let _ = fs::remove_dir_all(root);
+  }
+
+  /// Fresh publish: the pack was just built and verified in this process, so
+  /// `ensure_pack` may skip the second read-back.
+  #[test]
+  fn a_pack_marked_verified_stays_verified_while_its_stat_holds() {
+    let root = dir();
+    let dest = root.join("pack.zip");
+    fs::write(&dest, b"pack-bytes").unwrap();
+    let meta = fs::metadata(&dest).unwrap();
+    mark_verified(&dest, meta.len(), meta.modified().unwrap());
+    assert!(is_verified(&dest));
+    let _ = fs::remove_dir_all(root);
+  }
+
+  /// Resume: a pack from an earlier run is not in this process's registry and
+  /// gets the full self-check, as does one whose bytes moved since the mark.
+  #[test]
+  fn an_unmarked_or_moved_pack_is_verified_again() {
+    let root = dir();
+    // Never marked: a pack resumed from disk after a restart.
+    assert!(!is_verified(&root.join("resumed.zip")));
+
+    let dest = root.join("pack.zip");
+    fs::write(&dest, b"pack-bytes").unwrap();
+    let meta = fs::metadata(&dest).unwrap();
+    mark_verified(&dest, meta.len(), meta.modified().unwrap());
+    assert!(is_verified(&dest));
+
+    // Same length, new write: the modification time drops the mark.
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    fs::write(&dest, b"PACK-BYTES").unwrap();
+    assert!(!is_verified(&dest));
+
+    // A different size drops it too.
+    fs::write(&dest, b"longer pack-bytes").unwrap();
+    assert!(!is_verified(&dest));
     let _ = fs::remove_dir_all(root);
   }
 }

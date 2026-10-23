@@ -3,7 +3,7 @@
 use super::components::plan_components;
 use super::job::{is_running, PublishJob};
 use super::manifest::{plan_files, LocalFile};
-use super::pack::{build_pack, verify_pack};
+use super::pack::{build_pack, mark_verified, verify_pack};
 use super::record::{
   jobs_dir, paths, JobRecord, Phase, RecordedFile, RecordedObject, RecordedPack, RecordedUpload,
   RECORD_SCHEMA,
@@ -570,6 +570,13 @@ async fn prepare(
     tokio::task::spawn_blocking(move || verify_pack(&check_path, &check_sha1))
       .await
       .map_err(|e| USTBLError(e.to_string()))??;
+    // This process just verified these bytes; the upload's ensure_pack can
+    // skip reading the pack back while the file is untouched.
+    if let Ok(meta) = tokio::fs::metadata(&job_paths.pack).await {
+      if let Ok(modified) = meta.modified() {
+        mark_verified(&job_paths.pack, meta.len(), modified);
+      }
+    }
     report(app, instance_id, Stage::Packing, 1, 1);
     Some(RecordedPack {
       sha1: built.sha1,

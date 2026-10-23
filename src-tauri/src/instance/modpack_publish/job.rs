@@ -9,7 +9,7 @@ use super::commands::{
   adopt_published, authed_json, failure, failure_code, failure_detail, instance_of, PublishOutcome,
 };
 use super::manifest::{LocalFile, PackObject};
-use super::pack::{build_pack, verify_pack};
+use super::pack::{build_pack, is_verified, mark_verified, verify_pack};
 use super::record::{jobs_dir, paths, JobRecord, Phase, RecordedUpload};
 use super::transfer::{report, SentBytes};
 use crate::error::{USTBLError, USTBLResult};
@@ -438,7 +438,9 @@ impl PublishJob {
         // frontend; a recorded one is left exactly as the platform stage
         // saved it (§3.2.2: a lost watch stays `Processing`).
         if let Some(message) = record_failure(&mut self.record, failure) {
-          let _ = self.record.save(&dir);
+          if let Err(error) = self.record.save(&dir) {
+            log::warn!("Modpack publish {} could not save its record: {error:?}", self.record.id);
+          }
           emit_finished(&app, &tasks.group, &self.record, None, Some(message));
         }
       }
@@ -619,7 +621,9 @@ impl PublishJob {
             tasks.platform.write().unwrap().mark_failed(message.clone());
             self.record.phase = Phase::Processing;
             self.record.error = Some(message.clone());
-            let _ = self.record.save(&jobs_dir());
+            if let Err(error) = self.record.save(&jobs_dir()) {
+              log::warn!("Modpack publish {} could not save its record: {error:?}", self.record.id);
+            }
             return Err(ExecuteFailure::Recorded);
           }
           sleep(POLL).await;
@@ -629,7 +633,9 @@ impl PublishJob {
           tasks.platform.write().unwrap().mark_failed(error.0.clone());
           self.record.phase = Phase::Failed;
           self.record.error = Some(error.0.clone());
-          let _ = self.record.save(&jobs_dir());
+          if let Err(error) = self.record.save(&jobs_dir()) {
+            log::warn!("Modpack publish {} could not save its record: {error:?}", self.record.id);
+          }
           emit_finished(&self.app, &tasks.group, &self.record, None, Some(error.0.clone()));
           return Err(ExecuteFailure::Recorded);
         }
@@ -654,7 +660,9 @@ impl PublishJob {
         tasks.platform.write().unwrap().mark_failed(message.clone());
         self.record.phase = Phase::Failed;
         self.record.error = Some(message.clone());
-        let _ = self.record.save(&jobs_dir());
+        if let Err(error) = self.record.save(&jobs_dir()) {
+          log::warn!("Modpack publish {} could not save its record: {error:?}", self.record.id);
+        }
         emit_finished(&self.app, &tasks.group, &self.record, None, Some(message.clone()));
         return Err(ExecuteFailure::Recorded);
       }
@@ -673,7 +681,9 @@ impl PublishJob {
         tasks.platform.write().unwrap().mark_failed(message.clone());
         self.record.phase = Phase::Failed;
         self.record.error = Some(message.clone());
-        let _ = self.record.save(&jobs_dir());
+        if let Err(error) = self.record.save(&jobs_dir()) {
+          log::warn!("Modpack publish {} could not save its record: {error:?}", self.record.id);
+        }
         emit_finished(&self.app, &tasks.group, &self.record, None, Some(message.clone()));
         return Err(ExecuteFailure::Recorded);
       }
@@ -779,7 +789,9 @@ impl PublishJob {
   /// passes the same self-check the upload itself relies on (§13.2): on a
   /// rebuild, because the delta pack never touched disk before; when it is
   /// already there, because a previous run may have been interrupted mid
-  /// write.
+  /// write. A pack this process just built and verified skips the read-back
+  /// (its bytes are known); one resumed from disk after a restart always gets
+  /// the full check.
   async fn ensure_pack(&self) -> USTBLResult<std::path::PathBuf> {
     let pack = self
       .record
@@ -803,10 +815,18 @@ impl PublishJob {
         ));
       }
     }
+    if is_verified(&path) {
+      return Ok(path);
+    }
     let (check_path, check_sha1) = (path.clone(), pack.sha1.clone());
     tokio::task::spawn_blocking(move || verify_pack(&check_path, &check_sha1))
       .await
       .map_err(|e| USTBLError(e.to_string()))??;
+    if let Ok(meta) = tokio::fs::metadata(&path).await {
+      if let Ok(modified) = meta.modified() {
+        mark_verified(&path, meta.len(), modified);
+      }
+    }
     Ok(path)
   }
 
