@@ -14,9 +14,20 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
 use zip::write::SimpleFileOptions;
-use zip::{CompressionMethod, DateTime, ZipWriter};
+use zip::{CompressionMethod, DateTime, ZipArchive, ZipWriter};
 
 const COPY_BUFFER: usize = 256 * 1024;
+
+/// Local header length `build_pack` writes for every entry: 30 fixed bytes +
+/// the entry name + the ZIP64 extended field `large_file(true)` adds. Entry
+/// names are `objects/<sha1 of the content>`, so every entry has exactly this
+/// length regardless of content (§5.2). Measured against this crate's actual
+/// `zip` version; cross-check against vUSTB's verify constant once it lands.
+const LOCAL_HEADER_FIXED_LEN: u64 = 30;
+const ZIP64_EXTRA_FIXED_LEN: u64 = 20;
+fn local_header_len(name: &str) -> u64 {
+  LOCAL_HEADER_FIXED_LEN + name.len() as u64 + ZIP64_EXTRA_FIXED_LEN
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuiltPack {
@@ -69,10 +80,67 @@ pub fn build_pack(objects: &[PackObject], dest: &Path) -> USTBLResult<BuiltPack>
   Ok(BuiltPack { sha1, size })
 }
 
+/// Checks a pack against the rules `build_pack` guarantees and the server's
+/// verify step relies on (§5.2, §8.2): each entry decompresses to the sha1 its
+/// name promises and the CRC32 the central directory records; data offsets
+/// follow from the local header length alone; and the whole file's sha1
+/// matches `expected`. Used before the first upload and whenever the pack is
+/// rebuilt during resume.
+pub fn verify_pack(path: &Path, expected_sha1: &str) -> USTBLResult<()> {
+  let bad = || USTBLError("本地包的内容校验未通过，无法继续，请放弃这个任务后重新发布".into());
+
+  let (sha1, _) = hash_file(path)?;
+  if sha1 != expected_sha1 {
+    return Err(bad());
+  }
+
+  let mut zip = ZipArchive::new(File::open(path)?)?;
+  let mut expected_header_start = 0u64;
+  for i in 0..zip.len() {
+    let mut entry = zip.by_index(i)?;
+    let name = entry.name().to_string();
+    let object_sha1 = name
+      .strip_prefix("objects/")
+      .filter(|sha1| sha1.len() == 40)
+      .ok_or_else(bad)?;
+
+    if entry.header_start() != expected_header_start {
+      return Err(bad());
+    }
+    if entry.data_start() != entry.header_start() + local_header_len(&name) {
+      return Err(bad());
+    }
+
+    // `zip` checks the CRC32 itself (via `Crc32Reader`) as the entry is read
+    // to the end; an I/O error here means the entry's CRC32 did not match the
+    // central directory's record.
+    let mut hasher = Sha1::new();
+    let mut buffer = vec![0u8; COPY_BUFFER];
+    loop {
+      let read = entry.read(&mut buffer).map_err(|_| bad())?;
+      if read == 0 {
+        break;
+      }
+      hasher.update(&buffer[..read]);
+    }
+    if hex::encode(hasher.finalize()) != object_sha1 {
+      return Err(bad());
+    }
+
+    expected_header_start = entry.data_start() + entry.compressed_size();
+  }
+  // The central directory starts right where the last entry's data ends.
+  if !zip.is_empty() && zip.central_directory_start() != expected_header_start {
+    return Err(bad());
+  }
+  Ok(())
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
   use std::fs;
+  use std::io::Seek;
   use std::path::PathBuf;
 
   fn dir() -> PathBuf {
@@ -123,6 +191,85 @@ mod tests {
       entry.read_to_end(&mut content).unwrap();
       assert_eq!(content, fs::read(&object.path).unwrap());
     }
+    let _ = fs::remove_dir_all(root);
+  }
+
+  /// §5.2: the local header length must be computable from the entry name
+  /// alone, so the server's verify step (and our own self-check) can derive
+  /// every data offset from the central directory without reading local
+  /// headers. Record this measured length in the delivery report for
+  /// cross-check against vUSTB's own constant once it lands.
+  #[test]
+  fn the_local_header_length_matches_the_ss2_formula() {
+    let root = dir();
+    let objects = vec![
+      object(&root, "a", b"alpha", false),
+      object(&root, "b", &b"beta".repeat(10_000), true),
+    ];
+    let dest = root.join("pack.zip");
+    build_pack(&objects, &dest).unwrap();
+
+    let mut zip = zip::ZipArchive::new(File::open(&dest).unwrap()).unwrap();
+    for object in &objects {
+      let name = format!("objects/{}", object.sha1);
+      let entry = zip.by_name(&name).unwrap();
+      let measured = entry.data_start() - entry.header_start();
+      assert_eq!(
+        measured,
+        local_header_len(&name),
+        "measured local header length for {name} was {measured} bytes; \
+         update LOCAL_HEADER_FIXED_LEN/ZIP64_EXTRA_FIXED_LEN if this changes"
+      );
+    }
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn verify_pack_accepts_a_pack_build_pack_produced() {
+    let root = dir();
+    let objects = vec![
+      object(&root, "a", b"alpha alpha", false),
+      object(&root, "b", &b"beta".repeat(1000), true),
+    ];
+    let dest = root.join("pack.zip");
+    let built = build_pack(&objects, &dest).unwrap();
+    verify_pack(&dest, &built.sha1).unwrap();
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn verify_pack_rejects_a_pack_whose_whole_sha1_does_not_match() {
+    let root = dir();
+    let objects = vec![object(&root, "a", b"alpha", false)];
+    let dest = root.join("pack.zip");
+    build_pack(&objects, &dest).unwrap();
+    assert!(verify_pack(&dest, &"0".repeat(40)).is_err());
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn verify_pack_rejects_an_entry_whose_content_was_tampered_with_but_still_decompresses() {
+    let root = dir();
+    let objects = vec![
+      object(&root, "a", b"alpha alpha alpha alpha", false),
+      object(&root, "b", b"beta beta beta beta", false),
+    ];
+    let dest = root.join("pack.zip");
+    let built = build_pack(&objects, &dest).unwrap();
+
+    // Flip a byte inside the first (stored or deflated) entry's compressed
+    // data without touching lengths, so the file still parses as a zip but
+    // an entry's content (and so its CRC32/sha1) no longer matches.
+    let mut file = fs::OpenOptions::new().write(true).open(&dest).unwrap();
+    let mut zip = zip::ZipArchive::new(File::open(&dest).unwrap()).unwrap();
+    let entry = zip.by_index(0).unwrap();
+    let data_start = entry.data_start();
+    drop(entry);
+    drop(zip);
+    file.seek(std::io::SeekFrom::Start(data_start)).unwrap();
+    file.write_all(&[0xFF]).unwrap();
+
+    assert!(verify_pack(&dest, &built.sha1).is_err());
     let _ = fs::remove_dir_all(root);
   }
 
