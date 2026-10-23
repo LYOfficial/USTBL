@@ -71,6 +71,13 @@ pub(super) fn is_running(job_id: &str) -> bool {
   ACTIVE.lock().unwrap().iter().any(|id| id == job_id)
 }
 
+pub(super) fn ensure_not_running(job_id: &str) -> USTBLResult<()> {
+  if is_running(job_id) {
+    return Err(USTBLError("任务正在进行，请先在任务列表中取消".into()));
+  }
+  Ok(())
+}
+
 /// After a restart, a record the platform is still processing gets its task
 /// card back (§3.2.2): the card starts right at the platform stage instead
 /// of the publish being watched invisibly in the background.
@@ -1679,6 +1686,14 @@ mod tests {
     assert!(ActiveToken::take("job-x").is_none());
     drop(token);
     assert!(!is_running("job-x"));
+  }
+
+  #[test]
+  fn discard_gate_rejects_an_active_job() {
+    let token = ActiveToken::take("job-discard-active").unwrap();
+    assert!(ensure_not_running("job-discard-active").is_err());
+    drop(token);
+    assert!(ensure_not_running("job-discard-active").is_ok());
   }
 
   #[test]

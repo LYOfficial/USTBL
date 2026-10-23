@@ -2,7 +2,7 @@
 
 use super::cancel::{apply_cancel, cancel_remote, CancelOutcome};
 use super::components::plan_components;
-use super::job::{is_running, start_monitor, CancellingToken, PublishJob};
+use super::job::{ensure_not_running, is_running, start_monitor, CancellingToken, PublishJob};
 use super::manifest::{partition_publishable_paths, plan_files, LocalFile};
 use super::pack::{build_pack, mark_verified, verify_pack};
 use super::record::{
@@ -835,6 +835,7 @@ pub async fn resume_campus_modpack_publish(
 #[tauri::command]
 pub async fn discard_campus_modpack_publish(app: AppHandle, job_id: String) -> USTBLResult<()> {
   ensure_manager(&app)?;
+  ensure_not_running(&job_id)?;
   // Held from before the remote request until the action — and the watch
   // it may start — is fully done: a second discard, a resume, or the
   // guard's own cleanup can never slip in while this one is on the wire
