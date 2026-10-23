@@ -124,9 +124,35 @@ struct State {
 }
 
 /// One file a batch fetch is asked to produce.
+#[derive(Clone)]
 pub struct PackFetch {
   pub sha1: String,
   pub dest: PathBuf,
+}
+
+/// One file inside a planned group, with its pack position resolved.
+#[derive(Clone)]
+pub struct PlannedFetch {
+  pub entry: EntryLocation,
+  pub sha1: String,
+  pub dest: PathBuf,
+}
+
+/// One unit of fetch work: the entries a single merged Range request can
+/// cover, or one entry on its own. Groups are independent and can be fetched
+/// concurrently.
+#[derive(Clone)]
+pub struct FetchGroup {
+  pub entries: Vec<PlannedFetch>,
+  /// The signature generation at planning time, so an expired merged read
+  /// relocates only when nobody else already did.
+  pub generation: u64,
+}
+
+impl FetchGroup {
+  pub fn file_count(&self) -> usize {
+    self.entries.len()
+  }
 }
 
 /// Counters behind the info line logged at the end of an install or update.
@@ -267,36 +293,34 @@ impl PackSession {
     Ok(())
   }
 
-  /// Put every file of `batch` in place. Entries that sit close together in
-  /// the same pack are read with one Range request; anything else is read on
-  /// its own. A merged read is retried like a single read when the signature
-  /// runs out; if it still fails the group falls back to reading each file
-  /// by itself so one bad entry cannot drag the rest down.
-  pub async fn fetch_batch(&self, batch: &[PackFetch]) -> USTBLResult<()> {
-    if batch.len() == 1 {
-      return self.fetch(&batch[0].sha1, &batch[0].dest).await;
-    }
-    let (located, generation) = {
-      let state = self.state.lock().await;
-      match &state.located {
-        None => return Err(InstanceError::ModpackUpdateRemoteInvalid.into()),
-        Some(located) => (located.clone(), state.generation),
-      }
-    };
-    let mut items: Vec<(EntryLocation, &PackFetch)> = Vec::with_capacity(batch.len());
+  /// Split `batch` into the groups one merged Range request can cover: same
+  /// pack, neighbours at most MERGE_GAP apart, span at most MERGE_SPAN. A
+  /// single file is a group of its own. Either threshold being 0 disables
+  /// merging, so every entry comes back as its own group. Groups are returned
+  /// in pack offset order and are independent of each other: they can be
+  /// fetched concurrently, each with the signature `generation` captured
+  /// here.
+  pub fn plan_groups(
+    &self,
+    located: &Located,
+    generation: u64,
+    batch: &[PackFetch],
+  ) -> USTBLResult<Vec<FetchGroup>> {
+    let mut items: Vec<(EntryLocation, PackFetch)> = Vec::with_capacity(batch.len());
     for item in batch {
       let entry = located
         .entries
         .get(&item.sha1)
         .copied()
         .ok_or(InstanceError::ModpackUpdateRemoteInvalid)?;
-      items.push((entry, item));
+      items.push((entry, PackFetch {
+        sha1: item.sha1.clone(),
+        dest: item.dest.clone(),
+      }));
     }
     items.sort_by_key(|(entry, _)| (entry.pack, entry.data_offset));
 
-    // Split into merged reads: one pack at a time, a gap of more than
-    // MERGE_GAP or a span of more than MERGE_SPAN starts a new group. Either
-    // threshold being 0 disables merging, reading every entry on its own.
+    let mut groups: Vec<FetchGroup> = Vec::new();
     let mut from = 0;
     while from < items.len() {
       let mut to = from + 1;
@@ -311,25 +335,52 @@ impl PackSession {
         }
         to += 1;
       }
-      self.fetch_group(&items[from..to], generation).await?;
+      let entries: Vec<PlannedFetch> = items[from..to]
+        .iter()
+        .map(|(entry, item)| PlannedFetch {
+          entry: *entry,
+          sha1: item.sha1.clone(),
+          dest: item.dest.clone(),
+        })
+        .collect();
+      groups.push(FetchGroup {
+        entries,
+        generation,
+      });
       from = to;
+    }
+    Ok(groups)
+  }
+
+  /// The current located snapshot and its generation, for `plan_groups`.
+  pub async fn located(&self) -> USTBLResult<(Arc<Located>, u64)> {
+    let state = self.state.lock().await;
+    match &state.located {
+      None => Err(InstanceError::ModpackUpdateRemoteInvalid.into()),
+      Some(located) => Ok((located.clone(), state.generation)),
+    }
+  }
+
+  /// Put every file of `batch` in place, one planned group after another.
+  /// Callers that want concurrency plan the groups themselves and fetch them
+  /// concurrently.
+  pub async fn fetch_batch(&self, batch: &[PackFetch]) -> USTBLResult<()> {
+    let (located, generation) = self.located().await?;
+    for group in self.plan_groups(&located, generation, batch)? {
+      self.fetch_group(&group).await?;
     }
     Ok(())
   }
 
-  /// Read one group of entries. A group of one goes through the single-file
-  /// path; anything larger is one merged Range request.
-  async fn fetch_group(
-    &self,
-    group: &[(EntryLocation, &PackFetch)],
-    generation: u64,
-  ) -> USTBLResult<()> {
-    if group.len() == 1 {
-      let item = group[0].1;
+  /// Fetch one group planned by `plan_groups`. A group of one goes through
+  /// the single-file path; anything larger is one merged Range request.
+  pub async fn fetch_group(&self, group: &FetchGroup) -> USTBLResult<()> {
+    if group.entries.len() == 1 {
+      let item = &group.entries[0];
       return self.fetch(&item.sha1, &item.dest).await;
     }
     let mut relocations = 0;
-    let mut generation = generation;
+    let mut generation = group.generation;
     loop {
       let located = {
         let state = self.state.lock().await;
@@ -341,25 +392,30 @@ impl PackSession {
           Some(located) => located.clone(),
         }
       };
-      let start = group[0].0.data_offset;
-      let span = group[group.len() - 1].0.data_offset + group[group.len() - 1].0.compressed_size
-        - start;
+      let start = group.entries[0].entry.data_offset;
+      let last = group.entries[group.entries.len() - 1].entry;
+      let span = last.data_offset + last.compressed_size - start;
       let pack = located
         .packs
         .iter()
-        .find(|pack| pack.id == group[0].0.pack)
+        .find(|pack| pack.id == group.entries[0].entry.pack)
         .ok_or(InstanceError::ModpackUpdateRemoteInvalid)?;
       // The merged read lands next to the first entry, under a name the
       // per-entry pieces cannot collide with (`raw_path` of each dest).
-      let mut name = group[0].1.dest.file_name().unwrap_or_default().to_os_string();
+      let mut name = group.entries[0]
+        .dest
+        .file_name()
+        .unwrap_or_default()
+        .to_os_string();
       name.push(".pack-merged");
-      let raw = group[0].1.dest.with_file_name(name);
+      let raw = group.entries[0].dest.with_file_name(name);
       match self.transport.read_range(pack, start, span, &raw).await {
         Ok(()) => {
-          self.stats.record(group.len(), span);
+          self.stats.record(group.entries.len(), span);
           let pieces: Vec<(EntryLocation, PathBuf)> = group
+            .entries
             .iter()
-            .map(|(entry, item)| (*entry, item.dest.clone()))
+            .map(|planned| (planned.entry, planned.dest.clone()))
             .collect();
           let decoded = tokio::task::spawn_blocking(move || {
             let outcome: USTBLResult<()> = pieces
@@ -372,7 +428,7 @@ impl PackSession {
           .map_err(|e| USTBLError(e.to_string()))?;
           match decoded {
             Ok(()) => return Ok(()),
-            Err(error) => return self.fall_back(group, error).await,
+            Err(error) => return self.fall_back(&group.entries, error).await,
           }
         }
         Err(TransportError::Expired) if relocations < RELOCATIONS => {
@@ -381,24 +437,20 @@ impl PackSession {
         }
         Err(error) => {
           let _ = fs::remove_file(&raw);
-          return self.fall_back(group, error.into()).await;
+          return self.fall_back(&group.entries, error.into()).await;
         }
       }
     }
   }
 
   /// A merged read failed; read every file of the group on its own instead.
-  async fn fall_back(
-    &self,
-    group: &[(EntryLocation, &PackFetch)],
-    error: USTBLError,
-  ) -> USTBLResult<()> {
+  async fn fall_back(&self, entries: &[PlannedFetch], error: USTBLError) -> USTBLResult<()> {
     log::warn!(
       "merged read of {} pack entries failed ({error:?}); reading them one by one",
-      group.len()
+      entries.len()
     );
-    for (_, item) in group {
-      self.fetch(&item.sha1, &item.dest).await?;
+    for planned in entries {
+      self.fetch(&planned.sha1, &planned.dest).await?;
     }
     Ok(())
   }

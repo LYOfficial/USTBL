@@ -7,7 +7,7 @@
 //! half way, the journal is enough to put every file back.
 
 use super::diff::{Operation, DISABLED_SUFFIX};
-use super::packs::{PackFetch, PackSession};
+use super::packs::{FetchGroup, PackFetch, PackSession};
 use super::remote::{ComponentPack, FileSource, RemoteFile, RemoteModpack, UPDATE_DIR};
 use crate::error::USTBLResult;
 use crate::instance::helpers::modpack::base_store;
@@ -456,58 +456,41 @@ pub async fn materialize_remote_file(
   stage_file(env, dest, file).await
 }
 
-/// One unit of fetch work: a single file from a download or an archive, or a
-/// batch of files read from the same pack session, where neighbours can share
-/// one Range request.
+/// One unit of fetch work: a single file from a download or an archive, or
+/// one group of pack entries a single merged Range request can cover. A
+/// group of one file is read on its own.
 enum FetchUnit<'a> {
   Single(&'a RemoteFile, PathBuf),
-  Batch(Arc<PackSession>, Vec<PackFetch>),
+  Group(Arc<PackSession>, FetchGroup),
 }
 
 impl FetchUnit<'_> {
   fn file_count(&self) -> usize {
     match self {
       FetchUnit::Single(..) => 1,
-      FetchUnit::Batch(_, batch) => batch.len(),
+      FetchUnit::Group(_, group) => group.file_count(),
     }
   }
 }
 
-/// Group `to_fetch` into fetch units. Runs of files from the same pack
-/// session become one batch each; everything else stays a single file.
-fn fetch_units<'a>(to_fetch: &[(&'a RemoteFile, PathBuf)]) -> Vec<FetchUnit<'a>> {
+/// Group `to_fetch` into fetch units. Every pack file goes to its session's
+/// batch (wherever it sits in `to_fetch`), which the session splits into
+/// merged groups by pack offset; everything else is a single file. The
+/// groups are independent of each other and can run concurrently.
+fn fetch_units<'a>(
+  to_fetch: &[(&'a RemoteFile, PathBuf)],
+  planned: Vec<(Arc<PackSession>, Vec<FetchGroup>)>,
+) -> Vec<FetchUnit<'a>> {
   let mut units: Vec<FetchUnit<'a>> = Vec::new();
-  let mut batch: Option<(Arc<PackSession>, Vec<PackFetch>)> = None;
   for (file, dest) in to_fetch {
-    match &file.source {
-      FileSource::Pack(session) => match &mut batch {
-        Some((known, pending)) if Arc::ptr_eq(known, session) => pending.push(PackFetch {
-          sha1: file.key.sha1.clone(),
-          dest: dest.clone(),
-        }),
-        _ => {
-          if let Some((session, pending)) = batch.take() {
-            units.push(FetchUnit::Batch(session, pending));
-          }
-          batch = Some((
-            session.clone(),
-            vec![PackFetch {
-              sha1: file.key.sha1.clone(),
-              dest: dest.clone(),
-            }],
-          ));
-        }
-      },
-      _ => {
-        if let Some((session, pending)) = batch.take() {
-          units.push(FetchUnit::Batch(session, pending));
-        }
-        units.push(FetchUnit::Single(file, dest.clone()));
-      }
+    if !matches!(file.source, FileSource::Pack(_)) {
+      units.push(FetchUnit::Single(file, dest.clone()));
     }
   }
-  if let Some((session, pending)) = batch.take() {
-    units.push(FetchUnit::Batch(session, pending));
+  for (session, groups) in planned {
+    for group in groups {
+      units.push(FetchUnit::Group(session.clone(), group));
+    }
   }
   units
 }
@@ -627,11 +610,42 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
     );
   }
   let wanted: Vec<&RemoteFile> = to_fetch.iter().map(|(file, _)| *file).collect();
-  let sessions: Vec<Arc<PackSession>> = pack_sessions(&wanted)
-    .into_iter()
-    .map(|(session, _)| session)
-    .collect();
   prepare_packs(&wanted).await?;
+  // Plan every session's merged groups up front: all of its files, wherever
+  // they sit in `to_fetch`, are grouped by pack offset. Each group becomes
+  // one unit of fetch work, so the groups run concurrently.
+  let mut planned: Vec<(Arc<PackSession>, Vec<FetchGroup>)> = Vec::new();
+  let mut batches: Vec<(Arc<PackSession>, Vec<PackFetch>)> = Vec::new();
+  for (file, dest) in &to_fetch {
+    let FileSource::Pack(session) = &file.source else {
+      continue;
+    };
+    match batches
+      .iter_mut()
+      .find(|(known, _)| Arc::ptr_eq(known, session))
+    {
+      Some((_, batch)) => batch.push(PackFetch {
+        sha1: file.key.sha1.clone(),
+        dest: dest.clone(),
+      }),
+      None => batches.push((
+        session.clone(),
+        vec![PackFetch {
+          sha1: file.key.sha1.clone(),
+          dest: dest.clone(),
+        }],
+      )),
+    }
+  }
+  for (session, batch) in batches {
+    let (located, generation) = session.located().await?;
+    let groups = session.plan_groups(&located, generation, &batch)?;
+    planned.push((session, groups));
+  }
+  let sessions: Vec<Arc<PackSession>> = planned
+    .iter()
+    .map(|(session, _)| session.clone())
+    .collect();
   let total = to_fetch.len();
   env.report(Progress {
     stage: Stage::Fetching,
@@ -642,7 +656,7 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
   let fetching = Instant::now();
   // Driven by hand rather than with `buffer_unordered`: the combinator's
   // closure makes the future fail the `Send` check of the command handler.
-  let mut pending = fetch_units(&to_fetch).into_iter();
+  let mut pending = fetch_units(&to_fetch, planned).into_iter();
   let mut running = FuturesUnordered::new();
   let fetching_result: USTBLResult<()> = loop {
     while running.len() < FETCH_CONCURRENCY {
@@ -653,7 +667,7 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
       running.push(async move {
         let result = match &unit {
           FetchUnit::Single(file, dest) => stage_file(env, dest.clone(), file).await,
-          FetchUnit::Batch(session, batch) => session.fetch_batch(batch).await,
+          FetchUnit::Group(session, group) => session.fetch_group(group).await,
         };
         result.map(|()| files)
       });
@@ -1398,21 +1412,30 @@ mod tests {
     }
   }
 
-  /// A platform whose pack holds `files` back to back, keyed by their real
-  /// sha1; range reads are counted.
+  /// A platform whose pack holds `files`, keyed by their real sha1. `gaps[i]`
+  /// inserts that many filler bytes between entry i and entry i+1, so the
+  /// groups can be steered around the merge thresholds. Range reads are
+  /// counted, and the peak number of them in flight at once is tracked; each
+  /// read sleeps briefly so the peak reflects real overlap.
   struct MultiFilePack {
     pack: Vec<u8>,
     entries: BTreeMap<String, crate::instance::modpack_update::packs::EntryLocation>,
     ranges: Mutex<Vec<(u64, u64)>>,
+    flying: std::sync::atomic::AtomicUsize,
+    peak: std::sync::atomic::AtomicUsize,
   }
 
   impl MultiFilePack {
     fn new(files: &[(&str, &[u8])]) -> Self {
+      Self::spaced(files, &[])
+    }
+
+    fn spaced(files: &[(&str, &[u8])], gaps: &[usize]) -> Self {
       use crate::instance::modpack_update::packs::{EntryLocation, DEFLATED};
       use std::io::Write;
       let mut pack = Vec::new();
       let mut entries = BTreeMap::new();
-      for (sha1, data) in files {
+      for (index, (sha1, data)) in files.iter().enumerate() {
         let mut encoder =
           flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
         encoder.write_all(data).unwrap();
@@ -1431,11 +1454,16 @@ mod tests {
           },
         );
         pack.extend(compressed);
+        if let Some(gap) = gaps.get(index) {
+          pack.extend(vec![0u8; *gap]);
+        }
       }
       Self {
         pack,
         entries,
         ranges: Mutex::default(),
+        flying: std::sync::atomic::AtomicUsize::new(0),
+        peak: std::sync::atomic::AtomicUsize::new(0),
       }
     }
   }
@@ -1471,12 +1499,42 @@ mod tests {
       length: u64,
       dest: &Path,
     ) -> Result<(), crate::instance::modpack_update::packs::TransportError> {
+      let flying = self.flying.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+      self
+        .peak
+        .fetch_max(flying, std::sync::atomic::Ordering::SeqCst);
       self.ranges.lock().unwrap().push((start, length));
+      // Give the other groups a chance to overlap with this read.
+      tokio::time::sleep(std::time::Duration::from_millis(20)).await;
       fs::create_dir_all(dest.parent().unwrap()).unwrap();
       let (start, length) = (start as usize, length as usize);
       fs::write(dest, &self.pack[start..start + length]).unwrap();
+      self.flying.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
       Ok(())
     }
+  }
+
+  /// Pack files for `contents` on `session`, keyed by their real sha1s, and
+  /// the matching RemoteFile list.
+  fn pack_remote_files(
+    contents: &[(&str, &[u8])],
+    session: &Arc<PackSession>,
+  ) -> Vec<RemoteFile> {
+    contents
+      .iter()
+      .map(|(path, data)| RemoteFile {
+        path: path.to_string(),
+        key: sha1_of(data),
+        source: FileSource::Pack(session.clone()),
+      })
+      .collect()
+  }
+
+  fn sha1s_of<'a>(contents: &[(&str, &'a [u8])]) -> Vec<(String, &'a [u8])> {
+    contents
+      .iter()
+      .map(|(_, data)| (hex::encode(Sha1::digest(data)), *data))
+      .collect()
   }
 
   #[tokio::test]
@@ -1491,25 +1549,15 @@ mod tests {
       ("mods/b.jar", b"beta"),
       ("mods/c.jar", b"gamma"),
     ];
-    let pack_files: Vec<(String, &[u8])> = contents
-      .iter()
-      .map(|(_, data)| (hex::encode(Sha1::digest(data)), *data))
-      .collect();
+    let sha1s = sha1s_of(&contents);
     let transport = Arc::new(MultiFilePack::new(
-      &pack_files
+      &sha1s
         .iter()
         .map(|(sha1, data)| (sha1.as_str(), *data))
         .collect::<Vec<(&str, &[u8])>>(),
     ));
     let session = PackSession::new(transport.clone(), 3);
-    let remote_files: Vec<RemoteFile> = contents
-      .iter()
-      .map(|(path, data)| RemoteFile {
-        path: path.to_string(),
-        key: sha1_of(data),
-        source: FileSource::Pack(session.clone()),
-      })
-      .collect();
+    let remote_files = pack_remote_files(&contents, &session);
     let operations = remote_files.iter().map(write_op).collect();
 
     apply(&env, request(&root, remote_files, operations, "0.15.0"))
@@ -1521,6 +1569,95 @@ mod tests {
     assert_eq!(root.read("mods/a.jar").as_deref(), Some("alpha"));
     assert_eq!(root.read("mods/b.jar").as_deref(), Some("beta"));
     assert_eq!(root.read("mods/c.jar").as_deref(), Some("gamma"));
+  }
+
+  #[tokio::test]
+  async fn pack_files_interrupted_by_another_source_still_merge() {
+    let root = setup();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    // The two pack files sit at the ends of the operation list, with a
+    // download between them: they are not neighbours in `to_fetch`, but they
+    // are neighbours in the pack.
+    let contents: [(&str, &[u8]); 2] = [("mods/a.jar", b"alpha"), ("mods/c.jar", b"gamma")];
+    let sha1s = sha1s_of(&contents);
+    let transport = Arc::new(MultiFilePack::new(
+      &sha1s
+        .iter()
+        .map(|(sha1, data)| (sha1.as_str(), *data))
+        .collect::<Vec<(&str, &[u8])>>(),
+    ));
+    let session = PackSession::new(transport.clone(), 3);
+    let pack_files = pack_remote_files(&contents, &session);
+    let download = url_file("mods/b.jar", "beta", &mut env);
+    let remote_files = vec![
+      pack_files[0].clone(),
+      download,
+      pack_files[1].clone(),
+    ];
+    let operations = remote_files.iter().map(write_op).collect();
+
+    apply(&env, request(&root, remote_files, operations, "0.15.0"))
+      .await
+      .unwrap();
+
+    // Both pack files are read with one merged request despite the download
+    // between them in the operation list.
+    assert_eq!(transport.ranges.lock().unwrap().len(), 1);
+    assert_eq!(root.read("mods/a.jar").as_deref(), Some("alpha"));
+    assert_eq!(root.read("mods/b.jar").as_deref(), Some("beta"));
+    assert_eq!(root.read("mods/c.jar").as_deref(), Some("gamma"));
+  }
+
+  #[tokio::test]
+  async fn distant_groups_are_fetched_concurrently() {
+    let root = setup();
+    let env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    // Six entries with a gap over MERGE_GAP between every two: six groups.
+    let contents: [(&str, &[u8]); 6] = [
+      ("mods/a.jar", b"alpha"),
+      ("mods/b.jar", b"beta"),
+      ("mods/c.jar", b"gamma"),
+      ("mods/d.jar", b"delta"),
+      ("mods/e.jar", b"epsilon"),
+      ("mods/f.jar", b"zeta"),
+    ];
+    let sha1s = sha1s_of(&contents);
+    let gap = crate::instance::modpack_update::packs::MERGE_GAP as usize + 1;
+    let transport = Arc::new(MultiFilePack::spaced(
+      &sha1s
+        .iter()
+        .map(|(sha1, data)| (sha1.as_str(), *data))
+        .collect::<Vec<(&str, &[u8])>>(),
+      &[gap, gap, gap, gap, gap],
+    ));
+    let session = PackSession::new(transport.clone(), 3);
+    let remote_files = pack_remote_files(&contents, &session);
+    let operations = remote_files.iter().map(write_op).collect();
+
+    apply(&env, request(&root, remote_files, operations, "0.15.0"))
+      .await
+      .unwrap();
+
+    let ranges = transport.ranges.lock().unwrap();
+    // No merging possible across the gaps: one read per entry.
+    assert_eq!(ranges.len(), 6);
+    // But the groups run side by side.
+    let peak = transport.peak.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(peak > 1, "expected concurrent groups, peak was {peak}");
+    assert!(peak <= FETCH_CONCURRENCY);
+    drop(ranges);
+    for (path, data) in contents {
+      assert_eq!(
+        root.read(path).as_deref(),
+        Some(std::str::from_utf8(data).unwrap())
+      );
+    }
   }
 
   #[tokio::test]
