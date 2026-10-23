@@ -25,6 +25,7 @@ use crate::instance::modpack_update::commands::store_instance;
 use crate::instance::modpack_update::diff::FileKey;
 use crate::instance::modpack_update::sources::{loader_slug, CAMPUS_API};
 use crate::utils::web::build_part_upload_client;
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -35,6 +36,8 @@ use tauri::{AppHandle, Emitter, Manager};
 
 /// Hashes sent per request when asking which the platform lacks.
 const MISSING_BATCH: usize = 5000;
+/// Hash a few files at once without making a large instance saturate the disk.
+const HASH_CONCURRENCY: usize = 4;
 /// Part concurrency used on resume, when the record (§9.1) carries none and
 /// there is no fresh `POST /versions` response to read it from (§14.1).
 pub(super) const DEFAULT_PART_CONCURRENCY: usize = 3;
@@ -294,18 +297,43 @@ pub async fn delete_campus_modpack_project(app: AppHandle, project: String) -> U
   Ok(())
 }
 
-fn hash_selection(root: &Path, selected: &[String]) -> USTBLResult<Vec<LocalFile>> {
-  selected
-    .iter()
-    .map(|path| {
-      safe_relative(path)?;
-      let (sha1, size) = hash_file(&root.join(path))?;
-      Ok(LocalFile {
-        path: path.clone(),
-        key: FileKey { sha1, size },
-      })
-    })
-    .collect()
+/// Keep the result in selection order, but report each file as soon as it finishes.
+async fn hash_selection<F>(
+  root: &Path,
+  selected: &[String],
+  mut on_file: F,
+) -> USTBLResult<Vec<LocalFile>>
+where
+  F: FnMut(usize),
+{
+  let mut pending =
+    futures::stream::iter(selected.iter().cloned().enumerate().map(|(index, path)| {
+      let root = root.to_path_buf();
+      async move {
+        let file = tokio::task::spawn_blocking(move || {
+          safe_relative(&path)?;
+          let (sha1, size) = hash_file(&root.join(&path))?;
+          Ok::<LocalFile, USTBLError>(LocalFile {
+            path,
+            key: FileKey { sha1, size },
+          })
+        })
+        .await
+        .map_err(|e| USTBLError(e.to_string()))??;
+        Ok::<(usize, LocalFile), USTBLError>((index, file))
+      }
+    }))
+    .buffer_unordered(HASH_CONCURRENCY);
+  let mut indexed = Vec::with_capacity(selected.len());
+  let mut completed = 0;
+  while let Some(result) = pending.next().await {
+    let (index, file) = result?;
+    indexed.push((index, file));
+    completed += 1;
+    on_file(completed);
+  }
+  indexed.sort_unstable_by_key(|(index, _)| *index);
+  Ok(indexed.into_iter().map(|(_, file)| file).collect())
 }
 
 /// Paths the line's current release already lists, so the publish dialog can
@@ -511,13 +539,13 @@ async fn prepare(
   // with `check_campus_modpack_publishable`, this guard is the backstop).
   let snapshot = load_required_snapshot(&root).await?;
 
-  report(app, instance_id, Stage::Hashing, 0, files.len());
-  let selected = files.clone();
-  let hash_root = root.clone();
-  let hashed = tokio::task::spawn_blocking(move || hash_selection(&hash_root, &selected))
-    .await
-    .map_err(|e| USTBLError(e.to_string()))??;
-  report(app, instance_id, Stage::Hashing, files.len(), files.len());
+  let total = files.len();
+  report(app, instance_id, Stage::Hashing, 0, total);
+  let hashed = hash_selection(&root, &files, |done| {
+    report(app, instance_id, Stage::Hashing, done, total);
+  })
+  .await?;
+  report(app, instance_id, Stage::Hashing, total, total);
   let mut plan = plan_files(hashed, &instance.name);
   if plan.files.is_empty() {
     return Err(USTBLError("没有可发布的文件".into()));
@@ -938,10 +966,8 @@ async fn try_adopt(
   let root = instance.version_path.clone();
   let expected: Vec<LocalFile> = files.to_vec();
   let paths: Vec<String> = expected.iter().map(|file| file.path.clone()).collect();
-  let rescanned = tokio::task::spawn_blocking(move || hash_selection(&root, &paths))
-    .await
-    .map_err(|e| USTBLError(e.to_string()))?;
-  if !rescanned.is_ok_and(|now| now == expected) {
+  let rescanned = hash_selection(&root, &paths, |_| {}).await?;
+  if rescanned != expected {
     return Ok(Adoption::LocalChanged);
   }
 
@@ -996,19 +1022,41 @@ mod tests {
     root
   }
 
-  #[test]
-  fn selection_is_hashed_and_cannot_escape_the_instance() {
+  #[tokio::test]
+  async fn selection_is_hashed_and_cannot_escape_the_instance() {
     let root = instance_dir(&[("config/a.toml", "hello")]);
 
-    let hashed = hash_selection(&root, &["config/a.toml".to_string()]).unwrap();
+    let hashed = hash_selection(&root, &["config/a.toml".to_string()], |_| {})
+      .await
+      .unwrap();
     assert_eq!(hashed[0].key.size, 5);
     assert_eq!(
       hashed[0].key.sha1,
       "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
     );
 
-    assert!(hash_selection(&root, &["../outside".to_string()]).is_err());
-    assert!(hash_selection(&root, &["missing.txt".to_string()]).is_err());
+    assert!(hash_selection(&root, &["../outside".to_string()], |_| {})
+      .await
+      .is_err());
+    assert!(hash_selection(&root, &["missing.txt".to_string()], |_| {})
+      .await
+      .is_err());
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn hashing_reports_progress_and_preserves_selection_order() {
+    let root = instance_dir(&[("config/a.toml", "a"), ("config/b.toml", "bb")]);
+    let selected = vec!["config/b.toml".to_string(), "config/a.toml".to_string()];
+    let mut progress = Vec::new();
+
+    let hashed = hash_selection(&root, &selected, |done| progress.push(done))
+      .await
+      .unwrap();
+
+    assert_eq!(progress, [1, 2]);
+    let paths: Vec<_> = hashed.into_iter().map(|file| file.path).collect();
+    assert_eq!(paths, selected);
     let _ = fs::remove_dir_all(root);
   }
 
