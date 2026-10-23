@@ -690,19 +690,24 @@ pub struct UnfinishedPublish {
   pub version_number: String,
   pub phase: Phase,
   pub error: Option<String>,
-  /// On the task list right now.
-  pub running: bool,
+  /// §3.2.3: whether "继续" may be offered; a terminal failure only gets
+  /// "放弃" (v3 §8.4).
+  pub resumable: bool,
   pub created_at: i64,
 }
 
-/// Local records for uploads and platform-side publishes that are still being
-/// monitored or need user attention.
+/// Local publish records that need the user's attention (§3.2.3): an
+/// interrupted upload, or a failed publish. A record with a task group on
+/// the list right now — including every one the platform is still
+/// processing — shows there instead and never appears here.
 #[tauri::command]
 pub fn list_campus_modpack_publish_jobs() -> Vec<UnfinishedPublish> {
   JobRecord::list(&jobs_dir())
     .into_iter()
+    .filter(|record| !is_running(&record.id))
+    .filter(|record| record.phase != Phase::Processing)
     .map(|record| UnfinishedPublish {
-      running: is_running(&record.id) || super::job::is_monitoring(&record.id),
+      resumable: record.resumable(),
       job_id: record.id,
       instance_id: record.instance_id,
       instance_name: record.instance_name,
@@ -763,6 +768,8 @@ pub async fn discard_campus_modpack_publish(app: AppHandle, job_id: String) -> U
     )
     .await?;
     if state.status().is_success() && state.json::<Value>().await?["status"] == "published" {
+      // Already out: the card comes back for the adoption, then the record
+      // is dropped by the platform stage itself.
       PublishJob {
         app: app.clone(),
         uploader: build_part_upload_client(&app),
@@ -770,7 +777,7 @@ pub async fn discard_campus_modpack_publish(app: AppHandle, job_id: String) -> U
         // Only platform processing is watched here, never a part upload.
         concurrency: None,
       }
-      .monitor_in_background();
+      .start()?;
       return Ok(());
     }
   }

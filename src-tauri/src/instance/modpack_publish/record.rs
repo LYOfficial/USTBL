@@ -184,6 +184,39 @@ impl JobRecord {
       let _ = fs::remove_dir_all(paths.work);
     }
   }
+
+  /// §3.2.3: whether the unfinished list may offer "继续" for this record.
+  /// `Processing` records show on the task list instead, never here.
+  pub fn resumable(&self) -> bool {
+    match self.phase {
+      Phase::Uploading => true,
+      Phase::Processing => false,
+      Phase::Failed => resumable_failure(self.error.as_deref()),
+    }
+  }
+}
+
+/// v3 §8.4: the platform's own messages mark a recoverable failure with
+/// "请重新提交"/"需要重新上传" and a terminal one with "请重新发布"; the
+/// launcher's own typed codes are terminal by name. Anything else (network
+/// trouble, the cloud drive acting up, an interrupted monitor) is treated
+/// as recoverable: resuming then decides for real, and a session that is in
+/// fact gone fails there as MODPACK_UPLOAD_SESSION_GONE, which is terminal.
+fn resumable_failure(error: Option<&str>) -> bool {
+  let Some(error) = error else { return true };
+  if error.contains("请重新提交") || error.contains("需要重新上传") {
+    return true;
+  }
+  if error.contains("重新发布") {
+    return false;
+  }
+  const TERMINAL: &[&str] = &[
+    "MODPACK_PUBLISH_STALE",
+    "MODPACK_UPLOAD_VERIFY_FAILED",
+    "MODPACK_UPLOAD_SESSION_GONE",
+    "MODPACK_UPLOAD_RESTARTED",
+  ];
+  !TERMINAL.iter().any(|code| error.contains(code))
 }
 
 #[cfg(test)]
@@ -291,5 +324,53 @@ mod tests {
     assert!(JobRecord::load(&dir, "old-shape").is_err());
     assert!(JobRecord::list(&dir).is_empty());
     let _ = fs::remove_dir_all(dir);
+  }
+
+  /// §3.2.3's action table: an interrupted upload resumes, a record the
+  /// platform is processing never shows here, and a failed one resumes
+  /// unless its failure is terminal (v3 §8.4).
+  #[test]
+  fn the_phase_and_the_error_decide_whether_a_record_resumes() {
+    let mut job = record("job", 1);
+
+    job.phase = Phase::Uploading;
+    assert!(job.resumable());
+
+    job.phase = Phase::Processing;
+    assert!(!job.resumable());
+
+    job.phase = Phase::Failed;
+    // Network trouble and cloud unavailability resume.
+    job.error = Some("error sending request for url (https://yunpan.ustb.edu.cn/)".into());
+    assert!(job.resumable());
+    job.error = Some("MODPACK_UPLOAD_CLOUD_UNAVAILABLE".into());
+    assert!(job.resumable());
+    // Platform-side recoverable failures (v3 §8.4): commit again / send the
+    // pack again, no need to publish from scratch.
+    job.error = Some("云盘故障，请重新提交".into());
+    assert!(job.resumable());
+    job.error = Some("处理中断，请重新提交".into());
+    assert!(job.resumable());
+    job.error = Some("云盘上传会话已失效，需要重新上传".into());
+    assert!(job.resumable());
+    // A monitor that lost touch stays recoverable; the next start resumes it.
+    job.error = Some("暂时无法确认平台处理进度，请稍后重新启动启动器继续".into());
+    assert!(job.resumable());
+
+    // Terminal failures: publish again from scratch.
+    job.error = Some("MODPACK_PUBLISH_STALE".into());
+    assert!(!job.resumable());
+    job.error = Some("MODPACK_UPLOAD_VERIFY_FAILED".into());
+    assert!(!job.resumable());
+    job.error = Some("MODPACK_UPLOAD_SESSION_GONE".into());
+    assert!(!job.resumable());
+    job.error = Some("MODPACK_UPLOAD_RESTARTED".into());
+    assert!(!job.resumable());
+    job.error = Some("平台上已找不到这个版本，请放弃这个任务后重新发布".into());
+    assert!(!job.resumable());
+    job.error = Some("实例中的文件在上次发布后发生了变化，无法继续，请放弃这个任务后重新发布".into());
+    assert!(!job.resumable());
+    job.error = Some("上传内容校验未通过，请重新发布".into());
+    assert!(!job.resumable());
   }
 }
