@@ -3,6 +3,7 @@ import {
   Box,
   HStack,
   Text,
+  Tooltip,
   VStack,
   useDisclosure,
 } from "@chakra-ui/react";
@@ -228,6 +229,9 @@ const CampusPlatformSection: React.FC<CampusPlatformSectionProps> = ({
       ].join(" · "),
     [t]
   );
+
+  /** The newest version's changelog; older platforms send none. */
+  const changelogOf = (line: CampusModpackLine) => line.changelog?.trim() ?? "";
 
   const handleSelect = (
     project: CampusModpackProject,
@@ -465,13 +469,53 @@ const CampusPlatformSection: React.FC<CampusPlatformSectionProps> = ({
             projects.map((project) => (
               <OptionItemGroup
                 key={project.id}
-                title={project.name}
-                description={project.summary || undefined}
-                headExtra={deleteButton(project)}
-                items={project.lines.map((line) => ({
-                  title: describeLine(line),
-                  children: installButton(project, line),
-                }))}
+                items={[
+                  <HStack
+                    key="head"
+                    spacing={2}
+                    justify="space-between"
+                    align="start"
+                    p={0.5}
+                  >
+                    <VStack spacing={0} align="stretch" flex={1} minW={0}>
+                      <Text fontSize="sm" fontWeight="bold" noOfLines={1}>
+                        {project.name}
+                      </Text>
+                      {project.summary && (
+                        <Text
+                          fontSize="xs"
+                          className="secondary-text"
+                          noOfLines={1}
+                        >
+                          {project.summary}
+                        </Text>
+                      )}
+                    </VStack>
+                    {deleteButton(project)}
+                  </HStack>,
+                  ...project.lines.map((line) => ({
+                    title: describeLine(line),
+                    description: changelogOf(line) && (
+                      <Tooltip
+                        label={changelogOf(line)}
+                        placement="bottom-start"
+                        whiteSpace="pre-wrap"
+                        openDelay={300}
+                      >
+                        <Text
+                          fontSize="xs"
+                          className="secondary-text"
+                          noOfLines={2}
+                          whiteSpace="pre-wrap"
+                          wordBreak="break-all"
+                        >
+                          {changelogOf(line)}
+                        </Text>
+                      </Tooltip>
+                    ),
+                    children: installButton(project, line),
+                  })),
+                ]}
               />
             ))
           )}

@@ -636,7 +636,20 @@ async fn recover_base_copies(
   }
 }
 
-fn selected_hunk_contents(
+/// A merge keeps the local line endings. When nothing of the local side is
+/// left, write the published bytes instead: the file then matches the new
+/// baseline and the local scan does not report it as changed.
+fn remote_if_equivalent(path: &str, merged: Vec<u8>, remote: &[u8]) -> Vec<u8> {
+  match (
+    text::normalize_text(path, &merged),
+    text::normalize_text(path, remote),
+  ) {
+    (Some(merged_text), Some(remote_text)) if merged_text == remote_text => remote.to_vec(),
+    _ => merged,
+  }
+}
+
+pub(super) fn selected_hunk_contents(
   prepared: &super::plan::Prepared,
   choices: &mut BTreeMap<String, ConflictChoice>,
 ) -> USTBLResult<BTreeMap<String, Vec<u8>>> {
@@ -659,7 +672,7 @@ fn selected_hunk_contents(
     choices.insert(path.clone(), ConflictChoice::TakeRemote);
     let merged = merge_with_choices(path, base, local, remote, &selected)
       .map_err(|_| InstanceError::ModpackUpdateMergeInvalid)?;
-    result.insert(path.clone(), merged);
+    result.insert(path.clone(), remote_if_equivalent(path, merged, remote));
   }
   Ok(result)
 }
@@ -836,7 +849,24 @@ pub async fn recover_modpack_update(app: AppHandle, instance_id: String) -> USTB
 
 #[cfg(test)]
 mod tests {
-  use super::fast_forward;
+  use super::{fast_forward, remote_if_equivalent};
+
+  #[test]
+  fn a_merge_that_kept_nothing_local_writes_the_published_bytes() {
+    let remote = b"x = 3\ny = 1\n";
+    // Only the line endings are local: the published file is written.
+    let merged = b"x = 3\r\ny = 1\r\n".to_vec();
+    assert_eq!(
+      remote_if_equivalent("config/c.toml", merged, remote),
+      remote
+    );
+    // A kept local line stays, with the local line endings.
+    let merged = b"x = 2\r\ny = 1\r\n".to_vec();
+    assert_eq!(
+      remote_if_equivalent("config/c.toml", merged.clone(), remote),
+      merged
+    );
+  }
 
   #[test]
   fn only_a_plan_with_nothing_to_do_fast_forwards() {

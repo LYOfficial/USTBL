@@ -3160,7 +3160,8 @@
       "gameVersion": "Version du jeu",
       "modLoader": "Chargeur de mods",
       "modpackVersion": "Version du modpack",
-      "modpackInfo": "Infos du modpack"
+      "modpackInfo": "Infos du modpack",
+      "summary": "Résumé"
     },
     "button": {
       "install": "Installer"
@@ -3218,7 +3219,6 @@
       "remoteSide": "Nouvelle version"
     },
     "button": {
-      "preview": "Aperçu de la mise à jour",
       "apply": "Mettre à jour",
       "sync": "Synchroniser la version",
       "resume": "Reprendre le suivi",

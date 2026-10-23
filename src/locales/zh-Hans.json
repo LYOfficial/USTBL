@@ -3160,7 +3160,8 @@
       "gameVersion": "游戏版本",
       "modLoader": "模组加载器",
       "modpackVersion": "整合包版本",
-      "modpackInfo": "整合包信息"
+      "modpackInfo": "整合包信息",
+      "summary": "简介"
     },
     "button": {
       "install": "安装"
@@ -3218,7 +3219,6 @@
       "remoteSide": "新版本"
     },
     "button": {
-      "preview": "预览更新",
       "apply": "开始更新",
       "sync": "同步版本记录",
       "resume": "恢复跟随",

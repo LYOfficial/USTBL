@@ -4,6 +4,8 @@ export interface CampusModpackLine {
   loaderType: string;
   loaderVersion: string;
   versionNumber: string;
+  /** Changelog of the newest version; absent from older platforms. */
+  changelog?: string | null;
 }
 
 export interface CampusModpackProject {

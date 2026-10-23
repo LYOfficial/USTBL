@@ -3160,7 +3160,8 @@
       "gameVersion": "ゲームバージョン",
       "modLoader": "Mod ローダー",
       "modpackVersion": "Modpack バージョン",
-      "modpackInfo": "Modpack 情報"
+      "modpackInfo": "Modpack 情報",
+      "summary": "概要"
     },
     "button": {
       "install": "インストール"
@@ -3218,7 +3219,6 @@
       "remoteSide": "新しいバージョン"
     },
     "button": {
-      "preview": "更新をプレビュー",
       "apply": "更新する",
       "sync": "バージョン記録を同期",
       "resume": "追従を再開",

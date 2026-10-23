@@ -3160,7 +3160,8 @@
       "gameVersion": "Game Version",
       "modLoader": "Mod Loader",
       "modpackVersion": "Modpack Version",
-      "modpackInfo": "Modpack Info"
+      "modpackInfo": "Modpack Info",
+      "summary": "Summary"
     },
     "button": {
       "install": "Install"
@@ -3218,7 +3219,6 @@
       "remoteSide": "New version"
     },
     "button": {
-      "preview": "Preview update",
       "apply": "Update",
       "sync": "Sync version record",
       "resume": "Resume following",

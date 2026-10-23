@@ -40,7 +40,18 @@ interface UpdateModpackModalProps extends Omit<ModalProps, "children"> {
   instanceName: string;
 }
 
-type Phase = "checking" | "checked" | "planning" | "planned" | "applying";
+type Phase =
+  | "checking"
+  | "checked"
+  | "planning"
+  | "planned"
+  | "planFailed"
+  | "applying";
+
+interface PlanError {
+  message: string;
+  details?: string;
+}
 
 const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
   instanceId,
@@ -63,10 +74,26 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
   );
   const [progress, setProgress] = useState<CampusInstallProgress | null>(null);
   const [confirmingRollback, setConfirmingRollback] = useState(false);
+  const [planError, setPlanError] = useState<PlanError | null>(null);
+
+  const preparePlan = useCallback(async () => {
+    setPhase("planning");
+    setPlanError(null);
+    const response =
+      await ModpackUpdateService.prepareModpackUpdate(instanceId);
+    if (response.status === "success") {
+      setPlan(response.data);
+      setPhase("planned");
+    } else {
+      setPlanError({ message: response.message, details: response.details });
+      setPhase("planFailed");
+    }
+  }, [instanceId]);
 
   const runCheck = useCallback(async () => {
     setPhase("checking");
     setPlan(null);
+    setPlanError(null);
     setChoices({});
     setConfirmingRollback(false);
     // An interrupted update is rolled back before anything is compared.
@@ -76,9 +103,15 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
       getInstanceList(true);
     }
     // Opening the dialog is the moment to also look for local edits.
-    setCheck(await checkModpackUpdate(instanceId, true));
-    setPhase("checked");
-  }, [instanceId, getInstanceList, checkModpackUpdate]);
+    const result = await checkModpackUpdate(instanceId, true);
+    setCheck(result);
+    // An available update goes straight to its preview.
+    if (result.status === "available") {
+      await preparePlan();
+    } else {
+      setPhase("checked");
+    }
+  }, [instanceId, getInstanceList, checkModpackUpdate, preparePlan]);
 
   useEffect(() => {
     runCheck();
@@ -89,23 +122,6 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
       if (payload.instanceId === instanceId) setProgress(payload);
     });
   }, [instanceId]);
-
-  const handlePrepare = useCallback(async () => {
-    setPhase("planning");
-    const response =
-      await ModpackUpdateService.prepareModpackUpdate(instanceId);
-    if (response.status === "success") {
-      setPlan(response.data);
-      setPhase("planned");
-    } else {
-      toast({
-        title: response.message,
-        description: response.details,
-        status: "error",
-      });
-      setPhase("checked");
-    }
-  }, [instanceId, toast]);
 
   const handleApply = useCallback(async () => {
     if (!plan) return;
@@ -118,6 +134,9 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
     );
     getInstanceList(true);
     if (response.status === "success") {
+      // The ledger reads local changes from the cached check; refresh it so
+      // conflicts answered with the remote side stop counting.
+      void checkModpackUpdate(instanceId, true);
       toast({
         title: response.message,
         description: plan.toLabel,
@@ -145,6 +164,7 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
     instanceId,
     choices,
     getInstanceList,
+    checkModpackUpdate,
     toast,
     t,
     router,
@@ -550,6 +570,9 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
 
   const busy = phase === "checking" || phase === "planning";
   const applying = phase === "applying";
+  // Waiting for the player: the actions on the instance are open.
+  const idle =
+    phase === "checked" || phase === "planned" || phase === "planFailed";
 
   return (
     <Modal
@@ -581,8 +604,27 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
               )}
             </Text>
           )}
-          {phase === "checked" && renderChecked()}
-          {phase === "checked" && check?.canRollBack && (
+          {(phase === "checked" || phase === "planFailed") && renderChecked()}
+          {phase === "planFailed" && planError && (
+            <Alert status="error" mt={3}>
+              <AlertIcon />
+              <VStack align="start" spacing={1}>
+                <Text>{planError.message}</Text>
+                {planError.details && (
+                  <Text fontSize="xs">{planError.details}</Text>
+                )}
+              </VStack>
+            </Alert>
+          )}
+          {phase === "planned" && check?.currentLabel && (
+            <Text fontSize="xs" className="secondary-text" mb={2}>
+              {t("UpdateModpackModal.label.current", {
+                current: check.currentLabel,
+              })}
+            </Text>
+          )}
+          {phase === "planned" && renderPlan()}
+          {idle && check?.canRollBack && (
             <VStack align="start" spacing={2} mt={4}>
               <Text fontSize="xs" className="secondary-text">
                 {t("UpdateModpackModal.rollback.hint")}
@@ -595,16 +637,18 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
               )}
             </VStack>
           )}
-          {phase === "planned" && renderPlan()}
           {applying && renderApplying()}
         </ModalBody>
-        <ModalFooter>
-          {phase === "checked" && check?.status === "available" && (
-            <Button colorScheme={primaryColor} onClick={handlePrepare}>
-              {t("UpdateModpackModal.button.preview")}
-            </Button>
-          )}
-          {phase === "checked" && check?.canRollBack && (
+        <ModalFooter gap={2}>
+          {idle &&
+            check &&
+            check.status !== "notFollowing" &&
+            !check.unlinked && (
+              <Button variant="ghost" colorScheme="red" onClick={confirmUnlink}>
+                {t("UpdateModpackModal.unlink.button")}
+              </Button>
+            )}
+          {idle && check?.canRollBack && (
             <Button
               variant="ghost"
               colorScheme={confirmingRollback ? "red" : undefined}
@@ -633,14 +677,11 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
                 {t("UpdateModpackModal.button.retry")}
               </Button>
             )}
-          {phase === "checked" &&
-            check &&
-            check.status !== "notFollowing" &&
-            !check.unlinked && (
-              <Button variant="ghost" colorScheme="red" onClick={confirmUnlink}>
-                {t("UpdateModpackModal.unlink.button")}
-              </Button>
-            )}
+          {phase === "planFailed" && (
+            <Button colorScheme={primaryColor} onClick={preparePlan}>
+              {t("UpdateModpackModal.button.retry")}
+            </Button>
+          )}
           {phase === "planned" && plan && !plan.reinstallRequired && (
             <Button colorScheme={primaryColor} onClick={handleApply}>
               {t(

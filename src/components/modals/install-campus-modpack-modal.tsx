@@ -48,6 +48,9 @@ const LOADER_BY_SLUG: Record<string, ModLoaderType> = {
   neoforge: ModLoaderType.NeoForge,
 };
 
+/** A long summary is folded to this many lines until it is edited. */
+const SUMMARY_LINES = 3;
+
 const InstallCampusModpackModal: React.FC<InstallCampusModpackModalProps> = ({
   project,
   line,
@@ -214,6 +217,8 @@ const InstallCampusModpackModal: React.FC<InstallCampusModpackModalProps> = ({
               setIconSrc={setIconSrc}
               gameDirectory={gameDirectory}
               setGameDirectory={setGameDirectory}
+              descriptionLabel={t("InstallCampusModpackModal.label.summary")}
+              descriptionMaxLines={SUMMARY_LINES}
             />
             <OptionItemGroup
               title={t("InstallCampusModpackModal.label.modpackInfo")}
