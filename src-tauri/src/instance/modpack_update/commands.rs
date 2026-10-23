@@ -8,7 +8,8 @@ use super::diff::{resolve, Conflict, ConflictChoice, FileChange};
 use super::merge::merge_with_choices;
 use super::notice::{read_update_notice, write_update_notice, UpdateNotice};
 use super::plan::{
-  compare, count_local_changes, finish, local_changes, requires_reinstall, LocalChange,
+  compare, count_local_changes, finish, invalidate_scan_cache, local_changes, requires_reinstall,
+  LocalChange,
 };
 use super::plan_cache::{self, PlanCache};
 use super::remote::ComponentPack;
@@ -453,7 +454,9 @@ async fn unlink_origin(app: &AppHandle, instance_id: &str, target: &Target) -> U
     instance.origin = None;
     instance.modpack_version = None;
   })
-  .await
+  .await?;
+  invalidate_scan_cache(&target.root);
+  Ok(())
 }
 
 /// Detach the instance from its modpack: identity and baseline go, the game

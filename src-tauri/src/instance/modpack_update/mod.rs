@@ -1,6 +1,7 @@
 pub mod apply;
 pub mod commands;
 pub mod diff;
+pub mod local_scan;
 pub mod merge;
 pub mod notice;
 pub mod packs;

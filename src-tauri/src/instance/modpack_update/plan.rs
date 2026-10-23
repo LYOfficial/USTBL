@@ -1,6 +1,7 @@
 //! Comparing an instance with the version it is being updated to.
 
 use super::diff::{collect_local_states, three_way, Diff, FileKey, LocalState};
+use super::local_scan::{collect_states_cached, record_states, LocalScanCache};
 use super::remote::RemoteModpack;
 use super::merge::{merge_text, text_conflicts, TextMergeError};
 use super::text_diff::{unified_diff, DiffHunk, CONTEXT_LINES};
@@ -11,6 +12,25 @@ use crate::instance::helpers::modpack::{base_store, text};
 use sha1::{Digest, Sha1};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::sync::Mutex;
+
+/// The hash memory of the local-change scans, for the whole process. Counting
+/// and listing read it; preview and apply only ever write to it.
+static SCAN_CACHE: std::sync::LazyLock<Mutex<LocalScanCache>> =
+  std::sync::LazyLock::new(|| Mutex::new(LocalScanCache::default()));
+
+/// Lock the cache, replacing a poisoned one with an empty cache.
+fn cache() -> std::sync::MutexGuard<'static, LocalScanCache> {
+  SCAN_CACHE
+    .lock()
+    .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// The shared scan cache. Poisoning is not an error for a cache: the poisoned
+/// contents are dropped, which only costs the next scan a full re-hash.
+pub(crate) fn scan_cache() -> &'static Mutex<LocalScanCache> {
+  &SCAN_CACHE
+}
 
 pub struct Prepared {
   pub diff: Diff,
@@ -81,6 +101,11 @@ pub async fn count_local_changes(root: &Path, baseline: &ModpackBaseline) -> UST
   Ok(local_changes(root, baseline, false).await?.len())
 }
 
+/// Forget this instance's scan entries (deleted, or stopped following).
+pub fn invalidate_scan_cache(root: &Path) {
+  cache().invalidate(root);
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum LocalChangeKind {
@@ -126,8 +151,9 @@ pub async fn local_changes(
   let keys = baseline_keys(baseline);
   let root = root.to_path_buf();
   tokio::task::spawn_blocking(move || {
-    let paths: BTreeSet<String> = keys.keys().cloned().collect();
-    let local = collect_local_states(&root, &paths)?;
+    // The local scan reads the hash cache; a file whose size already differs
+    // from the baseline is a change without being hashed again.
+    let local = collect_states_cached(scan_cache(), &root, &keys)?;
     let mut changes = Vec::new();
     for (path, key) in keys {
       let local_key = match local.get(&path) {
@@ -225,6 +251,7 @@ pub async fn compare(
   let local = tokio::task::spawn_blocking(move || collect_local_states(&local_root, &paths))
     .await
     .map_err(|e| USTBLError(e.to_string()))??;
+  record_states(scan_cache(), &root, &local);
   let mut local = local;
   for (path, baseline_key) in &baseline_map {
     let Some(super::diff::LocalState::Present(local_key)) = local.get(path) else {
@@ -687,6 +714,38 @@ mod tests {
     let light = local_changes(&root, &installed, false).await.unwrap();
     assert_eq!(light.len(), 4);
     assert!(light.iter().all(|change| change.hunks.is_none()));
+    let _ = fs::remove_dir_all(root);
+  }
+
+  /// §7.2: the local-change scan reads the hash cache; the update preview
+  /// hashes the files itself, so a poisoned or stale entry can never leak
+  /// into the plan the apply step trusts.
+  #[tokio::test]
+  async fn prepare_hashes_the_instance_itself_instead_of_trusting_the_cache() {
+    let root = instance(&[("mods/a.jar", "a1")]);
+    let installed = baseline(&[("mods/a.jar", "a1")]);
+    let remote = remote(&[("mods/a.jar", "a2")]);
+
+    // Prime the cache with a state that does not match the disk: the file is
+    // "edited" according to the entry the scan now holds.
+    record_states(
+      scan_cache(),
+      &root,
+      &BTreeMap::from([(
+        "mods/a.jar".to_string(),
+        LocalState::Present(key("a1-edited")),
+      )]),
+    );
+    // The scan trusts the entry while the stat holds...
+    assert_eq!(count_local_changes(&root, &installed).await.unwrap(), 1);
+    // ...but the preview hashes the file itself: it matches the baseline, so
+    // the update is a plain update without a conflict.
+    let prepared = prepare_with_contents(&root, &installed, &remote, &BTreeMap::new())
+      .await
+      .unwrap();
+    assert!(prepared.diff.conflicts.is_empty());
+    assert_eq!(prepared.diff.changes.len(), 1);
+    assert_eq!(prepared.diff.changes[0].kind, ChangeKind::Update);
     let _ = fs::remove_dir_all(root);
   }
 }
