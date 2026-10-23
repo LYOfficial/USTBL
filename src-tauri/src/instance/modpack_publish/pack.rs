@@ -14,19 +14,78 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
 use zip::write::SimpleFileOptions;
-use zip::{CompressionMethod, DateTime, ZipArchive, ZipWriter};
+use zip::{CompressionMethod, DateTime, HasZipMetadata, ZipArchive, ZipWriter};
 
 const COPY_BUFFER: usize = 256 * 1024;
 
 /// Local header length `build_pack` writes for every entry: 30 fixed bytes +
-/// the entry name + the ZIP64 extended field `large_file(true)` adds. Entry
-/// names are `objects/<sha1 of the content>`, so every entry has exactly this
-/// length regardless of content (§5.2). Measured against this crate's actual
-/// `zip` version; cross-check against vUSTB's verify constant once it lands.
+/// the entry name + the ZIP64 extended field `large_file(true)` adds. The
+/// extra field is 20 bytes (two sizes) while the entry's own offset still
+/// fits in 32 bits, 28 bytes (plus that offset) once it does not (§5.2,
+/// updated 10-23). Entry names are `objects/<sha1 of the content>`; the
+/// length only depends on the name and where the entry starts, never its
+/// content. Measured against this crate's actual `zip` version; cross-check
+/// against vUSTB's verify constant once it lands.
 const LOCAL_HEADER_FIXED_LEN: u64 = 30;
-const ZIP64_EXTRA_FIXED_LEN: u64 = 20;
-fn local_header_len(name: &str) -> u64 {
-  LOCAL_HEADER_FIXED_LEN + name.len() as u64 + ZIP64_EXTRA_FIXED_LEN
+const ZIP64_EXTRA_SHORT_LEN: u64 = 20;
+const ZIP64_EXTRA_LONG_LEN: u64 = 28;
+/// Entry offsets at or above this no longer fit the plain 32-bit field, so
+/// `large_file(true)` widens the ZIP64 extra field to carry the offset too.
+const ZIP64_OFFSET_THRESHOLD: u64 = 0xFFFF_FFFF;
+
+/// `header_start` is the entry's own offset into the file, the quantity
+/// §5.2's threshold is defined against (not, e.g., the central directory's
+/// offset).
+fn local_header_len(name: &str, header_start: u64) -> u64 {
+  let extra = if header_start < ZIP64_OFFSET_THRESHOLD {
+    ZIP64_EXTRA_SHORT_LEN
+  } else {
+    ZIP64_EXTRA_LONG_LEN
+  };
+  LOCAL_HEADER_FIXED_LEN + name.len() as u64 + extra
+}
+
+/// Everything §5.2 requires of one entry that can be read off its metadata
+/// without decompressing it: a `objects/<sha1>` name that strictly follows
+/// the previous one (so entries are sorted and no name repeats), no
+/// encryption or data descriptor, a supported compression method, and a data
+/// offset that follows from its own header length alone. Pulled out as a
+/// pure function of plain facts so the structural rules are testable without
+/// hand-crafting zip byte streams for each violation.
+#[allow(clippy::too_many_arguments)]
+fn entry_structurally_valid(
+  name: &str,
+  previous_name: Option<&str>,
+  encrypted: bool,
+  using_data_descriptor: bool,
+  compression: CompressionMethod,
+  header_start: u64,
+  data_start: u64,
+  expected_header_start: u64,
+) -> bool {
+  if name
+    .strip_prefix("objects/")
+    .filter(|sha1| sha1.len() == 40)
+    .is_none()
+  {
+    return false;
+  }
+  if previous_name.is_some_and(|previous| previous >= name) {
+    return false;
+  }
+  if encrypted || using_data_descriptor {
+    return false;
+  }
+  if !matches!(
+    compression,
+    CompressionMethod::Stored | CompressionMethod::Deflated
+  ) {
+    return false;
+  }
+  if header_start != expected_header_start {
+    return false;
+  }
+  data_start == header_start + local_header_len(name, header_start)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,11 +140,14 @@ pub fn build_pack(objects: &[PackObject], dest: &Path) -> USTBLResult<BuiltPack>
 }
 
 /// Checks a pack against the rules `build_pack` guarantees and the server's
-/// verify step relies on (§5.2, §8.2): each entry decompresses to the sha1 its
-/// name promises and the CRC32 the central directory records; data offsets
-/// follow from the local header length alone; and the whole file's sha1
-/// matches `expected`. Used before the first upload and whenever the pack is
-/// rebuilt during resume.
+/// verify step relies on (§5.2, §8.2): entries sit back to back in sorted,
+/// unique-name order with the central directory immediately after the last
+/// one and no trailing comment; no entry is encrypted, uses a data
+/// descriptor, or is compressed with anything but STORED/DEFLATE; each entry
+/// decompresses to the sha1 its name promises and the CRC32 the central
+/// directory records; data offsets follow from the local header length
+/// alone; and the whole file's sha1 matches `expected`. Used before the
+/// first upload and whenever the pack is rebuilt during resume.
 pub fn verify_pack(path: &Path, expected_sha1: &str) -> USTBLResult<()> {
   let bad = || USTBLError("本地包的内容校验未通过，无法继续，请放弃这个任务后重新发布".into());
 
@@ -95,7 +157,12 @@ pub fn verify_pack(path: &Path, expected_sha1: &str) -> USTBLResult<()> {
   }
 
   let mut zip = ZipArchive::new(File::open(path)?)?;
+  if !zip.comment().is_empty() {
+    return Err(bad());
+  }
+
   let mut expected_header_start = 0u64;
+  let mut previous_name: Option<String> = None;
   for i in 0..zip.len() {
     let mut entry = zip.by_index(i)?;
     let name = entry.name().to_string();
@@ -103,13 +170,19 @@ pub fn verify_pack(path: &Path, expected_sha1: &str) -> USTBLResult<()> {
       .strip_prefix("objects/")
       .filter(|sha1| sha1.len() == 40)
       .ok_or_else(bad)?;
-
-    if entry.header_start() != expected_header_start {
+    if !entry_structurally_valid(
+      &name,
+      previous_name.as_deref(),
+      entry.encrypted(),
+      entry.get_metadata().using_data_descriptor,
+      entry.compression(),
+      entry.header_start(),
+      entry.data_start(),
+      expected_header_start,
+    ) {
       return Err(bad());
     }
-    if entry.data_start() != entry.header_start() + local_header_len(&name) {
-      return Err(bad());
-    }
+    previous_name = Some(name.clone());
 
     // `zip` checks the CRC32 itself (via `Crc32Reader`) as the entry is read
     // to the end; an I/O error here means the entry's CRC32 did not match the
@@ -195,12 +268,15 @@ mod tests {
   }
 
   /// §5.2: the local header length must be computable from the entry name
-  /// alone, so the server's verify step (and our own self-check) can derive
-  /// every data offset from the central directory without reading local
-  /// headers. Record this measured length in the delivery report for
-  /// cross-check against vUSTB's own constant once it lands.
+  /// and its own starting offset alone, so the server's verify step (and our
+  /// own self-check) can derive every data offset from the central directory
+  /// without reading local headers. Record this measured length in the
+  /// delivery report for cross-check against vUSTB's own constant once it
+  /// lands. Both entries here start well below the ZIP64 offset threshold;
+  /// the "entry starts at or past 4 GiB" branch is covered by the pure
+  /// formula test below, since building a pack that large is impractical.
   #[test]
-  fn the_local_header_length_matches_the_ss2_formula() {
+  fn the_local_header_length_matches_the_ss2_formula_below_the_offset_threshold() {
     let root = dir();
     let objects = vec![
       object(&root, "a", b"alpha", false),
@@ -216,12 +292,33 @@ mod tests {
       let measured = entry.data_start() - entry.header_start();
       assert_eq!(
         measured,
-        local_header_len(&name),
+        local_header_len(&name, entry.header_start()),
         "measured local header length for {name} was {measured} bytes; \
-         update LOCAL_HEADER_FIXED_LEN/ZIP64_EXTRA_FIXED_LEN if this changes"
+         update LOCAL_HEADER_FIXED_LEN/ZIP64_EXTRA_SHORT_LEN if this changes"
       );
     }
     let _ = fs::remove_dir_all(root);
+  }
+
+  /// The formula's two branches (§5.2, 10-23): a 20-byte ZIP64 extra field
+  /// while the entry's own offset still fits 32 bits, 28 bytes (room for the
+  /// offset itself) once it does not.
+  #[test]
+  fn the_local_header_length_formula_switches_at_the_offset_threshold() {
+    let name = "objects/".to_string() + &"a".repeat(40);
+    assert_eq!(local_header_len(&name, 0), 30 + name.len() as u64 + 20);
+    assert_eq!(
+      local_header_len(&name, ZIP64_OFFSET_THRESHOLD - 1),
+      30 + name.len() as u64 + 20
+    );
+    assert_eq!(
+      local_header_len(&name, ZIP64_OFFSET_THRESHOLD),
+      30 + name.len() as u64 + 28
+    );
+    assert_eq!(
+      local_header_len(&name, ZIP64_OFFSET_THRESHOLD + 1_000_000),
+      30 + name.len() as u64 + 28
+    );
   }
 
   #[test]
@@ -235,6 +332,133 @@ mod tests {
     let built = build_pack(&objects, &dest).unwrap();
     verify_pack(&dest, &built.sha1).unwrap();
     let _ = fs::remove_dir_all(root);
+  }
+
+  /// §5.2, 10-23: the EOCD must sit right at the end of the file with no
+  /// trailing comment, even though the file's whole-sha1 still matches
+  /// (which only covers the bytes, not that nothing trails the EOCD record
+  /// logically — a comment is itself part of those bytes, so this exercises
+  /// `verify_pack`'s dedicated comment check rather than the sha1 one).
+  #[test]
+  fn verify_pack_rejects_a_pack_whose_eocd_carries_a_comment() {
+    let root = dir();
+    let objects = vec![object(&root, "a", b"alpha", false)];
+    let dest = root.join("pack.zip");
+    {
+      let objects: Vec<&PackObject> = objects.iter().collect();
+      let mut zip = ZipWriter::new(File::create(&dest).unwrap());
+      for object in objects {
+        let options = SimpleFileOptions::default()
+          .compression_method(CompressionMethod::Deflated)
+          .last_modified_time(DateTime::default())
+          .unix_permissions(0o644)
+          .large_file(true);
+        zip
+          .start_file(format!("objects/{}", object.sha1), options)
+          .unwrap();
+        zip.write_all(&fs::read(&object.path).unwrap()).unwrap();
+      }
+      zip.set_comment("not empty");
+      zip.finish().unwrap();
+    }
+    let (sha1, _) = hash_file(&dest).unwrap();
+    assert!(verify_pack(&dest, &sha1).is_err());
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn an_entry_name_must_be_the_objects_prefix_plus_a_sha1() {
+    assert!(entry_structurally_valid(
+      &format!("objects/{}", "a".repeat(40)),
+      None,
+      false,
+      false,
+      CompressionMethod::Stored,
+      0,
+      30 + 8 + 40 + 20,
+      0,
+    ));
+    assert!(!entry_structurally_valid(
+      "not-objects/aaaa",
+      None,
+      false,
+      false,
+      CompressionMethod::Stored,
+      0,
+      0,
+      0,
+    ));
+    assert!(!entry_structurally_valid(
+      &format!("objects/{}", "a".repeat(10)),
+      None,
+      false,
+      false,
+      CompressionMethod::Stored,
+      0,
+      0,
+      0,
+    ));
+  }
+
+  #[test]
+  fn entries_must_be_strictly_sorted_with_no_repeated_name() {
+    let a = format!("objects/{}", "a".repeat(40));
+    let b = format!("objects/{}", "b".repeat(40));
+    // Strictly greater than the previous entry: fine.
+    assert!(entry_structurally_valid(
+      &b,
+      Some(&a),
+      false,
+      false,
+      CompressionMethod::Stored,
+      100,
+      100 + local_header_len(&b, 100),
+      100,
+    ));
+    // The same name twice (a duplicate object entry) is rejected...
+    assert!(!entry_structurally_valid(
+      &a,
+      Some(&a),
+      false,
+      false,
+      CompressionMethod::Stored,
+      0,
+      0,
+      0,
+    ));
+    // ...as is one that is out of order.
+    assert!(!entry_structurally_valid(
+      &a,
+      Some(&b),
+      false,
+      false,
+      CompressionMethod::Stored,
+      0,
+      0,
+      0,
+    ));
+  }
+
+  #[test]
+  fn encryption_a_data_descriptor_or_an_unsupported_method_is_rejected() {
+    let name = format!("objects/{}", "a".repeat(40));
+    let valid = |encrypted, using_data_descriptor, compression| {
+      entry_structurally_valid(
+        &name,
+        None,
+        encrypted,
+        using_data_descriptor,
+        compression,
+        0,
+        local_header_len(&name, 0),
+        0,
+      )
+    };
+    assert!(valid(false, false, CompressionMethod::Stored));
+    assert!(valid(false, false, CompressionMethod::Deflated));
+    assert!(!valid(true, false, CompressionMethod::Stored));
+    assert!(!valid(false, true, CompressionMethod::Stored));
+    assert!(!valid(false, false, CompressionMethod::BZIP2));
   }
 
   #[test]
