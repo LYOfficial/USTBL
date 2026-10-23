@@ -3319,7 +3319,7 @@
       },
       "updateTo": "可更新到 {{latest}}",
       "platform": {
-        "campus": "校内"
+        "campus": "USTB"
       },
       "installed": "已安装",
       "installedHint": "本地已有 {{count}} 个对应实例，点击查看",

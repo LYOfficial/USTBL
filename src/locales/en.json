@@ -3319,7 +3319,7 @@
       },
       "updateTo": "Update to {{latest}}",
       "platform": {
-        "campus": "Campus"
+        "campus": "USTB"
       },
       "installed": "Installed",
       "installedHint": "{{count}} matching instance(s) on this device, click to view",

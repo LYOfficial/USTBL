@@ -3319,7 +3319,7 @@
       },
       "updateTo": "{{latest}} に更新できます",
       "platform": {
-        "campus": "校内"
+        "campus": "USTB"
       },
       "installed": "インストール済み",
       "installedHint": "この端末に該当するインスタンスが {{count}} 件あります。クリックで表示",
