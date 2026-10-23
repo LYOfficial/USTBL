@@ -142,6 +142,11 @@ impl PackSession {
     })
   }
 
+  /// The version this session reads from.
+  pub fn version_id(&self) -> i64 {
+    self.version_id
+  }
+
   /// Ask the platform which packs hold `sha1s`. A pack the platform cannot
   /// hand out (gone, or too many of them) is reported as unavailable.
   pub async fn prepare(&self, sha1s: &[String]) -> USTBLResult<()> {

@@ -47,6 +47,16 @@ pub struct LatestVersion {
   pub payload: Option<Payload>,
 }
 
+impl LatestVersion {
+  /// The archive sha1 and download url of an Archive payload.
+  pub fn archive_ref(&self) -> Option<(&str, &str)> {
+    match &self.payload {
+      Some(Payload::Archive { url, sha1 }) => Some((sha1, url)),
+      _ => None,
+    }
+  }
+}
+
 pub fn loader_slug(loader: ModLoaderType) -> Option<&'static str> {
   match loader {
     ModLoaderType::Unknown => Some("vanilla"),
@@ -317,6 +327,111 @@ pub fn campus_remote(
 }
 
 // ---- archives ---------------------------------------------------------------
+
+/// A version's parsed remote, cached under the update folder. The archive of
+/// an Archive version is also kept next to it; a hit skips re-downloading,
+/// re-hashing and re-parsing it.
+const REMOTE_CACHE_SCHEMA: u32 = 1;
+
+fn remote_cache_path(root: &Path, version_id: &str) -> PathBuf {
+  remote_dir(root).join(format!("{version_id}.remote.json"))
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteCache {
+  pub schema: u32,
+  pub platform: OriginPlatform,
+  pub version_id: String,
+  /// Sha1 and size of the archive the remote was parsed from, Archive only.
+  pub archive_sha1: Option<String>,
+  pub archive_size: Option<u64>,
+  /// The instance root the `DownloadParam.dest` paths were built against.
+  pub root: PathBuf,
+  pub remote: super::remote::StoredRemoteModpack,
+}
+
+impl RemoteCache {
+  pub fn new(
+    origin: &InstanceOrigin,
+    root: &Path,
+    remote: &RemoteModpack,
+    archive: Option<(&str, u64)>,
+  ) -> Self {
+    Self {
+      schema: REMOTE_CACHE_SCHEMA,
+      platform: origin.platform,
+      version_id: remote.version_id.clone(),
+      archive_sha1: archive.map(|(sha1, _)| sha1.to_string()),
+      archive_size: archive.map(|(_, size)| size),
+      root: root.to_path_buf(),
+      remote: super::remote::StoredRemoteModpack::from(remote),
+    }
+  }
+
+  /// Whether this cache describes `version` fetched into `root` again. An
+  /// Archive cache additionally needs its archive, still there with the same
+  /// size (overrides are read from it).
+  pub fn matches(
+    &self,
+    origin: &InstanceOrigin,
+    root: &Path,
+    version: &LatestVersion,
+  ) -> bool {
+    if self.schema != REMOTE_CACHE_SCHEMA
+      || self.platform != origin.platform
+      || self.version_id != version.version_id
+      || self.root != root
+    {
+      return false;
+    }
+    match (version.archive_ref(), &self.archive_sha1, &self.archive_size) {
+      (Some((sha1, _)), Some(cached_sha1), Some(cached_size)) => {
+        if cached_sha1 != sha1 {
+          return false;
+        }
+        let path = archive_path(root, sha1);
+        fs::metadata(&path)
+          .map(|meta| meta.len() as u64 == *cached_size)
+          .unwrap_or(false)
+      }
+      (None, None, None) => true,
+      _ => false,
+    }
+  }
+}
+
+/// The archive of an Archive payload: its sha1 and the path it is kept at.
+fn archive_path(root: &Path, sha1: &str) -> PathBuf {
+  remote_dir(root).join(format!("{sha1}.zip"))
+}
+
+pub fn load_remote_cache(
+  app: &AppHandle,
+  origin: &InstanceOrigin,
+  root: &Path,
+  version: &LatestVersion,
+) -> Option<RemoteModpack> {
+  let bytes = fs::read(remote_cache_path(root, &version.version_id)).ok()?;
+  let cache: RemoteCache = serde_json::from_slice(&bytes).ok()?;
+  if cache.matches(origin, root, version) {
+    Some(RemoteModpack::from_stored(cache.remote, |version_id| {
+      PackSession::new(AppTransport::new(app.clone()), version_id)
+    }))
+  } else {
+    None
+  }
+}
+
+pub fn write_remote_cache(root: &Path, cache: &RemoteCache) -> std::io::Result<()> {
+  let path = remote_cache_path(root, &cache.version_id);
+  if let Some(parent) = path.parent() {
+    fs::create_dir_all(parent)?;
+  }
+  let temp = path.with_extension("json.tmp");
+  fs::write(&temp, serde_json::to_vec_pretty(cache)?)?;
+  fs::rename(temp, path)
+}
 
 /// SHA-1 and size of one archive entry, streamed.
 pub fn hash_archive_entry(archive: &Path, entry: &str) -> USTBLResult<FileKey> {
@@ -812,9 +927,9 @@ pub async fn latest_version(
 
 
 
-/// Fetch whatever the new version needs to be described file by file. Archives
-/// are cached under the update folder so applying right after planning does
-/// not download them twice.
+/// Fetch whatever the new version needs to be described file by file. The
+/// parsed result is cached per version under the update folder, so a plan and
+/// the apply right after it resolve the remote only once.
 pub async fn resolve_remote(
   app: &AppHandle,
   origin: &InstanceOrigin,
@@ -824,29 +939,46 @@ pub async fn resolve_remote(
 ) -> USTBLResult<RemoteModpack> {
   let dir = remote_dir(root);
   fs::create_dir_all(&dir)?;
-  let payload = latest
-    .payload
-    .as_ref()
-    .ok_or(InstanceError::ModpackUpdateRemoteInvalid)?;
-  let remote = match payload {
-    Payload::Archive { url, sha1 } => {
-      let path = dir.join(format!("{sha1}.zip"));
-      let cached = tokio::task::spawn_blocking({
-        let path = path.clone();
-        let sha1 = sha1.clone();
-        move || hash_file(&path).is_ok_and(|(actual, _)| actual == sha1)
-      })
-      .await
-      .map_err(|e| USTBLError(e.to_string()))?;
-      if !cached {
-        download_url(app, url, &path, Some(sha1)).await?;
+  let remote = if let Some(remote) = load_remote_cache(app, origin, root, latest) {
+    remote
+  } else {
+    let payload = latest
+      .payload
+      .as_ref()
+      .ok_or(InstanceError::ModpackUpdateRemoteInvalid)?;
+    let (remote, archive) = match payload {
+      Payload::Archive { url, sha1 } => {
+        let path = archive_path(root, sha1);
+        let cached = tokio::task::spawn_blocking({
+          let path = path.clone();
+          let sha1 = sha1.clone();
+          move || hash_file(&path).is_ok_and(|(actual, _)| actual == sha1)
+        })
+        .await
+        .map_err(|e| USTBLError(e.to_string()))?;
+        if !cached {
+          download_url(app, url, &path, Some(sha1)).await?;
+        }
+        let size = fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
+        (
+          remote_from_archive(app, &path, root, instance_name, origin, latest).await?,
+          Some((sha1.as_str(), size)),
+        )
       }
-      remote_from_archive(app, &path, root, instance_name, origin, latest).await?
+      Payload::Campus(version) => {
+        let packs = PackSession::new(AppTransport::new(app.clone()), version.id);
+        (campus_remote(version, &packs)?, None)
+      }
+    };
+    let archive = archive.map(|(sha1, size)| (sha1.to_string(), size));
+    let archive_ref = archive
+      .as_ref()
+      .map(|(sha1, size)| (sha1.as_str(), *size));
+    let cache = RemoteCache::new(origin, root, &remote, archive_ref);
+    if let Err(error) = write_remote_cache(root, &cache) {
+      log::warn!("cannot write modpack remote cache: {error:?}");
     }
-    Payload::Campus(version) => {
-      let packs = PackSession::new(AppTransport::new(app.clone()), version.id);
-      campus_remote(version, &packs)?
-    }
+    remote
   };
   if remote.game_version != origin.game_version || remote.loader.loader_type != origin.loader_type {
     return Err(InstanceError::ModpackUpdateLineMismatch.into());
@@ -1088,6 +1220,115 @@ mod tests {
     assert_eq!(merged.len(), 2);
     assert_eq!(merged[0].key.sha1, "3");
     assert!(matches!(merged[0].source, FileSource::ArchiveEntry { .. }));
+  }
+
+  fn origin_with(platform: OriginPlatform, version_id: &str) -> InstanceOrigin {
+    InstanceOrigin {
+      platform,
+      project_id: "p".into(),
+      version_id: version_id.into(),
+      game_version: "1.21.1".into(),
+      loader_type: ModLoaderType::Fabric,
+      follow: true,
+    }
+  }
+
+  fn archive_version(version_id: &str, sha1: &str) -> LatestVersion {
+    LatestVersion {
+      version_id: version_id.into(),
+      label: version_id.into(),
+      payload: Some(Payload::Archive {
+        url: "https://cdn.example/pack.zip".into(),
+        sha1: sha1.into(),
+      }),
+    }
+  }
+
+  fn remote_for_test() -> RemoteModpack {
+    RemoteModpack {
+      version_id: "7".into(),
+      label: "1.2.0".into(),
+      game_version: "1.21.1".into(),
+      loader: BaselineLoader {
+        loader_type: ModLoaderType::Fabric,
+        version: "0.16.0".into(),
+      },
+      components: None,
+      component_pack: None,
+      files: vec![
+        RemoteFile {
+          path: "mods/a.jar".into(),
+          key: FileKey {
+            sha1: "aa".repeat(20),
+            size: 3,
+          },
+          source: FileSource::Download(plain_download("https://cdn.example/a.jar").unwrap()),
+        },
+        RemoteFile {
+          path: "config/b.txt".into(),
+          key: FileKey {
+            sha1: "bb".repeat(20),
+            size: 5,
+          },
+          source: FileSource::ArchiveEntry {
+            archive: PathBuf::from("/tmp/pack.zip"),
+            entry: "overrides/config/b.txt".into(),
+          },
+        },
+      ],
+    }
+  }
+
+  #[test]
+  fn remote_cache_round_trips_and_matches_only_the_same_version_and_root() {
+    let root = std::env::temp_dir().join(format!("ustbl-remote-cache-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    let origin = origin_with(OriginPlatform::Modrinth, "7");
+    let version = archive_version("7", "cc".repeat(20).as_str());
+    let sha1 = "cc".repeat(20);
+    fs::create_dir_all(remote_dir(&root)).unwrap();
+    fs::write(archive_path(&root, &sha1), b"zip-bytes").unwrap();
+
+    let cache = RemoteCache::new(
+      &origin,
+      &root,
+      &remote_for_test(),
+      Some((&sha1, 9)),
+    );
+    assert!(cache.matches(&origin, &root, &version));
+
+    // Round trip through JSON.
+    let bytes = serde_json::to_vec(&cache).unwrap();
+    let back: RemoteCache = serde_json::from_slice(&bytes).unwrap();
+    assert!(back.matches(&origin, &root, &version));
+
+    // Another version id, platform or root does not match.
+    assert!(!back.matches(&origin, &root, &archive_version("8", &sha1)));
+    let other_platform = origin_with(OriginPlatform::CurseForge, "7");
+    assert!(!back.matches(&other_platform, &root, &version));
+    let other_root = root.join("moved");
+    assert!(!back.matches(&origin, &other_root, &version));
+
+    // The archive must still be there with the same size.
+    fs::write(archive_path(&root, &sha1), b"changed").unwrap();
+    assert!(!back.matches(&origin, &root, &version));
+    let _ = fs::remove_dir_all(&root);
+  }
+
+  #[test]
+  fn a_campus_remote_cache_needs_no_archive() {
+    let root = std::env::temp_dir().join(format!("ustbl-remote-cache-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    let origin = origin_with(OriginPlatform::Campus, "7");
+    let version = LatestVersion {
+      version_id: "7".into(),
+      label: "1.2.0".into(),
+      payload: None,
+    };
+    let cache = RemoteCache::new(&origin, &root, &remote_for_test(), None);
+    assert!(cache.matches(&origin, &root, &version));
+    assert!(!cache.matches(&origin, &root, &archive_version("7", "cc".repeat(20).as_str())));
+    let _ = fs::remove_dir_all(&root);
   }
 
   #[test]
