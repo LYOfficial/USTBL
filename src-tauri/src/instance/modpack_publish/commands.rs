@@ -2,7 +2,7 @@
 
 use super::components::plan_components;
 use super::job::{is_running, PublishJob};
-use super::manifest::{plan_files, LocalFile};
+use super::manifest::{partition_publishable_paths, plan_files, LocalFile};
 use super::pack::{build_pack, mark_verified, verify_pack};
 use super::record::{
   jobs_dir, paths, JobRecord, Phase, RecordedFile, RecordedObject, RecordedPack, RecordedUpload,
@@ -539,6 +539,7 @@ async fn prepare(
   // with `check_campus_modpack_publishable`, this guard is the backstop).
   let snapshot = load_required_snapshot(&root).await?;
 
+  let (files, skipped) = partition_publishable_paths(files, &instance.name);
   let total = files.len();
   report(app, instance_id, Stage::Hashing, 0, total);
   let hashed = hash_selection(&root, &files, |done| {
@@ -547,6 +548,8 @@ async fn prepare(
   .await?;
   report(app, instance_id, Stage::Hashing, total, total);
   let mut plan = plan_files(hashed, &instance.name);
+  plan.skipped.extend(skipped);
+  plan.skipped.sort();
   if plan.files.is_empty() {
     return Err(USTBLError("没有可发布的文件".into()));
   }

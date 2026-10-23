@@ -40,6 +40,7 @@ interface PublishModpackModalProps extends Omit<ModalProps, "children"> {
 }
 
 const NEW_PROJECT = "__new__";
+const DISABLED_SUFFIX = ".disabled";
 
 const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
   instanceId,
@@ -125,8 +126,11 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
           .then((response) => {
             if (!isActive) return;
             if (response.status === "success") {
-              setFileList(response.data);
-              const nextSelected = new Set(response.data.all);
+              const all = response.data.all.filter(
+                (path) => !path.toLowerCase().endsWith(DISABLED_SUFFIX)
+              );
+              setFileList({ ...response.data, all });
+              const nextSelected = new Set(all);
               response.data.unchecked.forEach((path) =>
                 nextSelected.delete(path)
               );

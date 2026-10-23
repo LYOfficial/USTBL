@@ -107,6 +107,17 @@ fn is_publishable(path: &str, instance_name: &str) -> bool {
     || lowered.starts_with(&format!("{UPDATE_DIR}/")))
 }
 
+/// Filter before hashing. Omitting a disabled variant also removes its enabled
+/// counterpart from the next manifest, which is how a publish deletes that mod.
+pub(super) fn partition_publishable_paths(
+  paths: Vec<String>,
+  instance_name: &str,
+) -> (Vec<String>, Vec<String>) {
+  paths
+    .into_iter()
+    .partition(|path| is_publishable(path, instance_name))
+}
+
 pub fn plan_files(files: Vec<LocalFile>, instance_name: &str) -> PublishPlan {
   let mut skipped = Vec::new();
   let mut kept: Vec<LocalFile> = Vec::new();
@@ -157,6 +168,37 @@ mod tests {
 
     assert_eq!(plan.files.len(), 1);
     assert_eq!(plan.skipped.len(), 5);
+  }
+
+  #[test]
+  fn a_disabled_mod_is_filtered_early_and_deletes_its_old_enabled_path() {
+    let (selected, skipped) = partition_publishable_paths(
+      vec![
+        "mods/a.jar.disabled".to_string(),
+        "config/a.toml".to_string(),
+      ],
+      "pack",
+    );
+    assert_eq!(selected, ["config/a.toml".to_string()]);
+    assert_eq!(skipped, ["mods/a.jar.disabled".to_string()]);
+
+    let plan = plan_files(
+      selected
+        .into_iter()
+        .map(|path| file(&path, "x", 1))
+        .collect(),
+      "pack",
+    );
+    let manifest = plan.manifest();
+    let published: Vec<_> = manifest["files"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .map(|file| file["path"].as_str().unwrap())
+      .collect();
+    assert!(!published.contains(&"mods/a.jar"));
+    assert!(!published.contains(&"mods/a.jar.disabled"));
+    assert_eq!(published, ["config/a.toml"]);
   }
 
   #[test]
