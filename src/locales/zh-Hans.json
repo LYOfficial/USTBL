@@ -2636,7 +2636,10 @@
           "title": "发布失败",
           "description": {
             "MODPACK_PUBLISH_STALE": "发布期间该线路已被其他人更新，请重新加载后再试",
-            "MODPACK_UPDATE_UNSUPPORTED": "该实例没有受支持的模组加载器，无法发布"
+            "MODPACK_UPDATE_UNSUPPORTED": "该实例没有受支持的模组加载器，无法发布",
+            "MODPACK_UPLOAD_RESTARTED": "上传会话已在云盘重新开始，请重新发布",
+            "MODPACK_UPLOAD_CLOUD_UNAVAILABLE": "云盘暂时不可用，请稍后重试",
+            "MODPACK_UPLOAD_VERIFY_FAILED": "上传内容与本地不符，请重新发布"
           }
         }
       },

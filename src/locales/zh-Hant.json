@@ -2636,7 +2636,10 @@
           "title": "發佈失敗",
           "description": {
             "MODPACK_PUBLISH_STALE": "發佈期間該線路已被其他人更新，請重新載入後再試",
-            "MODPACK_UPDATE_UNSUPPORTED": "此實例沒有受支援的模組載入器，無法發佈"
+            "MODPACK_UPDATE_UNSUPPORTED": "此實例沒有受支援的模組載入器，無法發佈",
+            "MODPACK_UPLOAD_RESTARTED": "上傳會話已在雲盤重新開始，請重新發佈",
+            "MODPACK_UPLOAD_CLOUD_UNAVAILABLE": "雲盤暫時不可用，請稍後重試",
+            "MODPACK_UPLOAD_VERIFY_FAILED": "上傳內容與本機不符，請重新發佈"
           }
         }
       },

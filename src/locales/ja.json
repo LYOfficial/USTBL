@@ -2636,7 +2636,10 @@
           "title": "公開に失敗しました",
           "description": {
             "MODPACK_PUBLISH_STALE": "公開中に他のユーザーがこのラインを更新しました。再読み込みしてからやり直してください",
-            "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスには対応するModローダーがないため公開できません"
+            "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスには対応するModローダーがないため公開できません",
+            "MODPACK_UPLOAD_RESTARTED": "アップロードセッションがクラウドストレージ側で再開されました。もう一度公開してください",
+            "MODPACK_UPLOAD_CLOUD_UNAVAILABLE": "クラウドストレージが一時的に利用できません。しばらくしてから再試行してください",
+            "MODPACK_UPLOAD_VERIFY_FAILED": "アップロードした内容がローカルのファイルと一致しません。もう一度公開してください"
           }
         }
       },
