@@ -99,3 +99,19 @@ test("a failed plan whose hash was never recorded still clears on a new plan", (
   assert.deepEqual(result.choices, {});
   assert.equal(result.toastPlanChanged, true);
 });
+
+test("the caller passes the failed hash explicitly: the same plan keeps the choices", () => {
+  // The dialog cannot rely on plan state surviving the re-check (runCheck
+  // clears it before the new prepare answers), so the failed plan's hash
+  // arrives as an argument.
+  const kept = resolvePlanChoices({
+    instanceId: "i1",
+    newPlanHash: "hash-a",
+    failedPlanHash: "hash-a",
+    recheckAfterFailure: true,
+    remembered: new Map(),
+    currentChoices: hunkChoice,
+  });
+  assert.deepEqual(kept.choices, hunkChoice);
+  assert.equal(kept.toastPlanChanged, false);
+});

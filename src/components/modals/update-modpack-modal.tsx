@@ -178,8 +178,11 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
   const planRef = useRef(plan);
   planRef.current = plan;
   // After a failed apply the choices stay until the re-check proves the plan
-  // still is the one they were made for.
+  // still is the one they were made for. The failed plan's hash travels in a
+  // ref: runCheck's setPlan(null) clears planRef long before the new prepare
+  // answers.
   const keepChoicesForRecheckRef = useRef(false);
+  const failedPlanHashRef = useRef<string | null>(null);
 
   const preparePlan = useCallback(
     async (round: number) => {
@@ -189,13 +192,12 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
       if (response.status === "success") {
         const recheck = keepChoicesForRecheckRef.current;
         keepChoicesForRecheckRef.current = false;
-        // planRef still holds the failed plan here (setPlan below commits
-        // only after this callback), so its hash identifies the plan the
-        // current choices were made for.
+        const failedPlanHash = failedPlanHashRef.current;
+        failedPlanHashRef.current = null;
         const resolved = resolvePlanChoices({
           instanceId,
           newPlanHash: response.data.planHash,
-          failedPlanHash: planRef.current?.planHash,
+          failedPlanHash,
           recheckAfterFailure: recheck,
           remembered: rememberedChoices,
           currentChoices: choicesRef.current,
@@ -326,6 +328,7 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
       // The choices stay for the re-check: it clears them itself when the
       // plan turns out to be another one (and says so).
       keepChoicesForRecheckRef.current = true;
+      failedPlanHashRef.current = plan.planHash;
       runCheck();
     }
   }, [
