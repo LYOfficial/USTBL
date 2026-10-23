@@ -1,6 +1,6 @@
 //! Conservative line-hunk three-way merging for eligible configuration text.
 
-#![allow(dead_code)]
+
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hunk {
