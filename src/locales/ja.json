@@ -2639,7 +2639,8 @@
             "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスには対応するModローダーがないため公開できません",
             "MODPACK_UPLOAD_RESTARTED": "アップロードセッションがクラウドストレージ側で再開されました。もう一度公開してください",
             "MODPACK_UPLOAD_CLOUD_UNAVAILABLE": "クラウドストレージが一時的に利用できません。しばらくしてから再試行してください",
-            "MODPACK_UPLOAD_VERIFY_FAILED": "アップロードした内容がローカルのファイルと一致しません。もう一度公開してください"
+            "MODPACK_UPLOAD_VERIFY_FAILED": "アップロードした内容がローカルのファイルと一致しません。もう一度公開してください",
+            "MODPACK_UPLOAD_SESSION_GONE": "アップロードセッションの有効期限が切れました。もう一度公開してください"
           }
         }
       },

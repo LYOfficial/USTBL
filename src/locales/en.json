@@ -2639,7 +2639,8 @@
             "MODPACK_UPDATE_UNSUPPORTED": "This instance has no supported mod loader and cannot be published",
             "MODPACK_UPLOAD_RESTARTED": "The upload session restarted on the cloud drive; please publish again",
             "MODPACK_UPLOAD_CLOUD_UNAVAILABLE": "The cloud drive is temporarily unavailable; please try again later",
-            "MODPACK_UPLOAD_VERIFY_FAILED": "The uploaded content does not match the local file; please publish again"
+            "MODPACK_UPLOAD_VERIFY_FAILED": "The uploaded content does not match the local file; please publish again",
+            "MODPACK_UPLOAD_SESSION_GONE": "The upload session has expired; please publish again"
           }
         }
       },

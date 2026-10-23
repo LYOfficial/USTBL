@@ -2639,7 +2639,8 @@
             "MODPACK_UPDATE_UNSUPPORTED": "此實例沒有受支援的模組載入器，無法發佈",
             "MODPACK_UPLOAD_RESTARTED": "上傳會話已在雲盤重新開始，請重新發佈",
             "MODPACK_UPLOAD_CLOUD_UNAVAILABLE": "雲盤暫時不可用，請稍後重試",
-            "MODPACK_UPLOAD_VERIFY_FAILED": "上傳內容與本機不符，請重新發佈"
+            "MODPACK_UPLOAD_VERIFY_FAILED": "上傳內容與本機不符，請重新發佈",
+            "MODPACK_UPLOAD_SESSION_GONE": "上傳會話已過期，請重新發佈"
           }
         }
       },

@@ -75,7 +75,7 @@ pub(crate) fn resume_monitors(app: &AppHandle) {
         uploader: crate::utils::web::build_part_upload_client(app),
         record,
         // Only platform processing is watched here, never a part upload.
-        concurrency: super::commands::DEFAULT_PART_CONCURRENCY,
+        concurrency: None,
       }
       .monitor_in_background();
     }
@@ -300,10 +300,15 @@ pub(super) struct PublishJob {
   pub app: AppHandle,
   pub uploader: reqwest::Client,
   pub record: JobRecord,
-  /// How many parts to PUT at once (§13.2, §14.1); fresh from `POST
-  /// /versions` on a new publish, or the suggested default on resume, since
-  /// the persisted record does not carry it (§9.1).
-  pub concurrency: usize,
+  /// How many parts to PUT at once (§13.2, §14.1). `Some` only right after
+  /// `POST /versions`, whose response carries the value a fresh upload
+  /// should use for its first round; `None` on resume (10-23: the record
+  /// itself never carries it), so every round instead takes whatever
+  /// `GET /uploads/{id}` suggests during reconciliation — which is also
+  /// what a restart mid-`upload_pack` falls back to once the first round
+  /// is behind it. A later commit changes `upload_pack` itself to act on
+  /// this; for now the field only changes shape.
+  pub concurrency: Option<usize>,
 }
 
 impl PublishJob {
@@ -708,7 +713,10 @@ impl PublishJob {
     let sent = SentBytes::new(total, stored);
     let monitor = self.app.state::<Pin<Box<TaskMonitor>>>();
     let signatures = SignatureCache::default();
-    let concurrency = self.concurrency.max(1);
+    let concurrency = self
+      .concurrency
+      .unwrap_or(super::commands::DEFAULT_PART_CONCURRENCY)
+      .max(1);
     let mut running = FuturesUnordered::new();
 
     loop {

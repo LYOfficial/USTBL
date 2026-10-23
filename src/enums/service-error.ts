@@ -61,6 +61,7 @@ export enum InstanceError {
   ModpackUploadRestarted = "MODPACK_UPLOAD_RESTARTED",
   ModpackUploadCloudUnavailable = "MODPACK_UPLOAD_CLOUD_UNAVAILABLE",
   ModpackUploadVerifyFailed = "MODPACK_UPLOAD_VERIFY_FAILED",
+  ModpackUploadSessionGone = "MODPACK_UPLOAD_SESSION_GONE",
 }
 
 export enum ConfigServiceError {

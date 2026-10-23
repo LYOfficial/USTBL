@@ -3,7 +3,7 @@
 use super::components::plan_components;
 use super::job::{is_running, PublishJob};
 use super::manifest::{plan_files, LocalFile};
-use super::pack::build_pack;
+use super::pack::{build_pack, verify_pack};
 use super::record::{
   jobs_dir, paths, JobRecord, Phase, RecordedFile, RecordedObject, RecordedPack, RecordedUpload,
   RECORD_SCHEMA,
@@ -407,7 +407,10 @@ pub async fn publish_campus_modpack(
     app: app.clone(),
     uploader,
     record,
-    concurrency,
+    // §14.1/10-23: a fresh publish's first upload round uses `POST
+    // /versions`'s own concurrency; `upload_pack` takes it for that round
+    // and falls back to `GET /uploads/{id}`'s value on every later one.
+    concurrency: Some(concurrency),
   }
   .start();
   match started {
@@ -518,6 +521,14 @@ async fn prepare(
     fs::create_dir_all(dir)?;
     let (objects, target) = (needed.clone(), job_paths.pack.clone());
     let built = tokio::task::spawn_blocking(move || build_pack(&objects, &target))
+      .await
+      .map_err(|e| USTBLError(e.to_string()))??;
+    // §13.2: the self-check runs before anything is sent to the platform, so
+    // a bad local pack never opens a version or an upload session that would
+    // then need to be torn down again (no `POST /versions` has happened yet
+    // at this point, so there is nothing on the platform to clean up).
+    let (check_path, check_sha1) = (job_paths.pack.clone(), built.sha1.clone());
+    tokio::task::spawn_blocking(move || verify_pack(&check_path, &check_sha1))
       .await
       .map_err(|e| USTBLError(e.to_string()))??;
     report(app, instance_id, Stage::Packing, 1, 1);
@@ -681,7 +692,10 @@ pub async fn resume_campus_modpack_publish(
     app,
     uploader,
     record,
-    concurrency: DEFAULT_PART_CONCURRENCY,
+    // §9.1/10-23: the record never carries a concurrency; `upload_pack`
+    // reconciles and takes `GET /uploads/{id}`'s value for every round of
+    // a resumed job instead.
+    concurrency: None,
   }
   .start()?;
   Ok(PublishStarted { group, job_id })
@@ -717,7 +731,8 @@ pub async fn discard_campus_modpack_publish(app: AppHandle, job_id: String) -> U
         app: app.clone(),
         uploader: build_part_upload_client(&app),
         record,
-        concurrency: DEFAULT_PART_CONCURRENCY,
+        // Only platform processing is watched here, never a part upload.
+        concurrency: None,
       }
       .monitor_in_background();
       return Ok(());
