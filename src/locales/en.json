@@ -2658,6 +2658,7 @@
             "MODPACK_UPDATE_BUSY": "This modpack is already being updated",
             "MODPACK_UPDATE_VERIFY_FAILED": "A downloaded file failed verification; the instance was not changed",
             "MODPACK_UPDATE_STALE": "Local files changed after the check; check for updates again",
+            "MODPACK_UPDATE_PREPARE_CANCELLED": "The update preview was cancelled",
             "MODPACK_UPDATE_REMOTE_INVALID": "The new version file list is invalid; the update was refused",
             "MODPACK_UPDATE_LINE_MISMATCH": "The new version is for a different game version or mod loader than this instance",
             "MODPACK_UPDATE_UNSUPPORTED": "This instance cannot be updated automatically",
@@ -2692,6 +2693,7 @@
             "MODPACK_UPDATE_BUSY": "This modpack is already being updated",
             "MODPACK_UPDATE_VERIFY_FAILED": "A downloaded file failed verification; the instance was not changed",
             "MODPACK_UPDATE_STALE": "Local files changed after the check; check for updates again",
+            "MODPACK_UPDATE_PREPARE_CANCELLED": "The update preview was cancelled",
             "MODPACK_UPDATE_REMOTE_INVALID": "The new version file list is invalid; the update was refused",
             "MODPACK_UPDATE_LINE_MISMATCH": "The new version is for a different game version or mod loader than this instance",
             "MODPACK_UPDATE_UNSUPPORTED": "This instance cannot be updated automatically",
@@ -2731,6 +2733,7 @@
             "MODPACK_UPDATE_BUSY": "This modpack is already being updated",
             "MODPACK_UPDATE_VERIFY_FAILED": "A downloaded file failed verification; the instance was not changed",
             "MODPACK_UPDATE_STALE": "Local files changed after the check; check for updates again",
+            "MODPACK_UPDATE_PREPARE_CANCELLED": "The update preview was cancelled",
             "MODPACK_UPDATE_REMOTE_INVALID": "The new version file list is invalid; the update was refused",
             "MODPACK_UPDATE_LINE_MISMATCH": "The new version is for a different game version or mod loader than this instance",
             "MODPACK_UPDATE_UNSUPPORTED": "This instance cannot be updated automatically",
@@ -3198,7 +3201,8 @@
       "delete": "{{count}} removed",
       "loaderChange": "Mod loader will change from {{from}} to {{to}}",
       "conflicts": "{{count}} files conflict with local changes. Choose what to do (local is kept by default)",
-      "autoMerged": "{{count}} configuration files were merged automatically",
+      "autoMerged": "{{count}} auto-merged",
+      "showAll": "Show all ({{count}} more)",
       "reinstallRequired": "{{latest}} changes the modpack's component chain and cannot be applied in place. Install the modpack again"
     },
     "conflictKind": {
@@ -3238,6 +3242,7 @@
     "reason": {
       "MODPACK_UPDATE_UNLINK_PENDING": "The last update is not finished. Recover or roll it back before unfollowing",
       "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack",
+      "MODPACK_UPDATE_PREPARE_CANCELLED": "The update preview was cancelled",
       "MODPACK_UPDATE_UNSUPPORTED": "This instance has no usable install record or version isolation is off",
       "MODPACK_UPDATE_NOT_ISOLATED": "Version isolation is off for this instance, so it cannot be compared safely. Turn it on in the instance settings and retry",
       "MODPACK_UPDATE_BASELINE_MISSING": "This instance has no install record for the modpack, or the record is damaged, so it cannot be compared",

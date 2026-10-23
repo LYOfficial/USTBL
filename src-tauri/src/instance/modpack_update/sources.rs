@@ -44,7 +44,7 @@ pub enum Payload {
 pub struct LatestVersion {
   pub version_id: String,
   pub label: String,
-  pub payload: Payload,
+  pub payload: Option<Payload>,
 }
 
 pub fn loader_slug(loader: ModLoaderType) -> Option<&'static str> {
@@ -117,6 +117,20 @@ pub struct CampusVersion {
   pub loader_type: String,
   pub loader_version: String,
   pub manifest: CampusManifest,
+}
+
+/// A line of the project listing: its newest version, without the manifest.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct CampusLine {
+  pub id: i64,
+  pub version_number: String,
+  pub game_version: String,
+  pub loader_type: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CampusProject {
+  pub lines: Vec<CampusLine>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -409,6 +423,44 @@ pub async fn remote_from_archive(
   })
 }
 
+// ---- light check --------------------------------------------------------------
+
+/// How the line a followed campus instance sits on compares with the newest
+/// publication, as seen from the project listing (no manifest is fetched).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CampusLineStatus {
+  /// The line's newest version is the one the instance follows.
+  Current,
+  /// The line has a newer version: its id and label.
+  Newer { id: i64, version_number: String },
+  /// The project exists but has no line for this game version and loader.
+  LineGone,
+}
+
+/// Match the followed line in a project listing, comparing the loader slug in
+/// lower case like the platform does.
+pub fn campus_line_status(
+  lines: &[CampusLine],
+  origin: &InstanceOrigin,
+) -> CampusLineStatus {
+  let Some(loader) = loader_slug(origin.loader_type) else {
+    return CampusLineStatus::LineGone;
+  };
+  let Some(line) = lines.iter().find(|line| {
+    line.game_version == origin.game_version && line.loader_type.to_lowercase() == loader
+  }) else {
+    return CampusLineStatus::LineGone;
+  };
+  if line.id.to_string() == origin.version_id {
+    CampusLineStatus::Current
+  } else {
+    CampusLineStatus::Newer {
+      id: line.id,
+      version_number: line.version_number.clone(),
+    }
+  }
+}
+
 // ---- network ----------------------------------------------------------------
 
 fn remote_dir(root: &Path) -> PathBuf {
@@ -520,6 +572,11 @@ pub fn is_project_gone_detail(status: u16, detail: Option<&Value>) -> bool {
   status == 404 && detail == Some(&Value::String(PROJECT_GONE_DETAIL.into()))
 }
 
+/// The `detail` field of an error body, used to classify a 404.
+pub fn error_detail(body: Option<&Value>) -> Option<&Value> {
+  body.and_then(|body| body.get("detail"))
+}
+
 /// Whether a project reference is worth asking about. Both the install flow
 /// and publish adoption store the slug; the platform's `get_project` accepts a
 /// slug or a numeric id alike, so any non-empty ref may be queried. The
@@ -531,6 +588,7 @@ pub fn campus_project_queryable(project_ref: &str) -> bool {
 
 /// Ask the platform whether a campus project was deleted. `None` when the
 /// answer is anything but a confirmed deletion, including every error.
+#[cfg_attr(not(test), allow(dead_code))]
 pub async fn campus_project_gone(app: &AppHandle, project_ref: &str) -> Option<bool> {
   if !campus_project_queryable(project_ref) {
     return None;
@@ -549,9 +607,93 @@ pub async fn campus_project_gone(app: &AppHandle, project_ref: &str) -> Option<b
   Some(is_project_gone_detail(status, detail.as_ref()))
 }
 
+/// Fetch the project listing for the light check. A 404 whose detail is the
+/// deletion proof returns `None`; any other 404 is the line being gone.
+pub async fn campus_project_for_light_check(
+  app: &AppHandle,
+  project_ref: &str,
+) -> USTBLResult<Option<CampusProject>> {
+  let client = app.state::<reqwest::Client>();
+  let response = client
+    .get(format!("{CAMPUS_API}/projects/{project_ref}"))
+    .send()
+    .await?;
+  let status = response.status().as_u16();
+  if status == 404 {
+    let body = response.json::<Value>().await.ok();
+    if is_project_gone_detail(status, error_detail(body.as_ref())) {
+      return Ok(None);
+    }
+    return Err(InstanceError::ModpackUpdateLineGone.into());
+  }
+  Ok(Some(response.error_for_status()?.json().await?))
+}
+
 #[cfg(test)]
 mod project_gone_tests {
   use super::*;
+  use crate::instance::models::misc::{ModLoaderType, OriginPlatform};
+
+  fn origin_at(version_id: &str) -> InstanceOrigin {
+    InstanceOrigin {
+      platform: OriginPlatform::Campus,
+      project_id: "p".into(),
+      version_id: version_id.into(),
+      game_version: "1.21.1".into(),
+      loader_type: ModLoaderType::Fabric,
+      follow: true,
+    }
+  }
+
+  fn line(id: i64, version_number: &str, game_version: &str, loader_type: &str) -> CampusLine {
+    CampusLine {
+      id,
+      version_number: version_number.into(),
+      game_version: game_version.into(),
+      loader_type: loader_type.into(),
+    }
+  }
+
+  #[test]
+  fn line_status_tells_current_newer_and_gone_apart() {
+    let lines = vec![
+      line(7, "1.2.0", "1.21.1", "fabric"),
+      line(9, "3.0.0", "1.20.1", "forge"),
+    ];
+    // The followed version is the line's newest: up to date.
+    assert_eq!(
+      campus_line_status(&lines, &origin_at("7")),
+      CampusLineStatus::Current
+    );
+    // Any other version of the line is an update.
+    assert_eq!(
+      campus_line_status(&lines, &origin_at("5")),
+      CampusLineStatus::Newer {
+        id: 7,
+        version_number: "1.2.0".into(),
+      }
+    );
+    // No line matches this game version / loader pair.
+    let mut other = origin_at("7");
+    other.game_version = "1.19.4".into();
+    assert_eq!(
+      campus_line_status(&lines, &other),
+      CampusLineStatus::LineGone
+    );
+    // The loader slug matches case-insensitively (the platform stores lower).
+    let lines = vec![line(7, "1.2.0", "1.21.1", "Fabric")];
+    assert_eq!(
+      campus_line_status(&lines, &origin_at("7")),
+      CampusLineStatus::Current
+    );
+    // A loader without a slug (LiteLoader, Quilt) never has a line.
+    let mut quilt = origin_at("7");
+    quilt.loader_type = ModLoaderType::Quilt;
+    assert_eq!(
+      campus_line_status(&lines, &quilt),
+      CampusLineStatus::LineGone
+    );
+  }
 
   #[test]
   fn only_the_exact_404_detail_confirms_deletion() {
@@ -576,6 +718,15 @@ mod project_gone_tests {
     assert!(campus_project_queryable("24"));
     assert!(!campus_project_queryable(""));
   }
+
+  #[test]
+  fn a_404_with_another_detail_is_not_a_deletion() {
+    // The exact detail is the deletion proof; anything else keeps the line.
+    let body = serde_json::json!({"detail": "Not Found"});
+    assert!(!is_project_gone_detail(404, error_detail(Some(&body))));
+    let gone = serde_json::json!({"detail": PROJECT_GONE_DETAIL});
+    assert!(is_project_gone_detail(404, error_detail(Some(&gone))));
+  }
 }
 
 pub async fn campus_base_remote(
@@ -594,7 +745,7 @@ pub async fn campus_base_remote(
   let latest = LatestVersion {
     version_id: origin.version_id.clone(),
     label: version.version_number.clone(),
-    payload: Payload::Campus(Box::new(version)),
+    payload: Some(Payload::Campus(Box::new(version))),
   };
   resolve_remote(app, origin, root, name, &latest).await
 }
@@ -622,7 +773,7 @@ pub async fn latest_version(
       Ok(Some(LatestVersion {
         version_id: version.id.to_string(),
         label: version.version_number.clone(),
-        payload: Payload::Campus(Box::new(version)),
+        payload: Some(Payload::Campus(Box::new(version))),
       }))
     }
     platform => {
@@ -650,14 +801,16 @@ pub async fn latest_version(
       Ok(Some(LatestVersion {
         version_id: item.file_id,
         label: item.name,
-        payload: Payload::Archive {
+        payload: Some(Payload::Archive {
           url: item.download_url,
           sha1: item.sha1.to_lowercase(),
-        },
+        }),
       }))
     }
   }
 }
+
+
 
 /// Fetch whatever the new version needs to be described file by file. Archives
 /// are cached under the update folder so applying right after planning does
@@ -671,7 +824,11 @@ pub async fn resolve_remote(
 ) -> USTBLResult<RemoteModpack> {
   let dir = remote_dir(root);
   fs::create_dir_all(&dir)?;
-  let remote = match &latest.payload {
+  let payload = latest
+    .payload
+    .as_ref()
+    .ok_or(InstanceError::ModpackUpdateRemoteInvalid)?;
+  let remote = match payload {
     Payload::Archive { url, sha1 } => {
       let path = dir.join(format!("{sha1}.zip"));
       let cached = tokio::task::spawn_blocking({

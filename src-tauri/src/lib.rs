@@ -182,6 +182,7 @@ pub async fn run() -> i32 {
       instance::commands::create_instance,
       instance::modpack_update::commands::check_modpack_update,
       instance::modpack_update::commands::prepare_modpack_update,
+      instance::modpack_update::commands::cancel_modpack_update_prepare,
       instance::modpack_update::commands::apply_modpack_update,
       instance::modpack_update::commands::recover_modpack_update,
       instance::modpack_update::commands::install_campus_modpack,

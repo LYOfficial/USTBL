@@ -45,6 +45,17 @@ export class ModpackUpdateService {
   }
 
   /**
+   * Stop the running preview of this instance, if any. The cancelled preview
+   * answers with `MODPACK_UPDATE_PREPARE_CANCELLED`, which callers ignore.
+   */
+  @responseHandler("instance")
+  static async cancelModpackUpdatePrepare(
+    instanceId: string
+  ): Promise<InvokeResponse<null>> {
+    return await invoke("cancel_modpack_update_prepare", { instanceId });
+  }
+
+  /**
    * Apply the plan the player confirmed. Conflicts without an answer keep the
    * local file.
    */

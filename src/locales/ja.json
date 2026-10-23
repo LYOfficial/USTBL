@@ -2658,6 +2658,7 @@
             "MODPACK_UPDATE_BUSY": "このModパックは更新中です",
             "MODPACK_UPDATE_VERIFY_FAILED": "ダウンロードしたファイルの検証に失敗しました。インスタンスは変更されていません",
             "MODPACK_UPDATE_STALE": "確認後にローカルファイルが変更されました。もう一度更新を確認してください",
+            "MODPACK_UPDATE_PREPARE_CANCELLED": "更新プレビューはキャンセルされました",
             "MODPACK_UPDATE_REMOTE_INVALID": "新しいバージョンのファイル一覧が無効なため、更新を拒否しました",
             "MODPACK_UPDATE_LINE_MISMATCH": "新しいバージョンのゲームバージョンまたはModローダーがこのインスタンスと異なります",
             "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスは自動更新できません",
@@ -2692,6 +2693,7 @@
             "MODPACK_UPDATE_BUSY": "このModパックは更新中です",
             "MODPACK_UPDATE_VERIFY_FAILED": "ダウンロードしたファイルの検証に失敗しました。インスタンスは変更されていません",
             "MODPACK_UPDATE_STALE": "確認後にローカルファイルが変更されました。もう一度更新を確認してください",
+            "MODPACK_UPDATE_PREPARE_CANCELLED": "更新プレビューはキャンセルされました",
             "MODPACK_UPDATE_REMOTE_INVALID": "新しいバージョンのファイル一覧が無効なため、更新を拒否しました",
             "MODPACK_UPDATE_LINE_MISMATCH": "新しいバージョンのゲームバージョンまたはModローダーがこのインスタンスと異なります",
             "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスは自動更新できません",
@@ -2731,6 +2733,7 @@
             "MODPACK_UPDATE_BUSY": "このModパックは更新中です",
             "MODPACK_UPDATE_VERIFY_FAILED": "ダウンロードしたファイルの検証に失敗しました。インスタンスは変更されていません",
             "MODPACK_UPDATE_STALE": "確認後にローカルファイルが変更されました。もう一度更新を確認してください",
+            "MODPACK_UPDATE_PREPARE_CANCELLED": "更新プレビューはキャンセルされました",
             "MODPACK_UPDATE_REMOTE_INVALID": "新しいバージョンのファイル一覧が無効なため、更新を拒否しました",
             "MODPACK_UPDATE_LINE_MISMATCH": "新しいバージョンのゲームバージョンまたはModローダーがこのインスタンスと異なります",
             "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスは自動更新できません",
@@ -3198,7 +3201,8 @@
       "delete": "削除 {{count}}",
       "loaderChange": "MODローダーを {{from}} から {{to}} に切り替えます",
       "conflicts": "{{count}} 個のファイルがローカルの変更と競合しています。処理を選択してください（既定はローカルを保持）",
-      "autoMerged": "{{count}} 個の設定ファイルを自動的にマージしました",
+      "autoMerged": "自動マージ {{count}}",
+      "showAll": "すべて表示（あと {{count}} 件）",
       "reinstallRequired": "{{latest}} はコンポーネント構成を変更するため、そのまま更新できません。モッドパックを再インストールしてください"
     },
     "conflictKind": {
@@ -3238,6 +3242,7 @@
     "reason": {
       "MODPACK_UPDATE_UNLINK_PENDING": "前回の更新が完了していません。先に復旧またはロールバックしてから解除してください",
       "MODPACK_UPDATE_LINE_GONE": "プラットフォームにこのモッドパックのラインはもうありません",
+      "MODPACK_UPDATE_PREPARE_CANCELLED": "更新プレビューはキャンセルされました",
       "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスには利用できるインストール記録がないか、バージョン分離が無効です",
       "MODPACK_UPDATE_NOT_ISOLATED": "このインスタンスはバージョン分離が無効のため、安全に比較できません。インスタンス設定で有効にして再試行してください",
       "MODPACK_UPDATE_BASELINE_MISSING": "このインスタンスにはモッドパックのインストール記録がないか、記録が破損しているため比較できません",

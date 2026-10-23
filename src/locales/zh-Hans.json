@@ -2658,6 +2658,7 @@
             "MODPACK_UPDATE_BUSY": "该整合包正在更新中",
             "MODPACK_UPDATE_VERIFY_FAILED": "下载的文件校验失败，未对实例做任何修改",
             "MODPACK_UPDATE_STALE": "本地文件在检查后发生了变化，请重新检查更新",
+            "MODPACK_UPDATE_PREPARE_CANCELLED": "更新预览已取消",
             "MODPACK_UPDATE_REMOTE_INVALID": "新版本的文件清单不合法，已拒绝更新",
             "MODPACK_UPDATE_LINE_MISMATCH": "新版本的游戏版本或加载器与此实例不一致，无法更新",
             "MODPACK_UPDATE_UNSUPPORTED": "此实例暂不支持自动更新",
@@ -2692,6 +2693,7 @@
             "MODPACK_UPDATE_BUSY": "该整合包正在更新中",
             "MODPACK_UPDATE_VERIFY_FAILED": "下载的文件校验失败，未对实例做任何修改",
             "MODPACK_UPDATE_STALE": "本地文件在检查后发生了变化，请重新检查更新",
+            "MODPACK_UPDATE_PREPARE_CANCELLED": "更新预览已取消",
             "MODPACK_UPDATE_REMOTE_INVALID": "新版本的文件清单不合法，已拒绝更新",
             "MODPACK_UPDATE_LINE_MISMATCH": "新版本的游戏版本或加载器与此实例不一致，无法更新",
             "MODPACK_UPDATE_UNSUPPORTED": "此实例暂不支持自动更新",
@@ -2731,6 +2733,7 @@
             "MODPACK_UPDATE_BUSY": "该整合包正在更新中",
             "MODPACK_UPDATE_VERIFY_FAILED": "下载的文件校验失败，未对实例做任何修改",
             "MODPACK_UPDATE_STALE": "本地文件在检查后发生了变化，请重新检查更新",
+            "MODPACK_UPDATE_PREPARE_CANCELLED": "更新预览已取消",
             "MODPACK_UPDATE_REMOTE_INVALID": "新版本的文件清单不合法，已拒绝更新",
             "MODPACK_UPDATE_LINE_MISMATCH": "新版本的游戏版本或加载器与此实例不一致，无法更新",
             "MODPACK_UPDATE_UNSUPPORTED": "此实例暂不支持自动更新",
@@ -3198,7 +3201,8 @@
       "delete": "删除 {{count}}",
       "loaderChange": "模组加载器将从 {{from}} 切换到 {{to}}",
       "conflicts": "有 {{count}} 个文件与本地修改冲突，请选择处理方式（默认保留本地）",
-      "autoMerged": "已自动合并 {{count}} 个配置文件",
+      "autoMerged": "自动合并 {{count}}",
+      "showAll": "显示全部（还有 {{count}} 项）",
       "reinstallRequired": "{{latest}} 更改了整合包的组件链，无法就地更新，请重新安装该整合包"
     },
     "conflictKind": {
@@ -3238,6 +3242,7 @@
     "reason": {
       "MODPACK_UPDATE_UNLINK_PENDING": "上次更新尚未完成，请先恢复或回滚后再解除跟随",
       "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线",
+      "MODPACK_UPDATE_PREPARE_CANCELLED": "更新预览已取消",
       "MODPACK_UPDATE_UNSUPPORTED": "该实例缺少可用的安装记录或未开启版本隔离",
       "MODPACK_UPDATE_NOT_ISOLATED": "该实例没有开启版本隔离，无法安全对比更新。请在实例设置中开启后重试",
       "MODPACK_UPDATE_BASELINE_MISSING": "该实例缺少整合包的安装记录或记录已损坏，无法对比更新",

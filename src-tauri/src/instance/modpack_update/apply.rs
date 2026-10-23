@@ -311,6 +311,7 @@ pub fn can_roll_back_last(root: &Path) -> bool {
 /// Put the instance back the way it was before the last update. Files the
 /// player changed since then are overwritten, so callers confirm first. The
 /// backup is spent afterwards; returns whether there was one.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn roll_back_last(root: &Path) -> USTBLResult<bool> {
   roll_back_last_checked(root, || Ok(()))
 }

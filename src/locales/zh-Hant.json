@@ -2658,6 +2658,7 @@
             "MODPACK_UPDATE_BUSY": "此整合包正在更新中",
             "MODPACK_UPDATE_VERIFY_FAILED": "下載的檔案校驗失敗，未對實例做任何修改",
             "MODPACK_UPDATE_STALE": "本機檔案在檢查後發生了變化，請重新檢查更新",
+            "MODPACK_UPDATE_PREPARE_CANCELLED": "更新預覽已取消",
             "MODPACK_UPDATE_REMOTE_INVALID": "新版本的檔案清單無效，已拒絕更新",
             "MODPACK_UPDATE_LINE_MISMATCH": "新版本的遊戲版本或模組載入器與此實例不同",
             "MODPACK_UPDATE_UNSUPPORTED": "此實例無法自動更新",
@@ -2692,6 +2693,7 @@
             "MODPACK_UPDATE_BUSY": "此整合包正在更新中",
             "MODPACK_UPDATE_VERIFY_FAILED": "下載的檔案校驗失敗，未對實例做任何修改",
             "MODPACK_UPDATE_STALE": "本機檔案在檢查後發生了變化，請重新檢查更新",
+            "MODPACK_UPDATE_PREPARE_CANCELLED": "更新預覽已取消",
             "MODPACK_UPDATE_REMOTE_INVALID": "新版本的檔案清單無效，已拒絕更新",
             "MODPACK_UPDATE_LINE_MISMATCH": "新版本的遊戲版本或模組載入器與此實例不同",
             "MODPACK_UPDATE_UNSUPPORTED": "此實例無法自動更新",
@@ -2731,6 +2733,7 @@
             "MODPACK_UPDATE_BUSY": "此整合包正在更新中",
             "MODPACK_UPDATE_VERIFY_FAILED": "下載的檔案校驗失敗，未對實例做任何修改",
             "MODPACK_UPDATE_STALE": "本機檔案在檢查後發生了變化，請重新檢查更新",
+            "MODPACK_UPDATE_PREPARE_CANCELLED": "更新預覽已取消",
             "MODPACK_UPDATE_REMOTE_INVALID": "新版本的檔案清單無效，已拒絕更新",
             "MODPACK_UPDATE_LINE_MISMATCH": "新版本的遊戲版本或模組載入器與此實例不同",
             "MODPACK_UPDATE_UNSUPPORTED": "此實例無法自動更新",
@@ -3198,7 +3201,8 @@
       "delete": "刪除 {{count}}",
       "loaderChange": "模組載入器將從 {{from}} 切換到 {{to}}",
       "conflicts": "有 {{count}} 個檔案與本機修改衝突，請選擇處理方式（預設保留本機）",
-      "autoMerged": "已自動合併 {{count}} 個設定檔",
+      "autoMerged": "自動合併 {{count}}",
+      "showAll": "顯示全部（還有 {{count}} 項）",
       "reinstallRequired": "{{latest}} 更改了整合包的組件鏈，無法就地更新，請重新安裝該整合包"
     },
     "conflictKind": {
@@ -3238,6 +3242,7 @@
     "reason": {
       "MODPACK_UPDATE_UNLINK_PENDING": "上次更新尚未完成，請先恢復或回滾後再解除跟隨",
       "MODPACK_UPDATE_LINE_GONE": "平台上已不存在該整合包的這條線",
+      "MODPACK_UPDATE_PREPARE_CANCELLED": "更新預覽已取消",
       "MODPACK_UPDATE_UNSUPPORTED": "該實例缺少可用的安裝記錄或未開啟版本隔離",
       "MODPACK_UPDATE_NOT_ISOLATED": "該實例沒有開啟版本隔離，無法安全比對更新。請在實例設定中開啟後重試",
       "MODPACK_UPDATE_BASELINE_MISSING": "該實例缺少整合包的安裝記錄或記錄已損壞，無法比對更新",
