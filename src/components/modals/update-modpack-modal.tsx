@@ -19,7 +19,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { useRouter } from "next/router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { DiffFile, DiffHunks, regionHunk } from "@/components/common/diff-view";
 import { useLauncherConfig } from "@/contexts/config";
@@ -113,9 +113,15 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
     }
   }, [instanceId, getInstanceList, checkModpackUpdate, preparePlan]);
 
+  // The opening check runs once per instance. runCheck also depends on
+  // getInstanceList, whose identity changes on every instance list update
+  // (e.g. play time writes), so it must not retrigger this effect: that
+  // would restart recover + scan + prepare and discard the choices.
+  const runCheckRef = useRef(runCheck);
+  runCheckRef.current = runCheck;
   useEffect(() => {
-    runCheck();
-  }, [runCheck]);
+    void runCheckRef.current();
+  }, [instanceId]);
 
   useEffect(() => {
     return CampusModpackService.onInstallProgress((payload) => {

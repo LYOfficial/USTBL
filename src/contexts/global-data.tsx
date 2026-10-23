@@ -81,6 +81,10 @@ export const GlobalDataContextProvider: React.FC<{
   const startupChecked = useRef(false);
   // An auto-unlink is announced once per instance, not on every later check.
   const unlinkNotified = useRef(new Set<string>());
+  // The unlink toast names the instance, but checkModpackUpdate must stay
+  // referentially stable across instance list updates.
+  const instanceListRef = useRef(instanceList);
+  instanceListRef.current = instanceList;
 
   const checkModpackUpdate = useCallback(
     async (instanceId: string, scanLocal = false) => {
@@ -100,7 +104,9 @@ export const GlobalDataContextProvider: React.FC<{
       setModpackChecks((current) => ({ ...current, [instanceId]: check }));
       if (check.unlinked && !unlinkNotified.current.has(instanceId)) {
         unlinkNotified.current.add(instanceId);
-        const name = instanceList?.find((i) => i.id === instanceId)?.name;
+        const name = instanceListRef.current?.find(
+          (i) => i.id === instanceId
+        )?.name;
         toast({
           title: t("InstanceSyncPage.ledger.unlinkedToast", {
             name: name ?? instanceId,
@@ -110,7 +116,7 @@ export const GlobalDataContextProvider: React.FC<{
       }
       return check;
     },
-    [instanceList, toast, t]
+    [toast, t]
   );
 
   // Once per launch, look for updates of every followed instance. One at a
