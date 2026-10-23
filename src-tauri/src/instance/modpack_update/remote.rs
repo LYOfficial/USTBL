@@ -159,13 +159,15 @@ impl From<&RemoteModpack> for StoredRemoteModpack {
 }
 
 impl RemoteModpack {
-  /// Rebuild a remote from its stored form; pack sources get a fresh session
-  /// from `make_session`.
+  /// Rebuild a remote from its stored form. Pack sources get a fresh session
+  /// from `make_session`, one per version shared by all of its files (the
+  /// component pack's included), so each version is located once.
   pub fn from_stored(
     stored: StoredRemoteModpack,
     make_session: impl Fn(i64) -> Arc<PackSession>,
   ) -> Self {
-    let file = |file: StoredRemoteFile| RemoteFile {
+    let mut sessions: BTreeMap<i64, Arc<PackSession>> = BTreeMap::new();
+    let mut file = |file: StoredRemoteFile| RemoteFile {
       path: file.path,
       key: file.key,
       source: match file.source {
@@ -173,21 +175,28 @@ impl RemoteModpack {
         StoredFileSource::ArchiveEntry { archive, entry } => {
           FileSource::ArchiveEntry { archive, entry }
         }
-        StoredFileSource::Pack { version_id } => FileSource::Pack(make_session(version_id)),
+        StoredFileSource::Pack { version_id } => FileSource::Pack(
+          sessions
+            .entry(version_id)
+            .or_insert_with(|| make_session(version_id))
+            .clone(),
+        ),
       },
     };
+    let component_pack = stored.component_pack.map(|pack| ComponentPack {
+      mmc_pack: pack.mmc_pack,
+      instance_cfg: pack.instance_cfg,
+      files: pack.files.into_iter().map(&mut file).collect(),
+    });
+    let files = stored.files.into_iter().map(&mut file).collect();
     Self {
       version_id: stored.version_id,
       label: stored.label,
       game_version: stored.game_version,
       loader: stored.loader,
       components: stored.components,
-      component_pack: stored.component_pack.map(|pack| ComponentPack {
-        mmc_pack: pack.mmc_pack,
-        instance_cfg: pack.instance_cfg,
-        files: pack.files.into_iter().map(file).collect(),
-      }),
-      files: stored.files.into_iter().map(file).collect(),
+      component_pack,
+      files,
     }
   }
 }
@@ -316,6 +325,79 @@ mod tests {
     assert!(pack(&["mods/A.jar", "mods/a.jar"])
       .validate("pack")
       .is_err());
+  }
+
+  /// Sessions here are only compared, never asked for anything.
+  struct NoTransport;
+
+  #[async_trait::async_trait]
+  impl super::super::packs::PackTransport for NoTransport {
+    async fn locate(
+      &self,
+      _: i64,
+      _: &[String],
+    ) -> Result<super::super::packs::Located, super::super::packs::TransportError> {
+      unreachable!()
+    }
+    async fn read_range(
+      &self,
+      _: &super::super::packs::PackLocation,
+      _: u64,
+      _: u64,
+      _: &std::path::Path,
+    ) -> Result<(), super::super::packs::TransportError> {
+      unreachable!()
+    }
+  }
+
+  fn stored_pack_file(path: &str, version_id: i64) -> StoredRemoteFile {
+    StoredRemoteFile {
+      path: path.into(),
+      key: FileKey {
+        sha1: format!("{version_id:0>40}"),
+        size: 1,
+      },
+      source: StoredFileSource::Pack { version_id },
+    }
+  }
+
+  #[test]
+  fn stored_pack_files_of_one_version_share_one_session() {
+    let mut stored = StoredRemoteModpack::from(&pack(&["mods/url.jar"]));
+    stored.files.extend([
+      stored_pack_file("mods/a.jar", 3),
+      stored_pack_file("mods/b.jar", 4),
+      stored_pack_file("mods/c.jar", 3),
+    ]);
+    stored.component_pack = Some(StoredComponentPack {
+      mmc_pack: serde_json::json!({ "components": [] }),
+      instance_cfg: BTreeMap::new(),
+      files: vec![
+        stored_pack_file("patches/x.json", 3),
+        stored_pack_file("libraries/y.jar", 4),
+      ],
+    });
+    let made = std::cell::RefCell::new(Vec::new());
+
+    let remote = RemoteModpack::from_stored(stored, |version_id| {
+      made.borrow_mut().push(version_id);
+      PackSession::new(Arc::new(NoTransport), version_id)
+    });
+
+    assert_eq!(made.into_inner(), [3, 4]);
+    let session = |file: &RemoteFile| match &file.source {
+      FileSource::Pack(session) => session.clone(),
+      other => panic!("{other:?}"),
+    };
+    let component = &remote.component_pack.as_ref().unwrap().files;
+    assert!(matches!(remote.files[0].source, FileSource::Download(_)));
+    let three = session(&remote.files[1]);
+    let four = session(&remote.files[2]);
+    assert_eq!((three.version_id(), four.version_id()), (3, 4));
+    assert!(!Arc::ptr_eq(&three, &four));
+    assert!(Arc::ptr_eq(&three, &session(&remote.files[3])));
+    assert!(Arc::ptr_eq(&three, &session(&component[0])));
+    assert!(Arc::ptr_eq(&four, &session(&component[1])));
   }
 
   #[test]

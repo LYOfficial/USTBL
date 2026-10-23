@@ -400,8 +400,17 @@ fn extract_entry(archive: &Path, entry: &str, dest: &Path) -> USTBLResult<()> {
 /// Tell every pack session which of its files are about to be fetched, so it
 /// can locate just those.
 pub async fn prepare_packs(files: &[&RemoteFile]) -> USTBLResult<()> {
-  for (session, wanted) in pack_sessions(files) {
+  for (session, mut wanted) in pack_sessions(files) {
+    wanted.sort();
+    wanted.dedup();
+    let locating = Instant::now();
     session.prepare(&wanted).await?;
+    log::info!(
+      "modpack pack locate: version {}, {} sha1s, {:?} elapsed",
+      session.version_id(),
+      wanted.len(),
+      locating.elapsed()
+    );
   }
   Ok(())
 }
@@ -1436,6 +1445,8 @@ mod tests {
     pack: Vec<u8>,
     entries: BTreeMap<String, crate::instance::modpack_update::packs::EntryLocation>,
     ranges: Mutex<Vec<(u64, u64)>>,
+    /// Version id and number of sha1s of every locate.
+    locates: Mutex<Vec<(i64, usize)>>,
     flying: std::sync::atomic::AtomicUsize,
     peak: std::sync::atomic::AtomicUsize,
   }
@@ -1477,6 +1488,7 @@ mod tests {
         pack,
         entries,
         ranges: Mutex::default(),
+        locates: Mutex::default(),
         flying: std::sync::atomic::AtomicUsize::new(0),
         peak: std::sync::atomic::AtomicUsize::new(0),
       }
@@ -1487,13 +1499,14 @@ mod tests {
   impl crate::instance::modpack_update::packs::PackTransport for MultiFilePack {
     async fn locate(
       &self,
-      _: i64,
+      version_id: i64,
       sha1s: &[String],
     ) -> Result<
       crate::instance::modpack_update::packs::Located,
       crate::instance::modpack_update::packs::TransportError,
     > {
       use crate::instance::modpack_update::packs::{Located, PackLocation};
+      self.locates.lock().unwrap().push((version_id, sha1s.len()));
       Ok(Located {
         packs: vec![PackLocation {
           id: 1,
@@ -1695,6 +1708,123 @@ mod tests {
       .unwrap();
 
     assert_eq!(root.read("config/p.toml").as_deref(), Some("from-pack"));
+  }
+
+  const CACHED_FILES: [(&str, &[u8]); 3] = [
+    ("mods/a.jar", b"alpha"),
+    ("mods/b.jar", b"beta"),
+    ("mods/c.jar", b"gamma"),
+  ];
+  const CACHED_COMPONENTS: [(&str, &[u8]); 2] = [
+    ("patches/com.example.json", b"patch-bytes"),
+    ("libraries/l.jar", b"lib"),
+  ];
+
+  /// A pack holding every file of `CACHED_FILES` and `CACHED_COMPONENTS`.
+  fn cached_pack() -> Arc<MultiFilePack> {
+    let sha1s: Vec<_> = sha1s_of(&CACHED_FILES)
+      .into_iter()
+      .chain(sha1s_of(&CACHED_COMPONENTS))
+      .collect();
+    Arc::new(MultiFilePack::new(
+      &sha1s
+        .iter()
+        .map(|(sha1, data)| (sha1.as_str(), *data))
+        .collect::<Vec<(&str, &[u8])>>(),
+    ))
+  }
+
+  /// An update restoring the component pack whose files are pack files of
+  /// version 3, except the second file of each list, which is in version 4.
+  fn two_version_request(root: &Root, transport: &Arc<MultiFilePack>) -> UpdateRequest {
+    let three = PackSession::new(transport.clone(), 3);
+    let four = PackSession::new(transport.clone(), 4);
+    let mut files = pack_remote_files(&CACHED_FILES, &three);
+    files[1].source = FileSource::Pack(four.clone());
+    let mut component = pack_remote_files(&CACHED_COMPONENTS, &three);
+    component[1].source = FileSource::Pack(four);
+    let operations = files.iter().map(write_op).collect();
+    let mut update = request(root, files, operations, "0.16.0");
+    update.remote.component_pack = Some(ComponentPack {
+      mmc_pack: serde_json::json!({ "components": [], "formatVersion": 1 }),
+      instance_cfg: BTreeMap::new(),
+      files: component,
+    });
+    update.restore_components = true;
+    update
+  }
+
+  /// `remote` written to the remote cache and read back the way
+  /// `load_remote_cache` does, with sessions on `transport`. Also returns how
+  /// many sessions were made.
+  fn through_remote_cache(
+    root: &Root,
+    remote: &RemoteModpack,
+    transport: &Arc<MultiFilePack>,
+  ) -> (RemoteModpack, usize) {
+    use crate::instance::modpack_update::sources::RemoteCache;
+    let cache = RemoteCache::new(&origin("2"), &root.0, remote, None);
+    let bytes = serde_json::to_vec(&cache).unwrap();
+    let back: RemoteCache = serde_json::from_slice(&bytes).unwrap();
+    let made = std::cell::Cell::new(0);
+    let remote = RemoteModpack::from_stored(back.remote, |version_id| {
+      made.set(made.get() + 1);
+      PackSession::new(transport.clone(), version_id)
+    });
+    (remote, made.get())
+  }
+
+  #[test]
+  fn a_remote_read_back_from_the_cache_has_one_pack_session_per_version() {
+    let root = Root::new();
+    let transport = cached_pack();
+    let update = two_version_request(&root, &transport);
+
+    let (remote, made) = through_remote_cache(&root, &update.remote, &transport);
+
+    assert_eq!(made, 2);
+    let files: Vec<&RemoteFile> = remote
+      .files
+      .iter()
+      .chain(&remote.component_pack.as_ref().unwrap().files)
+      .collect();
+    let sessions: Vec<_> = pack_sessions(&files)
+      .into_iter()
+      .map(|(session, wanted)| (session.version_id(), wanted.len()))
+      .collect();
+    assert_eq!(sessions, [(3, 3), (4, 2)]);
+  }
+
+  #[tokio::test]
+  async fn an_update_read_back_from_the_cache_locates_each_version_once() {
+    let root = setup();
+    let env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let transport = cached_pack();
+    let mut update = two_version_request(&root, &transport);
+    update.remote = through_remote_cache(&root, &update.remote, &transport).0;
+
+    apply(&env, update).await.unwrap();
+
+    assert_eq!(
+      transport.locates.lock().unwrap().as_slice(),
+      [(3, 3), (4, 2)]
+    );
+    for (path, data) in CACHED_FILES {
+      assert_eq!(
+        root.read(path).as_deref(),
+        Some(std::str::from_utf8(data).unwrap())
+      );
+    }
+    assert_eq!(
+      env.restored.lock().unwrap().as_slice(),
+      [
+        "patches/com.example.json=patch-bytes",
+        "libraries/l.jar=lib"
+      ]
+    );
   }
 
   #[tokio::test]
