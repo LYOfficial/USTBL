@@ -924,10 +924,7 @@ async fn materialize_text_candidates(
     loader: remote.loader.clone(),
     loader_install_pending: AtomicBool::new(false),
   };
-  let preview = target
-    .root
-    .join(super::remote::UPDATE_DIR)
-    .join("remote-preview");
+  let preview = target.root.join(super::remote::UPDATE_DIR).join("remote-preview");
   let _ = tokio::fs::remove_dir_all(&preview).await;
   let mut result = BTreeMap::new();
   let candidates: Vec<_> = remote
