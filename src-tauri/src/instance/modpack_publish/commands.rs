@@ -635,6 +635,30 @@ async fn prepare(
     .or(project.as_deref())
     .unwrap_or_default()
     .to_string();
+  // The task card shows the project's display name, not the generated slug.
+  let project_name = match &new_project {
+    Some(new) => Some(new.name.clone()),
+    None => {
+      let mut name = None;
+      if let Some(project) = &project {
+        if let Ok(response) = app
+          .state::<reqwest::Client>()
+          .get(format!("{CAMPUS_API}/projects/{project}"))
+          .send()
+          .await
+        {
+          if response.status().is_success() {
+            name = response
+              .json::<Value>()
+              .await
+              .ok()
+              .and_then(|body| body["name"].as_str().map(str::to_string));
+          }
+        }
+      }
+      Some(name.unwrap_or_else(|| slug.clone()))
+    }
+  };
 
   let record = JobRecord {
     schema: RECORD_SCHEMA,
@@ -645,6 +669,7 @@ async fn prepare(
     instance_id: instance_id.to_string(),
     instance_name: instance.name.clone(),
     project_slug: slug,
+    project_name,
     version_id,
     version_number,
     files: plan

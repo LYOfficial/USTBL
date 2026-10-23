@@ -338,6 +338,30 @@ async fn read_part(pack: &Path, offset: u64, length: u64) -> USTBLResult<(Bytes,
   Ok((Bytes::from(buffer), digest))
 }
 
+/// The task card is titled after the project's display name, not the slug the
+/// server generated. `?` and `@` are the group id's own separators and cannot
+/// appear in the name.
+fn display_project(record: &JobRecord) -> String {
+  let name = record
+    .project_name
+    .as_deref()
+    .map(str::trim)
+    .filter(|name| !name.is_empty())
+    .unwrap_or(record.project_slug.as_str());
+  name
+    .chars()
+    .map(|c| {
+      if matches!(c, '?' | '@' | '\n' | '\r') {
+        ' '
+      } else {
+        c
+      }
+    })
+    .collect::<String>()
+    .trim()
+    .to_string()
+}
+
 pub(super) struct PublishJob {
   pub app: AppHandle,
   pub uploader: reqwest::Client,
@@ -364,7 +388,7 @@ impl PublishJob {
     let monitor = app.state::<Pin<Box<TaskMonitor>>>();
     let group = format!(
       "modpack-publish?{} {}@{}",
-      self.record.project_slug,
+      display_project(&self.record),
       self.record.version_number,
       chrono::Utc::now().timestamp_millis()
     );
@@ -1812,6 +1836,7 @@ mod tests {
       instance_id: "i".into(),
       instance_name: "n".into(),
       project_slug: "p".into(),
+      project_name: None,
       version_id: 1,
       version_number: "1".into(),
       files: vec![],
