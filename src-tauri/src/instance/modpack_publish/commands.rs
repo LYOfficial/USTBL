@@ -1,7 +1,8 @@
 //! Publishing an instance to the campus modpack platform.
 
+use super::cancel::{cancel_remote, decide_cancel, CancelAction, RemoteCancel};
 use super::components::plan_components;
-use super::job::{is_running, PublishJob};
+use super::job::{is_running, start_monitor, PublishJob};
 use super::manifest::{partition_publishable_paths, plan_files, LocalFile};
 use super::pack::{build_pack, mark_verified, verify_pack};
 use super::record::{
@@ -821,7 +822,10 @@ pub async fn resume_campus_modpack_publish(
 }
 
 /// Give an unfinished publish up: the version is dropped on the platform and
-/// the local leftovers are removed.
+/// the local leftovers are removed — but only once the platform confirms the
+/// version is gone. The decision is the shared one in `cancel.rs`, the same
+/// the task card's cancel makes (§3.2): a version the platform still owns
+/// keeps its record and gets its watch back instead of being abandoned.
 #[tauri::command]
 pub async fn discard_campus_modpack_publish(app: AppHandle, job_id: String) -> USTBLResult<()> {
   ensure_manager(&app)?;
@@ -829,42 +833,37 @@ pub async fn discard_campus_modpack_publish(app: AppHandle, job_id: String) -> U
     return Err(USTBLError("任务正在进行，请先在任务列表中取消".into()));
   }
   let dir = jobs_dir();
-  let record = JobRecord::load(&dir, &job_id)?;
-  let response = authed_json(
-    &app,
-    reqwest::Method::DELETE,
-    &format!("/versions/{}", record.version_id),
-    None,
-  )
-  .await?;
-  if response.status() == reqwest::StatusCode::CONFLICT {
-    let state = authed_json(
-      &app,
-      reqwest::Method::GET,
-      &format!("/versions/{}/status", record.version_id),
-      None,
-    )
-    .await?;
-    if state.status().is_success() && state.json::<Value>().await?["status"] == "published" {
-      // Already out: the card comes back for the adoption, then the record
-      // is dropped by the platform stage itself.
-      PublishJob {
-        app: app.clone(),
-        uploader: build_part_upload_client(&app),
-        record,
-        // Only platform processing is watched here, never a part upload.
-        concurrency: None,
-      }
-      .start()?;
-      return Ok(());
+  let mut record = JobRecord::load(&dir, &job_id)?;
+  let remote = cancel_remote(&app, record.version_id).await;
+  match decide_cancel(&remote) {
+    CancelAction::RemoveLocal => {
+      JobRecord::remove(&dir, &job_id);
+      Ok(())
+    }
+    CancelAction::ResumeMonitoring => {
+      // The platform owns the version: the record goes back to `Processing`
+      // and the watch resumes; a published version then ends in the
+      // ordinary adoption (`adopt_published` via the platform stage), not
+      // in a deletion. A watch that cannot be started right now (the job
+      // already runs) leaves the record for the unfinished list or the
+      // next start, exactly as a lost watch would (§3.2).
+      record.phase = Phase::Processing;
+      record.error = None;
+      record.save(&dir)?;
+      start_monitor(&app, record);
+      Ok(())
+    }
+    CancelAction::KeepLocal => {
+      // Nothing could be confirmed: the record and the local files stay,
+      // so the publish can still be continued or given up later — never
+      // silently dropped as if it had been deleted.
+      let reason = match remote {
+        RemoteCancel::Undetermined(error) => error,
+        _ => USTBLError("暂时无法确认这个版本是否还能取消，请稍后再试".into()),
+      };
+      Err(reason)
     }
   }
-  // Already gone counts as dropped; a version being processed cannot be.
-  if !response.status().is_success() && response.status() != reqwest::StatusCode::NOT_FOUND {
-    return Err(failure(response).await);
-  }
-  JobRecord::remove(&dir, &job_id);
-  Ok(())
 }
 
 /// Fast-forward: after publishing, the instance holds exactly what the new

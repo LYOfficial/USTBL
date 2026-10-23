@@ -5,6 +5,7 @@
 //! own and shows on the task list next to the downloads. Everything it needs to
 //! start over after a failure or a restart is in the [`JobRecord`].
 
+use super::cancel::{cancel_remote, decide_cancel, CancelAction};
 use super::commands::{
   adopt_published, authed_json, failure, failure_code, failure_detail, instance_of, PublishOutcome,
 };
@@ -76,16 +77,73 @@ pub(super) fn is_running(job_id: &str) -> bool {
 pub(crate) fn resume_monitors(app: &AppHandle) {
   for record in JobRecord::list(&jobs_dir()) {
     if record.phase == Phase::Processing {
-      let _ = PublishJob {
-        app: app.clone(),
-        uploader: crate::utils::web::build_part_upload_client(app),
-        record,
-        // Only platform processing is watched here, never a part upload.
-        concurrency: None,
-      }
-      .start();
+      start_monitor(app, record);
+    } else if record.error.as_deref() == Some(CANCEL_RETRY_MARK) {
+      // A previous cancel could not reach the platform (§3.2): ask again
+      // whether the version can still be given up, and clear the mark so
+      // the record is back to its ordinary unfinished state either way.
+      let app = app.clone();
+      tauri::async_runtime::spawn(async move {
+        cleanup_cancelled(&app, record).await;
+      });
     }
   }
+}
+
+/// The cancel guard's cleanup, run as its own task so it does not outlive
+/// the app: the shared cancel decision decides whether the record goes away,
+/// the platform watch comes back, or everything stays as it is.
+async fn cleanup_cancelled(app: &AppHandle, mut record: JobRecord) {
+  let dir = jobs_dir();
+  match decide_cancel(&cancel_remote(app, record.version_id).await) {
+    CancelAction::RemoveLocal => JobRecord::remove(&dir, &record.id),
+    CancelAction::ResumeMonitoring => {
+      // The platform owns the version now: the record goes back to exactly
+      // the state `resume_monitors` and the unfinished list understand —
+      // `Processing`, no error — and the watch resumes through the same
+      // `PublishJob` path a `Processing` record normally would. Starting
+      // the watch can fail (only when it already runs); the record then
+      // stays and the next start picks it up again.
+      record.phase = Phase::Processing;
+      record.error = None;
+      if let Err(error) = record.save(&dir) {
+        log::warn!(
+          "Modpack publish {} could not save its record: {error:?}",
+          record.id
+        );
+      }
+      start_monitor(app, record);
+    }
+    CancelAction::KeepLocal => {
+      log::warn!(
+        "Modpack publish {} was cancelled but the platform could not confirm \
+         the version is gone; keeping the local record for a later continue or discard",
+        record.id
+      );
+      record.error = Some(CANCEL_RETRY_MARK.to_string());
+      if let Err(error) = record.save(&dir) {
+        log::warn!(
+          "Modpack publish {} could not save its record: {error:?}",
+          record.id
+        );
+      }
+    }
+  }
+}
+
+/// Watch the platform stage of `record` through the ordinary job path —
+/// the same one `resume_monitors` and a 409-conflicted discard use. A
+/// failed start (the job already runs) only means the watch is picked up
+/// again later; the record itself is never touched here.
+pub(super) fn start_monitor(app: &AppHandle, record: JobRecord) {
+  let _ = PublishJob {
+    app: app.clone(),
+    uploader: crate::utils::web::build_part_upload_client(app),
+    record,
+    // Only platform processing is watched here, never a part upload.
+    concurrency: None,
+  }
+  .start();
 }
 
 struct ActiveToken(String);
@@ -146,13 +204,20 @@ struct PublishFinished {
   error: Option<String>,
 }
 
-/// Cancelling the task drops the job; that gives the version up on the platform
-/// and forgets the record. Closing the launcher drops it too but must keep
-/// both, so the cleanup is a task of its own that does not outlive the app.
+/// `record.error` while a cancelled publish waits for the platform to be
+/// asked again whether the version can still be given up. Not a user-facing
+/// message: it only marks the record for one retry of the cancel decision
+/// on the next start, and clears as soon as that decision lands.
+pub(super) const CANCEL_RETRY_MARK: &str = "CANCEL_REMOTE_UNKNOWN";
+
+/// Cancelling the task drops the job; that gives the version up on the
+/// platform and — only once the platform confirms the version is gone —
+/// forgets the record (§3.2, v3 §12). Closing the launcher drops the job
+/// too but must keep both, so the cleanup is a task of its own that does
+/// not outlive the app.
 struct CancelGuard {
   app: AppHandle,
-  job_id: String,
-  version_id: i64,
+  record: JobRecord,
   armed: bool,
 }
 
@@ -161,16 +226,9 @@ impl Drop for CancelGuard {
     if !self.armed {
       return;
     }
-    let (app, job_id, version_id) = (self.app.clone(), self.job_id.clone(), self.version_id);
+    let (app, record) = (self.app.clone(), self.record.clone());
     tauri::async_runtime::spawn(async move {
-      let _ = authed_json(
-        &app,
-        reqwest::Method::DELETE,
-        &format!("/versions/{version_id}"),
-        None,
-      )
-      .await;
-      JobRecord::remove(&jobs_dir(), &job_id);
+      cleanup_cancelled(&app, record).await;
     });
   }
 }
@@ -447,8 +505,7 @@ impl PublishJob {
     let anchor_id = tasks.commit.read().unwrap().desc.task_id;
     let mut guard = CancelGuard {
       app: app.clone(),
-      job_id: self.record.id.clone(),
-      version_id: self.record.version_id,
+      record: self.record.clone(),
       armed: true,
     };
     let result = self.execute(&tasks, &mut guard).await;
