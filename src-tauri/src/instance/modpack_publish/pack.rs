@@ -142,13 +142,6 @@ pub fn build_pack(objects: &[PackObject], dest: &Path) -> USTBLResult<BuiltPack>
   Ok(BuiltPack { sha1, size })
 }
 
-/// Checks a pack against the rules `build_pack` guarantees and the server's
-/// verify step relies on (§5.2, §8.2): entries sit back to back in sorted,
-/// unique-name order with the central directory immediately after the last
-/// one and no trailing comment; no entry is encrypted, uses a data
-/// descriptor, or is compressed with anything but STORED/DEFLATE; each entry
-/// decompresses to the sha1 its name promises and the CRC32 the central
-/// directory records; data offsets follow from the local header length
 /// The packs this process has already run the self-check on, keyed by path.
 /// `ensure_pack` consults this before reading a pack back: a pack that was
 /// just built and verified here does not need the second read, while a pack

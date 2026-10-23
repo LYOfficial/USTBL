@@ -1,7 +1,5 @@
 //! Conservative line-hunk three-way merging for eligible configuration text.
 
-
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hunk {
   pub base_start: usize,

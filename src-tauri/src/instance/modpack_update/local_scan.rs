@@ -9,7 +9,7 @@
 //! keep hashing everything themselves (their result decides what is written),
 //! but they refresh the entries of the files they just hashed.
 
-use super::diff::{FileKey, LocalState, DISABLED_SUFFIX};
+use super::diff::{DISABLED_SUFFIX, FileKey, LocalState};
 use crate::instance::helpers::modpack::baseline::hash_file;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io;
@@ -50,6 +50,16 @@ impl LocalScanCache {
 
   /// Remember a just-computed state, replacing any older entry of the path.
   fn record(&mut self, root: &Path, path: &str, state: &LocalState) {
+    // A placeholder (empty sha1) is not a computed state: it only says "not
+    // the baseline it was scanned against". Caching it would report an
+    // untouched file as changed under every later baseline.
+    let placeholder = match state {
+      LocalState::Present(key) | LocalState::Disabled(key) => key.sha1.is_empty(),
+      LocalState::Absent => false,
+    };
+    if placeholder {
+      return;
+    }
     let file = file_of(root, path, state);
     let (size, modified) = match stat_of(&file) {
       Some(stat) => stat,
@@ -61,11 +71,14 @@ impl LocalScanCache {
       .instances
       .entry(root.to_path_buf())
       .or_default()
-      .insert(path.to_string(), ScanEntry {
-        size,
-        modified,
-        state: state.clone(),
-      });
+      .insert(
+        path.to_string(),
+        ScanEntry {
+          size,
+          modified,
+          state: state.clone(),
+        },
+      );
   }
 }
 
@@ -232,6 +245,33 @@ mod tests {
       }
       other => panic!("{other:?}"),
     }
+    let _ = fs::remove_dir_all(root);
+  }
+
+  /// The placeholder a size mismatch reports is not cached: a later baseline
+  /// that does match the file's size must hash it and see no change. Happens
+  /// when an update keeps the player's file and the new baseline records its
+  /// size.
+  #[test]
+  fn a_size_placeholder_is_forgotten_under_the_next_baseline() {
+    let root = root(&[("mods/a.jar", "content")]);
+    let cache = Mutex::new(LocalScanCache::default());
+
+    // First scan: the baseline expects another size, so the file is a change
+    // reported without a hash.
+    let short = BTreeMap::from([("mods/a.jar".to_string(), key("x"))]);
+    let states = collect_states_cached(&cache, &root, &short).unwrap();
+    match &states["mods/a.jar"] {
+      LocalState::Present(found) => assert!(found.sha1.is_empty()),
+      other => panic!("{other:?}"),
+    }
+
+    // Second scan: the new baseline matches the file exactly. Had the
+    // placeholder been cached, the lookup would hand back the empty sha1 and
+    // the file would still count as changed; instead it is hashed now.
+    let exact = BTreeMap::from([("mods/a.jar".to_string(), key("content"))]);
+    let states = collect_states_cached(&cache, &root, &exact).unwrap();
+    assert_eq!(states["mods/a.jar"], LocalState::Present(key("content")));
     let _ = fs::remove_dir_all(root);
   }
 
