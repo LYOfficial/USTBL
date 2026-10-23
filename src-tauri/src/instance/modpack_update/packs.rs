@@ -362,9 +362,10 @@ impl PackSession {
   }
 
   /// Put every file of `batch` in place, one planned group after another.
-  /// Callers that want concurrency plan the groups themselves and fetch them
-  /// concurrently.
-  pub async fn fetch_batch(&self, batch: &[PackFetch]) -> USTBLResult<()> {
+  /// Test helper: callers that want concurrency plan the groups themselves
+  /// and fetch them concurrently, so only the tests use this.
+  #[cfg(test)]
+  async fn fetch_batch(&self, batch: &[PackFetch]) -> USTBLResult<()> {
     let (located, generation) = self.located().await?;
     for group in self.plan_groups(&located, generation, batch)? {
       self.fetch_group(&group).await?;
