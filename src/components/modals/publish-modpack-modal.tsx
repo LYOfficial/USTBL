@@ -1,4 +1,6 @@
 import {
+  Alert,
+  AlertIcon,
   Button,
   HStack,
   Modal,
@@ -61,6 +63,8 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
   const [isFileListLoading, setIsFileListLoading] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
   const [progress, setProgress] = useState<CampusPublishProgress | null>(null);
+  // Why this instance cannot be published right now (empty = no blocker).
+  const [publishBlockReason, setPublishBlockReason] = useState("");
 
   const isNewProject = projectChoice === NEW_PROJECT;
 
@@ -89,6 +93,17 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
   useEffect(() => {
     if (!modalProps.isOpen) return;
     let isActive = true;
+
+    CampusModpackService.checkCampusModpackPublishable(instanceId).then(
+      (response) => {
+        if (!isActive) return;
+        if (response.status === "success") {
+          setPublishBlockReason("");
+        } else {
+          setPublishBlockReason(response.details || response.message);
+        }
+      }
+    );
 
     CampusModpackService.listCampusModpackProjects().then((response) => {
       if (!isActive) return;
@@ -251,6 +266,19 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
     {
       title: t("PublishModpackModal.label.project"),
       items: [
+        ...(publishBlockReason
+          ? [
+              {
+                title: "",
+                children: (
+                  <Alert status="error" borderRadius="md">
+                    <AlertIcon />
+                    {publishBlockReason}
+                  </Alert>
+                ),
+              },
+            ]
+          : []),
         {
           title: t("PublishModpackModal.label.target"),
           children: (
@@ -400,6 +428,7 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
               colorScheme={primaryColor}
               onClick={handlePublish}
               isLoading={isPublishing}
+              isDisabled={publishBlockReason !== ""}
             >
               {t("PublishModpackModal.button.publish")}
             </Button>

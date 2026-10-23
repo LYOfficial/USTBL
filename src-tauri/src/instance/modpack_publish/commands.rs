@@ -17,9 +17,7 @@ use crate::instance::helpers::modpack::baseline::{
   ModpackBaseline,
 };
 use crate::instance::helpers::modpack::multimc::profile::safe_relative;
-use crate::instance::helpers::modpack::multimc::snapshot::{
-  is_component_instance, ComponentSnapshot,
-};
+use crate::instance::helpers::modpack::multimc::snapshot::load_required_snapshot;
 use crate::instance::models::misc::{
   Instance, InstanceError, InstanceOrigin, InstanceSubdirType, OriginPlatform,
 };
@@ -252,6 +250,19 @@ pub(super) fn instance_of(app: &AppHandle, instance_id: &str) -> USTBLResult<Ins
       .ok_or(InstanceError::InstanceNotFoundByID)?
       .clone(),
   )
+}
+
+/// The publish dialog's gate on open: a component instance whose snapshot is
+/// missing or from an older importer fails with `ModpackExportProfileMissing`.
+/// Cheap on purpose (no hashing), so it is not part of the instance summary.
+#[tauri::command]
+pub async fn check_campus_modpack_publishable(
+  app: AppHandle,
+  instance_id: String,
+) -> USTBLResult<()> {
+  let instance = instance_of(&app, &instance_id)?;
+  load_required_snapshot(&instance.version_path).await?;
+  Ok(())
 }
 
 #[tauri::command]
@@ -495,6 +506,11 @@ async fn prepare(
     loader_slug(instance.mod_loader.loader_type).ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let job_paths = paths(dir, job_id)?;
 
+  // A component instance without a usable snapshot cannot be published; fail
+  // before hashing every selected file (the publish dialog checks this on open
+  // with `check_campus_modpack_publishable`, this guard is the backstop).
+  let snapshot = load_required_snapshot(&root).await?;
+
   report(app, instance_id, Stage::Hashing, 0, files.len());
   let selected = files.clone();
   let hash_root = root.clone();
@@ -506,11 +522,7 @@ async fn prepare(
   if plan.files.is_empty() {
     return Err(USTBLError("没有可发布的文件".into()));
   }
-  if is_component_instance(&root) {
-    let snapshot = ComponentSnapshot::load(&root)
-      .await
-      .map_err(|_| InstanceError::ModpackExportProfileMissing)?
-      .ok_or(InstanceError::ModpackExportProfileMissing)?;
+  if let Some(snapshot) = snapshot {
     let libraries_dir =
       get_instance_subdir_paths(app, &instance, &[&InstanceSubdirType::Libraries])
         .ok_or(InstanceError::InstanceNotFoundByID)?

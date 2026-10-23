@@ -2612,7 +2612,7 @@
           "title": "导出失败",
           "description": {
             "MODPACK_EXPORT_COMPONENT_INSTANCE": "组件式实例只能导出为 MultiMC 格式",
-            "MODPACK_EXPORT_PROFILE_MISSING": "该实例由旧版本导入，缺少导出所需的组件信息，请重新导入整合包后再导出"
+            "MODPACK_EXPORT_PROFILE_MISSING": "该实例由旧版本导入，缺少导出或发布所需的组件信息。请重新导入整合包；重新导入会新建实例，存档和配置需要手动迁移"
           }
         }
       },
@@ -2665,6 +2665,15 @@
             "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线",
             "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试",
             "MODPACK_UPDATE_MERGE_INVALID": "按块选择后配置文件的格式无效，请调整选择后重试"
+          }
+        }
+      },
+      "checkCampusModpackPublishable": {
+        "success": "该实例可以发布",
+        "error": {
+          "title": "该实例无法发布",
+          "description": {
+            "MODPACK_EXPORT_PROFILE_MISSING": "该实例由旧版本导入，缺少导出或发布所需的组件信息。请重新导入整合包；重新导入会新建实例，存档和配置需要手动迁移"
           }
         }
       },
