@@ -39,6 +39,10 @@ const PART_ATTEMPTS: u32 = 4;
 /// Consecutive attempts answered with a server error before the part uploader
 /// gives up and probes the upload session for a silent restart (§9.3).
 const PROBE_AFTER_FAILURES: u32 = 3;
+/// Consecutive clock-skew re-signs tolerated for the same part before one is
+/// counted as an ordinary failed attempt instead (10-23: re-signing must not
+/// be able to loop forever without ever waiting).
+const SKEW_RESIGN_LIMIT: u32 = 3;
 /// Bytes handed to the HTTP stack at a time, so progress moves smoothly.
 const SLICE: usize = 64 * 1024;
 /// Matches the reporting interval of the task list, which shows speed per tick.
@@ -206,21 +210,27 @@ fn part_length(total: u64, part_size: u64, count: u32, n: u32) -> u64 {
   }
 }
 
-/// What `GET /uploads/{id}`'s `parts` map means for `expected_generation`
-/// (§9.1): the part numbers already reported there, or an empty set when the
-/// server has already moved to a different generation (nothing of the old
-/// one counts towards the new).
-fn received_parts(body: &Value, expected_generation: u32) -> HashSet<u32> {
-  let server_generation = body["generation"].as_u64().unwrap_or(0) as u32;
+/// `GET /uploads/{id}`'s own generation, plus what its `parts` map means
+/// against `expected_generation` (§9.1): the part numbers already reported
+/// there when the server is still on the generation the launcher expected,
+/// or an empty set when it has already moved to a different one (nothing of
+/// the old generation counts towards the new one, and the launcher must
+/// adopt the server's generation before signing or reporting anything
+/// else).
+fn received_parts(body: &Value, expected_generation: u32) -> (u32, HashSet<u32>) {
+  let server_generation = body["generation"]
+    .as_u64()
+    .unwrap_or(expected_generation as u64) as u32;
   if server_generation != expected_generation {
-    return HashSet::new();
+    return (server_generation, HashSet::new());
   }
-  body["parts"]
+  let parts = body["parts"]
     .as_object()
     .into_iter()
     .flatten()
     .filter_map(|(n, _etag)| n.parse::<u32>().ok())
-    .collect()
+    .collect();
+  (server_generation, parts)
 }
 
 /// The generation to restart under, from a 409 `UPLOAD_RESTARTED` response's
@@ -248,11 +258,22 @@ fn retriable(status: reqwest::StatusCode) -> bool {
     || status == reqwest::StatusCode::REQUEST_TIMEOUT
 }
 
+/// The S3-compatible cloud answers errors with XML, not JSON:
+/// `<Error><Code>...</Code>...</Error>`. Only the code is worth keeping
+/// around (§13.4/10-23: the rest of the body must never end up in an error
+/// shown to the user or written to the log, since it may carry request
+/// details). `None` when the body does not look like that at all.
+fn cloud_error_code(body: &str) -> Option<&str> {
+  let start = body.find("<Code>")? + "<Code>".len();
+  let end = body[start..].find("</Code>")? + start;
+  Some(&body[start..end])
+}
+
 /// Signed cloud PUTs expire 900 s after `x-amz-date`, well past a part's
 /// expected transfer time; this tells that apart from an ordinary server
-/// error (§3, §13.2). The S3-compatible cloud answers with XML, not JSON.
+/// error (§3, §13.2).
 fn is_signature_expired(body: &str) -> bool {
-  body.contains("RequestTimeTooSkewed")
+  cloud_error_code(body) == Some("RequestTimeTooSkewed")
 }
 
 /// When the last slice of a request body was taken by the HTTP stack.
@@ -306,8 +327,7 @@ pub(super) struct PublishJob {
   /// itself never carries it), so every round instead takes whatever
   /// `GET /uploads/{id}` suggests during reconciliation — which is also
   /// what a restart mid-`upload_pack` falls back to once the first round
-  /// is behind it. A later commit changes `upload_pack` itself to act on
-  /// this; for now the field only changes shape.
+  /// is behind it.
   pub concurrency: Option<usize>,
 }
 
@@ -570,6 +590,9 @@ impl PublishJob {
       if status.is_success() {
         return Ok(());
       }
+      if status == reqwest::StatusCode::GONE {
+        return Err(InstanceError::ModpackUploadSessionGone.into());
+      }
       let (code, error) = failure_code(response).await;
       if code.as_deref() == Some("PARENT_MISMATCH") {
         return Err(InstanceError::ModpackPublishStale.into());
@@ -618,29 +641,54 @@ impl PublishJob {
     Ok(path)
   }
 
-  async fn upload_pack(&self, handle: &Handle, group: &str) -> USTBLResult<()> {
+  async fn upload_pack(&mut self, handle: &Handle, group: &str) -> USTBLResult<()> {
     let total = self.record.pack.as_ref().map_or(0, |pack| pack.size);
     let path = self.ensure_pack().await?;
-    let mut upload: RecordedUpload = self
-      .record
-      .upload
-      .clone()
-      .ok_or_else(|| USTBLError("这个版本没有上传会话".into()))?;
 
     handle.write().unwrap().mark_started();
     let mut tick = interval(TICK);
     tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
-    // Reconciliation (§9.1) may hand back a restarted (newer-generation)
-    // upload whose queue starts over from part 1; keep going until every
-    // part of the *current* generation is reported. A session that keeps
-    // restarting instead of making progress is reported as such rather than
-    // retried forever.
+    // Reconciliation (§9.1) may find the server already on a newer
+    // generation (a probe from this or an earlier run) or hand back a
+    // restart while parts are in flight; keep going until every part of the
+    // *current* generation is reported. A session that keeps restarting
+    // instead of making progress is reported as such rather than retried
+    // forever.
     let mut restarts = 0u32;
     loop {
-      let reconciled = self.reconcile(&upload).await?;
+      let upload = self
+        .record
+        .upload
+        .clone()
+        .ok_or_else(|| USTBLError("这个版本没有上传会话".into()))?;
+      let (generation, received, reconciled_concurrency) = self.reconcile(&upload).await?;
+      // The server's generation is adopted and saved *before* anything
+      // signs or reports under it (§9.1, §9.3): otherwise a stale local
+      // generation would keep being used for every signature and report
+      // this round, even though the server has already moved on.
+      if generation != upload.generation {
+        self.record_generation(generation)?;
+      }
+      let upload = self.record.upload.clone().unwrap_or(upload);
+      // §14.1/10-23: a brand new publish uploads its first round at the
+      // concurrency `POST /versions` returned; `self.concurrency` is taken
+      // (set to `None`) right after that round, so every later round —
+      // including a resumed job, which never had a `POST /versions`
+      // response to take it from in the first place — uses whatever
+      // `GET /uploads/{id}` suggests instead.
+      let concurrency = self.concurrency.take().unwrap_or(reconciled_concurrency);
       match self
-        .upload_parts(handle, group, &upload, reconciled, &path, total, &mut tick)
+        .upload_parts(
+          handle,
+          group,
+          &upload,
+          received,
+          concurrency,
+          &path,
+          total,
+          &mut tick,
+        )
         .await?
       {
         UploadRoundOutcome::Done => return Ok(()),
@@ -649,26 +697,29 @@ impl PublishJob {
           if restarts > MAX_RESTARTS {
             return Err(InstanceError::ModpackUploadRestarted.into());
           }
-          upload.generation = generation;
           self.record_generation(generation)?;
         }
       }
     }
   }
 
-  fn record_generation(&self, generation: u32) -> USTBLResult<()> {
-    let mut record = self.record.clone();
-    if let Some(upload) = &mut record.upload {
+  /// Persists a new generation to the job's own record (§9.1: "代数要真正落
+  /// 盘"), so every save from here on — including a crash right after this
+  /// point — carries it, and a resumed run never signs or reports under a
+  /// generation the server has already moved past.
+  fn record_generation(&mut self, generation: u32) -> USTBLResult<()> {
+    if let Some(upload) = &mut self.record.upload {
       upload.generation = generation;
     }
-    record.save(&jobs_dir())
+    self.record.save(&jobs_dir())
   }
 
-  /// `GET /uploads/{id}` against the current generation (§9.1): what is
-  /// already reported there, and whether the launcher must restart from part
-  /// 1 because the server moved to a newer generation behind its back (a
-  /// probe-triggered restart from an earlier run, e.g.).
-  async fn reconcile(&self, upload: &RecordedUpload) -> USTBLResult<HashSet<u32>> {
+  /// `GET /uploads/{id}` against the current generation (§9.1): the
+  /// server's own generation (which the launcher must adopt before signing
+  /// or reporting anything else), what is already reported there, and the
+  /// concurrency to upload with (10-23: `concurrency` is returned here too,
+  /// falling back to the suggested default when a pre-4c server omits it).
+  async fn reconcile(&self, upload: &RecordedUpload) -> USTBLResult<(u32, HashSet<u32>, usize)> {
     let response = authed_json(
       &self.app,
       reqwest::Method::GET,
@@ -678,15 +729,17 @@ impl PublishJob {
     .await?;
     let status = response.status();
     if status == reqwest::StatusCode::NOT_FOUND || status == reqwest::StatusCode::GONE {
-      return Err(USTBLError(
-        "平台上的上传会话已过期，请放弃这个任务后重新发布".into(),
-      ));
+      return Err(InstanceError::ModpackUploadSessionGone.into());
     }
     if !status.is_success() {
       return Err(failure(response).await);
     }
     let body: Value = response.json().await?;
-    Ok(received_parts(&body, upload.generation))
+    let (generation, received) = received_parts(&body, upload.generation);
+    let concurrency = body["concurrency"]
+      .as_u64()
+      .map_or(super::commands::DEFAULT_PART_CONCURRENCY, |n| n as usize);
+    Ok((generation, received, concurrency))
   }
 
   /// Uploads whatever `received` is missing from `upload.part_count`. Returns
@@ -698,6 +751,7 @@ impl PublishJob {
     group: &str,
     upload: &RecordedUpload,
     received: HashSet<u32>,
+    concurrency: usize,
     path: &Path,
     total: u64,
     tick: &mut tokio::time::Interval,
@@ -712,11 +766,8 @@ impl PublishJob {
 
     let sent = SentBytes::new(total, stored);
     let monitor = self.app.state::<Pin<Box<TaskMonitor>>>();
-    let signatures = SignatureCache::default();
-    let concurrency = self
-      .concurrency
-      .unwrap_or(super::commands::DEFAULT_PART_CONCURRENCY)
-      .max(1);
+    let signatures = SignatureCache::new(queue.iter().copied());
+    let concurrency = concurrency.max(1);
     let mut running = FuturesUnordered::new();
 
     loop {
@@ -734,7 +785,7 @@ impl PublishJob {
       tokio::select! {
         finished = running.next(), if !running.is_empty() => {
           match finished {
-            Some(Ok(PartOutcome::Reported)) => {}
+            Some(Ok(PartOutcome::Reported(n))) => signatures.reported(n),
             Some(Ok(PartOutcome::Restarted(generation))) => {
               return Ok(UploadRoundOutcome::Restarted(generation));
             }
@@ -770,19 +821,27 @@ impl PublishJob {
 
     let mut last = USTBLError("上传失败".into());
     let mut server_error_streak = 0u32;
+    // Re-signing on a clock-skew rejection does not count as a failed
+    // attempt (§9.3), but it must still be bounded: past this many
+    // consecutive re-signs for the same part it is treated as an ordinary
+    // failure instead of retried without end (10-23).
+    let mut skew_resigns = 0u32;
+    let mut etag_resent = false;
     let mut attempt = 0u32;
     loop {
       if attempt >= PART_ATTEMPTS {
         return Err(last);
       }
       if attempt > 0 {
-        sleep(Duration::from_secs(1 << (attempt - 1).min(3))).await;
+        // §13.2, updated 10-23: 2, 4, 8 s between retries for 5xx/429/408.
+        sleep(Duration::from_secs(1 << attempt.min(3))).await;
       }
       attempt += 1;
 
       let signed = match signatures.get_or_sign(&self.app, upload, n).await {
         Ok(signed) => signed,
-        Err(error) => {
+        Err(SignError::Restarted(generation)) => return Ok(PartOutcome::Restarted(generation)),
+        Err(SignError::Other(error)) => {
           last = error;
           continue;
         }
@@ -815,6 +874,8 @@ impl PublishJob {
         Ok(response) => response,
         Err(error) => {
           sent.take_back(sent_now);
+          // §13.4/10-23: never log a URL carrying a cloud signature.
+          let error = error.without_url();
           log::warn!(
             "Part {n}/{} (attempt {attempt}): request failed: {error}",
             upload.part_count
@@ -847,8 +908,10 @@ impl PublishJob {
           .to_ascii_lowercase();
         if cloud_etag != md5_hex {
           // Self-check (§13.2): what the cloud says it stored does not match
-          // what was sent. One resend before giving the job up outright.
-          if attempt < PART_ATTEMPTS {
+          // what was sent. Exactly one resend before giving the job up
+          // outright (§13.2, 10-23: not "whatever PART_ATTEMPTS allows").
+          if !etag_resent {
+            etag_resent = true;
             signatures.discard(n);
             last = USTBLError("云盘回报的 ETag 与本地 MD5 不一致，正在重传".into());
             continue;
@@ -858,16 +921,20 @@ impl PublishJob {
         return self.report_part(upload, n, &md5_hex, length).await.map(
           |restarted| match restarted {
             Some(generation) => PartOutcome::Restarted(generation),
-            None => PartOutcome::Reported,
+            None => PartOutcome::Reported(n),
           },
         );
       }
 
       sent.take_back(sent_now);
       let body = response.text().await.unwrap_or_default();
-      if status == reqwest::StatusCode::FORBIDDEN && is_signature_expired(&body) {
+      if status == reqwest::StatusCode::FORBIDDEN
+        && is_signature_expired(&body)
+        && skew_resigns < SKEW_RESIGN_LIMIT
+      {
         // §13.2/§9.3: re-signing on an expired signature is not a failed
-        // attempt.
+        // attempt, up to a bounded number of times (10-23).
+        skew_resigns += 1;
         signatures.discard(n);
         attempt -= 1;
         continue;
@@ -891,7 +958,10 @@ impl PublishJob {
         }
         continue;
       }
-      return Err(USTBLError(format!("HTTP {status}: {body}")));
+      // §13.4/10-23: the cloud's own error code only, never the raw body
+      // (which may carry request details) in a message the user can see.
+      let code = cloud_error_code(&body).unwrap_or("UNKNOWN");
+      return Err(USTBLError(format!("HTTP {status}: {code}")));
     }
   }
 
@@ -926,41 +996,71 @@ impl PublishJob {
         None => Err(error),
       };
     }
+    if response.status() == reqwest::StatusCode::GONE {
+      return Err(InstanceError::ModpackUploadSessionGone.into());
+    }
     Err(failure(response).await)
   }
 
   /// `POST /uploads/{id}/probe` (§9.3): tells a session the cloud silently
   /// expired from ordinary cloud trouble, after repeated plain 500s on one
   /// part. `Ok(Some(generation))` means the server already restarted the
-  /// session; `Ok(None)` means the cloud is just acting up and normal retries
-  /// should continue.
+  /// session; `Ok(None)` means the cloud is just acting up and normal
+  /// retries should continue (either the probe itself succeeded without a
+  /// restart, or the 503 backoff schedule ran out).
+  ///
+  /// The backoff on a 503 (§9.3, §14.1: 1, 2, 5, 10 minutes, the larger of
+  /// that and `Retry-After`) happens here, in a loop of its own: it must not
+  /// consume [`PART_ATTEMPTS`], since it is the cloud as a whole acting up
+  /// rather than one failed attempt at one part. Only `log::warn!`, not a
+  /// user-visible task message, marks the wait (the task list has no
+  /// non-terminal "still trying" state to show one in); once the schedule is
+  /// exhausted the caller reports the typed, user-facing
+  /// `ModpackUploadCloudUnavailable` instead of waiting forever.
   async fn probe(&self, upload: &RecordedUpload) -> USTBLResult<Option<u32>> {
-    let response = authed_json(
-      &self.app,
-      reqwest::Method::POST,
-      &format!("/uploads/{}/probe", upload.id),
-      Some(json!({ "generation": upload.generation })),
-    )
-    .await?;
-    if response.status().is_success() {
-      let body: Value = response.json().await?;
-      if body["result"] == "restarted" {
-        let generation = body["generation"].as_u64().unwrap_or(0) as u32;
-        return Ok(Some(generation));
+    const BACKOFF: [Duration; 4] = [
+      Duration::from_secs(60),
+      Duration::from_secs(2 * 60),
+      Duration::from_secs(5 * 60),
+      Duration::from_secs(10 * 60),
+    ];
+    let mut backoff = BACKOFF.iter();
+    loop {
+      let response = authed_json(
+        &self.app,
+        reqwest::Method::POST,
+        &format!("/uploads/{}/probe", upload.id),
+        Some(json!({ "generation": upload.generation })),
+      )
+      .await?;
+      if response.status().is_success() {
+        let body: Value = response.json().await?;
+        if body["result"] == "restarted" {
+          let generation = body["generation"].as_u64().unwrap_or(0) as u32;
+          return Ok(Some(generation));
+        }
+        return Ok(None);
       }
-      return Ok(None);
-    }
-    if response.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE {
+      if response.status() != reqwest::StatusCode::SERVICE_UNAVAILABLE {
+        return Err(failure(response).await);
+      }
       let retry_after = response
         .headers()
         .get(reqwest::header::RETRY_AFTER)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(60);
-      sleep(Duration::from_secs(retry_after)).await;
-      return Ok(None);
+        .map(Duration::from_secs);
+      let Some(&scheduled) = backoff.next() else {
+        return Ok(None);
+      };
+      let wait = retry_after.map_or(scheduled, |retry_after| retry_after.max(scheduled));
+      log::warn!(
+        "Upload {} probe found the cloud drive unavailable; waiting {:.0}s before trying again",
+        upload.id,
+        wait.as_secs_f64()
+      );
+      sleep(wait).await;
     }
-    Err(failure(response).await)
   }
 }
 
@@ -970,8 +1070,28 @@ enum UploadRoundOutcome {
 }
 
 enum PartOutcome {
-  Reported,
+  Reported(u32),
   Restarted(u32),
+}
+
+/// Signing can fail for an ordinary reason, or because the session already
+/// restarted under a newer generation (§13.2/10-23: a 409 `UPLOAD_RESTARTED`
+/// on `/parts/sign` is handled exactly like one on reporting).
+enum SignError {
+  Restarted(u32),
+  Other(USTBLError),
+}
+
+impl From<USTBLError> for SignError {
+  fn from(error: USTBLError) -> Self {
+    SignError::Other(error)
+  }
+}
+
+impl From<reqwest::Error> for SignError {
+  fn from(error: reqwest::Error) -> Self {
+    SignError::Other(error.into())
+  }
 }
 
 /// One signed cloud request plus when it was signed, so the cache can tell an
@@ -986,17 +1106,89 @@ struct SignedPart {
   received_at: Instant,
 }
 
+/// Picks ascending part numbers out of `remaining` that lack a fresh
+/// signature according to `fresh`, starting from `n`, up to [`SIGN_BATCH`] —
+/// able to reach the last part still outstanding rather than whatever
+/// happens to follow `n` sequentially in a queue that may have gaps
+/// (10-23: "范围包含最后一片"). Always returns at least `[n]`.
+fn select_sign_batch(
+  remaining: &std::collections::BTreeSet<u32>,
+  n: u32,
+  fresh: impl Fn(u32) -> bool,
+) -> Vec<u32> {
+  let last = remaining.iter().next_back().copied();
+  let mut wanted: Vec<u32> = std::iter::once(n)
+    .chain(remaining.range(n..).copied().filter(|&m| m != n))
+    .filter(|&m| !fresh(m))
+    .take(SIGN_BATCH)
+    .collect();
+  // The batch must be able to reach the last part still outstanding even
+  // when it does not fall within the ascending run starting at `n`
+  // (10-23): swap the tail slot for it if it is missing and not already
+  // fresh.
+  if let Some(last) = last {
+    if !wanted.contains(&last) && !fresh(last) {
+      if wanted.len() >= SIGN_BATCH {
+        wanted.pop();
+      }
+      wanted.push(last);
+    }
+  }
+  if wanted.is_empty() {
+    vec![n]
+  } else {
+    wanted
+  }
+}
+
 /// Signatures for parts not yet sent, fetched up to [`SIGN_BATCH`] at a time
 /// and shared by every part in flight so a prefetch for one part can be used
 /// by another (§13.2: "签名在当前批次用完前预取").
-#[derive(Default)]
+///
+/// Only one `/parts/sign` request is ever in flight at a time (10-23): a
+/// `tokio::sync::Mutex` serializes the actual signing call, and every caller
+/// re-checks the cache after acquiring it, so a request that arrives while
+/// another is already signing just picks up its result instead of issuing
+/// its own. `remaining` is the set of part numbers this round still needs a
+/// report for; the batch is chosen from there so it naturally skips parts
+/// already reported (removed via [`Self::reported`]) and can always reach
+/// the last part still outstanding.
 struct SignatureCache {
   parts: Mutex<HashMap<u32, SignedPart>>,
+  remaining: Mutex<std::collections::BTreeSet<u32>>,
+  sign_lock: tokio::sync::Mutex<()>,
 }
 
 impl SignatureCache {
+  /// `parts` is the initial queue (§9.1's reconciled missing parts) this
+  /// round will try to report; every one of them starts out "remaining"
+  /// until [`Self::reported`] removes it.
+  fn new(parts: impl Iterator<Item = u32>) -> Self {
+    Self {
+      parts: Mutex::new(HashMap::new()),
+      remaining: Mutex::new(parts.collect()),
+      sign_lock: tokio::sync::Mutex::new(()),
+    }
+  }
+
   fn discard(&self, n: u32) {
     self.parts.lock().unwrap().remove(&n);
+  }
+
+  /// A part that is done needs no more signature and must not be picked for
+  /// a future batch (10-23: "跳过已上报和在途的片").
+  fn reported(&self, n: u32) {
+    self.parts.lock().unwrap().remove(&n);
+    self.remaining.lock().unwrap().remove(&n);
+  }
+
+  fn fresh(&self, n: u32) -> bool {
+    self
+      .parts
+      .lock()
+      .unwrap()
+      .get(&n)
+      .is_some_and(|signed| signed.received_at.elapsed() < SIGNATURE_LIFETIME)
   }
 
   async fn get_or_sign(
@@ -1004,40 +1196,74 @@ impl SignatureCache {
     app: &AppHandle,
     upload: &RecordedUpload,
     n: u32,
-  ) -> USTBLResult<SignedPart> {
-    if let Some(signed) = self.parts.lock().unwrap().get(&n) {
-      if signed.received_at.elapsed() < SIGNATURE_LIFETIME {
-        return Ok(signed.clone());
-      }
+  ) -> Result<SignedPart, SignError> {
+    if self.fresh(n) {
+      return Ok(self.parts.lock().unwrap().get(&n).cloned().unwrap());
     }
-    self.sign_batch(app, upload, n).await?;
+    // Only one signing request runs at a time; everyone else just waits on
+    // this lock and re-checks the cache once they get it, rather than
+    // issuing a redundant request of their own for the same or an
+    // overlapping batch.
+    let _guard = self.sign_lock.lock().await;
+    if !self.fresh(n) {
+      self.sign_batch(app, upload, n).await?;
+    }
     self
       .parts
       .lock()
       .unwrap()
       .get(&n)
       .cloned()
-      .ok_or_else(|| USTBLError("平台没有为这一片签名".into()))
+      .ok_or_else(|| SignError::Other(USTBLError("平台没有为这一片签名".into())))
   }
 
-  async fn sign_batch(&self, app: &AppHandle, upload: &RecordedUpload, n: u32) -> USTBLResult<()> {
-    // `n` plus whichever of the next few parts still need a fresh signature,
-    // up to the batch limit, so one request covers more than just `n`.
-    let mut wanted = vec![n];
-    {
-      let parts = self.parts.lock().unwrap();
-      for m in (n + 1)..upload.part_count.min(n + SIGN_BATCH as u32) {
-        if wanted.len() >= SIGN_BATCH {
-          break;
-        }
-        let fresh = parts
-          .get(&m)
-          .is_some_and(|signed| signed.received_at.elapsed() < SIGNATURE_LIFETIME);
-        if !fresh {
-          wanted.push(m);
-        }
+  /// Exercises the same coordination `get_or_sign` does — fresh check,
+  /// take `sign_lock`, re-check, batch-select, insert — but with `signer`
+  /// standing in for the real `/parts/sign` call, so the single-flight
+  /// behavior can be tested without a network round trip.
+  #[cfg(test)]
+  async fn get_or_sign_with(&self, n: u32, signer: impl AsyncFnOnce(Vec<u32>) -> Vec<u32>) -> u32 {
+    if self.fresh(n) {
+      return n;
+    }
+    let _guard = self.sign_lock.lock().await;
+    if !self.fresh(n) {
+      let wanted = {
+        let remaining = self.remaining.lock().unwrap();
+        select_sign_batch(&remaining, n, |m| self.fresh(m))
+      };
+      let received_at = Instant::now();
+      let signed = signer(wanted).await;
+      let mut parts = self.parts.lock().unwrap();
+      for part_n in signed {
+        parts.insert(
+          part_n,
+          SignedPart {
+            method: reqwest::Method::PUT,
+            url: "https://example.test/".into(),
+            headers: HashMap::new(),
+            received_at,
+          },
+        );
       }
     }
+    n
+  }
+
+  /// Picks ascending part numbers out of `remaining` that lack a fresh
+  /// signature, starting from `n`, up to [`SIGN_BATCH`] — able to reach the
+  /// last part still outstanding rather than whatever happens to follow `n`
+  /// sequentially in a queue that may have gaps (10-23: "范围包含最后一片").
+  async fn sign_batch(
+    &self,
+    app: &AppHandle,
+    upload: &RecordedUpload,
+    n: u32,
+  ) -> Result<(), SignError> {
+    let wanted = {
+      let remaining = self.remaining.lock().unwrap();
+      select_sign_batch(&remaining, n, |m| self.fresh(m))
+    };
 
     let response = authed_json(
       app,
@@ -1046,14 +1272,31 @@ impl SignatureCache {
       Some(json!({ "generation": upload.generation, "parts": wanted })),
     )
     .await?;
-    if !response.status().is_success() {
-      return Err(failure(response).await);
+    let status = response.status();
+    if status == reqwest::StatusCode::CONFLICT {
+      // §13.2/10-23: a 409 on signing means the same thing a 409 on
+      // reporting does — the session is already on a newer generation —
+      // and is handled the same way: stop in-flight parts, reconcile, and
+      // restart from scratch under it.
+      let (detail, error) = failure_detail(response).await;
+      return match restart_generation(detail.as_ref(), upload.generation) {
+        Some(generation) => Err(SignError::Restarted(generation)),
+        None => Err(SignError::Other(error)),
+      };
+    }
+    if status == reqwest::StatusCode::GONE {
+      return Err(SignError::Other(
+        InstanceError::ModpackUploadSessionGone.into(),
+      ));
+    }
+    if !status.is_success() {
+      return Err(SignError::Other(failure(response).await));
     }
     let received_at = Instant::now();
     let body: Value = response.json().await?;
     let requests = body["requests"]
       .as_object()
-      .ok_or_else(|| USTBLError("平台返回了无法识别的签名".into()))?;
+      .ok_or_else(|| SignError::Other(USTBLError("平台返回了无法识别的签名".into())))?;
     let mut parts = self.parts.lock().unwrap();
     for (key, value) in requests {
       let Ok(part_n) = key.parse::<u32>() else {
@@ -1144,6 +1387,26 @@ async fn monitor_platform(job: PublishJob) {
         .as_str()
         .filter(|text| !text.is_empty())
         .unwrap_or("平台处理增量包失败")
+        .to_string();
+      let mut record = job.record.clone();
+      record.phase = Phase::Failed;
+      record.error = Some(message.clone());
+      let _ = record.save(&jobs_dir());
+      emit_finished(&job.app, &record, None, Some(message));
+      return;
+    }
+    // §8.4: the platform can revert the version to `uploading` during the
+    // complete phase when its own probe finds the cloud upload session
+    // gone (3 consecutive 500s) — the pack has to be sent again under a new
+    // generation. Polling stops here and the task becomes resumable, same
+    // as any other `Failed` task; resuming re-enters `upload_pack`, whose
+    // reconciliation adopts the server's new generation before anything
+    // signs or reports under it (§9.1).
+    if status == "uploading" {
+      let message = state["error"]
+        .as_str()
+        .filter(|text| !text.is_empty())
+        .unwrap_or("云盘上传会话已失效，需要重新上传")
         .to_string();
       let mut record = job.record.clone();
       record.phase = Phase::Failed;
@@ -1259,7 +1522,9 @@ mod tests {
       "generation": 3,
       "parts": { "1": "a".repeat(32), "3": "b".repeat(32) },
     });
-    let mut received: Vec<u32> = received_parts(&body, 3).into_iter().collect();
+    let (generation, received) = received_parts(&body, 3);
+    assert_eq!(generation, 3);
+    let mut received: Vec<u32> = received.into_iter().collect();
     received.sort_unstable();
     assert_eq!(received, [1, 3]);
   }
@@ -1268,13 +1533,17 @@ mod tests {
   fn reconciliation_against_a_newer_generation_restarts_from_scratch() {
     // The server moved on behind the launcher's back (e.g. a previous run's
     // probe restarted it); nothing already reported under the stale
-    // generation counts towards the new one.
+    // generation counts towards the new one, and the server's own
+    // generation is handed back so the caller can adopt it (10-23: fixes
+    // signing/reporting otherwise continuing under the stale generation).
     let body = json!({
       "status": "uploading",
       "generation": 4,
       "parts": { "1": "a".repeat(32) },
     });
-    assert!(received_parts(&body, 3).is_empty());
+    let (generation, received) = received_parts(&body, 3);
+    assert_eq!(generation, 4);
+    assert!(received.is_empty());
   }
 
   #[test]
@@ -1286,6 +1555,22 @@ mod tests {
       "<Error><Code>InternalError</Code></Error>"
     ));
     assert!(!is_signature_expired(""));
+  }
+
+  /// §13.4/10-23: only the `<Code>` is ever worth keeping from a cloud error
+  /// body; the rest (which may carry request details) must not leak into a
+  /// logged or user-facing message.
+  #[test]
+  fn only_the_cloud_error_code_is_pulled_out_of_the_xml_body() {
+    assert_eq!(
+      cloud_error_code(
+        "<?xml version=\"1.0\"?><Error><Code>InternalError</Code>\
+         <Message>oops, request-id abc123</Message></Error>"
+      ),
+      Some("InternalError")
+    );
+    assert_eq!(cloud_error_code("not xml at all"), None);
+    assert_eq!(cloud_error_code(""), None);
   }
 
   #[test]
@@ -1304,5 +1589,86 @@ mod tests {
     // keeps the launcher moving forward even if it someday does not.
     let without_generation = json!({ "code": "UPLOAD_RESTARTED" });
     assert_eq!(restart_generation(Some(&without_generation), 3), Some(4));
+  }
+
+  /// §13.2/10-23: concurrent requests for different parts must not each
+  /// issue their own `/parts/sign` call — the second one has to wait on
+  /// `sign_lock`, then find the first one's batch already covers it.
+  #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+  async fn concurrent_requests_for_different_parts_share_a_single_sign_call() {
+    let cache = Arc::new(SignatureCache::new(1..=4));
+    let calls = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    // Held while the one `signer` call that should ever run is in
+    // progress, simulating a signing request slow enough that a second,
+    // concurrent request for a different part would start its own if it
+    // were not actually blocked on `sign_lock` instead. `Notify` rather
+    // than a timer keeps the test deterministic.
+    let release = Arc::new(tokio::sync::Notify::new());
+
+    let sign = |n: u32,
+                calls: Arc<std::sync::atomic::AtomicU32>,
+                release: Arc<tokio::sync::Notify>,
+                cache: Arc<SignatureCache>| {
+      tokio::spawn(async move {
+        cache
+          .get_or_sign_with(n, async |wanted| {
+            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            release.notified().await;
+            wanted
+          })
+          .await
+      })
+    };
+
+    // Part 1 is spawned first and its `signer` call is awaited to have
+    // actually started before part 2 is spawned, so part 1 deterministically
+    // wins `sign_lock`. Its batch — ascending from 1 — necessarily covers
+    // part 2 too (there is nothing else in `remaining` after it), so part
+    // 2's request can only ever complete by finding part 1's batch
+    // already covers it, never by starting a batch of its own.
+    let task_a = sign(1, calls.clone(), release.clone(), cache.clone());
+    while calls.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+      tokio::task::yield_now().await;
+    }
+    let task_b = sign(2, calls.clone(), release.clone(), cache.clone());
+    // Give part 2's request a chance to reach (and block on) `sign_lock`
+    // before letting part 1's signer finish; if it did not block there it
+    // would instead race ahead and start a `signer` call of its own.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    release.notify_waiters();
+    let (a, b) = tokio::time::timeout(Duration::from_secs(2), async {
+      tokio::join!(task_a, task_b)
+    })
+    .await
+    .expect("a concurrent request for a different part was not blocked on sign_lock");
+    assert_eq!((a.unwrap(), b.unwrap()), (1, 2));
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    // Both parts ended up signed by that one call.
+    assert!(cache.fresh(1));
+    assert!(cache.fresh(2));
+  }
+
+  #[test]
+  fn the_batch_always_reaches_the_last_outstanding_part() {
+    let remaining: std::collections::BTreeSet<u32> = (1..=20).collect();
+    // Starting near the front, the ascending run alone would stop at
+    // n + SIGN_BATCH - 1 = 8 and never reach part 20.
+    let batch = select_sign_batch(&remaining, 1, |_| false);
+    assert_eq!(batch.len(), SIGN_BATCH);
+    assert!(batch.contains(&1));
+    assert!(batch.contains(&20));
+  }
+
+  #[test]
+  fn a_batch_never_includes_a_part_already_reported() {
+    let mut remaining: std::collections::BTreeSet<u32> = (1..=5).collect();
+    // Parts 2 and 4 are done and removed from `remaining`, as `reported`
+    // would do; they must not reappear in a later batch for part 1.
+    remaining.remove(&2);
+    remaining.remove(&4);
+    let batch = select_sign_batch(&remaining, 1, |_| false);
+    assert!(!batch.contains(&2));
+    assert!(!batch.contains(&4));
+    assert_eq!(batch, vec![1, 3, 5]);
   }
 }
