@@ -46,12 +46,25 @@ struct Edit {
 }
 
 fn edits(old: &[String], new: &[String]) -> Vec<Edit> {
+  // Trim what both sides share at the ends; most config edits are small.
+  let prefix = old.iter().zip(new).take_while(|(a, b)| a == b).count();
+  let suffix = old[prefix..]
+    .iter()
+    .rev()
+    .zip(new[prefix..].iter().rev())
+    .take_while(|(a, b)| a == b)
+    .count();
+  let old_mid = &old[prefix..old.len() - suffix];
+  let new_mid = &new[prefix..new.len() - suffix];
+  if old_mid.is_empty() && new_mid.is_empty() {
+    return Vec::new();
+  }
   // Hunks are positioned on the old side; walk them to find the new side.
   let mut result = Vec::new();
   let mut shift: isize = 0;
-  for hunk in line_hunks(old, new) {
-    let start = hunk.base_start;
-    let end = hunk.base_end;
+  for hunk in line_hunks(old_mid, new_mid) {
+    let start = prefix + hunk.base_start;
+    let end = prefix + hunk.base_end;
     let new_start = (start as isize + shift) as usize;
     let new_end = new_start + hunk.replacement.len();
     shift += hunk.replacement.len() as isize - (end - start) as isize;

@@ -129,17 +129,17 @@ pub fn merge_text(path: &str, base: &[u8], local: &[u8], remote: &[u8]) -> Resul
 }
 
 /// The changes that turn `base` into `changed`, positioned on `base`.
-/// Shared prefix and suffix lines are never matched cell by cell, and the
-/// quadratic matcher is bounded by `MAX_MATCH_CELLS`: past it the whole
-/// middle becomes one replacement hunk instead of allocating the matrix.
+///
+/// Within `MAX_MATCH_CELLS` the whole input is matched with the original
+/// full LCS, so the hunks are exactly the pre-budget algorithm's. Past the
+/// budget the shared ends are trimmed and the middle becomes one whole-range
+/// replacement instead of allocating the matrix.
 pub fn line_hunks(base: &[String], changed: &[String]) -> Vec<Hunk> {
   hunks(base, changed, MAX_MATCH_CELLS)
 }
 
-fn hunks(base: &[String], changed: &[String], budget: usize) -> Vec<Hunk> {
-  // Trim what both sides share at the ends; most config edits are small.
-  // Hunk coordinates are shifted back by `prefix`, so they still address the
-  // original `base` lines.
+/// The shared leading and trailing line count of `base` and `changed`.
+fn common_affix(base: &[String], changed: &[String]) -> (usize, usize) {
   let prefix = base.iter().zip(changed).take_while(|(a, b)| a == b).count();
   let suffix = base[prefix..]
     .iter()
@@ -147,39 +147,43 @@ fn hunks(base: &[String], changed: &[String], budget: usize) -> Vec<Hunk> {
     .zip(changed[prefix..].iter().rev())
     .take_while(|(a, b)| a == b)
     .count();
-  let base_mid = &base[prefix..base.len() - suffix];
-  let changed_mid = &changed[prefix..changed.len() - suffix];
-  let shift = |hunk: Hunk| Hunk {
-    base_start: prefix + hunk.base_start,
-    base_end: prefix + hunk.base_end,
-    replacement: hunk.replacement,
-  };
+  (prefix, suffix)
+}
+
+fn hunks(base: &[String], changed: &[String], budget: usize) -> Vec<Hunk> {
+  let (n, m) = (base.len(), changed.len());
+  let within = n
+    .checked_add(1)
+    .and_then(|n| n.checked_mul(m.checked_add(1)?))
+    .is_some_and(|cells| cells <= budget);
+  if within {
+    return lcs_hunks(base, changed);
+  }
+  // Over the budget: trim the shared ends only to narrow the whole-range
+  // replacement. The middle is never matched cell by cell, so the insert
+  // anchors and duplicate detection of the full algorithm are irrelevant
+  // here: this pair cannot be merged line by line anyway.
+  let (prefix, suffix) = common_affix(base, changed);
+  let base_mid = &base[prefix..n - suffix];
+  let changed_mid = &changed[prefix..m - suffix];
   if base_mid.is_empty() && changed_mid.is_empty() {
     return Vec::new();
   }
-  if base_mid.is_empty() || changed_mid.is_empty() {
-    return vec![shift(Hunk {
-      base_start: 0,
-      base_end: base_mid.len(),
-      replacement: changed_mid.to_vec(),
-    })];
-  }
-  let (n, m) = (base_mid.len(), changed_mid.len());
-  if n
-    .checked_add(1)
-    .and_then(|n| n.checked_mul(m + 1))
-    .is_none_or(|cells| cells > budget)
-  {
-    return vec![shift(Hunk {
-      base_start: 0,
-      base_end: n,
-      replacement: changed_mid.to_vec(),
-    })];
-  }
+  vec![Hunk {
+    base_start: prefix,
+    base_end: prefix + base_mid.len(),
+    replacement: changed_mid.to_vec(),
+  }]
+}
+
+/// The original full-matrix line matcher over the untrimmed input. Only run
+/// once the caller checked the matrix fits the budget.
+fn lcs_hunks(base: &[String], changed: &[String]) -> Vec<Hunk> {
+  let (n, m) = (base.len(), changed.len());
   let mut lcs = vec![vec![0usize; m + 1]; n + 1];
   for i in (0..n).rev() {
     for j in (0..m).rev() {
-      lcs[i][j] = if base_mid[i] == changed_mid[j] {
+      lcs[i][j] = if base[i] == changed[j] {
         lcs[i + 1][j + 1] + 1
       } else {
         lcs[i + 1][j].max(lcs[i][j + 1])
@@ -189,18 +193,17 @@ fn hunks(base: &[String], changed: &[String], budget: usize) -> Vec<Hunk> {
   let mut edits = Vec::new();
   let (mut i, mut j) = (0, 0);
   while i < n || j < m {
-    if i < n && j < m && base_mid[i] == changed_mid[j] {
+    if i < n && j < m && base[i] == changed[j] {
       i += 1;
       j += 1;
     } else if j < m && (i == n || lcs[i][j + 1] >= lcs[i + 1][j]) {
-      edits.push((i, i, vec![changed_mid[j].clone()]));
+      edits.push((i, i, vec![changed[j].clone()]));
       j += 1;
     } else {
       edits.push((i, i + 1, Vec::new()));
       i += 1;
     }
   }
-  // Merge adjacent edits in the middle's own coordinates, then shift.
   let mut result: Vec<Hunk> = Vec::new();
   for (start, end, replacement) in edits {
     if let Some(last) = result.last_mut() {
@@ -218,7 +221,7 @@ fn hunks(base: &[String], changed: &[String], budget: usize) -> Vec<Hunk> {
       });
     }
   }
-  result.into_iter().map(shift).collect()
+  result
 }
 
 struct EditGroup {
@@ -602,5 +605,121 @@ mod tests {
         .len(),
       1
     );
+  }
+
+  /// The pre-budget full-matrix matcher, kept verbatim as the reference the
+  /// bounded path must agree with inside the budget. Never trims.
+  fn reference_hunks(base: &[String], changed: &[String]) -> Vec<Hunk> {
+    let n = base.len();
+    let m = changed.len();
+    let mut lcs = vec![vec![0usize; m + 1]; n + 1];
+    for i in (0..n).rev() {
+      for j in (0..m).rev() {
+        lcs[i][j] = if base[i] == changed[j] {
+          lcs[i + 1][j + 1] + 1
+        } else {
+          lcs[i + 1][j].max(lcs[i][j + 1])
+        };
+      }
+    }
+    let mut edits = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    while i < n || j < m {
+      if i < n && j < m && base[i] == changed[j] {
+        i += 1;
+        j += 1;
+      } else if j < m && (i == n || lcs[i][j + 1] >= lcs[i + 1][j]) {
+        edits.push((i, i, vec![changed[j].clone()]));
+        j += 1;
+      } else {
+        edits.push((i, i + 1, Vec::new()));
+        i += 1;
+      }
+    }
+    let mut result = Vec::new();
+    for (start, end, replacement) in edits {
+      if let Some(last) = result.last_mut() {
+        let last: &mut Hunk = last;
+        if last.base_end == start {
+          last.base_end = end;
+          last.replacement.extend(replacement);
+          continue;
+        }
+      }
+      if start != end || !replacement.is_empty() {
+        result.push(Hunk {
+          base_start: start,
+          base_end: end,
+          replacement,
+        });
+      }
+    }
+    result
+  }
+
+  /// Every small pair over a tiny alphabet, including repeated lines: the
+  /// bounded path must produce the reference's coordinates and replacements.
+  #[test]
+  fn within_budget_hunks_match_the_reference() {
+    let alphabet = ["a", "b"];
+    let mut inputs: Vec<Vec<String>> = vec![Vec::new()];
+    for len in 1..=4 {
+      let mut current = vec![Vec::new()];
+      for _ in 0..len {
+        let mut next = Vec::new();
+        for combo in &current {
+          for letter in alphabet {
+            let mut combo = combo.clone();
+            combo.push(letter.to_string());
+            next.push(combo);
+          }
+        }
+        current = next;
+      }
+      inputs.extend(current);
+    }
+    for base in &inputs {
+      for changed in &inputs {
+        assert_eq!(
+          line_hunks(base, changed),
+          reference_hunks(base, changed),
+          "base={base:?} changed={changed:?}"
+        );
+      }
+    }
+  }
+
+  /// The review's minimal counterexample: trimming the duplicated tail must
+  /// not move the remote insertion anchor or break duplicate detection.
+  #[test]
+  fn repeated_tail_keeps_insert_anchors_and_dedupes() {
+    let base = lines("a");
+    let local = lines("a\na");
+    let remote = lines("b\na\na");
+    let result = three_way(&base, &local, &remote);
+    assert!(result.conflicts.is_empty());
+    assert_eq!(result.lines, lines("b\na\na"));
+  }
+
+  /// Same anchor, different inserted content: a real conflict, exactly as the
+  /// untrimmed algorithm sees it. Trimming must not have hidden it.
+  #[test]
+  fn same_anchor_different_inserts_conflict() {
+    let base = lines("a");
+    let local = lines("a\na");
+    let remote = lines("a\na\nb");
+    let result = three_way(&base, &local, &remote);
+    assert_eq!(result.conflicts.len(), 1);
+    // Selecting the remote hunk takes the remote lines, unselected keeps local.
+    assert_eq!(three_way_with_choices(&base, &local, &remote, &[0]), remote);
+    assert_eq!(three_way_with_choices(&base, &local, &remote, &[]), local);
+  }
+
+  /// Identical insertions on both sides are deduplicated, not applied twice.
+  #[test]
+  fn identical_insertions_dedupe_across_sides() {
+    let result = three_way(&lines("x"), &lines("x\ny"), &lines("x\ny"));
+    assert!(result.conflicts.is_empty());
+    assert_eq!(result.lines, lines("x\ny"));
   }
 }
