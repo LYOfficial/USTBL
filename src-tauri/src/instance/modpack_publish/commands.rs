@@ -407,9 +407,10 @@ pub async fn publish_campus_modpack(
     app: app.clone(),
     uploader,
     record,
-    // §14.1/10-23: a fresh publish's first upload round uses `POST
-    // /versions`'s own concurrency; `upload_pack` takes it for that round
-    // and falls back to `GET /uploads/{id}`'s value on every later one.
+    // §14.1: a fresh publish's first upload round uses `POST /versions`'s
+    // own concurrency; `upload_pack` takes it for that round and falls
+    // back to `GET /uploads/{id}`'s value on every later one, same as a
+    // resumed job does from its very first round.
     concurrency: Some(concurrency),
   }
   .start();
@@ -692,7 +693,7 @@ pub async fn resume_campus_modpack_publish(
     app,
     uploader,
     record,
-    // §9.1/10-23: the record never carries a concurrency; `upload_pack`
+    // §9.1: the record never carries a concurrency; `upload_pack`
     // reconciles and takes `GET /uploads/{id}`'s value for every round of
     // a resumed job instead.
     concurrency: None,

@@ -21,8 +21,8 @@ const COPY_BUFFER: usize = 256 * 1024;
 /// Local header length `build_pack` writes for every entry: 30 fixed bytes +
 /// the entry name + the ZIP64 extended field `large_file(true)` adds. The
 /// extra field is 20 bytes (two sizes) while the entry's own offset still
-/// fits in 32 bits, 28 bytes (plus that offset) once it does not (§5.2,
-/// updated 10-23). Entry names are `objects/<sha1 of the content>`; the
+/// fits in 32 bits, 28 bytes (plus that offset) once it does not (§5.2).
+/// Entry names are `objects/<sha1 of the content>`; the
 /// length only depends on the name and where the entry starts, never its
 /// content. Measured against this crate's actual `zip` version; cross-check
 /// against vUSTB's verify constant once it lands.
@@ -300,8 +300,8 @@ mod tests {
     let _ = fs::remove_dir_all(root);
   }
 
-  /// The formula's two branches (§5.2, 10-23): a 20-byte ZIP64 extra field
-  /// while the entry's own offset still fits 32 bits, 28 bytes (room for the
+  /// The formula's two branches (§5.2): a 20-byte ZIP64 extra field while
+  /// the entry's own offset still fits 32 bits, 28 bytes (room for the
   /// offset itself) once it does not.
   #[test]
   fn the_local_header_length_formula_switches_at_the_offset_threshold() {
@@ -334,7 +334,7 @@ mod tests {
     let _ = fs::remove_dir_all(root);
   }
 
-  /// §5.2, 10-23: the EOCD must sit right at the end of the file with no
+  /// §5.2: the EOCD must sit right at the end of the file with no
   /// trailing comment, even though the file's whole-sha1 still matches
   /// (which only covers the bytes, not that nothing trails the EOCD record
   /// logically — a comment is itself part of those bytes, so this exercises

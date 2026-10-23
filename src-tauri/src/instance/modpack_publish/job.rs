@@ -40,8 +40,8 @@ const PART_ATTEMPTS: u32 = 4;
 /// gives up and probes the upload session for a silent restart (§9.3).
 const PROBE_AFTER_FAILURES: u32 = 3;
 /// Consecutive clock-skew re-signs tolerated for the same part before one is
-/// counted as an ordinary failed attempt instead (10-23: re-signing must not
-/// be able to loop forever without ever waiting).
+/// counted as an ordinary failed attempt instead: re-signing must not be
+/// able to loop forever without ever waiting.
 const SKEW_RESIGN_LIMIT: u32 = 3;
 /// Bytes handed to the HTTP stack at a time, so progress moves smoothly.
 const SLICE: usize = 64 * 1024;
@@ -258,15 +258,24 @@ fn retriable(status: reqwest::StatusCode) -> bool {
     || status == reqwest::StatusCode::REQUEST_TIMEOUT
 }
 
+/// The longest `<Code>` kept by [`cloud_error_code`], in characters.
+const CLOUD_ERROR_CODE_LIMIT: usize = 64;
+
 /// The S3-compatible cloud answers errors with XML, not JSON:
 /// `<Error><Code>...</Code>...</Error>`. Only the code is worth keeping
-/// around (§13.4/10-23: the rest of the body must never end up in an error
-/// shown to the user or written to the log, since it may carry request
-/// details). `None` when the body does not look like that at all.
+/// around (§13.4: the rest of the body must never end up in an error shown
+/// to the user or written to the log, since it may carry request details),
+/// and even that is capped at [`CLOUD_ERROR_CODE_LIMIT`] characters in case
+/// the cloud ever answers with something unexpectedly long. `None` when the
+/// body does not look like that at all.
 fn cloud_error_code(body: &str) -> Option<&str> {
   let start = body.find("<Code>")? + "<Code>".len();
   let end = body[start..].find("</Code>")? + start;
-  Some(&body[start..end])
+  let code = &body[start..end];
+  match code.char_indices().nth(CLOUD_ERROR_CODE_LIMIT) {
+    Some((cut, _)) => Some(&code[..cut]),
+    None => Some(code),
+  }
 }
 
 /// Signed cloud PUTs expire 900 s after `x-amz-date`, well past a part's
@@ -307,7 +316,7 @@ fn counting_body(
 
 /// Reads one part off the local pack and hashes it on the way in, so the MD5
 /// used for the ETag self-check never requires a second pass over the bytes
-/// (§13.2: "边读边算 MD5").
+/// (§13.2).
 async fn read_part(pack: &Path, offset: u64, length: u64) -> USTBLResult<(Bytes, [u8; 16])> {
   let mut file = tokio::fs::File::open(pack).await?;
   file.seek(SeekFrom::Start(offset)).await?;
@@ -323,8 +332,8 @@ pub(super) struct PublishJob {
   pub record: JobRecord,
   /// How many parts to PUT at once (§13.2, §14.1). `Some` only right after
   /// `POST /versions`, whose response carries the value a fresh upload
-  /// should use for its first round; `None` on resume (10-23: the record
-  /// itself never carries it), so every round instead takes whatever
+  /// should use for its first round; `None` on resume (the record itself
+  /// never carries it), so every round instead takes whatever
   /// `GET /uploads/{id}` suggests during reconciliation — which is also
   /// what a restart mid-`upload_pack` falls back to once the first round
   /// is behind it.
@@ -671,7 +680,7 @@ impl PublishJob {
         self.record_generation(generation)?;
       }
       let upload = self.record.upload.clone().unwrap_or(upload);
-      // §14.1/10-23: a brand new publish uploads its first round at the
+      // §14.1: a brand new publish uploads its first round at the
       // concurrency `POST /versions` returned; `self.concurrency` is taken
       // (set to `None`) right after that round, so every later round —
       // including a resumed job, which never had a `POST /versions`
@@ -703,9 +712,9 @@ impl PublishJob {
     }
   }
 
-  /// Persists a new generation to the job's own record (§9.1: "代数要真正落
-  /// 盘"), so every save from here on — including a crash right after this
-  /// point — carries it, and a resumed run never signs or reports under a
+  /// Persists a new generation to the job's own record (§9.1), so every
+  /// save from here on — including a crash right after this point —
+  /// carries it, and a resumed run never signs or reports under a
   /// generation the server has already moved past.
   fn record_generation(&mut self, generation: u32) -> USTBLResult<()> {
     if let Some(upload) = &mut self.record.upload {
@@ -717,8 +726,8 @@ impl PublishJob {
   /// `GET /uploads/{id}` against the current generation (§9.1): the
   /// server's own generation (which the launcher must adopt before signing
   /// or reporting anything else), what is already reported there, and the
-  /// concurrency to upload with (10-23: `concurrency` is returned here too,
-  /// falling back to the suggested default when a pre-4c server omits it).
+  /// concurrency to upload with, falling back to the suggested default when
+  /// a pre-4c server omits it.
   async fn reconcile(&self, upload: &RecordedUpload) -> USTBLResult<(u32, HashSet<u32>, usize)> {
     let response = authed_json(
       &self.app,
@@ -824,7 +833,7 @@ impl PublishJob {
     // Re-signing on a clock-skew rejection does not count as a failed
     // attempt (§9.3), but it must still be bounded: past this many
     // consecutive re-signs for the same part it is treated as an ordinary
-    // failure instead of retried without end (10-23).
+    // failure instead of retried without end.
     let mut skew_resigns = 0u32;
     let mut etag_resent = false;
     let mut attempt = 0u32;
@@ -833,7 +842,7 @@ impl PublishJob {
         return Err(last);
       }
       if attempt > 0 {
-        // §13.2, updated 10-23: 2, 4, 8 s between retries for 5xx/429/408.
+        // §13.2: 2, 4, 8 s between retries for 5xx/429/408.
         sleep(Duration::from_secs(1 << attempt.min(3))).await;
       }
       attempt += 1;
@@ -841,10 +850,10 @@ impl PublishJob {
       let signed = match signatures.get_or_sign(&self.app, upload, n).await {
         Ok(signed) => signed,
         Err(SignError::Restarted(generation)) => return Ok(PartOutcome::Restarted(generation)),
-        Err(SignError::Other(error)) => {
-          last = error;
-          continue;
-        }
+        // A session that is gone, or a 409 that is not a restart, means
+        // signing can never succeed for this upload; fail outright instead
+        // of spending the attempt budget retrying it.
+        Err(SignError::Other(error)) => return Err(error),
       };
 
       let counted = Arc::new(AtomicU64::new(0));
@@ -874,7 +883,7 @@ impl PublishJob {
         Ok(response) => response,
         Err(error) => {
           sent.take_back(sent_now);
-          // §13.4/10-23: never log a URL carrying a cloud signature.
+          // §13.4: never log a URL carrying a cloud signature.
           let error = error.without_url();
           log::warn!(
             "Part {n}/{} (attempt {attempt}): request failed: {error}",
@@ -909,7 +918,7 @@ impl PublishJob {
         if cloud_etag != md5_hex {
           // Self-check (§13.2): what the cloud says it stored does not match
           // what was sent. Exactly one resend before giving the job up
-          // outright (§13.2, 10-23: not "whatever PART_ATTEMPTS allows").
+          // outright, independent of the part's own attempt budget.
           if !etag_resent {
             etag_resent = true;
             signatures.discard(n);
@@ -933,7 +942,7 @@ impl PublishJob {
         && skew_resigns < SKEW_RESIGN_LIMIT
       {
         // §13.2/§9.3: re-signing on an expired signature is not a failed
-        // attempt, up to a bounded number of times (10-23).
+        // attempt, up to a bounded number of times.
         skew_resigns += 1;
         signatures.discard(n);
         attempt -= 1;
@@ -958,8 +967,8 @@ impl PublishJob {
         }
         continue;
       }
-      // §13.4/10-23: the cloud's own error code only, never the raw body
-      // (which may carry request details) in a message the user can see.
+      // §13.4: the cloud's own error code only, never the raw body (which
+      // may carry request details) in a message the user can see.
       let code = cloud_error_code(&body).unwrap_or("UNKNOWN");
       return Err(USTBLError(format!("HTTP {status}: {code}")));
     }
@@ -1075,8 +1084,9 @@ enum PartOutcome {
 }
 
 /// Signing can fail for an ordinary reason, or because the session already
-/// restarted under a newer generation (§13.2/10-23: a 409 `UPLOAD_RESTARTED`
-/// on `/parts/sign` is handled exactly like one on reporting).
+/// restarted under a newer generation (§13.2: a 409 `UPLOAD_RESTARTED` on
+/// `/parts/sign` is handled exactly like one on reporting).
+#[derive(Debug)]
 enum SignError {
   Restarted(u32),
   Other(USTBLError),
@@ -1107,33 +1117,22 @@ struct SignedPart {
 }
 
 /// Picks ascending part numbers out of `remaining` that lack a fresh
-/// signature according to `fresh`, starting from `n`, up to [`SIGN_BATCH`] —
-/// able to reach the last part still outstanding rather than whatever
-/// happens to follow `n` sequentially in a queue that may have gaps
-/// (10-23: "范围包含最后一片"). Always returns at least `[n]`.
+/// signature according to `fresh`, starting from `n`, up to [`SIGN_BATCH`].
+/// `remaining.range(n..)` already reaches the last part still outstanding
+/// whenever `n` is close enough to it; nothing before `n` is ever included,
+/// since those parts are either already reported or already being worked
+/// on by another request. Always returns at least `[n]`.
 fn select_sign_batch(
   remaining: &std::collections::BTreeSet<u32>,
   n: u32,
   fresh: impl Fn(u32) -> bool,
 ) -> Vec<u32> {
-  let last = remaining.iter().next_back().copied();
-  let mut wanted: Vec<u32> = std::iter::once(n)
-    .chain(remaining.range(n..).copied().filter(|&m| m != n))
+  let wanted: Vec<u32> = remaining
+    .range(n..)
+    .copied()
     .filter(|&m| !fresh(m))
     .take(SIGN_BATCH)
     .collect();
-  // The batch must be able to reach the last part still outstanding even
-  // when it does not fall within the ascending run starting at `n`
-  // (10-23): swap the tail slot for it if it is missing and not already
-  // fresh.
-  if let Some(last) = last {
-    if !wanted.contains(&last) && !fresh(last) {
-      if wanted.len() >= SIGN_BATCH {
-        wanted.pop();
-      }
-      wanted.push(last);
-    }
-  }
   if wanted.is_empty() {
     vec![n]
   } else {
@@ -1143,9 +1142,9 @@ fn select_sign_batch(
 
 /// Signatures for parts not yet sent, fetched up to [`SIGN_BATCH`] at a time
 /// and shared by every part in flight so a prefetch for one part can be used
-/// by another (§13.2: "签名在当前批次用完前预取").
+/// by another (§13.2).
 ///
-/// Only one `/parts/sign` request is ever in flight at a time (10-23): a
+/// Only one `/parts/sign` request is ever in flight at a time: a
 /// `tokio::sync::Mutex` serializes the actual signing call, and every caller
 /// re-checks the cache after acquiring it, so a request that arrives while
 /// another is already signing just picks up its result instead of issuing
@@ -1176,7 +1175,7 @@ impl SignatureCache {
   }
 
   /// A part that is done needs no more signature and must not be picked for
-  /// a future batch (10-23: "跳过已上报和在途的片").
+  /// a future batch.
   fn reported(&self, n: u32) {
     self.parts.lock().unwrap().remove(&n);
     self.remaining.lock().unwrap().remove(&n);
@@ -1197,6 +1196,22 @@ impl SignatureCache {
     upload: &RecordedUpload,
     n: u32,
   ) -> Result<SignedPart, SignError> {
+    self
+      .get_or_sign_via(n, |wanted| sign_request(app, upload, wanted))
+      .await
+  }
+
+  /// Looks up a fresh signature for `n`, signing a batch starting at it if
+  /// there is none, with `request` standing in for the actual
+  /// `/parts/sign` call — production uses [`sign_request`]; tests can
+  /// supply something else, so this coordination (fresh check, take
+  /// `sign_lock`, re-check, batch-select, insert) is exercised the same way
+  /// in both.
+  async fn get_or_sign_via<F, Fut>(&self, n: u32, request: F) -> Result<SignedPart, SignError>
+  where
+    F: FnOnce(Vec<u32>) -> Fut,
+    Fut: std::future::Future<Output = Result<HashMap<u32, SignedPart>, SignError>>,
+  {
     if self.fresh(n) {
       return Ok(self.parts.lock().unwrap().get(&n).cloned().unwrap());
     }
@@ -1206,7 +1221,12 @@ impl SignatureCache {
     // overlapping batch.
     let _guard = self.sign_lock.lock().await;
     if !self.fresh(n) {
-      self.sign_batch(app, upload, n).await?;
+      let wanted = {
+        let remaining = self.remaining.lock().unwrap();
+        select_sign_batch(&remaining, n, |m| self.fresh(m))
+      };
+      let signed = request(wanted).await?;
+      self.parts.lock().unwrap().extend(signed);
     }
     self
       .parts
@@ -1216,119 +1236,80 @@ impl SignatureCache {
       .cloned()
       .ok_or_else(|| SignError::Other(USTBLError("平台没有为这一片签名".into())))
   }
+}
 
-  /// Exercises the same coordination `get_or_sign` does — fresh check,
-  /// take `sign_lock`, re-check, batch-select, insert — but with `signer`
-  /// standing in for the real `/parts/sign` call, so the single-flight
-  /// behavior can be tested without a network round trip.
-  #[cfg(test)]
-  async fn get_or_sign_with(&self, n: u32, signer: impl AsyncFnOnce(Vec<u32>) -> Vec<u32>) -> u32 {
-    if self.fresh(n) {
-      return n;
-    }
-    let _guard = self.sign_lock.lock().await;
-    if !self.fresh(n) {
-      let wanted = {
-        let remaining = self.remaining.lock().unwrap();
-        select_sign_batch(&remaining, n, |m| self.fresh(m))
-      };
-      let received_at = Instant::now();
-      let signed = signer(wanted).await;
-      let mut parts = self.parts.lock().unwrap();
-      for part_n in signed {
-        parts.insert(
-          part_n,
-          SignedPart {
-            method: reqwest::Method::PUT,
-            url: "https://example.test/".into(),
-            headers: HashMap::new(),
-            received_at,
-          },
-        );
-      }
-    }
-    n
-  }
-
-  /// Picks ascending part numbers out of `remaining` that lack a fresh
-  /// signature, starting from `n`, up to [`SIGN_BATCH`] — able to reach the
-  /// last part still outstanding rather than whatever happens to follow `n`
-  /// sequentially in a queue that may have gaps (10-23: "范围包含最后一片").
-  async fn sign_batch(
-    &self,
-    app: &AppHandle,
-    upload: &RecordedUpload,
-    n: u32,
-  ) -> Result<(), SignError> {
-    let wanted = {
-      let remaining = self.remaining.lock().unwrap();
-      select_sign_batch(&remaining, n, |m| self.fresh(m))
+/// `POST /uploads/{id}/parts/sign` for exactly `wanted`, turned into the
+/// signatures the cache stores. A 410, or a 409 that is not
+/// `UPLOAD_RESTARTED`, fails outright (§13.2): the session cannot be
+/// signed against, and retrying will not change that.
+async fn sign_request(
+  app: &AppHandle,
+  upload: &RecordedUpload,
+  wanted: Vec<u32>,
+) -> Result<HashMap<u32, SignedPart>, SignError> {
+  let response = authed_json(
+    app,
+    reqwest::Method::POST,
+    &format!("/uploads/{}/parts/sign", upload.id),
+    Some(json!({ "generation": upload.generation, "parts": wanted })),
+  )
+  .await?;
+  let status = response.status();
+  if status == reqwest::StatusCode::CONFLICT {
+    // A 409 on signing means the same thing a 409 on reporting does — the
+    // session is already on a newer generation — and is handled the same
+    // way: stop in-flight parts, reconcile, and restart from scratch under
+    // it (§13.2).
+    let (detail, error) = failure_detail(response).await;
+    return match restart_generation(detail.as_ref(), upload.generation) {
+      Some(generation) => Err(SignError::Restarted(generation)),
+      None => Err(SignError::Other(error)),
     };
-
-    let response = authed_json(
-      app,
-      reqwest::Method::POST,
-      &format!("/uploads/{}/parts/sign", upload.id),
-      Some(json!({ "generation": upload.generation, "parts": wanted })),
-    )
-    .await?;
-    let status = response.status();
-    if status == reqwest::StatusCode::CONFLICT {
-      // §13.2/10-23: a 409 on signing means the same thing a 409 on
-      // reporting does — the session is already on a newer generation —
-      // and is handled the same way: stop in-flight parts, reconcile, and
-      // restart from scratch under it.
-      let (detail, error) = failure_detail(response).await;
-      return match restart_generation(detail.as_ref(), upload.generation) {
-        Some(generation) => Err(SignError::Restarted(generation)),
-        None => Err(SignError::Other(error)),
-      };
-    }
-    if status == reqwest::StatusCode::GONE {
-      return Err(SignError::Other(
-        InstanceError::ModpackUploadSessionGone.into(),
-      ));
-    }
-    if !status.is_success() {
-      return Err(SignError::Other(failure(response).await));
-    }
-    let received_at = Instant::now();
-    let body: Value = response.json().await?;
-    let requests = body["requests"]
-      .as_object()
-      .ok_or_else(|| SignError::Other(USTBLError("平台返回了无法识别的签名".into())))?;
-    let mut parts = self.parts.lock().unwrap();
-    for (key, value) in requests {
-      let Ok(part_n) = key.parse::<u32>() else {
-        continue;
-      };
-      let method = value["method"]
-        .as_str()
-        .and_then(|m| m.parse().ok())
-        .unwrap_or(reqwest::Method::PUT);
-      let url = value["url"].as_str().unwrap_or_default().to_string();
-      if !url.starts_with("https://") {
-        // §13.2: the upload client only ever accepts https URLs.
-        continue;
-      }
-      let headers = value["headers"]
-        .as_object()
-        .into_iter()
-        .flatten()
-        .filter_map(|(name, value)| Some((name.clone(), value.as_str()?.to_string())))
-        .collect();
-      parts.insert(
-        part_n,
-        SignedPart {
-          method,
-          url,
-          headers,
-          received_at,
-        },
-      );
-    }
-    Ok(())
   }
+  if status == reqwest::StatusCode::GONE {
+    return Err(SignError::Other(
+      InstanceError::ModpackUploadSessionGone.into(),
+    ));
+  }
+  if !status.is_success() {
+    return Err(SignError::Other(failure(response).await));
+  }
+  let received_at = Instant::now();
+  let body: Value = response.json().await?;
+  let requests = body["requests"]
+    .as_object()
+    .ok_or_else(|| SignError::Other(USTBLError("平台返回了无法识别的签名".into())))?;
+  let mut signed = HashMap::new();
+  for (key, value) in requests {
+    let Ok(part_n) = key.parse::<u32>() else {
+      continue;
+    };
+    let method = value["method"]
+      .as_str()
+      .and_then(|m| m.parse().ok())
+      .unwrap_or(reqwest::Method::PUT);
+    let url = value["url"].as_str().unwrap_or_default().to_string();
+    if !url.starts_with("https://") {
+      // §13.2: the upload client only ever accepts https URLs.
+      continue;
+    }
+    let headers = value["headers"]
+      .as_object()
+      .into_iter()
+      .flatten()
+      .filter_map(|(name, value)| Some((name.clone(), value.as_str()?.to_string())))
+      .collect();
+    signed.insert(
+      part_n,
+      SignedPart {
+        method,
+        url,
+        headers,
+        received_at,
+      },
+    );
+  }
+  Ok(signed)
 }
 
 async fn monitor_platform(job: PublishJob) {
@@ -1534,8 +1515,8 @@ mod tests {
     // The server moved on behind the launcher's back (e.g. a previous run's
     // probe restarted it); nothing already reported under the stale
     // generation counts towards the new one, and the server's own
-    // generation is handed back so the caller can adopt it (10-23: fixes
-    // signing/reporting otherwise continuing under the stale generation).
+    // generation is handed back so the caller can adopt it instead of
+    // signing or reporting under the stale one.
     let body = json!({
       "status": "uploading",
       "generation": 4,
@@ -1557,7 +1538,7 @@ mod tests {
     assert!(!is_signature_expired(""));
   }
 
-  /// §13.4/10-23: only the `<Code>` is ever worth keeping from a cloud error
+  /// §13.4: only the `<Code>` is ever worth keeping from a cloud error
   /// body; the rest (which may carry request details) must not leak into a
   /// logged or user-facing message.
   #[test]
@@ -1571,6 +1552,21 @@ mod tests {
     );
     assert_eq!(cloud_error_code("not xml at all"), None);
     assert_eq!(cloud_error_code(""), None);
+  }
+
+  /// A `<Code>` longer than [`CLOUD_ERROR_CODE_LIMIT`] is cut down to it,
+  /// on a character boundary rather than a byte one.
+  #[test]
+  fn an_overlong_cloud_error_code_is_cut_to_the_limit_on_a_char_boundary() {
+    let long_code = "错".repeat(CLOUD_ERROR_CODE_LIMIT + 10);
+    let body = format!("<Error><Code>{long_code}</Code></Error>");
+    let code = cloud_error_code(&body).unwrap();
+    assert_eq!(code.chars().count(), CLOUD_ERROR_CODE_LIMIT);
+    assert_eq!(code, "错".repeat(CLOUD_ERROR_CODE_LIMIT));
+
+    let short_code = "InternalError";
+    let body = format!("<Error><Code>{short_code}</Code></Error>");
+    assert_eq!(cloud_error_code(&body), Some(short_code));
   }
 
   #[test]
@@ -1591,14 +1587,17 @@ mod tests {
     assert_eq!(restart_generation(Some(&without_generation), 3), Some(4));
   }
 
-  /// §13.2/10-23: concurrent requests for different parts must not each
-  /// issue their own `/parts/sign` call — the second one has to wait on
-  /// `sign_lock`, then find the first one's batch already covers it.
+  /// §13.2: concurrent requests for different parts must not each issue
+  /// their own `/parts/sign` call — the second one has to wait on
+  /// `sign_lock`, then find the first one's batch already covers it. Goes
+  /// through [`SignatureCache::get_or_sign_via`], the exact coordination
+  /// `get_or_sign` itself runs in production, with a fake `request` in
+  /// place of the real HTTP call.
   #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
   async fn concurrent_requests_for_different_parts_share_a_single_sign_call() {
     let cache = Arc::new(SignatureCache::new(1..=4));
     let calls = Arc::new(std::sync::atomic::AtomicU32::new(0));
-    // Held while the one `signer` call that should ever run is in
+    // Held while the one `request` call that should ever run is in
     // progress, simulating a signing request slow enough that a second,
     // concurrent request for a different part would start its own if it
     // were not actually blocked on `sign_lock` instead. `Notify` rather
@@ -1611,16 +1610,32 @@ mod tests {
                 cache: Arc<SignatureCache>| {
       tokio::spawn(async move {
         cache
-          .get_or_sign_with(n, async |wanted| {
+          .get_or_sign_via(n, |wanted| async move {
             calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             release.notified().await;
-            wanted
+            let received_at = Instant::now();
+            Ok(
+              wanted
+                .into_iter()
+                .map(|part_n| {
+                  (
+                    part_n,
+                    SignedPart {
+                      method: reqwest::Method::PUT,
+                      url: "https://example.test/".into(),
+                      headers: HashMap::new(),
+                      received_at,
+                    },
+                  )
+                })
+                .collect(),
+            )
           })
           .await
       })
     };
 
-    // Part 1 is spawned first and its `signer` call is awaited to have
+    // Part 1 is spawned first and its `request` call is awaited to have
     // actually started before part 2 is spawned, so part 1 deterministically
     // wins `sign_lock`. Its batch — ascending from 1 — necessarily covers
     // part 2 too (there is nothing else in `remaining` after it), so part
@@ -1632,8 +1647,8 @@ mod tests {
     }
     let task_b = sign(2, calls.clone(), release.clone(), cache.clone());
     // Give part 2's request a chance to reach (and block on) `sign_lock`
-    // before letting part 1's signer finish; if it did not block there it
-    // would instead race ahead and start a `signer` call of its own.
+    // before letting part 1's request finish; if it did not block there it
+    // would instead race ahead and start a `request` call of its own.
     tokio::time::sleep(Duration::from_millis(50)).await;
     release.notify_waiters();
     let (a, b) = tokio::time::timeout(Duration::from_secs(2), async {
@@ -1641,22 +1656,46 @@ mod tests {
     })
     .await
     .expect("a concurrent request for a different part was not blocked on sign_lock");
-    assert_eq!((a.unwrap(), b.unwrap()), (1, 2));
+    assert_eq!(a.unwrap().unwrap().url, "https://example.test/");
+    assert_eq!(b.unwrap().unwrap().url, "https://example.test/");
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     // Both parts ended up signed by that one call.
     assert!(cache.fresh(1));
     assert!(cache.fresh(2));
   }
 
+  /// A signing request returning 410 fails outright instead of being
+  /// retried; same for a 409 that is not `UPLOAD_RESTARTED`.
+  #[tokio::test]
+  async fn a_sign_request_that_cannot_succeed_fails_without_retrying() {
+    let cache = SignatureCache::new(1..=2);
+    let calls = std::sync::atomic::AtomicU32::new(0);
+    let result = cache
+      .get_or_sign_via(1, |_wanted| {
+        calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        async {
+          Err(SignError::Other(
+            InstanceError::ModpackUploadSessionGone.into(),
+          ))
+        }
+      })
+      .await;
+    assert!(matches!(result, Err(SignError::Other(_))));
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+  }
+
   #[test]
-  fn the_batch_always_reaches_the_last_outstanding_part() {
+  fn the_batch_never_looks_behind_n() {
     let remaining: std::collections::BTreeSet<u32> = (1..=20).collect();
-    // Starting near the front, the ascending run alone would stop at
-    // n + SIGN_BATCH - 1 = 8 and never reach part 20.
-    let batch = select_sign_batch(&remaining, 1, |_| false);
-    assert_eq!(batch.len(), SIGN_BATCH);
-    assert!(batch.contains(&1));
-    assert!(batch.contains(&20));
+    // Starting near the end, the batch reaches the actual last part (20)
+    // because it is within SIGN_BATCH of n; starting near the front, it
+    // must not reach backward to find it.
+    let near_end = select_sign_batch(&remaining, 15, |_| false);
+    assert_eq!(near_end, vec![15, 16, 17, 18, 19, 20]);
+
+    let near_start = select_sign_batch(&remaining, 1, |_| false);
+    assert_eq!(near_start.len(), SIGN_BATCH);
+    assert!(!near_start.contains(&20));
   }
 
   #[test]
