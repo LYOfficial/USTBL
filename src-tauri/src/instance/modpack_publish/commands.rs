@@ -2,7 +2,7 @@
 
 use super::cancel::{apply_cancel, cancel_remote, CancelOutcome};
 use super::components::plan_components;
-use super::job::{is_cancelling, is_running, start_monitor, PublishJob};
+use super::job::{is_running, start_monitor, CancellingToken, PublishJob};
 use super::manifest::{partition_publishable_paths, plan_files, LocalFile};
 use super::pack::{build_pack, mark_verified, verify_pack};
 use super::record::{
@@ -806,9 +806,12 @@ pub async fn resume_campus_modpack_publish(
   job_id: String,
 ) -> USTBLResult<PublishStarted> {
   ensure_manager(&app)?;
-  if is_cancelling(&job_id) {
-    return Err(USTBLError("取消处理尚未完成，请稍后再试".into()));
-  }
+  // Held from before the record is read until the task group is running:
+  // a cancel cleanup that is still on the wire (or a discard in flight)
+  // must never interleave with this start. Once the group runs, `ACTIVE`
+  // takes over the duplicate protection and the token may go.
+  let _cancelling = CancellingToken::take(&job_id)
+    .ok_or_else(|| USTBLError("取消处理尚未完成，请稍后再试".into()))?;
   let record = JobRecord::load(&jobs_dir(), &job_id)?;
   let uploader = build_part_upload_client(&app);
   let group = PublishJob {
@@ -832,12 +835,12 @@ pub async fn resume_campus_modpack_publish(
 #[tauri::command]
 pub async fn discard_campus_modpack_publish(app: AppHandle, job_id: String) -> USTBLResult<()> {
   ensure_manager(&app)?;
-  if is_running(&job_id) {
-    return Err(USTBLError("任务正在进行，请先在任务列表中取消".into()));
-  }
-  if is_cancelling(&job_id) {
-    return Err(USTBLError("取消处理尚未完成，请稍后再试".into()));
-  }
+  // Held from before the remote request until the action — and the watch
+  // it may start — is fully done: a second discard, a resume, or the
+  // guard's own cleanup can never slip in while this one is on the wire
+  // and race the record or the restarted task.
+  let _cancelling = CancellingToken::take(&job_id)
+    .ok_or_else(|| USTBLError("取消处理尚未完成，请稍后再试".into()))?;
   let dir = jobs_dir();
   let version_id = JobRecord::load(&dir, &job_id)?.version_id;
   let remote = cancel_remote(&app, version_id).await;

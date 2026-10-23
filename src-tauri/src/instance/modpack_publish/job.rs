@@ -82,25 +82,27 @@ pub(crate) fn resume_monitors(app: &AppHandle) {
   }
 }
 
-/// Jobs whose cancel cleanup is still on the wire. Process-local only:
-/// nothing about it is persisted. While a job id is listed here,
+/// Jobs whose cancel cleanup or discard is still on the wire. Process-local
+/// only: nothing about it is persisted. While a job id is listed here,
 /// `resume_campus_modpack_publish` and `discard_campus_modpack_publish`
 /// refuse to touch it, so neither can race the cleanup's own read of the
 /// record or the watch it may start.
 static CANCELLING: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-pub(super) fn is_cancelling(job_id: &str) -> bool {
+#[cfg(test)]
+fn is_cancelling(job_id: &str) -> bool {
   CANCELLING.lock().unwrap().iter().any(|id| id == job_id)
 }
 
-/// Registered synchronously the moment the guard fires and released only
-/// when the cleanup is fully done — never inferred from the job's own
-/// `ActiveToken`, which drops with the cancelled task itself, long before
-/// the cleanup's remote calls finish.
-struct CancellingToken(String);
+/// Registered synchronously before any cancel cleanup or discard reaches
+/// the network, and released only when the whole exchange — remote answer,
+/// record action, and the watch it may start — is fully done. Never
+/// inferred from the job's own `ActiveToken`, which drops with the
+/// cancelled task itself, long before the cleanup's remote calls finish.
+pub(super) struct CancellingToken(String);
 
 impl CancellingToken {
-  fn take(job_id: &str) -> Option<Self> {
+  pub(super) fn take(job_id: &str) -> Option<Self> {
     let mut cancelling = CANCELLING.lock().unwrap();
     if cancelling.iter().any(|id| id == job_id) {
       return None;
