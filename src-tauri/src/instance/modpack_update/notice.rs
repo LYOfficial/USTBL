@@ -36,8 +36,7 @@ pub fn write_update_notice(
   let dir = instance_dir.join(UPDATE_DIR);
   fs::create_dir_all(&dir).map_err(|_| InstanceError::FileOperationError)?;
   let path = notice_path(instance_dir);
-  let data = serde_json::to_string_pretty(notice)
-    .map_err(|_| InstanceError::FileOperationError)?;
+  let data = serde_json::to_string_pretty(notice).map_err(|_| InstanceError::FileOperationError)?;
   fs::write(path, data).map_err(|_| InstanceError::FileOperationError)?;
   Ok(())
 }
@@ -50,7 +49,8 @@ mod tests {
 
   impl TestDir {
     fn new(name: &str) -> Self {
-      let path = std::env::temp_dir().join(format!("ustbl-notice-test-{name}-{}", std::process::id()));
+      let path =
+        std::env::temp_dir().join(format!("ustbl-notice-test-{name}-{}", std::process::id()));
       let _ = fs::remove_dir_all(&path);
       fs::create_dir_all(&path).unwrap();
       Self(path)

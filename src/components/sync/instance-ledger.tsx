@@ -14,7 +14,6 @@ import { useLauncherConfig } from "@/contexts/config";
 import { useGlobalData } from "@/contexts/global-data";
 import { useSharedModals } from "@/contexts/shared-modal";
 import { ModLoaderType } from "@/enums/instance";
-import { CampusModpackProject } from "@/models/campus-modpack";
 import { InstanceSummary } from "@/models/instance/misc";
 import {
   LedgerBadge,
@@ -37,8 +36,6 @@ const BADGE_COLORS: Record<LedgerBadge, string> = {
 
 interface InstanceLedgerProps {
   instances: InstanceSummary[];
-  /** Campus projects, to name the lines of campus instances. */
-  projects: CampusModpackProject[];
   /** The row to flash after a jump from a project card. */
   highlightId: string | null;
 }
@@ -52,7 +49,6 @@ export const ledgerRowId = (instanceId: string) => `sync-row-${instanceId}`;
  */
 export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
   instances,
-  projects,
   highlightId,
 }) => {
   const { t } = useTranslation();

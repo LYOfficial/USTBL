@@ -40,6 +40,11 @@ interface GlobalDataContextType {
     instanceId: string,
     scanLocal?: boolean
   ) => Promise<ModpackUpdateCheck>;
+  /**
+   * True once the startup check of every followed instance has finished.
+   * The modpack update reminder listens to this so it fires exactly once.
+   */
+  startupChecksDone: boolean;
 }
 
 // for frontend-only state update
@@ -78,6 +83,7 @@ export const GlobalDataContextProvider: React.FC<{
   const [modpackChecks, setModpackChecks] = useState<
     Record<string, ModpackUpdateCheck>
   >({});
+  const [startupChecksDone, setStartupChecksDone] = useState(false);
   const startupChecked = useRef(false);
   // An auto-unlink is announced once per instance, not on every later check.
   const unlinkNotified = useRef(new Set<string>());
@@ -167,7 +173,8 @@ export const GlobalDataContextProvider: React.FC<{
   );
 
   // Once per launch, look for updates of every followed instance. One at a
-  // time, so a slow platform does not pile up requests.
+  // time, so a slow platform does not pile up requests. When all are done the
+  // reminder may fire.
   useEffect(() => {
     if (!instanceList || startupChecked.current) return;
     startupChecked.current = true;
@@ -175,6 +182,7 @@ export const GlobalDataContextProvider: React.FC<{
       for (const instance of instanceList) {
         if (instance.origin) await checkModpackUpdate(instance.id);
       }
+      setStartupChecksDone(true);
     })();
   }, [instanceList, checkModpackUpdate]);
 
@@ -247,6 +255,7 @@ export const GlobalDataContextProvider: React.FC<{
         isGameVersionListLoading,
         modpackChecks,
         checkModpackUpdate,
+        startupChecksDone,
       }}
     >
       <GlobalDataDispatchContext.Provider

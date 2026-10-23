@@ -603,11 +603,7 @@ const InstanceSyncPage = () => {
     >
       <Box overflow="auto" flexGrow={1}>
         <VStack align="stretch" spacing={5}>
-          <InstanceLedger
-            instances={instances}
-            projects={projects}
-            highlightId={highlightId}
-          />
+          <InstanceLedger instances={instances} highlightId={highlightId} />
           <CampusPlatformSection
             projects={projects}
             recommendation={recommendation}

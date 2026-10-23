@@ -138,7 +138,6 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
         }
       },
     },
-
     ...(isVustbManager(vustbAccount)
       ? [
           {

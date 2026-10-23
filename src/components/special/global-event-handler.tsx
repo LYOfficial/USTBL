@@ -21,7 +21,12 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
 }) => {
   const { openSharedModal } = useSharedModals();
   const toast = useToast();
-  const { selectedInstance, getInstanceList, modpackChecks } = useGlobalData();
+  const {
+    selectedInstance,
+    getInstanceList,
+    modpackChecks,
+    startupChecksDone,
+  } = useGlobalData();
   const { newerVersion } = useLauncherConfig();
   const router = useRouter();
   const isStandAlone =
@@ -151,15 +156,19 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
     });
   }, [isStandAlone, newerVersion, openSharedModal]);
 
-  // Announce modpack updates found by the startup check, once per new version.
+  // Announce modpack updates found by the startup check, once per launch,
+  // after every followed instance has been checked.
+  const modpackNoticeAnnounced = useRef(false);
   useEffect(() => {
-    if (isStandAlone) return;
+    if (isStandAlone || !startupChecksDone || modpackNoticeAnnounced.current)
+      return;
+    modpackNoticeAnnounced.current = true;
+
     const available = Object.entries(modpackChecks).filter(
       ([, check]) => check.status === "available" && check.latestVersionId
     );
     if (available.length === 0) return;
 
-    let cancelled = false;
     (async () => {
       const updates: {
         instanceId: string;
@@ -182,11 +191,11 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
           });
         }
       }
-      if (cancelled || updates.length === 0) return;
+      if (updates.length === 0) return;
 
-      // Mark as announced before opening the dialog; the user may not act on it.
+      // Record before announcing, so a repeated startup does not re-announce.
       for (const update of updates) {
-        void ModpackUpdateService.setModpackUpdateNotice(
+        await ModpackUpdateService.setModpackUpdateNotice(
           update.instanceId,
           modpackChecks[update.instanceId].latestVersionId!
         );
@@ -194,21 +203,23 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
 
       openSharedModal("notify-modpack-updates", { updates });
 
-      void isMainWindowUnfocused().then((unfocused) => {
-        if (!unfocused) return;
+      const unfocused = await isMainWindowUnfocused();
+      if (unfocused) {
         const summary = updates
           .map((u) => `${u.instanceName} → ${u.latestLabel ?? "?"}`)
           .join("; ");
         void invoke("show_message_notification", {
           message: summary,
         });
-      });
+      }
     })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isStandAlone, modpackChecks, getInstanceList, openSharedModal]);
+  }, [
+    isStandAlone,
+    startupChecksDone,
+    modpackChecks,
+    getInstanceList,
+    openSharedModal,
+  ]);
 
   useEffect(() => {
     let disposed = false;
