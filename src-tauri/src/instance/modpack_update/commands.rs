@@ -6,6 +6,7 @@ use super::apply::{
 };
 use super::diff::{resolve, Conflict, ConflictChoice, FileChange};
 use super::merge::merge_with_choices;
+use super::notice::{read_update_notice, write_update_notice, UpdateNotice};
 use super::plan::{
   compare, count_local_changes, finish, local_changes, requires_reinstall, LocalChange,
 };
@@ -1035,6 +1036,30 @@ pub async fn apply_modpack_update(
     version_id,
     loader_install_pending: env.loader_install_pending.load(Ordering::SeqCst),
   })
+}
+
+/// The modpack version the launcher already announced for this instance.
+/// `None` when no version was announced yet or the record is unreadable.
+#[tauri::command]
+pub async fn get_modpack_update_notice(
+  app: AppHandle,
+  instance_id: String,
+) -> USTBLResult<Option<String>> {
+  let instance = current_instance(&app, &instance_id)?;
+  let notice = read_update_notice(&instance.version_path);
+  Ok(notice.map(|n| n.version_id))
+}
+
+/// Remember that the launcher announced `version_id` for this instance, so a
+/// later startup check does not announce the same version again.
+#[tauri::command]
+pub async fn set_modpack_update_notice(
+  app: AppHandle,
+  instance_id: String,
+  version_id: String,
+) -> USTBLResult<()> {
+  let instance = current_instance(&app, &instance_id)?;
+  write_update_notice(&instance.version_path, &UpdateNotice { version_id })
 }
 
 /// Install the files of a campus modpack into the empty instance created for it.

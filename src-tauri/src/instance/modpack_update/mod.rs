@@ -2,6 +2,7 @@ pub mod apply;
 pub mod commands;
 pub mod diff;
 pub mod merge;
+pub mod notice;
 pub mod packs;
 pub mod plan;
 pub mod plan_cache;
