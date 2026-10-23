@@ -1275,9 +1275,7 @@
       "exportModPack": "匯出為模組包",
       "star": "星標此實例",
       "unstar": "取消星標",
-      "publishModPack": "發佈到校園整合包",
-      "updateModpack": "更新整合包",
-      "updateModpackAvailable": "更新整合包（有新版本）"
+      "publishModPack": "發佈到校園整合包"
     },
     "instanceTabList": {
       "overview": "概覽",
@@ -3311,7 +3309,8 @@
         "needsRepair": "需修復",
         "waitingLoader": "等待載入器",
         "unknown": "檢查失敗",
-        "notChecked": "未檢查"
+        "notChecked": "未檢查",
+        "unlinked": "已解除跟隨"
       },
       "action": {
         "update": "更新",
@@ -3326,6 +3325,45 @@
       "installed": "已安裝",
       "installedHint": "本地已有 {{count}} 個對應實例，點擊查看",
       "unlinkedToast": "整合包已被刪除，實例 {{name}} 已解除跟隨"
+    }
+  },
+  "ModpackInstanceDetailsModal": {
+    "header": {
+      "title": "{{name}} 的整合包詳情"
+    },
+    "section": {
+      "instance": "實例",
+      "follow": "當前跟隨"
+    },
+    "instance": {
+      "name": "名稱",
+      "version": "遊戲版本",
+      "loader": "模組加載器",
+      "modpackVersion": "整合包版本"
+    },
+    "follow": {
+      "platform": "來源",
+      "project": "整合包",
+      "projectGone": "平台上找不到這個整合包",
+      "current": "當前版本",
+      "latest": "最新版本",
+      "status": "狀態",
+      "following": "跟隨中",
+      "paused": "已暫停"
+    },
+    "action": {
+      "pause": "暫停跟隨",
+      "resume": "恢復跟隨",
+      "unlink": "解除跟隨",
+      "viewMods": "查看模組"
+    },
+    "notFollowing": "這個實例沒有跟隨整合包。"
+  },
+  "NotifyModpackUpdatesModal": {
+    "title": "有整合包更新",
+    "button": {
+      "later": "稍後",
+      "goToSync": "前往更新"
     }
   }
 }

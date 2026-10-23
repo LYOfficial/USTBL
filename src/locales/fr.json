@@ -1275,9 +1275,7 @@
       "exportModPack": "Exporter en tant que modpack",
       "star": "Mettre en favori cette instance",
       "unstar": "Retirer des favoris",
-      "publishModPack": "Publier dans les modpacks du campus",
-      "updateModpack": "Mettre à jour le pack",
-      "updateModpackAvailable": "Mettre à jour le pack (nouvelle version)"
+      "publishModPack": "Publier dans les modpacks du campus"
     },
     "instanceTabList": {
       "overview": "Aperçu",
@@ -3311,7 +3309,8 @@
         "needsRepair": "À réparer",
         "waitingLoader": "En attente du chargeur",
         "unknown": "Échec de la vérification",
-        "notChecked": "Non vérifié"
+        "notChecked": "Non vérifié",
+        "unlinked": "Suivi annulé"
       },
       "action": {
         "update": "Mettre à jour",
@@ -3326,6 +3325,45 @@
       "installed": "Installé",
       "installedHint": "{{count}} instance(s) correspondante(s) sur cet appareil, cliquez pour voir",
       "unlinkedToast": "Le pack a été supprimé, l'instance {{name}} n'est plus suivie"
+    }
+  },
+  "ModpackInstanceDetailsModal": {
+    "header": {
+      "title": "Détails du modpack de {{name}}"
+    },
+    "section": {
+      "instance": "Instance",
+      "follow": "Suivi"
+    },
+    "instance": {
+      "name": "Nom",
+      "version": "Version du jeu",
+      "loader": "Chargeur de mods",
+      "modpackVersion": "Version du modpack"
+    },
+    "follow": {
+      "platform": "Source",
+      "project": "Projet",
+      "projectGone": "Modpack introuvable sur la plateforme",
+      "current": "Version actuelle",
+      "latest": "Dernière version",
+      "status": "Statut",
+      "following": "Suivi",
+      "paused": "En pause"
+    },
+    "action": {
+      "pause": "Pause",
+      "resume": "Reprendre",
+      "unlink": "Annuler le suivi",
+      "viewMods": "Voir les mods"
+    },
+    "notFollowing": "Cette instance ne suit pas de modpack."
+  },
+  "NotifyModpackUpdatesModal": {
+    "title": "Mises à jour de modpack disponibles",
+    "button": {
+      "later": "Plus tard",
+      "goToSync": "Aller à la mise à jour"
     }
   }
 }

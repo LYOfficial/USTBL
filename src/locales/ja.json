@@ -1275,9 +1275,7 @@
       "exportModPack": "モッドパックエクスポート",
       "star": "このインスタンスをスター",
       "unstar": "このインスタンスを非スター",
-      "publishModPack": "キャンパスModパックに公開",
-      "updateModpack": "モッドパックを更新",
-      "updateModpackAvailable": "モッドパックを更新（新バージョンあり）"
+      "publishModPack": "キャンパスModパックに公開"
     },
     "instanceTabList": {
       "overview": "概要",
@@ -3311,7 +3309,8 @@
         "needsRepair": "要修復",
         "waitingLoader": "ローダー待ち",
         "unknown": "確認に失敗",
-        "notChecked": "未確認"
+        "notChecked": "未確認",
+        "unlinked": "フォロー解除済み"
       },
       "action": {
         "update": "更新",
@@ -3326,6 +3325,45 @@
       "installed": "インストール済み",
       "installedHint": "この端末に該当するインスタンスが {{count}} 件あります。クリックで表示",
       "unlinkedToast": "モッドパックが削除されたため、インスタンス {{name}} の追従を解除しました"
+    }
+  },
+  "ModpackInstanceDetailsModal": {
+    "header": {
+      "title": "{{name}} のモッドパック詳細"
+    },
+    "section": {
+      "instance": "インスタンス",
+      "follow": "フォロー中"
+    },
+    "instance": {
+      "name": "名前",
+      "version": "ゲームバージョン",
+      "loader": "モッドローダー",
+      "modpackVersion": "モッドパックバージョン"
+    },
+    "follow": {
+      "platform": "ソース",
+      "project": "プロジェクト",
+      "projectGone": "プラットフォームにこのモッドパックが見つかりません",
+      "current": "現在のバージョン",
+      "latest": "最新バージョン",
+      "status": "状態",
+      "following": "フォロー中",
+      "paused": "一時停止中"
+    },
+    "action": {
+      "pause": "一時停止",
+      "resume": "再開",
+      "unlink": "フォロー解除",
+      "viewMods": "モッドを見る"
+    },
+    "notFollowing": "このインスタンスはモッドパックをフォローしていません。"
+  },
+  "NotifyModpackUpdatesModal": {
+    "title": "モッドパックの更新があります",
+    "button": {
+      "later": "後で",
+      "goToSync": "更新へ"
     }
   }
 }

@@ -1275,9 +1275,7 @@
       "exportModPack": "Export as Modpack",
       "star": "Star this instance",
       "unstar": "Unstar",
-      "publishModPack": "Publish to Campus Modpacks",
-      "updateModpack": "Update modpack",
-      "updateModpackAvailable": "Update modpack (new version)"
+      "publishModPack": "Publish to Campus Modpacks"
     },
     "instanceTabList": {
       "overview": "Overview",
@@ -3311,7 +3309,8 @@
         "needsRepair": "Needs repair",
         "waitingLoader": "Waiting for loader",
         "unknown": "Check failed",
-        "notChecked": "Not checked"
+        "notChecked": "Not checked",
+        "unlinked": "Unlinked"
       },
       "action": {
         "update": "Update",
@@ -3326,6 +3325,45 @@
       "installed": "Installed",
       "installedHint": "{{count}} matching instance(s) on this device, click to view",
       "unlinkedToast": "The modpack was deleted, instance {{name}} is no longer followed"
+    }
+  },
+  "ModpackInstanceDetailsModal": {
+    "header": {
+      "title": "Modpack details of {{name}}"
+    },
+    "section": {
+      "instance": "Instance",
+      "follow": "Following"
+    },
+    "instance": {
+      "name": "Name",
+      "version": "Game version",
+      "loader": "Mod loader",
+      "modpackVersion": "Modpack version"
+    },
+    "follow": {
+      "platform": "Source",
+      "project": "Project",
+      "projectGone": "Not found on the platform",
+      "current": "Current version",
+      "latest": "Latest version",
+      "status": "Status",
+      "following": "Following",
+      "paused": "Paused"
+    },
+    "action": {
+      "pause": "Pause",
+      "resume": "Resume",
+      "unlink": "Unlink",
+      "viewMods": "View mods"
+    },
+    "notFollowing": "This instance is not following a modpack."
+  },
+  "NotifyModpackUpdatesModal": {
+    "title": "Modpack updates available",
+    "button": {
+      "later": "Later",
+      "goToSync": "Go to update"
     }
   }
 }
