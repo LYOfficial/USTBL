@@ -988,6 +988,19 @@ pub async fn apply_modpack_update(
   plan_hash: String,
   choices: BTreeMap<String, ConflictChoice>,
 ) -> USTBLResult<UpdateOutcome> {
+  // What the player answered, before anything is checked: a Stale answer
+  // below must not take the record of the choices with it. Paths, hunk
+  // indexes and sides only; never file contents.
+  {
+    let received: Vec<String> = choices
+      .iter()
+      .map(|(key, choice)| format!("{key}={choice:?}"))
+      .collect();
+    log::info!(
+      "modpack update apply: instance={instance_id} plan_hash={plan_hash} choices=[{}]",
+      received.join(","),
+    );
+  }
   let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   ensure_not_running(&app, &instance_id)?;
   let baseline = load_baseline(&target).await?;
@@ -1031,6 +1044,10 @@ pub async fn apply_modpack_update(
     // The cached plan the player looked at describes another state; drop it
     // so a retry re-plans instead of serving it again.
     plan_cache::clear_plan_cache(&target.root);
+    log::info!(
+      "modpack update apply stale: instance={instance_id} expected plan_hash={} got plan_hash={plan_hash}",
+      prepared.plan_hash,
+    );
     return Err(InstanceError::ModpackUpdateStale.into());
   }
 
@@ -1044,15 +1061,9 @@ pub async fn apply_modpack_update(
   let version_id = remote.version_id.clone();
   let mut apply_choices = choices.clone();
   let merged_contents = selected_hunk_contents(&prepared, &mut apply_choices)?;
-  // What the player answered, and how every conflict was settled. Paths,
-  // hunk indexes and sides only; never file contents.
-  let received: Vec<String> = choices
-    .iter()
-    .map(|(key, choice)| format!("{key}={choice:?}"))
-    .collect();
+  // How every conflict was settled. Paths, hunk indexes and sides only.
   log::info!(
-    "modpack update apply: instance={instance_id} plan_hash={plan_hash} choices=[{}] resolutions=[{}]",
-    received.join(","),
+    "modpack update apply resolutions: instance={instance_id} plan_hash={plan_hash} resolutions=[{}]",
     describe_conflict_resolutions(&prepared.diff, &apply_choices).join(","),
   );
   let result = apply(
