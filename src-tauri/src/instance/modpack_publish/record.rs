@@ -186,11 +186,12 @@ impl JobRecord {
   }
 
   /// §3.2.3: whether the unfinished list may offer "继续" for this record.
-  /// `Processing` records show on the task list instead, never here.
+  /// A `Processing` record that is not on the task list right now (the watch
+  /// was cancelled, or the launcher was closed before `resume_monitors`
+  /// picked it up) resumes straight into the platform stage.
   pub fn resumable(&self) -> bool {
     match self.phase {
-      Phase::Uploading => true,
-      Phase::Processing => false,
+      Phase::Uploading | Phase::Processing => true,
       Phase::Failed => resumable_failure(self.error.as_deref()),
     }
   }
@@ -337,7 +338,9 @@ mod tests {
     assert!(job.resumable());
 
     job.phase = Phase::Processing;
-    assert!(!job.resumable());
+    // Not on the task list right now (watch cancelled or never restarted):
+    // resumes straight into the platform stage.
+    assert!(job.resumable());
 
     job.phase = Phase::Failed;
     // Network trouble and cloud unavailability resume.

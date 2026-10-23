@@ -697,15 +697,14 @@ pub struct UnfinishedPublish {
 }
 
 /// Local publish records that need the user's attention (§3.2.3): an
-/// interrupted upload, or a failed publish. A record with a task group on
-/// the list right now — including every one the platform is still
-/// processing — shows there instead and never appears here.
+/// interrupted upload, a failed publish, or a platform-side publish whose
+/// watch is not on the task list right now. A record with a task group
+/// running shows there instead and never appears here.
 #[tauri::command]
 pub fn list_campus_modpack_publish_jobs() -> Vec<UnfinishedPublish> {
   JobRecord::list(&jobs_dir())
     .into_iter()
     .filter(|record| !is_running(&record.id))
-    .filter(|record| record.phase != Phase::Processing)
     .map(|record| UnfinishedPublish {
       resumable: record.resumable(),
       job_id: record.id,

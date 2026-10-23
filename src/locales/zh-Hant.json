@@ -644,6 +644,7 @@
       "title": "未完成的發佈",
       "phase": {
         "uploading": "上傳中斷，可繼續",
+        "processing": "平台正在處理",
         "failed": "發佈失敗"
       },
       "resume": "繼續",

@@ -181,6 +181,37 @@ fn complete(handle: &Handle) {
   handle.mark_completed();
 }
 
+/// Why `execute` ended early. `Fresh` means the record on disk was not
+/// touched by this run and still carries whatever it had (possibly an old,
+/// unrelated error); `Recorded` means the platform stage already saved the
+/// record itself — `Failed` for a real failure, still `Processing` with the
+/// error set when the watch lost the platform — so `run` must leave it
+/// alone instead of overwriting it with the same or a stale message.
+enum ExecuteFailure {
+  Fresh(USTBLError),
+  Recorded,
+}
+
+impl From<USTBLError> for ExecuteFailure {
+  fn from(error: USTBLError) -> Self {
+    ExecuteFailure::Fresh(error)
+  }
+}
+
+/// What `run` does with an execute failure: a fresh one is written to the
+/// record and handed back to be told to the frontend; a recorded one needs
+/// nothing, the record already says it all.
+fn record_failure(record: &mut JobRecord, failure: &ExecuteFailure) -> Option<String> {
+  match failure {
+    ExecuteFailure::Fresh(error) => {
+      record.phase = Phase::Failed;
+      record.error = Some(error.0.clone());
+      Some(error.0.clone())
+    }
+    ExecuteFailure::Recorded => None,
+  }
+}
+
 /// Length of part `n` (1-based, as the server numbers them): every part is
 /// `part_size` long except the last, which takes whatever remains.
 fn part_length(total: u64, part_size: u64, count: u32, n: u32) -> u64 {
@@ -396,22 +427,19 @@ impl PublishJob {
       version_id: self.record.version_id,
       armed: true,
     };
-    let result = self.execute(&tasks).await;
+    let result = self.execute(&tasks, &mut guard).await;
     guard.armed = false;
 
     match &result {
       Ok(_) => {}
-      Err(error) => {
+      Err(failure) => {
         tasks.abandon();
-        // Failures of the platform stage are already written to the record
-        // by `monitor` (a lost monitor stays `Processing`, everything else
-        // `Failed`); earlier failures leave the record untouched, so they
-        // are written here. Kept either way, to resume or to give up.
-        if self.record.error.is_none() {
-          self.record.phase = Phase::Failed;
-          self.record.error = Some(error.0.clone());
+        // A fresh failure is written to the record and told to the
+        // frontend; a recorded one is left exactly as the platform stage
+        // saved it (§3.2.2: a lost watch stays `Processing`).
+        if let Some(message) = record_failure(&mut self.record, failure) {
           let _ = self.record.save(&dir);
-          emit_finished(&app, &tasks.group, &self.record, None, Some(error.0.clone()));
+          emit_finished(&app, &tasks.group, &self.record, None, Some(message));
         }
       }
     }
@@ -479,7 +507,11 @@ impl PublishJob {
     }
   }
 
-  async fn execute(&mut self, tasks: &Tasks) -> USTBLResult<()> {
+  async fn execute(
+    &mut self,
+    tasks: &Tasks,
+    guard: &mut CancelGuard,
+  ) -> Result<(), ExecuteFailure> {
     let started = Instant::now();
     log::info!(
       "Modpack publish {} started for version {}",
@@ -499,7 +531,7 @@ impl PublishJob {
         let upload_started = Instant::now();
         if let Err(error) = self.upload_pack(&tasks.pack, &tasks.group).await {
           tasks.pack.write().unwrap().mark_failed(error.0.clone());
-          return Err(error);
+          return Err(ExecuteFailure::Fresh(error));
         }
         log::info!(
           "Modpack publish {} upload completed in {:.2}s",
@@ -514,7 +546,7 @@ impl PublishJob {
       let commit_started = Instant::now();
       if let Err(error) = self.commit().await {
         tasks.commit.write().unwrap().mark_failed(error.0.clone());
-        return Err(error);
+        return Err(ExecuteFailure::Fresh(error));
       }
       log::info!(
         "Modpack publish {} commit accepted in {:.2}s",
@@ -533,6 +565,11 @@ impl PublishJob {
     self.record.phase = Phase::Processing;
     self.record.error = None;
     self.record.save(&jobs_dir())?;
+    // The version is the platform's now: a processing version refuses
+    // DELETE, so from here on cancelling the card only stops the watch and
+    // the record stays `Processing` for the next resume — the guard that
+    // would have deleted the version and the record must not fire.
+    guard.armed = false;
     tasks.platform.write().unwrap().mark_started();
     log::info!(
       "Modpack publish {} submitted in {:.2}s; platform processing runs on the task card",
@@ -544,11 +581,11 @@ impl PublishJob {
 
   /// The platform stage (§3.2.2.2): polls the version's status and writes
   /// what happens onto the card. Returns `Ok` once the version is published
-  /// (the record is gone by then); every other ending is an `Err` with the
-  /// record already saved — `Failed` for a real failure, still `Processing`
-  /// with the error set when the platform stopped answering, so the next
-  /// launcher start picks the watch up again (§3.2.2).
-  async fn monitor(&mut self, tasks: &Tasks) -> USTBLResult<()> {
+  /// (the record is gone by then); every other ending is a `Recorded`
+  /// failure, the record already saved — `Failed` for a real failure,
+  /// still `Processing` with the error set when the platform stopped
+  /// answering, so the next launcher start picks the watch up again (§3.2.2).
+  async fn monitor(&mut self, tasks: &Tasks) -> Result<(), ExecuteFailure> {
     let started = Instant::now();
     let mut misses = 0;
     let mut last_status = String::new();
@@ -583,7 +620,7 @@ impl PublishJob {
             self.record.phase = Phase::Processing;
             self.record.error = Some(message.clone());
             let _ = self.record.save(&jobs_dir());
-            return Err(USTBLError(message));
+            return Err(ExecuteFailure::Recorded);
           }
           sleep(POLL).await;
           continue;
@@ -594,7 +631,7 @@ impl PublishJob {
           self.record.error = Some(error.0.clone());
           let _ = self.record.save(&jobs_dir());
           emit_finished(&self.app, &tasks.group, &self.record, None, Some(error.0.clone()));
-          return Err(error);
+          return Err(ExecuteFailure::Recorded);
         }
       };
       let status = state["status"].as_str().unwrap_or_default();
@@ -619,7 +656,7 @@ impl PublishJob {
         self.record.error = Some(message.clone());
         let _ = self.record.save(&jobs_dir());
         emit_finished(&self.app, &tasks.group, &self.record, None, Some(message.clone()));
-        return Err(USTBLError(message));
+        return Err(ExecuteFailure::Recorded);
       }
       // §8.4: the platform can revert the version to `uploading` during the
       // complete phase when its own probe finds the cloud upload session
@@ -638,7 +675,7 @@ impl PublishJob {
         self.record.error = Some(message.clone());
         let _ = self.record.save(&jobs_dir());
         emit_finished(&self.app, &tasks.group, &self.record, None, Some(message.clone()));
-        return Err(USTBLError(message));
+        return Err(ExecuteFailure::Recorded);
       }
       if status == "published" {
         let files: Vec<LocalFile> = self
@@ -1494,6 +1531,7 @@ fn emit_finished(
 
 #[cfg(test)]
 mod tests {
+  use super::super::record::RECORD_SCHEMA;
   use super::*;
 
   #[test]
@@ -1736,5 +1774,42 @@ mod tests {
     assert!(!batch.contains(&2));
     assert!(!batch.contains(&4));
     assert_eq!(batch, vec![1, 3, 5]);
+  }
+
+  /// A record resumed from an earlier failure carries that failure's error
+  /// until the platform stage begins. When the resumed run fails early
+  /// (first status check, upload, commit), `run` must still overwrite the
+  /// record with the new error and tell the frontend — the stale message
+  /// must not shield the fresh failure just because it exists.
+  #[test]
+  fn a_fresh_failure_overwrites_the_old_error_a_resumed_record_carries() {
+    let mut record = JobRecord {
+      schema: RECORD_SCHEMA,
+      id: "job".into(),
+      phase: Phase::Failed,
+      error: Some("MODPACK_UPLOAD_CLOUD_UNAVAILABLE".into()),
+      created_at: 1,
+      instance_id: "i".into(),
+      instance_name: "n".into(),
+      project_slug: "p".into(),
+      version_id: 1,
+      version_number: "1".into(),
+      files: vec![],
+      mmc_pack: None,
+      skipped: vec![],
+      objects: vec![],
+      pack: None,
+      upload: None,
+    };
+    let fresh = ExecuteFailure::Fresh(USTBLError("平台上已找不到这个版本".into()));
+    let message = record_failure(&mut record, &fresh);
+    assert_eq!(message, Some("平台上已找不到这个版本".to_string()));
+    assert_eq!(record.phase, Phase::Failed);
+    assert_eq!(record.error.as_deref(), Some("平台上已找不到这个版本"));
+
+    // The platform stage saved the record itself; `run` leaves it alone.
+    let mut record = JobRecord { ..record };
+    assert_eq!(record_failure(&mut record, &ExecuteFailure::Recorded), None);
+    assert_eq!(record.error.as_deref(), Some("平台上已找不到这个版本"));
   }
 }
