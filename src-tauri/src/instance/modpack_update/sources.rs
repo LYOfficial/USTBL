@@ -520,19 +520,24 @@ pub fn is_project_gone_detail(status: u16, detail: Option<&Value>) -> bool {
   status == 404 && detail == Some(&Value::String(PROJECT_GONE_DETAIL.into()))
 }
 
-/// Parse the numeric id a slug-free campus project reference carries.
-/// A project id that is not a number cannot be queried: treat it as unknown.
-pub fn campus_project_ref_id(project_ref: &str) -> Option<i64> {
-  project_ref.parse().ok()
+/// Whether a project reference is worth asking about. Both the install flow
+/// and publish adoption store the slug; the platform's `get_project` accepts a
+/// slug or a numeric id alike, so any non-empty ref may be queried. The
+/// strictness of the deletion check comes from the exact 404 detail, not from
+/// the ref's shape.
+pub fn campus_project_queryable(project_ref: &str) -> bool {
+  !project_ref.is_empty()
 }
 
 /// Ask the platform whether a campus project was deleted. `None` when the
 /// answer is anything but a confirmed deletion, including every error.
 pub async fn campus_project_gone(app: &AppHandle, project_ref: &str) -> Option<bool> {
-  let id = campus_project_ref_id(project_ref)?;
+  if !campus_project_queryable(project_ref) {
+    return None;
+  }
   let client = app.state::<reqwest::Client>();
   let response = client
-    .get(format!("{CAMPUS_API}/projects/{id}"))
+    .get(format!("{CAMPUS_API}/projects/{project_ref}"))
     .send()
     .await
     .ok()?;
@@ -565,12 +570,11 @@ mod project_gone_tests {
   }
 
   #[test]
-  fn only_numeric_project_refs_can_be_queried() {
-    assert_eq!(campus_project_ref_id("24"), Some(24));
-    assert_eq!(campus_project_ref_id(" 24"), None);
-    assert_eq!(campus_project_ref_id("slug-name"), None);
-    assert_eq!(campus_project_ref_id(""), None);
-    assert_eq!(campus_project_ref_id("24x"), None);
+  fn any_non_empty_project_ref_is_queried() {
+    // Install and publish both store the slug; the platform also accepts ids.
+    assert!(campus_project_queryable("gtnh"));
+    assert!(campus_project_queryable("24"));
+    assert!(!campus_project_queryable(""));
   }
 }
 

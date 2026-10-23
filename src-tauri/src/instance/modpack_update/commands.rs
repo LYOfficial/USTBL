@@ -377,10 +377,15 @@ pub async fn check_modpack_update(
         && campus_project_gone(&app, &target.origin.project_id).await == Some(true)
       {
         return match unlink_origin(&app, &instance_id, &target).await {
-          Ok(()) => Ok(UpdateCheck {
-            unlinked: true,
-            ..check_of(CheckStatus::NotFollowing, &target)
-          }),
+          Ok(()) => {
+            // The ledger groups rows by the origin in the instance list, so it
+            // has to hear about the lost identity right away.
+            refresh_and_update_instances(&app, false).await;
+            Ok(UpdateCheck {
+              unlinked: true,
+              ..check_of(CheckStatus::NotFollowing, &target)
+            })
+          }
           Err(error) => Ok(UpdateCheck {
             reason: Some(error.0),
             ..check_of(CheckStatus::Unknown, &target)

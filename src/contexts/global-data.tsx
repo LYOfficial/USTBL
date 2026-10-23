@@ -110,7 +110,7 @@ export const GlobalDataContextProvider: React.FC<{
       }
       return check;
     },
-    [instanceList, toast]
+    [instanceList, toast, t]
   );
 
   // Once per launch, look for updates of every followed instance. One at a
