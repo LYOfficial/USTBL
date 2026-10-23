@@ -995,6 +995,10 @@ pub async fn apply_modpack_update(
   };
   let remote_contents =
     materialize_text_candidates(&app, &target, &remote, &compared.diff.conflicts).await?;
+  // The new text bytes fetched for the merge; `apply` caches them so a file
+  // that ends up differing from the new version (merged, or kept local) still
+  // has a base to diff against. Text files only; `store` re-validates.
+  let base_texts = remote_contents.clone();
   let prepared = finish(compared, &target.root, &remote, &remote_contents)?;
   if prepared.plan_hash != plan_hash {
     // The cached plan the player looked at describes another state; drop it
@@ -1025,6 +1029,7 @@ pub async fn apply_modpack_update(
       components,
       restore_components,
       merged_contents,
+      base_texts,
     },
   )
   .await;

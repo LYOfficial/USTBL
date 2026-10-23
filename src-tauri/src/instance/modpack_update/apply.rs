@@ -148,6 +148,10 @@ pub struct UpdateRequest {
   /// Content for automatically merged text files. Other operations fetch the
   /// remote file through its normal source.
   pub merged_contents: BTreeMap<String, Vec<u8>>,
+  /// New-version text bytes the caller already has, keyed by relative path.
+  /// Cached as the baseline copy after the update so a locally edited file
+  /// keeps a base to diff against.
+  pub base_texts: BTreeMap<String, Vec<u8>>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -776,6 +780,16 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
       baseline = baseline.with_components(chain.clone());
     }
     baseline.save(root).await.map_err(io_error)?;
+    // Cache the new text bases fetched during planning. Merged or kept-local
+    // files do not match the new baseline on disk, so `sync` below would not
+    // pick them up. A failed validation is only logged.
+    for (path, bytes) in &request.base_texts {
+      if let Some(file) = baseline.files.iter().find(|file| &file.path == path) {
+        if let Err(error) = base_store::store(root, file, bytes) {
+          log::warn!("cannot store modpack text baseline for {path}: {error:?}");
+        }
+      }
+    }
     tokio::task::spawn_blocking({
       let root = root.clone();
       let files = baseline.files.clone();
@@ -981,6 +995,7 @@ mod tests {
       components: None,
       restore_components: false,
       merged_contents: BTreeMap::new(),
+      base_texts: BTreeMap::new(),
     }
   }
 
@@ -1778,5 +1793,131 @@ mod tests {
     assert_eq!(root.read("mods/a.jar").as_deref(), Some("a2"));
     assert_eq!(root.read("mods/b.jar").as_deref(), Some("b2"));
     assert_eq!(root.read("config/c.toml").as_deref(), Some(remote_text));
+  }
+
+  /// A text conflict answered "keep local" block by block still has its new
+  /// base cached, so the local-change list can show the line diff instead of
+  /// `BaseMissing`.
+  #[tokio::test]
+  async fn keeping_local_hunks_still_caches_the_new_base() {
+    use crate::instance::helpers::modpack::baseline::BaselineFile;
+    use crate::instance::modpack_update::commands::selected_hunk_contents;
+    use crate::instance::modpack_update::diff::{resolve, ConflictChoice};
+    use crate::instance::modpack_update::plan::{
+      count_local_changes, local_changes, prepare_with_contents,
+    };
+
+    let root = setup();
+    root.write("config/c.toml", "x = 2\ny = 1\n");
+    let base_text = "x = 1\ny = 1\n";
+    let remote_text = "x = 3\ny = 1\n";
+    let key = sha1_of(base_text.as_bytes());
+    let installed = ModpackBaseline::build(
+      &origin("1"),
+      loader("0.15.0"),
+      vec![BaselineFile {
+        path: "config/c.toml".to_string(),
+        sha1: key.sha1.clone(),
+        size: key.size,
+      }],
+    );
+    base_store::store(&root.0, &installed.files[0], base_text.as_bytes()).unwrap();
+
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let remote_files = vec![url_file("config/c.toml", remote_text, &mut env)];
+    let mut update = request(&root, remote_files, Vec::new(), "0.15.0");
+    let contents = BTreeMap::from([("config/c.toml".to_string(), remote_text.as_bytes().to_vec())]);
+    let prepared = prepare_with_contents(&root.0, &installed, &update.remote, &contents)
+      .await
+      .unwrap();
+    assert_eq!(prepared.diff.conflicts.len(), 1);
+    assert!(!prepared.diff.conflicts[0].hunks.is_empty());
+
+    // Keep every local block, as the dialog sends for per-hunk choices.
+    let mut choices = BTreeMap::new();
+    for index in 0..prepared.diff.conflicts[0].hunks.len() {
+      choices.insert(format!("config/c.toml#{index}"), ConflictChoice::KeepLocal);
+    }
+    update.merged_contents = selected_hunk_contents(&prepared, &mut choices).unwrap();
+    update.operations = resolve(&prepared.diff, &choices);
+    update.base_texts = contents.clone();
+
+    apply(&env, update).await.unwrap();
+
+    let baseline = ModpackBaseline::load(&root.0).await.unwrap();
+    assert_eq!(count_local_changes(&root.0, &baseline).await.unwrap(), 1);
+    let changes = local_changes(&root.0, &baseline, true).await.unwrap();
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].path, "config/c.toml");
+    assert!(changes[0].hunks.is_some());
+    assert_eq!(changes[0].no_diff, None);
+  }
+
+  /// An automatically merged text file keeps its line diff in the
+  /// local-change list as well: the new base survives the update.
+  #[tokio::test]
+  async fn an_auto_merged_file_keeps_its_line_diff() {
+    use crate::instance::helpers::modpack::baseline::BaselineFile;
+    use crate::instance::modpack_update::plan::{
+      count_local_changes, local_changes, prepare_with_contents,
+    };
+
+    let root = setup();
+    // Local edits line 1, the new version edits line 3: they merge cleanly.
+    root.write("config/c.toml", "x = 2\ny = 1\nz = 1\n");
+    let base_text = "x = 1\ny = 1\nz = 1\n";
+    let remote_text = "x = 1\ny = 1\nz = 3\n";
+    let key = sha1_of(base_text.as_bytes());
+    let installed = ModpackBaseline::build(
+      &origin("1"),
+      loader("0.15.0"),
+      vec![BaselineFile {
+        path: "config/c.toml".to_string(),
+        sha1: key.sha1.clone(),
+        size: key.size,
+      }],
+    );
+    base_store::store(&root.0, &installed.files[0], base_text.as_bytes()).unwrap();
+
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let remote_files = vec![url_file("config/c.toml", remote_text, &mut env)];
+    let mut update = request(&root, remote_files, Vec::new(), "0.15.0");
+    let contents = BTreeMap::from([("config/c.toml".to_string(), remote_text.as_bytes().to_vec())]);
+    let prepared = prepare_with_contents(&root.0, &installed, &update.remote, &contents)
+      .await
+      .unwrap();
+    assert!(prepared.diff.conflicts.is_empty());
+    assert_eq!(prepared.diff.auto_merged.len(), 1);
+
+    update.merged_contents = prepared.merged_contents.clone();
+    update.operations =
+      crate::instance::modpack_update::diff::resolve(&prepared.diff, &BTreeMap::new());
+    // The command fetched these bytes while the file was still a text
+    // conflict, before `finish` merged it, and passes them on for the base
+    // cache.
+    update.base_texts = contents.clone();
+
+    apply(&env, update).await.unwrap();
+
+    assert_eq!(
+      root.read("config/c.toml").as_deref(),
+      Some("x = 2\ny = 1\nz = 3\n")
+    );
+    let baseline = ModpackBaseline::load(&root.0).await.unwrap();
+    assert_eq!(count_local_changes(&root.0, &baseline).await.unwrap(), 1);
+    let changes = local_changes(&root.0, &baseline, true).await.unwrap();
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].path, "config/c.toml");
+    let hunks = changes[0].hunks.as_ref().expect("line diff expected");
+    assert!(hunks
+      .iter()
+      .any(|hunk| hunk.lines.iter().any(|line| line.text == "x = 2")));
+    assert_eq!(changes[0].no_diff, None);
   }
 }
