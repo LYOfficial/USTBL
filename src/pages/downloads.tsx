@@ -139,7 +139,7 @@ export const DownloadTasksPage = () => {
       }
     >
       <VStack align="stretch" px="10%" spacing={4}>
-        <UnfinishedPublishes refreshKey={tasks.length} />
+        <UnfinishedPublishes />
         {taskGroupList.length === 0 && <Empty withIcon={false} size="sm" />}
         {taskGroupList.map(([group, expanded]) => (
           <OptionItemGroup

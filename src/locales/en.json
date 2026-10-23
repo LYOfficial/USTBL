@@ -639,12 +639,11 @@
     }
   },
   "DownloadTasksPage": {
-    "title": "Download Tasks",
+    "title": "Download & Upload Tasks",
     "unfinishedPublish": {
       "title": "Unfinished publishes",
       "phase": {
         "uploading": "Upload interrupted, can be continued",
-        "processing": "The platform is processing it",
         "failed": "Publish failed"
       },
       "resume": "Continue",

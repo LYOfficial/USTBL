@@ -19,7 +19,7 @@ export const DownloadIndicator: React.FC = () => {
   const router = useRouter();
   const { t } = useTranslation();
   const { config } = useLauncherConfig();
-  const { tasks, generalPercent } = useTaskContext();
+  const { tasks, generalPercent, unfinishedPublishes } = useTaskContext();
   const primaryColor = config.appearance.theme.primaryColor;
 
   const [showCheckIcon, setShowCheckIcon] = useState(false);
@@ -35,6 +35,16 @@ export const DownloadIndicator: React.FC = () => {
   const hasError = tasks.some(
     (task) => task.status === GTaskEventStatusEnums.Failed
   );
+
+  // Publish records waiting on the user (an interrupted upload, a failure):
+  // shown as "needs attention", never as spinning progress (10-23 addition).
+  const needsAttention =
+    unfinishedPublishes.length > 0 &&
+    !tasks.some(
+      (group) =>
+        group.status === GTaskEventStatusEnums.Started ||
+        group.status === GTaskEventStatusEnums.Stopped
+    );
 
   useEffect(() => {
     if (isAllCompleted) {
@@ -60,7 +70,7 @@ export const DownloadIndicator: React.FC = () => {
         }}
         className="drop-in-elastic"
       >
-        {!isAllCompleted && !hasError ? (
+        {!isAllCompleted && !hasError && !needsAttention ? (
           <CircularProgress
             color={`${primaryColor}.500`}
             size="30px"
@@ -95,7 +105,7 @@ export const DownloadIndicator: React.FC = () => {
                 />
               </Box>
             )}
-            {hasError && (
+            {(hasError || needsAttention) && (
               <Icon
                 as={LuCircleAlert}
                 boxSize={2.5}

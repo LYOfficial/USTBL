@@ -639,12 +639,11 @@
     }
   },
   "DownloadTasksPage": {
-    "title": "ダウンロードタスク",
+    "title": "ダウンロード・アップロードタスク",
     "unfinishedPublish": {
       "title": "未完了の公開",
       "phase": {
         "uploading": "アップロードが中断されました。続行できます",
-        "processing": "プラットフォームで処理中です",
         "failed": "公開に失敗しました"
       },
       "resume": "続行",

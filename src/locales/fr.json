@@ -639,12 +639,11 @@
     }
   },
   "DownloadTasksPage": {
-    "title": "Tâches de téléchargement en cours",
+    "title": "Tâches de téléchargement et d'envoi",
     "unfinishedPublish": {
       "title": "Publications inachevées",
       "phase": {
         "uploading": "Envoi interrompu, reprise possible",
-        "processing": "Traitement en cours sur la plateforme",
         "failed": "Échec de la publication"
       },
       "resume": "Reprendre",

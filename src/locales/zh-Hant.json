@@ -639,12 +639,11 @@
     }
   },
   "DownloadTasksPage": {
-    "title": "下載任務",
+    "title": "下載與上傳任務",
     "unfinishedPublish": {
       "title": "未完成的發佈",
       "phase": {
         "uploading": "上傳中斷，可繼續",
-        "processing": "平台正在處理",
         "failed": "發佈失敗"
       },
       "resume": "繼續",
