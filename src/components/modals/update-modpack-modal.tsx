@@ -173,50 +173,38 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
   const [planError, setPlanError] = useState<PlanError | null>(null);
   const choicesRef = useRef(choices);
   choicesRef.current = choices;
+  // Each run of the open/retry flow gets a token; a preview that answers to
+  // an older token is stale (cancelled by the check or a retry) and dropped.
+  const roundRef = useRef(0);
 
-  const preparePlan = useCallback(async () => {
-    setPlanPhase("planning");
-    setPlanError(null);
-    const response =
-      await ModpackUpdateService.prepareModpackUpdate(instanceId);
-    if (response.status === "success") {
-      setPlan(response.data);
-      // Restore the choices the player made the last time this exact plan
-      // was shown.
-      const remembered = rememberedChoices.get(instanceId);
-      if (remembered && remembered.planHash === response.data.planHash) {
-        setChoices(remembered.choices);
-      }
-      setPlanPhase("planned");
-    } else if (
-      response.details !== InstanceError.ModpackUpdatePrepareCancelled
-    ) {
-      setPlanError({ message: response.message, details: response.details });
-      setPlanPhase("planFailed");
-    } else {
-      setPlanPhase("idle");
-    }
-  }, [instanceId]);
-
-  const finishCheck = useCallback(
-    async (result: ModpackUpdateCheck) => {
-      setCheck(result);
-      if (result.status !== "available") {
-        // No update: the preview is not worth waiting for.
-        void ModpackUpdateService.cancelModpackUpdatePrepare(instanceId);
-        setPlanPhase("idle");
-        if (result.status === "upToDate") {
-          // Only now is the local scan worth its hashing.
-          const scanned = await checkModpackUpdate(instanceId, true);
-          setCheck(scanned);
+  const preparePlan = useCallback(
+    async (round: number) => {
+      const response =
+        await ModpackUpdateService.prepareModpackUpdate(instanceId);
+      if (roundRef.current !== round) return;
+      if (response.status === "success") {
+        setPlan(response.data);
+        // Restore the choices the player made the last time this exact plan
+        // was shown.
+        const remembered = rememberedChoices.get(instanceId);
+        if (remembered && remembered.planHash === response.data.planHash) {
+          setChoices(remembered.choices);
         }
+        setPlanPhase("planned");
+      } else if (
+        response.details !== InstanceError.ModpackUpdatePrepareCancelled
+      ) {
+        setPlanError({ message: response.message, details: response.details });
+        setPlanPhase("planFailed");
+      } else {
+        setPlanPhase("idle");
       }
-      setCheckPhase("checked");
     },
-    [instanceId, checkModpackUpdate]
+    [instanceId]
   );
 
   const runCheck = useCallback(async () => {
+    const round = ++roundRef.current;
     setCheckPhase("checking");
     setPlanPhase("planning");
     setPlan(null);
@@ -231,17 +219,25 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
     }
     // Check and preview run at the same time: the preview hits its cache
     // when nothing changed, and the check is the light listing request.
-    const preparePromise = preparePlan();
+    const preparePromise = preparePlan(round);
     const result = await checkModpackUpdate(instanceId, false);
-    await finishCheck(result);
+    if (roundRef.current !== round) return;
+    setCheck(result);
+    setCheckPhase("checked");
+    if (result.status !== "available") {
+      // No update: the preview is not worth waiting for; its answer, whenever
+      // it comes, belongs to a finished round and is dropped.
+      roundRef.current += 1;
+      void ModpackUpdateService.cancelModpackUpdatePrepare(instanceId);
+      setPlanPhase("idle");
+      if (result.status === "upToDate") {
+        // Only now is the local scan worth its hashing.
+        const scanned = await checkModpackUpdate(instanceId, true);
+        setCheck(scanned);
+      }
+    }
     await preparePromise;
-  }, [
-    instanceId,
-    getInstanceList,
-    checkModpackUpdate,
-    preparePlan,
-    finishCheck,
-  ]);
+  }, [instanceId, getInstanceList, checkModpackUpdate, preparePlan]);
 
   // The opening check runs once per instance. runCheck also depends on
   // getInstanceList, whose identity changes on every instance list update
@@ -834,7 +830,15 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
               </Button>
             )}
           {planPhase === "planFailed" && (
-            <Button colorScheme={primaryColor} onClick={preparePlan}>
+            <Button
+              colorScheme={primaryColor}
+              onClick={() => {
+                const round = ++roundRef.current;
+                setPlanPhase("planning");
+                setPlanError(null);
+                void preparePlan(round);
+              }}
+            >
               {t("UpdateModpackModal.button.retry")}
             </Button>
           )}

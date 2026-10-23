@@ -24,11 +24,7 @@ pub struct Prepared {
 
 /// The pieces of one comparison, so the conflict setup can finish the work
 /// without hashing the local files a second time.
-#[allow(dead_code)]
 pub struct Compared {
-  pub baseline_map: BTreeMap<String, FileKey>,
-  pub remote_map: BTreeMap<String, FileKey>,
-  pub local: BTreeMap<String, LocalState>,
   pub diff: Diff,
 }
 
@@ -195,13 +191,10 @@ pub async fn local_changes(
   .map_err(|e| USTBLError(e.to_string()))?
 }
 
-
-
-
 /// Prepare an update and merge eligible text conflicts when remote bytes are
 /// available. Remote bytes are supplied by the caller because their source may
 /// be an archive, a campus pack, or a download.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub async fn prepare_with_contents(
   root: &Path,
   baseline: &ModpackBaseline,
@@ -256,12 +249,7 @@ pub async fn compare(
     }
   }
   let diff = three_way(&baseline_map, &local, &remote_map);
-  Ok(Compared {
-    baseline_map,
-    remote_map,
-    local,
-    diff,
-  })
+  Ok(Compared { diff })
 }
 
 /// Finish a comparison after the remote bytes of conflicting text files were

@@ -372,12 +372,7 @@ impl RemoteCache {
   /// Whether this cache describes `version` fetched into `root` again. An
   /// Archive cache additionally needs its archive, still there with the same
   /// size (overrides are read from it).
-  pub fn matches(
-    &self,
-    origin: &InstanceOrigin,
-    root: &Path,
-    version: &LatestVersion,
-  ) -> bool {
+  pub fn matches(&self, origin: &InstanceOrigin, root: &Path, version: &LatestVersion) -> bool {
     if self.schema != REMOTE_CACHE_SCHEMA
       || self.platform != origin.platform
       || self.version_id != version.version_id
@@ -385,7 +380,11 @@ impl RemoteCache {
     {
       return false;
     }
-    match (version.archive_ref(), &self.archive_sha1, &self.archive_size) {
+    match (
+      version.archive_ref(),
+      &self.archive_sha1,
+      &self.archive_size,
+    ) {
       (Some((sha1, _)), Some(cached_sha1), Some(cached_size)) => {
         if cached_sha1 != sha1 {
           return false;
@@ -554,10 +553,7 @@ pub enum CampusLineStatus {
 
 /// Match the followed line in a project listing, comparing the loader slug in
 /// lower case like the platform does.
-pub fn campus_line_status(
-  lines: &[CampusLine],
-  origin: &InstanceOrigin,
-) -> CampusLineStatus {
+pub fn campus_line_status(lines: &[CampusLine], origin: &InstanceOrigin) -> CampusLineStatus {
   let Some(loader) = loader_slug(origin.loader_type) else {
     return CampusLineStatus::LineGone;
   };
@@ -703,7 +699,6 @@ pub fn campus_project_queryable(project_ref: &str) -> bool {
 
 /// Ask the platform whether a campus project was deleted. `None` when the
 /// answer is anything but a confirmed deletion, including every error.
-#[cfg_attr(not(test), allow(dead_code))]
 pub async fn campus_project_gone(app: &AppHandle, project_ref: &str) -> Option<bool> {
   if !campus_project_queryable(project_ref) {
     return None;
@@ -716,7 +711,11 @@ pub async fn campus_project_gone(app: &AppHandle, project_ref: &str) -> Option<b
     .ok()?;
   let status = response.status().as_u16();
   if status != 404 {
-    return if response.status().is_success() { Some(false) } else { None };
+    return if response.status().is_success() {
+      Some(false)
+    } else {
+      None
+    };
   }
   let detail = response.json::<Value>().await.ok()?.get("detail").cloned();
   Some(is_project_gone_detail(status, detail.as_ref()))
@@ -925,8 +924,6 @@ pub async fn latest_version(
   }
 }
 
-
-
 /// Fetch whatever the new version needs to be described file by file. The
 /// parsed result is cached per version under the update folder, so a plan and
 /// the apply right after it resolve the remote only once.
@@ -971,9 +968,7 @@ pub async fn resolve_remote(
       }
     };
     let archive = archive.map(|(sha1, size)| (sha1.to_string(), size));
-    let archive_ref = archive
-      .as_ref()
-      .map(|(sha1, size)| (sha1.as_str(), *size));
+    let archive_ref = archive.as_ref().map(|(sha1, size)| (sha1.as_str(), *size));
     let cache = RemoteCache::new(origin, root, &remote, archive_ref);
     if let Err(error) = write_remote_cache(root, &cache) {
       log::warn!("cannot write modpack remote cache: {error:?}");
@@ -1289,12 +1284,7 @@ mod tests {
     fs::create_dir_all(remote_dir(&root)).unwrap();
     fs::write(archive_path(&root, &sha1), b"zip-bytes").unwrap();
 
-    let cache = RemoteCache::new(
-      &origin,
-      &root,
-      &remote_for_test(),
-      Some((&sha1, 9)),
-    );
+    let cache = RemoteCache::new(&origin, &root, &remote_for_test(), Some((&sha1, 9)));
     assert!(cache.matches(&origin, &root, &version));
 
     // Round trip through JSON.
@@ -1327,7 +1317,11 @@ mod tests {
     };
     let cache = RemoteCache::new(&origin, &root, &remote_for_test(), None);
     assert!(cache.matches(&origin, &root, &version));
-    assert!(!cache.matches(&origin, &root, &archive_version("7", "cc".repeat(20).as_str())));
+    assert!(!cache.matches(
+      &origin,
+      &root,
+      &archive_version("7", "cc".repeat(20).as_str())
+    ));
     let _ = fs::remove_dir_all(&root);
   }
 

@@ -55,7 +55,10 @@ impl PlanCache {
 pub fn fingerprint_paths(root: &Path, paths: &[String]) -> io::Result<String> {
   let mut entries = Vec::with_capacity(paths.len());
   for path in paths {
-    for variant in [path.clone(), format!("{path}{}", super::diff::DISABLED_SUFFIX)] {
+    for variant in [
+      path.clone(),
+      format!("{path}{}", super::diff::DISABLED_SUFFIX),
+    ] {
       let file = root.join(&variant);
       let meta = match fs::metadata(&file) {
         Ok(meta) if meta.is_file() => Some(meta),
@@ -138,7 +141,9 @@ pub fn plan_paths(
 pub fn baseline_sha1(
   baseline: &crate::instance::helpers::modpack::baseline::ModpackBaseline,
 ) -> String {
-  hex::encode(Sha1::digest(serde_json::to_vec(baseline).unwrap_or_default()))
+  hex::encode(Sha1::digest(
+    serde_json::to_vec(baseline).unwrap_or_default(),
+  ))
 }
 
 #[cfg(test)]
@@ -147,10 +152,8 @@ mod tests {
   use crate::instance::helpers::modpack::baseline::{
     BaselineFile, BaselineLoader, ModpackBaseline,
   };
-  use crate::instance::models::misc::{
-    InstanceOrigin, ModLoaderType, OriginPlatform,
-  };
-  use std::time::Duration;
+  use crate::instance::models::misc::{InstanceOrigin, ModLoaderType, OriginPlatform};
+  use std::time::SystemTime;
 
   fn origin() -> InstanceOrigin {
     InstanceOrigin {
@@ -212,15 +215,16 @@ mod tests {
     let resized = fingerprint_paths(&root, &paths).unwrap();
     assert_ne!(first, resized);
 
-    // Rewriting the same bytes keeps the size but moves the mtime (on file
-    // systems whose mtime resolution is fine enough, which the development
-    // targets are); either way the fingerprint must be well defined.
-    fs::write(root.join("mods/a.jar"), b"aaaa").unwrap();
-    std::thread::sleep(Duration::from_millis(20));
-    fs::write(root.join("mods/a.jar"), b"aaaa").unwrap();
-    let _ = &first;
+    // Same size, another modification time changes the fingerprint.
+    let other = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+    fs::File::options()
+      .write(true)
+      .open(root.join("mods/a.jar"))
+      .unwrap()
+      .set_modified(other)
+      .unwrap();
     let touched = fingerprint_paths(&root, &paths).unwrap();
-    assert_eq!(touched.len(), 40);
+    assert_ne!(first, touched);
     let _ = fs::remove_dir_all(&root);
   }
 
