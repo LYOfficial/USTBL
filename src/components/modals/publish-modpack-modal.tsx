@@ -63,8 +63,11 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
   const [isFileListLoading, setIsFileListLoading] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
   const [progress, setProgress] = useState<CampusPublishProgress | null>(null);
-  // Why this instance cannot be published right now (empty = no blocker).
-  const [publishBlockReason, setPublishBlockReason] = useState("");
+  // The publishability gate: "unknown" while the check is in flight, a reason
+  // string when the instance cannot be published, "" when it passed.
+  const [publishBlockReason, setPublishBlockReason] = useState<
+    string | "unknown"
+  >("unknown");
 
   const isNewProject = projectChoice === NEW_PROJECT;
 
@@ -93,51 +96,54 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
   useEffect(() => {
     if (!modalProps.isOpen) return;
     let isActive = true;
+    setPublishBlockReason("unknown");
 
     CampusModpackService.checkCampusModpackPublishable(instanceId).then(
       (response) => {
         if (!isActive) return;
-        if (response.status === "success") {
-          setPublishBlockReason("");
-        } else {
+        if (response.status !== "success") {
           setPublishBlockReason(response.details || response.message);
+          return;
         }
+        setPublishBlockReason("");
+
+        CampusModpackService.listCampusModpackProjects().then((response) => {
+          if (!isActive) return;
+          if (response.status === "success") {
+            setProjects(response.data);
+          } else {
+            toast({
+              title: response.message,
+              description: response.details,
+              status: "error",
+            });
+          }
+        });
+
+        setIsFileListLoading(true);
+        InstanceService.retrieveExportableFileList(instanceId)
+          .then((response) => {
+            if (!isActive) return;
+            if (response.status === "success") {
+              setFileList(response.data);
+              const nextSelected = new Set(response.data.all);
+              response.data.unchecked.forEach((path) =>
+                nextSelected.delete(path)
+              );
+              setSelectedFiles(nextSelected);
+            } else {
+              toast({
+                title: response.message,
+                description: response.details,
+                status: "error",
+              });
+            }
+          })
+          .finally(() => {
+            if (isActive) setIsFileListLoading(false);
+          });
       }
     );
-
-    CampusModpackService.listCampusModpackProjects().then((response) => {
-      if (!isActive) return;
-      if (response.status === "success") {
-        setProjects(response.data);
-      } else {
-        toast({
-          title: response.message,
-          description: response.details,
-          status: "error",
-        });
-      }
-    });
-
-    setIsFileListLoading(true);
-    InstanceService.retrieveExportableFileList(instanceId)
-      .then((response) => {
-        if (!isActive) return;
-        if (response.status === "success") {
-          setFileList(response.data);
-          const nextSelected = new Set(response.data.all);
-          response.data.unchecked.forEach((path) => nextSelected.delete(path));
-          setSelectedFiles(nextSelected);
-        } else {
-          toast({
-            title: response.message,
-            description: response.details,
-            status: "error",
-          });
-        }
-      })
-      .finally(() => {
-        if (isActive) setIsFileListLoading(false);
-      });
 
     return () => {
       isActive = false;
@@ -266,7 +272,7 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
     {
       title: t("PublishModpackModal.label.project"),
       items: [
-        ...(publishBlockReason
+        ...(publishBlockReason !== "" && publishBlockReason !== "unknown"
           ? [
               {
                 title: "",
