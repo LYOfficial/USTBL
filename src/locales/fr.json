@@ -3315,8 +3315,7 @@
       "action": {
         "update": "Mettre à jour",
         "details": "Détails",
-        "viewChanges": "Voir les modifications",
-        "viewChangesCount": "Voir les modifications ({{count}})"
+        "viewChanges": "Voir les modifications"
       },
       "updateTo": "Mise à jour vers {{latest}}",
       "platform": {

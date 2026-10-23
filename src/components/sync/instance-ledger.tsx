@@ -174,11 +174,7 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
                 isDisabled={localChanges === 0}
                 onClick={openChanges}
               >
-                {localChanges > 0
-                  ? t("InstanceSyncPage.ledger.action.viewChangesCount", {
-                      count: localChanges,
-                    })
-                  : t("InstanceSyncPage.ledger.action.viewChanges")}
+                {t("InstanceSyncPage.ledger.action.viewChanges")}
               </Button>
               <Button size="xs" colorScheme={primaryColor} onClick={openUpdate}>
                 {t("InstanceSyncPage.ledger.action.update")}

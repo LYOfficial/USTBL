@@ -3315,8 +3315,7 @@
       "action": {
         "update": "更新",
         "details": "詳細",
-        "viewChanges": "変更を表示",
-        "viewChangesCount": "変更を表示（{{count}}）"
+        "viewChanges": "変更を表示"
       },
       "updateTo": "{{latest}} に更新できます",
       "platform": {
