@@ -3238,7 +3238,8 @@
       "confirmRollback": "確認撤銷"
     },
     "toast": {
-      "loaderPending": "模組載入器需要重新安裝，請在下載頁查看進度"
+      "loaderPending": "模組載入器需要重新安裝，請在下載頁查看進度",
+      "planChanged": "更新計劃已變化，請重新選擇衝突"
     },
     "unlink": {
       "button": "解除跟隨",

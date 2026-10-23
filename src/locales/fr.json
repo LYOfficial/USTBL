@@ -3238,7 +3238,8 @@
       "confirmRollback": "Confirmer l'annulation"
     },
     "toast": {
-      "loaderPending": "Le chargeur de mods doit être réinstallé. Consultez la page des téléchargements"
+      "loaderPending": "Le chargeur de mods doit être réinstallé. Consultez la page des téléchargements",
+      "planChanged": "Le plan de mise à jour a changé. Choisissez de nouveau comment résoudre les conflits"
     },
     "unlink": {
       "button": "Ne plus suivre",

@@ -3238,7 +3238,8 @@
       "confirmRollback": "Confirm undo"
     },
     "toast": {
-      "loaderPending": "The mod loader needs to be installed again. See the downloads page"
+      "loaderPending": "The mod loader needs to be installed again. See the downloads page",
+      "planChanged": "The update plan changed. Choose how to resolve the conflicts again"
     },
     "unlink": {
       "button": "Unfollow",

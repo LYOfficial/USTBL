@@ -174,6 +174,11 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
   // Each run of the open/retry flow gets a token; a preview that answers to
   // an older token is stale (cancelled by the check or a retry) and dropped.
   const roundRef = useRef(0);
+  const planRef = useRef(plan);
+  planRef.current = plan;
+  // After a failed apply the choices stay until the re-check proves the plan
+  // still is the one they were made for.
+  const keepChoicesForRecheckRef = useRef(false);
 
   const preparePlan = useCallback(
     async (round: number) => {
@@ -181,13 +186,27 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
         await ModpackUpdateService.prepareModpackUpdate(instanceId);
       if (roundRef.current !== round) return;
       if (response.status === "success") {
-        setPlan(response.data);
-        // Restore the choices the player made the last time this exact plan
-        // was shown.
-        const remembered = rememberedChoices.get(instanceId);
-        if (remembered && remembered.planHash === response.data.planHash) {
-          setChoices(remembered.choices);
+        if (keepChoicesForRecheckRef.current) {
+          // A re-check after a failed apply: the answers stay only while the
+          // plan is still the one they were made for. planRef still holds the
+          // failed plan here (setPlan below commits only after this callback).
+          keepChoicesForRecheckRef.current = false;
+          if (planRef.current?.planHash !== response.data.planHash) {
+            setChoices({});
+            toast({
+              title: t("UpdateModpackModal.toast.planChanged"),
+              status: "info",
+            });
+          }
+        } else {
+          // Restore the choices the player made the last time this exact plan
+          // was shown.
+          const remembered = rememberedChoices.get(instanceId);
+          if (remembered && remembered.planHash === response.data.planHash) {
+            setChoices(remembered.choices);
+          }
         }
+        setPlan(response.data);
         setPlanPhase("planned");
       } else if (
         response.details !== InstanceError.ModpackUpdatePrepareCancelled
@@ -198,7 +217,7 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
         setPlanPhase("idle");
       }
     },
-    [instanceId]
+    [instanceId, t, toast]
   );
 
   const runCheck = useCallback(async () => {
@@ -207,7 +226,9 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
     setPlanPhase("planning");
     setPlan(null);
     setPlanError(null);
-    setChoices({});
+    if (!keepChoicesForRecheckRef.current) {
+      setChoices({});
+    }
     setConfirmingRollback(false);
     // An interrupted update is rolled back before anything is compared.
     const recovered =
@@ -248,8 +269,6 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
   }, [instanceId]);
 
   // Remember the current choices when the dialog closes, by plan hash.
-  const planRef = useRef(plan);
-  planRef.current = plan;
   useEffect(() => {
     return () => {
       const plan = planRef.current;
@@ -303,6 +322,9 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
         status: "error",
       });
       // The plan may be stale or rolled back; start over from a fresh check.
+      // The choices stay for the re-check: it clears them itself when the
+      // plan turns out to be another one (and says so).
+      keepChoicesForRecheckRef.current = true;
       runCheck();
     }
   }, [
