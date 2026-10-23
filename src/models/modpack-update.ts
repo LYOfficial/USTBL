@@ -22,6 +22,8 @@ export interface ModpackUpdateCheck {
   canRollBack: boolean;
   /** Managed files that differ from the install; set by the local scan. */
   localChanges?: number;
+  /** The platform confirmed the project is gone; this check detached the instance. */
+  unlinked?: boolean;
 }
 
 export interface ModpackFileKey {
