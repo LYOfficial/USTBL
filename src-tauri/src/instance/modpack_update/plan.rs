@@ -717,6 +717,58 @@ mod tests {
     let _ = fs::remove_dir_all(root);
   }
 
+  /// A base line list, replaced wholesale on disk and/or upstream. Each side
+  /// is 3000 short lines, so the LCS middle is ~9M cells: past the budget the
+  /// merge must degrade instead of building the matrix.
+  fn big_text(tag: &str) -> String {
+    (0..3000).map(|n| format!("{tag}{n}\n")).collect()
+  }
+
+  fn store_base(root: &Path, baseline: &ModpackBaseline, content: &str) {
+    let file = &baseline.files[0];
+    base_store::store(root, file, content.as_bytes()).unwrap();
+  }
+
+  #[tokio::test]
+  async fn a_huge_one_sided_text_edit_still_updates() {
+    let base = big_text("b");
+    let local = big_text("local");
+    let root = instance(&[("config/a.txt", &local)]);
+    let installed = baseline(&[("config/a.txt", &base)]);
+    store_base(&root, &installed, &base);
+    // The new version did not touch the file; only the local side moved.
+    let remote = remote(&[("config/a.txt", &base)]);
+    let prepared = prepare_with_contents(&root, &installed, &remote, &BTreeMap::new())
+      .await
+      .unwrap();
+    // The local edit simply stays: no conflict, nothing auto-taken.
+    assert!(prepared.diff.conflicts.is_empty());
+    assert!(prepared.diff.auto_merged.is_empty());
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn huge_two_sided_text_edits_degrade_to_one_whole_file_conflict() {
+    let base = big_text("b");
+    let local = big_text("local");
+    let remote_text = big_text("remote");
+    let root = instance(&[("config/a.txt", &local)]);
+    let installed = baseline(&[("config/a.txt", &base)]);
+    store_base(&root, &installed, &base);
+    let remote = remote(&[("config/a.txt", &remote_text)]);
+    let contents = BTreeMap::from([("config/a.txt".to_string(), remote_text.as_bytes().to_vec())]);
+    let prepared = prepare_with_contents(&root, &installed, &remote, &contents)
+      .await
+      .unwrap();
+    // No InvalidText, no aborted update: exactly one conflict the user answers.
+    assert_eq!(prepared.diff.conflicts.len(), 1);
+    assert_eq!(prepared.diff.conflicts[0].hunks.len(), 1);
+    let hunk = &prepared.diff.conflicts[0].hunks[0];
+    assert_eq!(hunk.local.len(), 3000);
+    assert_eq!(hunk.remote.len(), 3000);
+    let _ = fs::remove_dir_all(root);
+  }
+
   /// §7.2: the local-change scan reads the hash cache; the update preview
   /// hashes the files itself, so a poisoned or stale entry can never leak
   /// into the plan the apply step trusts.
