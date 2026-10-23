@@ -122,4 +122,21 @@ export class ModpackUpdateService {
   ): Promise<InvokeResponse<null>> {
     return await invoke("unlink_modpack_origin", { instanceId });
   }
+
+  /** The modpack version the launcher already announced for this instance. */
+  @responseHandler("instance")
+  static async getModpackUpdateNotice(
+    instanceId: string
+  ): Promise<InvokeResponse<string | null>> {
+    return await invoke("get_modpack_update_notice", { instanceId });
+  }
+
+  /** Remember that the launcher announced `versionId` for this instance. */
+  @responseHandler("instance")
+  static async setModpackUpdateNotice(
+    instanceId: string,
+    versionId: string
+  ): Promise<InvokeResponse<null>> {
+    return await invoke("set_modpack_update_notice", { instanceId, versionId });
+  }
 }

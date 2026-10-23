@@ -9,7 +9,9 @@ import ExportModpackModal from "@/components/modals/export-modpack-modal";
 import GenericConfirmDialog from "@/components/modals/generic-confirm-dialog";
 import ImportModpackModal from "@/components/modals/import-modpack-modal";
 import LaunchProcessModal from "@/components/modals/launch-process-modal";
+import ModpackInstanceDetailsModal from "@/components/modals/modpack-instance-details-modal";
 import ModpackLocalChangesModal from "@/components/modals/modpack-local-changes-modal";
+import NotifyModpackUpdatesModal from "@/components/modals/notify-modpack-updates-modal";
 import NotifyNewVersionModal from "@/components/modals/notify-new-version-modal";
 import PublishModpackModal from "@/components/modals/publish-modpack-modal";
 import ReLoginPlayerModal from "@/components/modals/relogin-player-modal";
@@ -48,7 +50,9 @@ const SharedModals: React.FC<{ children: React.ReactNode }> = ({
     "generic-confirm": GenericConfirmDialog,
     "import-modpack": ImportModpackModal,
     launch: LaunchProcessModal,
+    "modpack-instance-details": ModpackInstanceDetailsModal,
     "modpack-local-changes": ModpackLocalChangesModal,
+    "notify-modpack-updates": NotifyModpackUpdatesModal,
     "notify-new-version": NotifyNewVersionModal,
     "publish-modpack": PublishModpackModal,
     relogin: ReLoginPlayerModal,

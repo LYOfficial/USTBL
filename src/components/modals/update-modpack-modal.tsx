@@ -25,7 +25,6 @@ import { LuChevronDown, LuChevronRight } from "react-icons/lu";
 import { DiffFile, DiffHunks, regionHunk } from "@/components/common/diff-view";
 import { useLauncherConfig } from "@/contexts/config";
 import { useGlobalData } from "@/contexts/global-data";
-import { useSharedModals } from "@/contexts/shared-modal";
 import { useToast } from "@/contexts/toast";
 import { InstanceError } from "@/enums/service-error";
 import { CampusInstallProgress } from "@/models/campus-modpack";
@@ -158,7 +157,6 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
   const toast = useToast();
   const router = useRouter();
   const { getInstanceList, checkModpackUpdate } = useGlobalData();
-  const { openGenericConfirmDialog } = useSharedModals();
   const primaryColor = config.appearance.theme.primaryColor;
 
   const [checkPhase, setCheckPhase] = useState<CheckPhase>("checking");
@@ -409,33 +407,6 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
       });
     }
   }, [instanceId, getInstanceList, runCheck, toast]);
-
-  const handleUnlink = useCallback(async () => {
-    const response = await ModpackUpdateService.unlinkModpackOrigin(instanceId);
-    if (response.status === "success") {
-      getInstanceList(true);
-      toast({ title: response.message, status: "success" });
-      modalProps.onClose();
-    } else {
-      toast({
-        title: response.message,
-        description: response.details,
-        status: "error",
-      });
-    }
-  }, [instanceId, getInstanceList, toast, modalProps]);
-
-  const confirmUnlink = useCallback(() => {
-    openGenericConfirmDialog({
-      title: t("UpdateModpackModal.unlink.confirmTitle"),
-      body: t("UpdateModpackModal.unlink.confirmBody"),
-      btnOK: t("UpdateModpackModal.unlink.button"),
-      isAlert: true,
-      onOKCallback: () => {
-        void handleUnlink();
-      },
-    });
-  }, [openGenericConfirmDialog, t, handleUnlink]);
 
   const reasonText = (code?: string) =>
     code
@@ -792,14 +763,6 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
           {applying && renderApplying()}
         </ModalBody>
         <ModalFooter gap={2}>
-          {idle &&
-            check &&
-            check.status !== "notFollowing" &&
-            !check.unlinked && (
-              <Button variant="ghost" colorScheme="red" onClick={confirmUnlink}>
-                {t("UpdateModpackModal.unlink.button")}
-              </Button>
-            )}
           {idle && check?.canRollBack && (
             <Button
               variant="ghost"

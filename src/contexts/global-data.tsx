@@ -86,75 +86,6 @@ export const GlobalDataContextProvider: React.FC<{
   const instanceListRef = useRef(instanceList);
   instanceListRef.current = instanceList;
 
-  const checkModpackUpdate = useCallback(
-    async (instanceId: string, scanLocal = false) => {
-      const response = await ModpackUpdateService.checkModpackUpdate(
-        instanceId,
-        scanLocal
-      );
-      const check: ModpackUpdateCheck =
-        response.status === "success"
-          ? response.data
-          : {
-              status: "unknown",
-              follow: true,
-              reason: response.details,
-              canRollBack: false,
-            };
-      setModpackChecks((current) => ({ ...current, [instanceId]: check }));
-      if (check.unlinked && !unlinkNotified.current.has(instanceId)) {
-        unlinkNotified.current.add(instanceId);
-        const name = instanceListRef.current?.find(
-          (i) => i.id === instanceId
-        )?.name;
-        toast({
-          title: t("InstanceSyncPage.ledger.unlinkedToast", {
-            name: name ?? instanceId,
-          }),
-          status: "info",
-        });
-      }
-      return check;
-    },
-    [toast, t]
-  );
-
-  // Once per launch, look for updates of every followed instance. One at a
-  // time, so a slow platform does not pile up requests.
-  useEffect(() => {
-    if (!instanceList || startupChecked.current) return;
-    startupChecked.current = true;
-    (async () => {
-      for (const instance of instanceList) {
-        if (instance.origin) await checkModpackUpdate(instance.id);
-      }
-    })();
-  }, [instanceList, checkModpackUpdate]);
-
-  useEffect(() => {
-    return InstanceService.onPlayTimeUpdated(({ instanceId, playTime }) => {
-      setInstanceList((current) =>
-        current?.map((instance) =>
-          instance.id === instanceId ? { ...instance, playTime } : instance
-        )
-      );
-    });
-  }, []);
-
-  useEffect(() => {
-    const selectedPlayerId = config.states.shared.selectedPlayerId;
-    setSelectedPlayer(
-      playerList?.find((player) => player.id === selectedPlayerId)
-    );
-  }, [playerList, config.states.shared.selectedPlayerId]);
-
-  useEffect(() => {
-    const selectedInstanceId = config.states.shared.selectedInstanceId;
-    setSelectedInstance(
-      instanceList?.find((instance) => instance.id === selectedInstanceId)
-    );
-  }, [instanceList, config.states.shared.selectedInstanceId]);
-
   const handleRetrievePlayerList = useCallback(() => {
     AccountService.retrievePlayerList().then((response) => {
       if (response.status === "success") {
@@ -198,6 +129,78 @@ export const GlobalDataContextProvider: React.FC<{
         });
     });
   }, [setInstanceList, toast]);
+
+  const checkModpackUpdate = useCallback(
+    async (instanceId: string, scanLocal = false) => {
+      const response = await ModpackUpdateService.checkModpackUpdate(
+        instanceId,
+        scanLocal
+      );
+      const check: ModpackUpdateCheck =
+        response.status === "success"
+          ? response.data
+          : {
+              status: "unknown",
+              follow: true,
+              reason: response.details,
+              canRollBack: false,
+            };
+      setModpackChecks((current) => ({ ...current, [instanceId]: check }));
+      if (check.unlinked && !unlinkNotified.current.has(instanceId)) {
+        unlinkNotified.current.add(instanceId);
+        const name = instanceListRef.current?.find(
+          (i) => i.id === instanceId
+        )?.name;
+        toast({
+          title: t("InstanceSyncPage.ledger.unlinkedToast", {
+            name: name ?? instanceId,
+          }),
+          status: "info",
+        });
+        // The platform confirmed the project is gone; refresh the instance
+        // list so the ledger row drops the origin right away.
+        handleRetrieveInstanceList();
+      }
+      return check;
+    },
+    [toast, t, handleRetrieveInstanceList]
+  );
+
+  // Once per launch, look for updates of every followed instance. One at a
+  // time, so a slow platform does not pile up requests.
+  useEffect(() => {
+    if (!instanceList || startupChecked.current) return;
+    startupChecked.current = true;
+    (async () => {
+      for (const instance of instanceList) {
+        if (instance.origin) await checkModpackUpdate(instance.id);
+      }
+    })();
+  }, [instanceList, checkModpackUpdate]);
+
+  useEffect(() => {
+    return InstanceService.onPlayTimeUpdated(({ instanceId, playTime }) => {
+      setInstanceList((current) =>
+        current?.map((instance) =>
+          instance.id === instanceId ? { ...instance, playTime } : instance
+        )
+      );
+    });
+  }, []);
+
+  useEffect(() => {
+    const selectedPlayerId = config.states.shared.selectedPlayerId;
+    setSelectedPlayer(
+      playerList?.find((player) => player.id === selectedPlayerId)
+    );
+  }, [playerList, config.states.shared.selectedPlayerId]);
+
+  useEffect(() => {
+    const selectedInstanceId = config.states.shared.selectedInstanceId;
+    setSelectedInstance(
+      instanceList?.find((instance) => instance.id === selectedInstanceId)
+    );
+  }, [instanceList, config.states.shared.selectedInstanceId]);
 
   const handleFetchGameVersionList = useCallback(async () => {
     const response = await ResourceService.fetchGameVersionList();
