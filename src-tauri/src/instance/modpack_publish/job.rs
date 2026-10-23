@@ -5,7 +5,7 @@
 //! own and shows on the task list next to the downloads. Everything it needs to
 //! start over after a failure or a restart is in the [`JobRecord`].
 
-use super::cancel::{cancel_remote, decide_cancel, CancelAction};
+use super::cancel::{apply_cancel, cancel_remote, CancelOutcome};
 use super::commands::{
   adopt_published, authed_json, failure, failure_code, failure_detail, instance_of, PublishOutcome,
 };
@@ -78,55 +78,70 @@ pub(crate) fn resume_monitors(app: &AppHandle) {
   for record in JobRecord::list(&jobs_dir()) {
     if record.phase == Phase::Processing {
       start_monitor(app, record);
-    } else if record.error.as_deref() == Some(CANCEL_RETRY_MARK) {
-      // A previous cancel could not reach the platform (§3.2): ask again
-      // whether the version can still be given up, and clear the mark so
-      // the record is back to its ordinary unfinished state either way.
-      let app = app.clone();
-      tauri::async_runtime::spawn(async move {
-        cleanup_cancelled(&app, record).await;
-      });
     }
   }
 }
 
-/// The cancel guard's cleanup, run as its own task so it does not outlive
-/// the app: the shared cancel decision decides whether the record goes away,
-/// the platform watch comes back, or everything stays as it is.
-async fn cleanup_cancelled(app: &AppHandle, mut record: JobRecord) {
-  let dir = jobs_dir();
-  match decide_cancel(&cancel_remote(app, record.version_id).await) {
-    CancelAction::RemoveLocal => JobRecord::remove(&dir, &record.id),
-    CancelAction::ResumeMonitoring => {
-      // The platform owns the version now: the record goes back to exactly
-      // the state `resume_monitors` and the unfinished list understand —
-      // `Processing`, no error — and the watch resumes through the same
-      // `PublishJob` path a `Processing` record normally would. Starting
-      // the watch can fail (only when it already runs); the record then
-      // stays and the next start picks it up again.
-      record.phase = Phase::Processing;
-      record.error = None;
-      if let Err(error) = record.save(&dir) {
-        log::warn!(
-          "Modpack publish {} could not save its record: {error:?}",
-          record.id
-        );
-      }
-      start_monitor(app, record);
+/// Jobs whose cancel cleanup is still on the wire. Process-local only:
+/// nothing about it is persisted. While a job id is listed here,
+/// `resume_campus_modpack_publish` and `discard_campus_modpack_publish`
+/// refuse to touch it, so neither can race the cleanup's own read of the
+/// record or the watch it may start.
+static CANCELLING: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+pub(super) fn is_cancelling(job_id: &str) -> bool {
+  CANCELLING.lock().unwrap().iter().any(|id| id == job_id)
+}
+
+/// Registered synchronously the moment the guard fires and released only
+/// when the cleanup is fully done — never inferred from the job's own
+/// `ActiveToken`, which drops with the cancelled task itself, long before
+/// the cleanup's remote calls finish.
+struct CancellingToken(String);
+
+impl CancellingToken {
+  fn take(job_id: &str) -> Option<Self> {
+    let mut cancelling = CANCELLING.lock().unwrap();
+    if cancelling.iter().any(|id| id == job_id) {
+      return None;
     }
-    CancelAction::KeepLocal => {
+    cancelling.push(job_id.to_string());
+    Some(Self(job_id.to_string()))
+  }
+}
+
+impl Drop for CancellingToken {
+  fn drop(&mut self) {
+    CANCELLING.lock().unwrap().retain(|id| id != &self.0);
+  }
+}
+
+/// The cancel guard's cleanup, run as its own task so it does not outlive
+/// the app. The remote answer decides through the shared action; the record
+/// it applies to is re-read from disk at that point, never the snapshot the
+/// guard was created with. The `cancelling` registration outlives the whole
+/// exchange and is released last, after the watch (if any) is running and
+/// `ACTIVE` can take over the duplicate protection.
+async fn cleanup_cancelled(app: &AppHandle, job_id: String, version_id: i64) {
+  let remote = cancel_remote(app, version_id).await;
+  let app_for_watch = app.clone();
+  let outcome = apply_cancel(&jobs_dir(), &job_id, remote, move |record| {
+    start_monitor(&app_for_watch, record);
+  });
+  match outcome {
+    CancelOutcome::Removed => {}
+    CancelOutcome::Kept(reason) => {
       log::warn!(
-        "Modpack publish {} was cancelled but the platform could not confirm \
-         the version is gone; keeping the local record for a later continue or discard",
-        record.id
+        "Modpack publish {job_id} was cancelled but the platform could not confirm \
+         the version is gone ({}); keeping the local record for a later continue or discard",
+        reason.0
       );
-      record.error = Some(CANCEL_RETRY_MARK.to_string());
-      if let Err(error) = record.save(&dir) {
-        log::warn!(
-          "Modpack publish {} could not save its record: {error:?}",
-          record.id
-        );
-      }
+    }
+    CancelOutcome::Watching => {}
+    CancelOutcome::RecordKept(error) => {
+      log::warn!(
+        "Modpack publish {job_id} was cancelled but its record could not be read back or saved: {error:?}"
+      );
     }
   }
 }
@@ -204,20 +219,17 @@ struct PublishFinished {
   error: Option<String>,
 }
 
-/// `record.error` while a cancelled publish waits for the platform to be
-/// asked again whether the version can still be given up. Not a user-facing
-/// message: it only marks the record for one retry of the cancel decision
-/// on the next start, and clears as soon as that decision lands.
-pub(super) const CANCEL_RETRY_MARK: &str = "CANCEL_REMOTE_UNKNOWN";
-
 /// Cancelling the task drops the job; that gives the version up on the
 /// platform and — only once the platform confirms the version is gone —
 /// forgets the record (§3.2, v3 §12). Closing the launcher drops the job
 /// too but must keep both, so the cleanup is a task of its own that does
-/// not outlive the app.
+/// not outlive the app. The guard holds only the job's identity: the record
+/// is re-read from disk once the remote answer is in, since the job may
+/// have kept writing it until the very moment it was cancelled.
 struct CancelGuard {
   app: AppHandle,
-  record: JobRecord,
+  job_id: String,
+  version_id: i64,
   armed: bool,
 }
 
@@ -226,9 +238,17 @@ impl Drop for CancelGuard {
     if !self.armed {
       return;
     }
-    let (app, record) = (self.app.clone(), self.record.clone());
+    let (app, job_id, version_id) = (self.app.clone(), self.job_id.clone(), self.version_id);
+    // Registered synchronously, before the cleanup ever reaches the
+    // runtime: a resume or discard coming in right after the cancel must
+    // already see the job as busy. The token lives in the cleanup task
+    // and drops when it is fully done.
+    let Some(token) = CancellingToken::take(&job_id) else {
+      return;
+    };
     tauri::async_runtime::spawn(async move {
-      cleanup_cancelled(&app, record).await;
+      let _token = token;
+      cleanup_cancelled(&app, job_id, version_id).await;
     });
   }
 }
@@ -505,7 +525,8 @@ impl PublishJob {
     let anchor_id = tasks.commit.read().unwrap().desc.task_id;
     let mut guard = CancelGuard {
       app: app.clone(),
-      record: self.record.clone(),
+      job_id: self.record.id.clone(),
+      version_id: self.record.version_id,
       armed: true,
     };
     let result = self.execute(&tasks, &mut guard).await;
@@ -1909,5 +1930,21 @@ mod tests {
     let mut record = JobRecord { ..record };
     assert_eq!(record_failure(&mut record, &ExecuteFailure::Recorded), None);
     assert_eq!(record.error.as_deref(), Some("平台上已找不到这个版本"));
+  }
+
+  /// The `cancelling` registration a resume or a discard checks: it exists
+  /// from the moment the guard fires until the cleanup is fully done, so
+  /// neither command can slip in between the job's task dying and the
+  /// cleanup's last remote answer.
+  #[test]
+  fn a_job_is_busy_while_its_cancel_cleanup_runs_and_free_after() {
+    assert!(!is_cancelling("job-cancel-x"));
+    let token = CancellingToken::take("job-cancel-x").unwrap();
+    assert!(is_cancelling("job-cancel-x"));
+    // One cleanup at a time; a second registration never happens in
+    // production (the guard fires once), but the registry must refuse it.
+    assert!(CancellingToken::take("job-cancel-x").is_none());
+    drop(token);
+    assert!(!is_cancelling("job-cancel-x"));
   }
 }

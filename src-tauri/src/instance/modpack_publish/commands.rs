@@ -1,8 +1,8 @@
 //! Publishing an instance to the campus modpack platform.
 
-use super::cancel::{cancel_remote, decide_cancel, CancelAction, RemoteCancel};
+use super::cancel::{apply_cancel, cancel_remote, CancelOutcome};
 use super::components::plan_components;
-use super::job::{is_running, start_monitor, PublishJob};
+use super::job::{is_cancelling, is_running, start_monitor, PublishJob};
 use super::manifest::{partition_publishable_paths, plan_files, LocalFile};
 use super::pack::{build_pack, mark_verified, verify_pack};
 use super::record::{
@@ -806,6 +806,9 @@ pub async fn resume_campus_modpack_publish(
   job_id: String,
 ) -> USTBLResult<PublishStarted> {
   ensure_manager(&app)?;
+  if is_cancelling(&job_id) {
+    return Err(USTBLError("取消处理尚未完成，请稍后再试".into()));
+  }
   let record = JobRecord::load(&jobs_dir(), &job_id)?;
   let uploader = build_part_upload_client(&app);
   let group = PublishJob {
@@ -832,37 +835,19 @@ pub async fn discard_campus_modpack_publish(app: AppHandle, job_id: String) -> U
   if is_running(&job_id) {
     return Err(USTBLError("任务正在进行，请先在任务列表中取消".into()));
   }
+  if is_cancelling(&job_id) {
+    return Err(USTBLError("取消处理尚未完成，请稍后再试".into()));
+  }
   let dir = jobs_dir();
-  let mut record = JobRecord::load(&dir, &job_id)?;
-  let remote = cancel_remote(&app, record.version_id).await;
-  match decide_cancel(&remote) {
-    CancelAction::RemoveLocal => {
-      JobRecord::remove(&dir, &job_id);
-      Ok(())
-    }
-    CancelAction::ResumeMonitoring => {
-      // The platform owns the version: the record goes back to `Processing`
-      // and the watch resumes; a published version then ends in the
-      // ordinary adoption (`adopt_published` via the platform stage), not
-      // in a deletion. A watch that cannot be started right now (the job
-      // already runs) leaves the record for the unfinished list or the
-      // next start, exactly as a lost watch would (§3.2).
-      record.phase = Phase::Processing;
-      record.error = None;
-      record.save(&dir)?;
-      start_monitor(&app, record);
-      Ok(())
-    }
-    CancelAction::KeepLocal => {
-      // Nothing could be confirmed: the record and the local files stay,
-      // so the publish can still be continued or given up later — never
-      // silently dropped as if it had been deleted.
-      let reason = match remote {
-        RemoteCancel::Undetermined(error) => error,
-        _ => USTBLError("暂时无法确认这个版本是否还能取消，请稍后再试".into()),
-      };
-      Err(reason)
-    }
+  let version_id = JobRecord::load(&dir, &job_id)?.version_id;
+  let remote = cancel_remote(&app, version_id).await;
+  // The shared action, identical to the one the task card's cancel runs:
+  // the record it applies to is re-read from disk now that the remote
+  // answer is in, and the watch — when the platform turns out to own the
+  // version — only ever starts from the freshly saved one.
+  match apply_cancel(&dir, &job_id, remote, |record| start_monitor(&app, record)) {
+    CancelOutcome::Removed | CancelOutcome::Watching => Ok(()),
+    CancelOutcome::Kept(reason) | CancelOutcome::RecordKept(reason) => Err(reason),
   }
 }
 
