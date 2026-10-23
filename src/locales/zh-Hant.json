@@ -2714,6 +2714,15 @@
           "title": "更新跟隨設定失敗"
         }
       },
+      "unlinkModpackOrigin": {
+        "success": "已解除跟隨",
+        "error": {
+          "title": "解除跟隨失敗",
+          "description": {
+            "MODPACK_UPDATE_UNLINK_PENDING": "上次更新尚未完成，請先恢復或回滾後再解除跟隨"
+          }
+        }
+      },
       "applyModpackUpdate": {
         "success": "整合包已更新",
         "error": {
@@ -3220,7 +3229,14 @@
     "toast": {
       "loaderPending": "模組載入器需要重新安裝，請在下載頁查看進度"
     },
+    "unlink": {
+      "button": "解除跟隨",
+      "confirmTitle": "解除跟隨整合包",
+      "confirmBody": "解除後不再檢查該整合包的更新，也不會刪除任何遊戲檔案。之後可以重新安裝或重新發佈來再次關聯。",
+      "success": "已解除跟隨"
+    },
     "reason": {
+      "MODPACK_UPDATE_UNLINK_PENDING": "上次更新尚未完成，請先恢復或回滾後再解除跟隨",
       "MODPACK_UPDATE_LINE_GONE": "平台上已不存在該整合包的這條線",
       "MODPACK_UPDATE_UNSUPPORTED": "該實例缺少可用的安裝記錄或未開啟版本隔離",
       "MODPACK_UPDATE_NOT_ISOLATED": "該實例沒有開啟版本隔離，無法安全比對更新。請在實例設定中開啟後重試",
@@ -3303,7 +3319,8 @@
         "campus": "校內"
       },
       "installed": "已安裝",
-      "installedHint": "本地已有 {{count}} 個對應實例，點擊查看"
+      "installedHint": "本地已有 {{count}} 個對應實例，點擊查看",
+      "unlinkedToast": "整合包已被刪除，實例 {{name}} 已解除跟隨"
     }
   }
 }

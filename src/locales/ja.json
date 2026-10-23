@@ -2714,6 +2714,15 @@
           "title": "追従設定の更新に失敗しました"
         }
       },
+      "unlinkModpackOrigin": {
+        "success": "追従を解除しました",
+        "error": {
+          "title": "追従の解除に失敗しました",
+          "description": {
+            "MODPACK_UPDATE_UNLINK_PENDING": "前回の更新が完了していません。先に復旧またはロールバックしてから解除してください"
+          }
+        }
+      },
       "applyModpackUpdate": {
         "success": "モッドパックを更新しました",
         "error": {
@@ -3220,7 +3229,14 @@
     "toast": {
       "loaderPending": "MODローダーの再インストールが必要です。ダウンロードページをご確認ください"
     },
+    "unlink": {
+      "button": "追従を解除",
+      "confirmTitle": "モッドパックの追従を解除",
+      "confirmBody": "解除すると、このモッドパックの更新確認は行われなくなります。ゲームファイルは削除されません。後で再インストールや再公開で再度関連付けできます。",
+      "success": "追従を解除しました"
+    },
     "reason": {
+      "MODPACK_UPDATE_UNLINK_PENDING": "前回の更新が完了していません。先に復旧またはロールバックしてから解除してください",
       "MODPACK_UPDATE_LINE_GONE": "プラットフォームにこのモッドパックのラインはもうありません",
       "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスには利用できるインストール記録がないか、バージョン分離が無効です",
       "MODPACK_UPDATE_NOT_ISOLATED": "このインスタンスはバージョン分離が無効のため、安全に比較できません。インスタンス設定で有効にして再試行してください",
@@ -3303,7 +3319,8 @@
         "campus": "校内"
       },
       "installed": "インストール済み",
-      "installedHint": "この端末に該当するインスタンスが {{count}} 件あります。クリックで表示"
+      "installedHint": "この端末に該当するインスタンスが {{count}} 件あります。クリックで表示",
+      "unlinkedToast": "モッドパックが削除されたため、インスタンス {{name}} の追従を解除しました"
     }
   }
 }

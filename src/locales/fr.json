@@ -2714,6 +2714,15 @@
           "title": "Échec de la mise à jour du réglage de suivi"
         }
       },
+      "unlinkModpackOrigin": {
+        "success": "Suivi retiré",
+        "error": {
+          "title": "Échec du retrait du suivi",
+          "description": {
+            "MODPACK_UPDATE_UNLINK_PENDING": "La dernière mise à jour n'est pas terminée. Restaurez-la ou annulez-la avant de retirer le suivi"
+          }
+        }
+      },
       "applyModpackUpdate": {
         "success": "Pack mis à jour",
         "error": {
@@ -3220,7 +3229,14 @@
     "toast": {
       "loaderPending": "Le chargeur de mods doit être réinstallé. Consultez la page des téléchargements"
     },
+    "unlink": {
+      "button": "Ne plus suivre",
+      "confirmTitle": "Ne plus suivre le pack",
+      "confirmBody": "Le lanceur ne vérifiera plus les mises à jour de ce pack et aucun fichier de jeu ne sera supprimé. Vous pourrez le réinstaller ou le republier pour le réassocier.",
+      "success": "Suivi retiré"
+    },
     "reason": {
+      "MODPACK_UPDATE_UNLINK_PENDING": "La dernière mise à jour n'est pas terminée. Restaurez-la ou annulez-la avant de retirer le suivi",
       "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack",
       "MODPACK_UPDATE_UNSUPPORTED": "Cette instance n'a pas d'enregistrement d'installation utilisable ou l'isolation de version est désactivée",
       "MODPACK_UPDATE_NOT_ISOLATED": "L'isolation de version est désactivée pour cette instance, la comparaison n'est pas sûre. Activez-la dans les paramètres de l'instance puis réessayez",
@@ -3303,7 +3319,8 @@
         "campus": "Campus"
       },
       "installed": "Installé",
-      "installedHint": "{{count}} instance(s) correspondante(s) sur cet appareil, cliquez pour voir"
+      "installedHint": "{{count}} instance(s) correspondante(s) sur cet appareil, cliquez pour voir",
+      "unlinkedToast": "Le pack a été supprimé, l'instance {{name}} n'est plus suivie"
     }
   }
 }

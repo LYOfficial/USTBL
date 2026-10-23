@@ -334,6 +334,17 @@ pub fn roll_back_last_checked(
   Ok(true)
 }
 
+/// Refuse unlinking while an update is mid-flight: the journal means the
+/// instance is between two versions and has to be recovered or rolled back
+/// first. The guard keeps an update from starting after the check.
+pub fn ensure_unlink_safe(root: &Path) -> USTBLResult<()> {
+  let _guard = UpdateGuard::acquire(root)?;
+  if journal_path(root).exists() {
+    return Err(InstanceError::ModpackUpdateUnlinkPending.into());
+  }
+  Ok(())
+}
+
 /// Finish or undo whatever an interrupted update left behind.
 pub fn recover(root: &Path) -> USTBLResult<Recovery> {
   recover_checked(root, || Ok(()))
@@ -1172,6 +1183,20 @@ mod tests {
     assert_eq!(root.read("ustblcfg.json").as_deref(), Some("cfg-v2"));
     assert!(last_backup_dir(&root.0).join("files/mods/old.jar").exists());
     assert!(!journal_path(&root.0).exists());
+  }
+
+  #[test]
+  fn unlink_is_refused_while_an_update_is_mid_flight() {
+    let root = setup();
+    // No journal: unlinking is safe.
+    assert!(ensure_unlink_safe(&root.0).is_ok());
+    // A leftover journal means the instance sits between two versions.
+    interrupted(&root, JournalState::Committing);
+    let error = ensure_unlink_safe(&root.0).unwrap_err();
+    assert_eq!(error.0, InstanceError::ModpackUpdateUnlinkPending.to_string());
+    // Once recovered, unlinking is safe again.
+    assert_eq!(recover(&root.0).unwrap(), Recovery::RolledBack);
+    assert!(ensure_unlink_safe(&root.0).is_ok());
   }
 
   #[tokio::test]

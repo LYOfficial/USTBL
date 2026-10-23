@@ -1,9 +1,10 @@
 //! Tauri commands for following a modpack: check, plan, apply, recover.
 
 use super::apply::{
-  apply, can_roll_back_last, materialize_remote_file, prepare_packs, recover_checked,
-  roll_back_last_checked, Progress, Recovery, UpdateEnv, UpdateRequest,
+  apply, can_roll_back_last, ensure_unlink_safe, materialize_remote_file, prepare_packs,
+  recover_checked, roll_back_last_checked, Progress, Recovery, UpdateEnv, UpdateRequest,
 };
+use super::sources::campus_project_gone;
 use super::diff::{resolve, Conflict, ConflictChoice, FileChange};
 use super::plan::{
   count_local_changes, local_changes, prepare, prepare_with_contents, requires_reinstall,
@@ -16,10 +17,13 @@ use super::sources::{download_param, latest_version, resolve_remote, LatestVersi
 use crate::error::USTBLResult;
 use crate::instance::commands::switch_mod_loader;
 use crate::instance::helpers::misc::{get_instance_game_config, refresh_and_update_instances};
-use crate::instance::helpers::modpack::baseline::{BaselineLoader, ModpackBaseline};
+use crate::instance::helpers::modpack::baseline::{
+  BaselineLoader, ModpackBaseline, BASELINE_FILE_NAME,
+};
 use crate::instance::helpers::modpack::text;
 use crate::instance::models::misc::{
   Instance, InstanceError, InstanceOrigin, ModLoader, ModLoaderStatus, ModLoaderType,
+  OriginPlatform,
 };
 use crate::launch::models::LaunchingState;
 use crate::resource::models::ModLoaderResourceInfo;
@@ -27,6 +31,7 @@ use crate::tasks::download::DownloadParam;
 use async_trait::async_trait;
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -72,6 +77,9 @@ pub struct UpdateCheck {
   pub can_roll_back: bool,
   /// How many managed files differ from the install; set by the local scan.
   pub local_changes: Option<usize>,
+  /// The platform confirmed the followed project is gone, so this check
+  /// detached the instance from it. Only set on the check that unlinked.
+  pub unlinked: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -292,6 +300,7 @@ fn check_of(status: CheckStatus, target: &Target) -> UpdateCheck {
     reason: None,
     can_roll_back: can_roll_back_last(&target.root),
     local_changes: None,
+    unlinked: false,
   }
 }
 
@@ -311,6 +320,7 @@ pub async fn check_modpack_update(
       reason: None,
       can_roll_back: false,
       local_changes: None,
+      unlinked: false,
     });
   };
   if !target.origin.follow {
@@ -358,11 +368,56 @@ pub async fn check_modpack_update(
       }
       Ok(check)
     }
-    Err(err) => Ok(UpdateCheck {
-      reason: Some(err.0),
-      ..check_of(CheckStatus::Unknown, &target)
-    }),
+    Err(err) => {
+      // A line the platform no longer lists may mean the whole project was
+      // deleted. Confirm before detaching: any other failure keeps the
+      // identity and stays `Unknown`.
+      if err.0 == InstanceError::ModpackUpdateLineGone.to_string()
+        && target.origin.platform == OriginPlatform::Campus
+        && campus_project_gone(&app, &target.origin.project_id).await == Some(true)
+      {
+        return match unlink_origin(&app, &instance_id, &target).await {
+          Ok(()) => Ok(UpdateCheck {
+            unlinked: true,
+            ..check_of(CheckStatus::NotFollowing, &target)
+          }),
+          Err(error) => Ok(UpdateCheck {
+            reason: Some(error.0),
+            ..check_of(CheckStatus::Unknown, &target)
+          }),
+        };
+      }
+      Ok(UpdateCheck {
+        reason: Some(err.0),
+        ..check_of(CheckStatus::Unknown, &target)
+      })
+    }
   }
+}
+
+/// Drop the identity and baseline; the game files and isolation stay.
+async fn unlink_origin(
+  app: &AppHandle,
+  instance_id: &str,
+  target: &Target,
+) -> USTBLResult<()> {
+  ensure_unlink_safe(&target.root)?;
+  fs::remove_file(target.root.join(BASELINE_FILE_NAME)).ok();
+  store_instance(app, instance_id, |instance| {
+    instance.origin = None;
+    instance.modpack_version = None;
+  })
+  .await
+}
+
+/// Detach the instance from its modpack: identity and baseline go, the game
+/// files stay. Refused while an update transaction is unfinished.
+#[tauri::command]
+pub async fn unlink_modpack_origin(app: AppHandle, instance_id: String) -> USTBLResult<()> {
+  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  unlink_origin(&app, &instance_id, &target).await?;
+  refresh_and_update_instances(&app, false).await;
+  Ok(())
 }
 
 /// Take back the previous update. Returns whether there was one to take back.
