@@ -36,6 +36,10 @@ import {
 } from "@/models/modpack-update";
 import { CampusModpackService } from "@/services/campus-modpack";
 import { ModpackUpdateService } from "@/services/modpack-update";
+import {
+  RememberedChoices,
+  resolvePlanChoices,
+} from "@/utils/modpack-update-choices";
 
 interface UpdateModpackModalProps extends Omit<ModalProps, "children"> {
   instanceId: string;
@@ -52,10 +56,7 @@ interface PlanError {
 }
 
 /** Conflict choices remembered per instance while the launcher runs. */
-const rememberedChoices = new Map<
-  string,
-  { planHash: string; choices: Record<string, ModpackConflictChoice> }
->();
+const rememberedChoices: RememberedChoices = new Map();
 
 const formatSize = (size?: number) => {
   if (size === undefined) return "";
@@ -186,25 +187,25 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
         await ModpackUpdateService.prepareModpackUpdate(instanceId);
       if (roundRef.current !== round) return;
       if (response.status === "success") {
-        if (keepChoicesForRecheckRef.current) {
-          // A re-check after a failed apply: the answers stay only while the
-          // plan is still the one they were made for. planRef still holds the
-          // failed plan here (setPlan below commits only after this callback).
-          keepChoicesForRecheckRef.current = false;
-          if (planRef.current?.planHash !== response.data.planHash) {
-            setChoices({});
-            toast({
-              title: t("UpdateModpackModal.toast.planChanged"),
-              status: "info",
-            });
-          }
-        } else {
-          // Restore the choices the player made the last time this exact plan
-          // was shown.
-          const remembered = rememberedChoices.get(instanceId);
-          if (remembered && remembered.planHash === response.data.planHash) {
-            setChoices(remembered.choices);
-          }
+        const recheck = keepChoicesForRecheckRef.current;
+        keepChoicesForRecheckRef.current = false;
+        // planRef still holds the failed plan here (setPlan below commits
+        // only after this callback), so its hash identifies the plan the
+        // current choices were made for.
+        const resolved = resolvePlanChoices({
+          instanceId,
+          newPlanHash: response.data.planHash,
+          failedPlanHash: planRef.current?.planHash,
+          recheckAfterFailure: recheck,
+          remembered: rememberedChoices,
+          currentChoices: choicesRef.current,
+        });
+        setChoices(resolved.choices);
+        if (resolved.toastPlanChanged) {
+          toast({
+            title: t("UpdateModpackModal.toast.planChanged"),
+            status: "info",
+          });
         }
         setPlan(response.data);
         setPlanPhase("planned");
