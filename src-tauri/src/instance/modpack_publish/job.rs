@@ -849,11 +849,14 @@ impl PublishJob {
 
       let signed = match signatures.get_or_sign(&self.app, upload, n).await {
         Ok(signed) => signed,
-        Err(SignError::Restarted(generation)) => return Ok(PartOutcome::Restarted(generation)),
-        // A session that is gone, or a 409 that is not a restart, means
-        // signing can never succeed for this upload; fail outright instead
-        // of spending the attempt budget retrying it.
-        Err(SignError::Other(error)) => return Err(error),
+        Err(error) => match SignStep::from_sign_error(error) {
+          SignStep::Restarted(generation) => return Ok(PartOutcome::Restarted(generation)),
+          SignStep::Fail(error) => return Err(error),
+          SignStep::Retry(error) => {
+            last = error;
+            continue;
+          }
+        },
       };
 
       let counted = Arc::new(AtomicU64::new(0));
@@ -1083,24 +1086,51 @@ enum PartOutcome {
   Restarted(u32),
 }
 
-/// Signing can fail for an ordinary reason, or because the session already
-/// restarted under a newer generation (§13.2: a 409 `UPLOAD_RESTARTED` on
-/// `/parts/sign` is handled exactly like one on reporting).
+/// Signing can fail for an ordinary, transient reason (`Retry` — spent
+/// against the part's `PART_ATTEMPTS` budget the same way a failed PUT
+/// would), because the session already restarted under a newer generation
+/// (`Restarted` — a 409 `UPLOAD_RESTARTED` on `/parts/sign` is handled
+/// exactly like one on reporting, §13.2), or because signing can never
+/// succeed against this session (`Fatal` — 410, or a 409 that is not
+/// `UPLOAD_RESTARTED`; the launcher must stop rather than spend attempts
+/// retrying).
 #[derive(Debug)]
 enum SignError {
   Restarted(u32),
-  Other(USTBLError),
+  Fatal(USTBLError),
+  Retry(USTBLError),
 }
 
 impl From<USTBLError> for SignError {
   fn from(error: USTBLError) -> Self {
-    SignError::Other(error)
+    SignError::Retry(error)
   }
 }
 
 impl From<reqwest::Error> for SignError {
   fn from(error: reqwest::Error) -> Self {
-    SignError::Other(error.into())
+    SignError::Retry(error.into())
+  }
+}
+
+/// What `send_part` should do next after a signing failure, decided
+/// purely from the [`SignError`] itself. Split out so the classification
+/// rules — restart, fail outright, spend an attempt and retry — can be
+/// tested without driving the whole part loop.
+#[derive(Debug, PartialEq, Eq)]
+enum SignStep {
+  Restarted(u32),
+  Fail(USTBLError),
+  Retry(USTBLError),
+}
+
+impl SignStep {
+  fn from_sign_error(error: SignError) -> Self {
+    match error {
+      SignError::Restarted(generation) => SignStep::Restarted(generation),
+      SignError::Fatal(error) => SignStep::Fail(error),
+      SignError::Retry(error) => SignStep::Retry(error),
+    }
   }
 }
 
@@ -1234,14 +1264,19 @@ impl SignatureCache {
       .unwrap()
       .get(&n)
       .cloned()
-      .ok_or_else(|| SignError::Other(USTBLError("平台没有为这一片签名".into())))
+      .ok_or_else(|| SignError::Retry(USTBLError("平台没有为这一片签名".into())))
   }
 }
 
 /// `POST /uploads/{id}/parts/sign` for exactly `wanted`, turned into the
-/// signatures the cache stores. A 410, or a 409 that is not
-/// `UPLOAD_RESTARTED`, fails outright (§13.2): the session cannot be
-/// signed against, and retrying will not change that.
+/// signatures the cache stores. This is where the HTTP-level outcome is
+/// classified into the three [`SignError`] kinds: a 409
+/// `UPLOAD_RESTARTED` restarts the round under the server's generation;
+/// a 410, or a 409 that is not `UPLOAD_RESTARTED`, means the session
+/// cannot be signed against and fails outright; anything else — network
+/// trouble, a platform 5xx/429/408, a body that does not parse — is
+/// ordinary transient trouble and is retried against the part's attempt
+/// budget (§13.2).
 async fn sign_request(
   app: &AppHandle,
   upload: &RecordedUpload,
@@ -1259,26 +1294,28 @@ async fn sign_request(
     // A 409 on signing means the same thing a 409 on reporting does — the
     // session is already on a newer generation — and is handled the same
     // way: stop in-flight parts, reconcile, and restart from scratch under
-    // it (§13.2).
+    // it (§13.2). A 409 that is not that code is not transient either:
+    // the session's own identity no longer lines up with what the
+    // launcher has, and retrying will not change that.
     let (detail, error) = failure_detail(response).await;
     return match restart_generation(detail.as_ref(), upload.generation) {
       Some(generation) => Err(SignError::Restarted(generation)),
-      None => Err(SignError::Other(error)),
+      None => Err(SignError::Fatal(error)),
     };
   }
   if status == reqwest::StatusCode::GONE {
-    return Err(SignError::Other(
+    return Err(SignError::Fatal(
       InstanceError::ModpackUploadSessionGone.into(),
     ));
   }
   if !status.is_success() {
-    return Err(SignError::Other(failure(response).await));
+    return Err(SignError::Retry(failure(response).await));
   }
   let received_at = Instant::now();
   let body: Value = response.json().await?;
   let requests = body["requests"]
     .as_object()
-    .ok_or_else(|| SignError::Other(USTBLError("平台返回了无法识别的签名".into())))?;
+    .ok_or_else(|| SignError::Retry(USTBLError("平台返回了无法识别的签名".into())))?;
   let mut signed = HashMap::new();
   for (key, value) in requests {
     let Ok(part_n) = key.parse::<u32>() else {
@@ -1664,24 +1701,24 @@ mod tests {
     assert!(cache.fresh(2));
   }
 
-  /// A signing request returning 410 fails outright instead of being
-  /// retried; same for a 409 that is not `UPLOAD_RESTARTED`.
-  #[tokio::test]
-  async fn a_sign_request_that_cannot_succeed_fails_without_retrying() {
-    let cache = SignatureCache::new(1..=2);
-    let calls = std::sync::atomic::AtomicU32::new(0);
-    let result = cache
-      .get_or_sign_via(1, |_wanted| {
-        calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        async {
-          Err(SignError::Other(
-            InstanceError::ModpackUploadSessionGone.into(),
-          ))
-        }
-      })
-      .await;
-    assert!(matches!(result, Err(SignError::Other(_))));
-    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+  /// The outcome of a signing request decides what `send_part` does next:
+  /// a restart restarts the round, a 410 or non-restart 409 fails
+  /// outright, everything else spends an attempt and is retried.
+  #[test]
+  fn a_sign_failure_is_classified_into_restart_fail_or_retry() {
+    let restarted = SignStep::from_sign_error(SignError::Restarted(7));
+    assert_eq!(restarted, SignStep::Restarted(7));
+
+    let fatal = SignStep::from_sign_error(SignError::Fatal(
+      InstanceError::ModpackUploadSessionGone.into(),
+    ));
+    assert_eq!(
+      fatal,
+      SignStep::Fail(InstanceError::ModpackUploadSessionGone.into())
+    );
+
+    let retry = SignStep::from_sign_error(SignError::Retry(USTBLError("platform 500".into())));
+    assert_eq!(retry, SignStep::Retry(USTBLError("platform 500".into())));
   }
 
   #[test]
