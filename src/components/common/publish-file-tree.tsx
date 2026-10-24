@@ -103,7 +103,7 @@ const PublishFileTree: React.FC<PublishFileTreeProps> = ({
               : view.fileState(data.path);
             const canRemove =
               data.ghost && (isDir || canRemoveFile(draft, data.path));
-            const next = nextState(state, { canRemove });
+            const next = nextState(state, { canRemove, ghost: data.ghost });
             const style = STATE_STYLE[state];
             const apply = () =>
               onDraftChange((prev) =>

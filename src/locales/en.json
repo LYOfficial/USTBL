@@ -3154,7 +3154,7 @@
       "packing": "Packing new content"
     },
     "tree": {
-      "legend": "Include: ships with the version. Ignore: this version leaves it alone and players keep theirs. Delete: removed on players' update. Click the state button to cycle; a folder's state applies to every file under it.",
+      "legend": "Include: ships with the version. Ignore: this version leaves it alone and players keep theirs. Delete: removed on players' update. Click the state button to cycle; a folder's state applies to every file under it except those set individually.",
       "include": "Include",
       "ignore": "Ignore",
       "delete": "Delete",

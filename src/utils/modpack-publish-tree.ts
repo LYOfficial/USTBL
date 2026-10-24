@@ -138,15 +138,15 @@ const coveringRule = (
   return undefined;
 };
 
-const dirKeysOf = (keys: Iterable<string>): Set<string> => {
+const dirKeysOf = (keys: Set<string>): Set<string> => {
   const dirs = new Set<string>();
-  for (const key of keys) {
+  keys.forEach((key) => {
     let cut = key.lastIndexOf("/");
     while (cut > 0 && !dirs.has(key.slice(0, cut))) {
       dirs.add(key.slice(0, cut));
       cut = key.lastIndexOf("/", cut - 1);
     }
-  }
+  });
   return dirs;
 };
 
@@ -366,9 +366,13 @@ export const setFileState = (
 };
 
 /**
- * A directory and everything listed under it takes `state`. Ignore and delete
- * leave one rule on the directory (none if it inherits that already) and drop
- * the settings below; include ticks every file on disk below it.
+ * Set the state of a directory by changing its own rule only; settings on
+ * nodes below it are the publisher's deliberate overrides and stay. Ignore and
+ * delete leave a rule on the directory unless it inherits that state already.
+ * Include has no rule of its own, so the directory's rule is dropped and the
+ * files that would still inherit a non-include state from outside the
+ * directory are ticked; files with their own file rule or governed by a deeper
+ * directory rule are left alone.
  */
 export const setDirState = (
   context: PublishContext,
@@ -377,28 +381,34 @@ export const setDirState = (
   state: PublishState
 ): PublishDraft => {
   const dirKey = keyOf(path);
-  let rules = withoutRules(
+  const without = withoutRules(
     draft.rules,
-    (key) => key === dirKey || isUnder(key, dirKey)
+    (key, rule) => key === dirKey && rule.kind === "dir"
   );
-  const included = new Set(
-    Array.from(draft.included).filter((key) => !isUnder(key, dirKey))
-  );
-  const covering = coveringRule(indexRules(rules), dirKey);
-  const inherited: ShownState = covering ? covering.state : "include";
+  const index = indexRules(without);
+  const included = new Set(draft.included);
   if (state === "include") {
-    if (inherited !== "include") {
-      for (const file of context.files) {
-        const key = keyOf(file.path);
-        if (isUnder(key, dirKey)) included.add(key);
+    context.files.forEach((file) => {
+      const key = keyOf(file.path);
+      if (!isUnder(key, dirKey) || index.files.has(key)) return;
+      const covering = coveringRule(index, key);
+      if (covering && !isUnder(keyOf(covering.path), dirKey)) {
+        included.add(key);
       }
-    }
-  } else if (inherited !== state) {
-    rules = withRule(rules, { path, kind: "dir", state });
+    });
+    return { rules: without, included, once: draft.once };
   }
-  return { rules, included, once: draft.once };
+  const covering = coveringRule(index, dirKey);
+  const inherited: ShownState = covering ? covering.state : "include";
+  return {
+    rules:
+      inherited !== state
+        ? withRule(draft.rules, { path, kind: "dir", state })
+        : without,
+    included,
+    once: draft.once,
+  };
 };
-
 /**
  * Drop the setting on this node so it inherits again. A file goes back to its
  * covering rule (or ticked); a directory loses its own rule only.
@@ -432,14 +442,20 @@ export const setOnce = (
   return { ...draft, once };
 };
 
-/** The state a click moves to; a mixed or removed node goes to the first. */
+/**
+ * The state a click moves to; a mixed node goes to the first. A node missing
+ * from disk (`ghost`) can never be ticked: it cycles remove, ignore, delete, or
+ * only ignore, delete once a directory rule covers it.
+ */
 export const nextState = (
   current: ShownState,
-  options: { canRemove: boolean }
+  options: { canRemove: boolean; ghost?: boolean }
 ): PublishState | "remove" => {
   const order: (PublishState | "remove")[] = options.canRemove
     ? ["remove", "ignore", "delete"]
-    : ["include", "ignore", "delete"];
+    : options.ghost
+      ? ["ignore", "delete"]
+      : ["include", "ignore", "delete"];
   const at = order.indexOf(current as PublishState | "remove");
   return order[(at + 1) % order.length];
 };
