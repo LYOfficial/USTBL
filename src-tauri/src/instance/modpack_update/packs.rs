@@ -313,10 +313,13 @@ impl PackSession {
         .get(&item.sha1)
         .copied()
         .ok_or(InstanceError::ModpackUpdateRemoteInvalid)?;
-      items.push((entry, PackFetch {
-        sha1: item.sha1.clone(),
-        dest: item.dest.clone(),
-      }));
+      items.push((
+        entry,
+        PackFetch {
+          sha1: item.sha1.clone(),
+          dest: item.dest.clone(),
+        },
+      ));
     }
     items.sort_by_key(|(entry, _)| (entry.pack, entry.data_offset));
 
@@ -857,9 +860,7 @@ mod tests {
     }
   }
 
-  fn session<T: PackTransport + 'static>(
-    transport: T,
-  ) -> (Arc<PackSession>, Arc<T>, PathBuf) {
+  fn session<T: PackTransport + 'static>(transport: T) -> (Arc<PackSession>, Arc<T>, PathBuf) {
     let transport = Arc::new(transport);
     let work = temp("work");
     (PackSession::new(transport.clone(), 3), transport, work)
@@ -1231,10 +1232,7 @@ mod tests {
     let spaced = Spaced::new(&[("aa", b"alpha"), ("bb", b"beta")], &[0]);
     *spaced.corrupt.lock().unwrap() = Some("bb".into());
     let (session, fake, work) = session(spaced);
-    session
-      .prepare(&["aa".into(), "bb".into()])
-      .await
-      .unwrap();
+    session.prepare(&["aa".into(), "bb".into()]).await.unwrap();
     let batch = [
       PackFetch {
         sha1: "aa".into(),
@@ -1269,10 +1267,7 @@ mod tests {
     let mut fake = Fake::new(&[("aa", b"alpha alpha"), ("bb", b"beta beta")]);
     *fake.expire.get_mut().unwrap() = 1;
     let (session, fake, work) = session(fake);
-    session
-      .prepare(&["aa".into(), "bb".into()])
-      .await
-      .unwrap();
+    session.prepare(&["aa".into(), "bb".into()]).await.unwrap();
     let batch = [
       PackFetch {
         sha1: "aa".into(),

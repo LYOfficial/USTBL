@@ -746,10 +746,8 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
     let groups = session.plan_groups(&located, generation, &batch)?;
     planned.push((session, groups));
   }
-  let sessions: Vec<Arc<PackSession>> = planned
-    .iter()
-    .map(|(session, _)| session.clone())
-    .collect();
+  let sessions: Vec<Arc<PackSession>> =
+    planned.iter().map(|(session, _)| session.clone()).collect();
   let total = to_fetch.len();
   env.report(Progress {
     stage: Stage::Fetching,
@@ -1563,7 +1561,10 @@ mod tests {
     // A leftover journal means the instance sits between two versions.
     interrupted(&root, JournalState::Committing);
     let error = ensure_unlink_safe(&root.0).unwrap_err();
-    assert_eq!(error.0, InstanceError::ModpackUpdateUnlinkPending.to_string());
+    assert_eq!(
+      error.0,
+      InstanceError::ModpackUpdateUnlinkPending.to_string()
+    );
     // Once recovered, unlinking is safe again.
     assert_eq!(recover(&root.0).unwrap(), Recovery::RolledBack);
     assert!(ensure_unlink_safe(&root.0).is_ok());
@@ -1904,7 +1905,10 @@ mod tests {
       length: u64,
       dest: &Path,
     ) -> Result<(), crate::instance::modpack_update::packs::TransportError> {
-      let flying = self.flying.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+      let flying = self
+        .flying
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        + 1;
       self
         .peak
         .fetch_max(flying, std::sync::atomic::Ordering::SeqCst);
@@ -1914,17 +1918,16 @@ mod tests {
       fs::create_dir_all(dest.parent().unwrap()).unwrap();
       let (start, length) = (start as usize, length as usize);
       fs::write(dest, &self.pack[start..start + length]).unwrap();
-      self.flying.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+      self
+        .flying
+        .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
       Ok(())
     }
   }
 
   /// Pack files for `contents` on `session`, keyed by their real sha1s, and
   /// the matching RemoteFile list.
-  fn pack_remote_files(
-    contents: &[(&str, &[u8])],
-    session: &Arc<PackSession>,
-  ) -> Vec<RemoteFile> {
+  fn pack_remote_files(contents: &[(&str, &[u8])], session: &Arc<PackSession>) -> Vec<RemoteFile> {
     contents
       .iter()
       .map(|(path, data)| RemoteFile {
@@ -1999,11 +2002,7 @@ mod tests {
     let session = PackSession::new(transport.clone(), 3);
     let pack_files = pack_remote_files(&contents, &session);
     let download = url_file("mods/b.jar", "beta", &mut env);
-    let remote_files = vec![
-      pack_files[0].clone(),
-      download,
-      pack_files[1].clone(),
-    ];
+    let remote_files = vec![pack_files[0].clone(), download, pack_files[1].clone()];
     let operations = remote_files.iter().map(write_op).collect();
 
     apply(&env, request(&root, remote_files, operations, "0.15.0"))

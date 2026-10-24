@@ -16,16 +16,15 @@ use crate::account::models::AccountInfo;
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::misc::{get_instance_game_config, get_instance_subdir_paths};
 use crate::instance::helpers::modpack::baseline::{
-  canonical_loader_version, hash_file, BaselineLoader,
-  ModpackBaseline,
+  canonical_loader_version, hash_file, BaselineLoader, ModpackBaseline,
 };
 use crate::instance::helpers::modpack::multimc::profile::safe_relative;
 use crate::instance::helpers::modpack::multimc::snapshot::load_required_snapshot;
 use crate::instance::models::misc::{
   Instance, InstanceError, InstanceOrigin, InstanceSubdirType, OriginPlatform,
 };
-use crate::instance::modpack_update::commands::store_instance;
 use crate::instance::modpack_update::commands::fast_forward;
+use crate::instance::modpack_update::commands::store_instance;
 use crate::instance::modpack_update::diff::FileKey;
 use crate::instance::modpack_update::plan::{compare, Compared};
 use crate::instance::modpack_update::remote::RemoteRule;
@@ -989,7 +988,11 @@ fn adopt_action(
 fn is_fast_forward(compared: &Compared) -> bool {
   compared.both_variants.is_empty()
     && fast_forward(
-      compared.diff.changes.iter().chain(&compared.diff.auto_merged),
+      compared
+        .diff
+        .changes
+        .iter()
+        .chain(&compared.diff.auto_merged),
       compared.diff.conflicts.len(),
       false,
     )
@@ -1040,7 +1043,8 @@ async fn try_adopt(
   let remote = campus_base_remote(app, &new_origin, &root, &instance.name).await?;
   // The line the instance already follows is the base; any other start (no
   // identity, or a project that is gone) is a first install.
-  let following = origin.is_some_and(|o| may_follow(Some(o), project, &instance.version, loader_type));
+  let following =
+    origin.is_some_and(|o| may_follow(Some(o), project, &instance.version, loader_type));
   let base = match ModpackBaseline::load(&root).await {
     Ok(baseline) if following => baseline,
     _ => ModpackBaseline::build(&new_origin, loader.clone(), Vec::new()),
@@ -1271,7 +1275,10 @@ mod tests {
     assert!(entry("mods/b.jar").is_managed() && entry("mods/b.jar").disabled);
     // A once-only file is remembered but not managed.
     assert!(!entry("config/once.toml").is_managed());
-    assert!(compared.next_baseline.iter().all(|f| f.path != "config/cache/x"));
+    assert!(compared
+      .next_baseline
+      .iter()
+      .all(|f| f.path != "config/cache/x"));
     let _ = fs::remove_dir_all(root);
   }
 

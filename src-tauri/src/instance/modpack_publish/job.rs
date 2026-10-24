@@ -524,7 +524,13 @@ impl PublishJob {
     );
     // Total 0 keeps the stage out of the group's percentage; the card shows
     // an indeterminate bar while the platform works (§3.2.2.2).
-    let platform = upload_handle(&app, monitor.get_new_id(), &group, "平台处理".to_string(), 0);
+    let platform = upload_handle(
+      &app,
+      monitor.get_new_id(),
+      &group,
+      "平台处理".to_string(),
+      0,
+    );
     let tasks = Tasks {
       group: group.clone(),
       pack,
@@ -562,7 +568,10 @@ impl PublishJob {
         // saved it (§3.2.2: a lost watch stays `Processing`).
         if let Some(message) = record_failure(&mut self.record, failure) {
           if let Err(error) = self.record.save(&dir) {
-            log::warn!("Modpack publish {} could not save its record: {error:?}", self.record.id);
+            log::warn!(
+              "Modpack publish {} could not save its record: {error:?}",
+              self.record.id
+            );
           }
           emit_finished(&app, &tasks.group, &self.record, None, Some(message));
         }
@@ -745,7 +754,10 @@ impl PublishJob {
             self.record.phase = Phase::Processing;
             self.record.error = Some(message.clone());
             if let Err(error) = self.record.save(&jobs_dir()) {
-              log::warn!("Modpack publish {} could not save its record: {error:?}", self.record.id);
+              log::warn!(
+                "Modpack publish {} could not save its record: {error:?}",
+                self.record.id
+              );
             }
             return Err(ExecuteFailure::Recorded);
           }
@@ -757,9 +769,18 @@ impl PublishJob {
           self.record.phase = Phase::Failed;
           self.record.error = Some(error.0.clone());
           if let Err(error) = self.record.save(&jobs_dir()) {
-            log::warn!("Modpack publish {} could not save its record: {error:?}", self.record.id);
+            log::warn!(
+              "Modpack publish {} could not save its record: {error:?}",
+              self.record.id
+            );
           }
-          emit_finished(&self.app, &tasks.group, &self.record, None, Some(error.0.clone()));
+          emit_finished(
+            &self.app,
+            &tasks.group,
+            &self.record,
+            None,
+            Some(error.0.clone()),
+          );
           return Err(ExecuteFailure::Recorded);
         }
       };
@@ -784,9 +805,18 @@ impl PublishJob {
         self.record.phase = Phase::Failed;
         self.record.error = Some(message.clone());
         if let Err(error) = self.record.save(&jobs_dir()) {
-          log::warn!("Modpack publish {} could not save its record: {error:?}", self.record.id);
+          log::warn!(
+            "Modpack publish {} could not save its record: {error:?}",
+            self.record.id
+          );
         }
-        emit_finished(&self.app, &tasks.group, &self.record, None, Some(message.clone()));
+        emit_finished(
+          &self.app,
+          &tasks.group,
+          &self.record,
+          None,
+          Some(message.clone()),
+        );
         return Err(ExecuteFailure::Recorded);
       }
       // §8.4: the platform can revert the version to `uploading` during the
@@ -805,9 +835,18 @@ impl PublishJob {
         self.record.phase = Phase::Failed;
         self.record.error = Some(message.clone());
         if let Err(error) = self.record.save(&jobs_dir()) {
-          log::warn!("Modpack publish {} could not save its record: {error:?}", self.record.id);
+          log::warn!(
+            "Modpack publish {} could not save its record: {error:?}",
+            self.record.id
+          );
         }
-        emit_finished(&self.app, &tasks.group, &self.record, None, Some(message.clone()));
+        emit_finished(
+          &self.app,
+          &tasks.group,
+          &self.record,
+          None,
+          Some(message.clone()),
+        );
         return Err(ExecuteFailure::Recorded);
       }
       if status == "published" {

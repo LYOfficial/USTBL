@@ -1407,11 +1407,7 @@ mod tests {
               Some(key) if *key == base_key => {
                 decision(write_remote_key(&ship.key, outcome), None, next)
               }
-              Some(_) => decision(
-                Action::Nothing,
-                Some(DecisionConflict::Remanage),
-                next,
-              ),
+              Some(_) => decision(Action::Nothing, Some(DecisionConflict::Remanage), next),
             }
           }
           Base::Managed { key: base_key, .. } => {

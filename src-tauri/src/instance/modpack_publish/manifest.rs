@@ -252,7 +252,10 @@ mod tests {
     assert_eq!(files[1]["path"], "mods/a.jar");
     assert_eq!(files[1]["disabled"], true);
     let objects = plan.objects(Path::new("/instance"));
-    assert_eq!(objects["a"].path, Path::new("/instance/mods/a.jar.disabled"));
+    assert_eq!(
+      objects["a"].path,
+      Path::new("/instance/mods/a.jar.disabled")
+    );
     assert_eq!(objects["x"].path, Path::new("/instance/config/a.toml"));
   }
 

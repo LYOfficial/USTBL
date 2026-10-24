@@ -376,7 +376,8 @@ mod tests {
     assert!(!job.resumable());
     job.error = Some("平台上已找不到这个版本，请放弃这个任务后重新发布".into());
     assert!(!job.resumable());
-    job.error = Some("实例中的文件在上次发布后发生了变化，无法继续，请放弃这个任务后重新发布".into());
+    job.error =
+      Some("实例中的文件在上次发布后发生了变化，无法继续，请放弃这个任务后重新发布".into());
     assert!(!job.resumable());
     job.error = Some("上传内容校验未通过，请重新发布".into());
     assert!(!job.resumable());

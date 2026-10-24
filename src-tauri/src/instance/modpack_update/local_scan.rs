@@ -9,7 +9,7 @@
 //! keep hashing everything themselves (their result decides what is written),
 //! but they refresh the entries of the files they just hashed.
 
-use super::diff::{DISABLED_SUFFIX, FileKey, LocalState};
+use super::diff::{FileKey, LocalState, DISABLED_SUFFIX};
 use crate::instance::helpers::modpack::baseline::hash_file;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io;
