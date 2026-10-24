@@ -143,12 +143,27 @@ pub struct CampusProject {
   pub lines: Vec<CampusLine>,
 }
 
+/// The only manifest format the client reads.
+pub const MANIFEST_FORMAT: &str = "ustbl.modpack/3";
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct CampusManifest {
+  pub format: String,
   pub files: Vec<CampusFile>,
+  /// Publish rules: the grey (ignore) and red (delete) entries of the tree.
+  #[serde(default)]
+  pub rules: Vec<CampusRule>,
   /// Everything a component-profile pack needs to be rebuilt.
   #[serde(default)]
   pub components: Option<CampusComponents>,
+}
+
+/// One publish rule. `kind` is `dir` or `file`, `state` `ignore` or `delete`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CampusRule {
+  pub path: String,
+  pub kind: String,
+  pub state: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -188,6 +203,10 @@ pub struct CampusFile {
   #[serde(default)]
   pub env: CampusEnv,
   pub source: CampusSource,
+  #[serde(default)]
+  pub disabled: bool,
+  #[serde(default)]
+  pub once: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -245,6 +264,8 @@ fn pack_file(
       sha1: blob.to_lowercase(),
       size,
     },
+    disabled: false,
+    once: false,
   })
 }
 
@@ -278,10 +299,15 @@ fn component_pack(
 
 /// Turn a campus version into the platform independent description. Files the
 /// client does not use are left out; files in packs are read through `packs`.
+/// Only `ustbl.modpack/3` manifests are read at all: anything older has no
+/// rules and no file attributes the client could trust.
 pub fn campus_remote(
   version: &CampusVersion,
   packs: &Arc<PackSession>,
 ) -> USTBLResult<RemoteModpack> {
+  if version.manifest.format != MANIFEST_FORMAT {
+    return Err(InstanceError::ModpackUpdateRemoteInvalid.into());
+  }
   let loader_type =
     loader_from_slug(&version.loader_type).ok_or(InstanceError::ModpackUpdateRemoteInvalid)?;
   let mut files = Vec::new();
@@ -301,6 +327,26 @@ pub fn campus_remote(
         size: file.size,
       },
       source,
+      disabled: file.disabled,
+      once: file.once,
+    });
+  }
+  let mut rules = Vec::new();
+  for rule in &version.manifest.rules {
+    let kind = match rule.kind.as_str() {
+      "dir" => super::remote::RuleKind::Dir,
+      "file" => super::remote::RuleKind::File,
+      _ => return Err(InstanceError::ModpackUpdateRemoteInvalid.into()),
+    };
+    let state = match rule.state.as_str() {
+      "ignore" => super::remote::RuleState::Ignore,
+      "delete" => super::remote::RuleState::Delete,
+      _ => return Err(InstanceError::ModpackUpdateRemoteInvalid.into()),
+    };
+    rules.push(super::remote::RemoteRule {
+      path: normalize_relative_path(&rule.path),
+      kind,
+      state,
     });
   }
   Ok(RemoteModpack {
@@ -323,6 +369,8 @@ pub fn campus_remote(
       .map(|components| component_pack(components, packs))
       .transpose()?,
     files,
+    rules,
+    rules_manifest: true,
   })
 }
 
@@ -498,6 +546,8 @@ pub async fn remote_from_archive(
         size,
       },
       source: FileSource::Download(Box::new(download.param)),
+      disabled: false,
+      once: false,
     });
   }
 
@@ -516,6 +566,8 @@ pub async fn remote_from_archive(
             archive: archive_path.clone(),
             entry,
           },
+          disabled: false,
+          once: false,
         })
       })
       .collect()
@@ -534,6 +586,8 @@ pub async fn remote_from_archive(
     components: None,
     component_pack: None,
     files: merge_files(downloads, overrides),
+    rules: Vec::new(),
+    rules_manifest: false,
   })
 }
 
@@ -1070,9 +1124,57 @@ mod tests {
       "game_version": "1.21.1",
       "loader_type": "neoforge",
       "loader_version": "21.1.5",
-      "manifest": { "format": "ustbl.modpack/2", "files": files },
+      "manifest": { "format": "ustbl.modpack/3", "files": files },
     }))
     .unwrap()
+  }
+
+  #[test]
+  fn disabled_once_and_rules_ride_along() {
+    let sha = "a".repeat(40);
+    let mut version = campus(serde_json::json!([
+      {"path": "mods/a.jar", "size": 1, "sha1": sha, "source": {"kind": "pack"}, "disabled": true},
+      {"path": "config/first.toml", "size": 1, "sha1": sha, "source": {"kind": "pack"}, "once": true},
+    ]));
+    version.manifest.rules = serde_json::from_value(serde_json::json!([
+      {"path": "config/yes_steve_model/cache", "kind": "dir", "state": "ignore"},
+      {"path": "resourcepacks/old.zip", "kind": "file", "state": "delete"},
+    ]))
+    .unwrap();
+
+    let remote = campus_remote(&version, &session()).unwrap();
+
+    assert!(remote.rules_manifest);
+    assert_eq!(remote.files[0].path, "mods/a.jar");
+    assert!(remote.files[0].disabled && !remote.files[0].once);
+    assert_eq!(remote.files[1].path, "config/first.toml");
+    assert!(remote.files[1].once && !remote.files[1].disabled);
+    assert_eq!(
+      remote.rules,
+      vec![
+        super::super::remote::RemoteRule {
+          path: "config/yes_steve_model/cache".into(),
+          kind: super::super::remote::RuleKind::Dir,
+          state: super::super::remote::RuleState::Ignore,
+        },
+        super::super::remote::RemoteRule {
+          path: "resourcepacks/old.zip".into(),
+          kind: super::super::remote::RuleKind::File,
+          state: super::super::remote::RuleState::Delete,
+        },
+      ]
+    );
+    // Unknown kinds or states are not a manifest.
+    version.manifest.rules = serde_json::from_value(serde_json::json!([
+      {"path": "config", "kind": "tree", "state": "ignore"},
+    ]))
+    .unwrap();
+    assert!(campus_remote(&version, &session()).is_err());
+    version.manifest.rules = serde_json::from_value(serde_json::json!([
+      {"path": "config", "kind": "dir", "state": "ship"},
+    ]))
+    .unwrap();
+    assert!(campus_remote(&version, &session()).is_err());
   }
 
   /// Packs are never touched by these tests; they only check the mapping.
@@ -1181,6 +1283,10 @@ mod tests {
       ]));
       assert!(campus_remote(&version, &session()).is_err());
     }
+    // Anything but /3 is refused before any file is looked at.
+    let mut old = campus(serde_json::json!([]));
+    old.manifest.format = "ustbl.modpack/2".into();
+    assert!(campus_remote(&old, &session()).is_err());
     let short = campus(serde_json::json!([
       {"path": "a", "size": 1, "sha1": "abc", "source": {"kind": "pack"}},
     ]));
@@ -1207,6 +1313,8 @@ mod tests {
       } else {
         FileSource::Download(plain_download("https://example.com/x").unwrap())
       },
+      disabled: false,
+      once: false,
     };
     let merged = merge_files(
       vec![file("a", "1", false), file("b", "2", false)],
@@ -1258,6 +1366,8 @@ mod tests {
             size: 3,
           },
           source: FileSource::Download(plain_download("https://cdn.example/a.jar").unwrap()),
+          disabled: false,
+          once: false,
         },
         RemoteFile {
           path: "config/b.txt".into(),
@@ -1269,8 +1379,12 @@ mod tests {
             archive: PathBuf::from("/tmp/pack.zip"),
             entry: "overrides/config/b.txt".into(),
           },
+          disabled: false,
+          once: false,
         },
       ],
+      rules: Vec::new(),
+      rules_manifest: false,
     }
   }
 

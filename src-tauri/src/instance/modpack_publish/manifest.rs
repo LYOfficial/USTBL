@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-pub const MANIFEST_FORMAT: &str = "ustbl.modpack/2";
+pub const MANIFEST_FORMAT: &str = "ustbl.modpack/3";
 
 /// Extensions of formats that are compressed already; deflating them again only
 /// costs time.
@@ -62,6 +62,10 @@ impl PublishPlan {
           "size": file.key.size,
           "sha1": file.key.sha1,
           "source": { "kind": "pack" },
+          // The three-state publish tree is U2; until then every file ships
+          // enabled and on every install.
+          "disabled": false,
+          "once": false,
         })
       })
       .collect();
@@ -212,8 +216,12 @@ mod tests {
       "pack",
     );
     let manifest = plan.manifest();
-    assert_eq!(manifest["format"], "ustbl.modpack/2");
+    assert_eq!(manifest["format"], "ustbl.modpack/3");
     let files = manifest["files"].as_array().unwrap();
+    // Until the three-state tree (U2) every file ships enabled and always.
+    assert!(files
+      .iter()
+      .all(|f| f["disabled"] == false && f["once"] == false));
     let paths: Vec<_> = files.iter().map(|f| f["path"].as_str().unwrap()).collect();
     assert_eq!(paths, ["empty.txt", "mods/a.jar", "options.txt"]);
     assert!(files.iter().all(|f| f["source"]["kind"] == "pack"));
