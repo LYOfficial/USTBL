@@ -602,15 +602,16 @@ async fn prepare(
     report(app, instance_id, Stage::Packing, 0, 1);
     fs::create_dir_all(dir)?;
     let (objects, target) = (needed.clone(), job_paths.pack.clone());
-    let built = tokio::task::spawn_blocking(move || build_pack(&objects, &target))
+    tokio::task::spawn_blocking(move || build_pack(&objects, &target))
       .await
       .map_err(|e| USTBLError(e.to_string()))??;
     // §13.2: the self-check runs before anything is sent to the platform, so
     // a bad local pack never opens a version or an upload session that would
     // then need to be torn down again (no `POST /versions` has happened yet
-    // at this point, so there is nothing on the platform to clean up).
-    let (check_path, check_sha1) = (job_paths.pack.clone(), built.sha1.clone());
-    tokio::task::spawn_blocking(move || verify_pack(&check_path, &check_sha1))
+    // at this point, so there is nothing on the platform to clean up). The
+    // pack is new, so its sha1 is whatever this read finds.
+    let check_path = job_paths.pack.clone();
+    let built = tokio::task::spawn_blocking(move || verify_pack(&check_path, None))
       .await
       .map_err(|e| USTBLError(e.to_string()))??;
     // This process just verified these bytes; the upload's ensure_pack can

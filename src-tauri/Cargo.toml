@@ -22,6 +22,26 @@ strip = true
 lto = true
 panic = "abort"
 
+# Hashing and (de)compression run over whole modpack packs; unoptimized they
+# make `tauri dev` publishing several times slower than release.
+[profile.dev.package.sha1]
+opt-level = 3
+
+[profile.dev.package.sha1_smol]
+opt-level = 3
+
+[profile.dev.package.flate2]
+opt-level = 3
+
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+
+[profile.dev.package.crc32fast]
+opt-level = 3
+
+[profile.dev.package.zip]
+opt-level = 3
+
 [dependencies]
 async-speed-limit = "0.4.2"
 async-trait = "0.1.89"

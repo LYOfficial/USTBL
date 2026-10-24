@@ -9,7 +9,7 @@ use super::commands::{
   adopt_published, authed_json, failure, failure_code, failure_detail, instance_of, PublishOutcome,
 };
 use super::manifest::{LocalFile, PackObject};
-use super::pack::{build_pack, is_verified, mark_verified, verify_pack};
+use super::pack::{is_verified, mark_verified, rebuild_pack, verify_pack};
 use super::record::{jobs_dir, paths, JobRecord, Phase, RecordedUpload};
 use super::transfer::{report, SentBytes};
 use crate::error::{USTBLError, USTBLResult};
@@ -826,26 +826,22 @@ impl PublishJob {
     let exists = tokio::fs::metadata(&path)
       .await
       .is_ok_and(|meta| meta.len() == pack.size);
-    if !exists {
-      let objects: Vec<PackObject> = self.record.objects.iter().map(PackObject::from).collect();
-      let target = path.clone();
-      let built = tokio::task::spawn_blocking(move || build_pack(&objects, &target))
-        .await
-        .map_err(|e| USTBLError(e.to_string()))??;
-      if built.sha1 != pack.sha1 || built.size != pack.size {
-        let _ = tokio::fs::remove_file(&path).await;
-        return Err(USTBLError(
-          "实例中的文件在上次发布后发生了变化，无法继续，请放弃这个任务后重新发布".into(),
-        ));
-      }
-    }
-    if is_verified(&path) {
+    if exists && is_verified(&path) {
       return Ok(path);
     }
-    let (check_path, check_sha1) = (path.clone(), pack.sha1.clone());
-    tokio::task::spawn_blocking(move || verify_pack(&check_path, &check_sha1))
+    let check_path = path.clone();
+    if exists {
+      tokio::task::spawn_blocking(move || verify_pack(&check_path, Some(&pack.sha1)))
+        .await
+        .map_err(|e| USTBLError(e.to_string()))??;
+    } else {
+      let objects: Vec<PackObject> = self.record.objects.iter().map(PackObject::from).collect();
+      tokio::task::spawn_blocking(move || {
+        rebuild_pack(&objects, &check_path, &pack.sha1, pack.size)
+      })
       .await
       .map_err(|e| USTBLError(e.to_string()))??;
+    }
     if let Ok(meta) = tokio::fs::metadata(&path).await {
       if let Ok(modified) = meta.modified() {
         mark_verified(&path, meta.len(), modified);

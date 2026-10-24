@@ -91,8 +91,9 @@ fn entry_structurally_valid(
   data_start == header_start + local_header_len(name, header_start)
 }
 
+/// The whole-file sha1 and size of a pack that passed `verify_pack`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BuiltPack {
+pub struct VerifiedPack {
   pub sha1: String,
   pub size: u64,
 }
@@ -100,7 +101,12 @@ pub struct BuiltPack {
 /// Write the pack for `objects` to `dest`. Every object is hashed on the way
 /// in: a file that changed since it was scanned fails the build rather than
 /// ending up under the wrong name.
-pub fn build_pack(objects: &[PackObject], dest: &Path) -> USTBLResult<BuiltPack> {
+///
+/// The pack's own sha1 is not computed here: every pack goes through
+/// `verify_pack` before it is used, and that read yields the hash. (Hashing
+/// the bytes as they are written does not work: `ZipWriter` seeks back to
+/// patch each entry's local header once its data is written.)
+pub fn build_pack(objects: &[PackObject], dest: &Path) -> USTBLResult<()> {
   let mut ordered: Vec<&PackObject> = objects.iter().collect();
   ordered.sort_by(|a, b| a.sha1.cmp(&b.sha1));
 
@@ -137,9 +143,27 @@ pub fn build_pack(objects: &[PackObject], dest: &Path) -> USTBLResult<BuiltPack>
     }
   }
   zip.finish()?.flush()?;
+  Ok(())
+}
 
-  let (sha1, size) = hash_file(dest)?;
-  Ok(BuiltPack { sha1, size })
+/// Build the pack again for an upload resumed after its pack went missing.
+/// It has to come out as the pack the platform was promised; one that does
+/// not is removed again. The result has passed `verify_pack`.
+pub fn rebuild_pack(
+  objects: &[PackObject],
+  dest: &Path,
+  expected_sha1: &str,
+  expected_size: u64,
+) -> USTBLResult<()> {
+  build_pack(objects, dest)?;
+  let built = verify_pack(dest, None)?;
+  if built.sha1 != expected_sha1 || built.size != expected_size {
+    let _ = std::fs::remove_file(dest);
+    return Err(USTBLError(
+      "实例中的文件在上次发布后发生了变化，无法继续，请放弃这个任务后重新发布".into(),
+    ));
+  }
+  Ok(())
 }
 
 /// The packs this process has already run the self-check on, keyed by path.
@@ -181,13 +205,16 @@ pub fn is_verified(path: &Path) -> bool {
 /// descriptor, or is compressed with anything but STORED/DEFLATE; each entry
 /// decompresses to the sha1 its name promises and the CRC32 the central
 /// directory records; data offsets follow from the local header length
-/// alone; and the whole file's sha1 matches `expected`. Used before the
-/// first upload and whenever the pack is rebuilt during resume.
-pub fn verify_pack(path: &Path, expected_sha1: &str) -> USTBLResult<()> {
+/// alone; and, given `expected_sha1`, the whole file's sha1 matches it.
+/// `None` is for a pack just built, whose sha1 is not known yet; the caller
+/// then takes the returned one (and compares it itself where a record says
+/// what it has to be). Used before the first upload, whenever the pack is
+/// rebuilt during resume, and on a pack resumed from disk.
+pub fn verify_pack(path: &Path, expected_sha1: Option<&str>) -> USTBLResult<VerifiedPack> {
   let bad = || USTBLError("本地包的内容校验未通过，无法继续，请放弃这个任务后重新发布".into());
 
-  let (sha1, _) = hash_file(path)?;
-  if sha1 != expected_sha1 {
+  let (sha1, size) = hash_file(path)?;
+  if expected_sha1.is_some_and(|expected| expected != sha1) {
     return Err(bad());
   }
 
@@ -241,7 +268,7 @@ pub fn verify_pack(path: &Path, expected_sha1: &str) -> USTBLResult<()> {
   if !zip.is_empty() && zip.central_directory_start() != expected_header_start {
     return Err(bad());
   }
-  Ok(())
+  Ok(VerifiedPack { sha1, size })
 }
 
 #[cfg(test)]
@@ -279,7 +306,8 @@ mod tests {
     ];
     let dest = root.join("pack.zip");
 
-    let built = build_pack(&objects, &dest).unwrap();
+    build_pack(&objects, &dest).unwrap();
+    let built = verify_pack(&dest, None).unwrap();
 
     assert_eq!(built.size, fs::metadata(&dest).unwrap().len());
     assert_eq!(built.sha1, hash_file(&dest).unwrap().0);
@@ -364,8 +392,9 @@ mod tests {
       object(&root, "b", &b"beta".repeat(1000), true),
     ];
     let dest = root.join("pack.zip");
-    let built = build_pack(&objects, &dest).unwrap();
-    verify_pack(&dest, &built.sha1).unwrap();
+    build_pack(&objects, &dest).unwrap();
+    let built = verify_pack(&dest, None).unwrap();
+    assert_eq!(verify_pack(&dest, Some(&built.sha1)).unwrap(), built);
     let _ = fs::remove_dir_all(root);
   }
 
@@ -397,7 +426,8 @@ mod tests {
       zip.finish().unwrap();
     }
     let (sha1, _) = hash_file(&dest).unwrap();
-    assert!(verify_pack(&dest, &sha1).is_err());
+    assert!(verify_pack(&dest, Some(&sha1)).is_err());
+    assert!(verify_pack(&dest, None).is_err());
     let _ = fs::remove_dir_all(root);
   }
 
@@ -502,7 +532,7 @@ mod tests {
     let objects = vec![object(&root, "a", b"alpha", false)];
     let dest = root.join("pack.zip");
     build_pack(&objects, &dest).unwrap();
-    assert!(verify_pack(&dest, &"0".repeat(40)).is_err());
+    assert!(verify_pack(&dest, Some(&"0".repeat(40))).is_err());
     let _ = fs::remove_dir_all(root);
   }
 
@@ -514,7 +544,8 @@ mod tests {
       object(&root, "b", b"beta beta beta beta", false),
     ];
     let dest = root.join("pack.zip");
-    let built = build_pack(&objects, &dest).unwrap();
+    build_pack(&objects, &dest).unwrap();
+    let built = verify_pack(&dest, None).unwrap();
 
     // Flip a byte inside the first (stored or deflated) entry's compressed
     // data without touching lengths, so the file still parses as a zip but
@@ -528,7 +559,10 @@ mod tests {
     file.seek(std::io::SeekFrom::Start(data_start)).unwrap();
     file.write_all(&[0xFF]).unwrap();
 
-    assert!(verify_pack(&dest, &built.sha1).is_err());
+    assert!(verify_pack(&dest, Some(&built.sha1)).is_err());
+    // A just-built pack is checked without a sha1 to compare against; the
+    // entry check alone still catches the change.
+    assert!(verify_pack(&dest, None).is_err());
     let _ = fs::remove_dir_all(root);
   }
 
@@ -540,9 +574,13 @@ mod tests {
       object(&root, "b", b"beta", true),
       object(&root, "c", &b"gamma".repeat(500), false),
     ];
-    let first = build_pack(&objects, &root.join("one.zip")).unwrap();
+    let built = |objects: &[PackObject], dest: PathBuf| {
+      build_pack(objects, &dest).unwrap();
+      hash_file(&dest).unwrap()
+    };
+    let first = built(&objects, root.join("one.zip"));
     objects.reverse();
-    let second = build_pack(&objects, &root.join("two.zip")).unwrap();
+    let second = built(&objects, root.join("two.zip"));
     assert_eq!(first, second);
 
     // Rebuilt later from copies of the files, the pack is still the same.
@@ -555,12 +593,90 @@ mod tests {
         PackObject { path, ..o.clone() }
       })
       .collect();
-    assert_eq!(
-      build_pack(&copies, &moved.join("three.zip")).unwrap(),
-      first
-    );
+    assert_eq!(built(&copies, moved.join("three.zip")), first);
     let _ = fs::remove_dir_all(root);
     let _ = fs::remove_dir_all(moved);
+  }
+
+  /// Deterministic bytes that do not compress (a fixed xorshift stream).
+  fn noise(len: usize, seed: u64) -> Vec<u8> {
+    let mut state = seed;
+    (0..len)
+      .map(|_| {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state as u8
+      })
+      .collect()
+  }
+
+  /// A fixed sample's pack, pinned to the bytes `build_pack` produced before
+  /// the whole-file hash moved into `verify_pack` (7fa2320). Objects span
+  /// several copy buffers, both methods, text and incompressible data, and an
+  /// empty file. A change here means the platform-side pack hash of an
+  /// unchanged instance changed too.
+  #[test]
+  fn a_fixed_sample_still_packs_to_the_same_bytes() {
+    let root = dir();
+    let text = b"[general]\nkey = value\n".repeat(40_000);
+    let objects = vec![
+      object(&root, "text", &text, false),
+      object(&root, "noise-deflated", &noise(700_000, 1), false),
+      object(&root, "noise-stored", &noise(300_000, 2), true),
+      object(&root, "small", b"small", true),
+      object(&root, "empty", b"", false),
+    ];
+    let dest = root.join("pack.zip");
+    build_pack(&objects, &dest).unwrap();
+    let expected = VerifiedPack {
+      sha1: "9f3f8b0b84b9c4e8096f7ec8fb035b1bb3311146".into(),
+      size: 1_003_380,
+    };
+    assert_eq!(verify_pack(&dest, None).unwrap(), expected);
+    let (sha1, size) = hash_file(&dest).unwrap();
+    assert_eq!(VerifiedPack { sha1, size }, expected);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  /// Resume after the pack went missing: the same objects come out as the
+  /// recorded pack and pass the self-check.
+  #[test]
+  fn a_rebuilt_pack_that_matches_the_record_is_kept() {
+    let root = dir();
+    let objects = vec![
+      object(&root, "a", b"alpha alpha", false),
+      object(&root, "b", &noise(5_000, 3), true),
+    ];
+    let first = root.join("first.zip");
+    build_pack(&objects, &first).unwrap();
+    let recorded = verify_pack(&first, None).unwrap();
+
+    let dest = root.join("pack.zip");
+    rebuild_pack(&objects, &dest, &recorded.sha1, recorded.size).unwrap();
+    assert_eq!(hash_file(&dest).unwrap(), (recorded.sha1, recorded.size));
+    let _ = fs::remove_dir_all(root);
+  }
+
+  /// A rebuild that does not reproduce the recorded sha1 (or size) fails and
+  /// leaves no pack behind for the upload to pick up.
+  #[test]
+  fn a_rebuilt_pack_that_differs_from_the_record_fails_and_is_removed() {
+    let root = dir();
+    let objects = vec![object(&root, "a", b"alpha alpha", false)];
+    let first = root.join("first.zip");
+    build_pack(&objects, &first).unwrap();
+    let recorded = verify_pack(&first, None).unwrap();
+
+    let dest = root.join("pack.zip");
+    let error = rebuild_pack(&objects, &dest, &"0".repeat(40), recorded.size).unwrap_err();
+    assert!(error.0.contains("发生了变化"), "{}", error.0);
+    assert!(!dest.exists());
+
+    let error = rebuild_pack(&objects, &dest, &recorded.sha1, recorded.size + 1).unwrap_err();
+    assert!(error.0.contains("发生了变化"), "{}", error.0);
+    assert!(!dest.exists());
+    let _ = fs::remove_dir_all(root);
   }
 
   #[test]
