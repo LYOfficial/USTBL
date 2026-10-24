@@ -48,13 +48,15 @@ export const findInstancesOfLine = (
  */
 export type LedgerBadge =
   | Exclude<ModpackCheckStatus, "notFollowing" | "localChanges">
-  | "notChecked";
+  | "notChecked"
+  | "unlinked";
 
 export const ledgerBadge = (
   instance: InstanceSummary,
   check: ModpackUpdateCheck | undefined
 ): LedgerBadge => {
-  if (!check || check.status === "notFollowing") return "notChecked";
+  if (!check) return "notChecked";
+  if (check.status === "notFollowing") return "unlinked";
   if (check.status === "localChanges") return "upToDate";
   return check.status;
 };

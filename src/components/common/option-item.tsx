@@ -32,6 +32,11 @@ export interface OptionItemProps extends Omit<BoxProps, "title"> {
   isChildrenIndependent?: boolean;
   maxTitleLines?: number;
   maxDescriptionLines?: number;
+  /**
+   * Keep the title at its own width on one line; the children take the rest
+   * and wrap inside it. For long values such as a description.
+   */
+  isTitleFixed?: boolean;
 }
 
 export interface OptionItemGroupProps extends SectionProps {
@@ -55,6 +60,7 @@ export const OptionItem: React.FC<OptionItemProps> = ({
   isChildrenIndependent = false,
   maxTitleLines = undefined,
   maxDescriptionLines = undefined,
+  isTitleFixed = false,
   ...boxProps
 }) => {
   const [isHovered, setIsHovered] = useState(false);
@@ -78,7 +84,11 @@ export const OptionItem: React.FC<OptionItemProps> = ({
   const _title =
     typeof title === "string" ? (
       <Skeleton isLoaded={!isLoading}>
-        <Text fontSize="xs-sm" {...(maxTitleLines ? titleLineClampProps : {})}>
+        <Text
+          fontSize="xs-sm"
+          {...(maxTitleLines ? titleLineClampProps : {})}
+          {...(isTitleFixed ? { whiteSpace: "nowrap" } : {})}
+        >
           {title}
         </Text>
       </Skeleton>
@@ -98,7 +108,7 @@ export const OptionItem: React.FC<OptionItemProps> = ({
       titleExtra
     ));
 
-  const wrappedChildren =
+  const shownChildren =
     (childrenOnHover ? isHovered : true) &&
     (typeof children === "string" ? (
       <Skeleton isLoaded={!isLoading}>
@@ -109,6 +119,14 @@ export const OptionItem: React.FC<OptionItemProps> = ({
     ) : (
       children
     ));
+
+  const wrappedChildren = isTitleFixed ? (
+    <Box flex="1 1 0" minW={0}>
+      {shownChildren}
+    </Box>
+  ) : (
+    shownChildren
+  );
 
   return (
     <Flex justify="space-between" alignItems="center">
@@ -132,7 +150,12 @@ export const OptionItem: React.FC<OptionItemProps> = ({
         p={0.5}
         {...boxProps}
       >
-        <HStack spacing={2.5} overflow="hidden" flex="1 1 auto" minW={0}>
+        <HStack
+          spacing={2.5}
+          overflow="hidden"
+          flex={isTitleFixed ? "0 0 auto" : "1 1 auto"}
+          minW={0}
+        >
           {prefixElement && (
             <Skeleton isLoaded={!isLoading} flex="0 0 auto">
               {prefixElement}

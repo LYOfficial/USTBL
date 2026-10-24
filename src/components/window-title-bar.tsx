@@ -50,13 +50,16 @@ const WindowTitleBar = () => {
   const router = useRouter();
   const { t } = useTranslation();
   const { config } = useLauncherConfig();
-  const { tasks } = useTaskContext();
+  const { tasks, unfinishedPublishes } = useTaskContext();
   const [isMaximized, setIsMaximized] = useState(false);
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
   const [rememberCloseChoice, setRememberCloseChoice] = useState(false);
   const primaryColor = config.appearance.theme.primaryColor;
   const isSimplified = config.appearance.theme.headNavStyle === "simplified";
-  const isDownloadIndicatorShown = tasks.length > 0;
+  // Unfinished publishes count too: they survive a restart as plain records,
+  // without any task group on the list (10-23 addition).
+  const isDownloadIndicatorShown =
+    tasks.length > 0 || unfinishedPublishes.length > 0;
   const unselectTabColor = useColorModeValue("gray.600", "gray.400");
 
   const navList = useMemo<NavItem[]>(

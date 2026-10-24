@@ -65,49 +65,26 @@ type Handle = Arc<RwLock<PTaskHandle>>;
 
 /// Jobs that run right now; the rest of the records are waiting for the user.
 static ACTIVE: Mutex<Vec<String>> = Mutex::new(Vec::new());
-static MONITORING: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 pub(super) fn is_running(job_id: &str) -> bool {
   ACTIVE.lock().unwrap().iter().any(|id| id == job_id)
 }
 
+/// After a restart, a record the platform is still processing gets its task
+/// card back (§3.2.2): the card starts right at the platform stage instead
+/// of the publish being watched invisibly in the background.
 pub(crate) fn resume_monitors(app: &AppHandle) {
   for record in JobRecord::list(&jobs_dir()) {
     if record.phase == Phase::Processing {
-      PublishJob {
+      let _ = PublishJob {
         app: app.clone(),
         uploader: crate::utils::web::build_part_upload_client(app),
         record,
         // Only platform processing is watched here, never a part upload.
         concurrency: None,
       }
-      .monitor_in_background();
+      .start();
     }
-  }
-}
-
-fn monitor_is_running(job_id: &str) -> bool {
-  MONITORING.lock().unwrap().iter().any(|id| id == job_id)
-}
-
-pub(super) fn is_monitoring(job_id: &str) -> bool {
-  monitor_is_running(job_id)
-}
-
-fn take_monitor(job_id: &str) -> Option<MonitorToken> {
-  let mut monitoring = MONITORING.lock().unwrap();
-  if monitoring.iter().any(|id| id == job_id) {
-    return None;
-  }
-  monitoring.push(job_id.to_string());
-  Some(MonitorToken(job_id.to_string()))
-}
-
-struct MonitorToken(String);
-
-impl Drop for MonitorToken {
-  fn drop(&mut self) {
-    MONITORING.lock().unwrap().retain(|id| id != &self.0);
   }
 }
 
@@ -130,15 +107,19 @@ impl Drop for ActiveToken {
   }
 }
 
+/// The three stages one publish shows on the task list (§3.2.2): the pack
+/// going to the cloud drive, the version being committed, and the platform
+/// processing it. The group stays until the publish is published or failed.
 struct Tasks {
   group: String,
-  pack: Option<Handle>,
-  finish: Handle,
+  pack: Handle,
+  commit: Handle,
+  platform: Handle,
 }
 
 impl Tasks {
   fn all(&self) -> impl Iterator<Item = &Handle> {
-    self.pack.iter().chain(std::iter::once(&self.finish))
+    [&self.pack, &self.commit, &self.platform].into_iter()
   }
 
   /// After a failure: whatever has not ended is cancelled.
@@ -198,6 +179,37 @@ fn complete(handle: &Handle) {
   let mut handle = handle.write().unwrap();
   handle.desc.current = handle.desc.total;
   handle.mark_completed();
+}
+
+/// Why `execute` ended early. `Fresh` means the record on disk was not
+/// touched by this run and still carries whatever it had (possibly an old,
+/// unrelated error); `Recorded` means the platform stage already saved the
+/// record itself — `Failed` for a real failure, still `Processing` with the
+/// error set when the watch lost the platform — so `run` must leave it
+/// alone instead of overwriting it with the same or a stale message.
+enum ExecuteFailure {
+  Fresh(USTBLError),
+  Recorded,
+}
+
+impl From<USTBLError> for ExecuteFailure {
+  fn from(error: USTBLError) -> Self {
+    ExecuteFailure::Fresh(error)
+  }
+}
+
+/// What `run` does with an execute failure: a fresh one is written to the
+/// record and handed back to be told to the frontend; a recorded one needs
+/// nothing, the record already says it all.
+fn record_failure(record: &mut JobRecord, failure: &ExecuteFailure) -> Option<String> {
+  match failure {
+    ExecuteFailure::Fresh(error) => {
+      record.phase = Phase::Failed;
+      record.error = Some(error.0.clone());
+      Some(error.0.clone())
+    }
+    ExecuteFailure::Recorded => None,
+  }
 }
 
 /// Length of part `n` (1-based, as the server numbers them): every part is
@@ -342,7 +354,9 @@ pub(super) struct PublishJob {
 
 impl PublishJob {
   /// Puts the job on the task list and runs it in the background. Returns the
-  /// name of the task group.
+  /// name of the task group. The group lives until the version is published
+  /// or the publish fails (§3.2.2): platform processing is the group's own
+  /// last stage, never a separate background watch.
   pub(super) fn start(self) -> USTBLResult<String> {
     let token = ActiveToken::take(&self.record.id)
       .ok_or_else(|| USTBLError("这个发布任务已在进行中".into()))?;
@@ -355,75 +369,83 @@ impl PublishJob {
       chrono::Utc::now().timestamp_millis()
     );
 
-    let pack = self.record.pack.as_ref().map(|pack| {
-      upload_handle(
+    // A publish without new files has nothing to upload (§3.2.2.1): the
+    // stage stays on the card, already done, so the "瞬间完成" case reads
+    // as "平台已有全部文件，无需上传" instead of a missing step.
+    let pack = match &self.record.pack {
+      Some(pack) => upload_handle(
         &app,
         monitor.get_new_id(),
         &group,
         "增量包".to_string(),
         pack.size as i64,
-      )
-    });
-    let finish = upload_handle(
+      ),
+      None => {
+        let handle = upload_handle(
+          &app,
+          monitor.get_new_id(),
+          &group,
+          "平台已有全部文件，无需上传".to_string(),
+          1,
+        );
+        complete(&handle);
+        handle
+      }
+    };
+    let commit = upload_handle(
       &app,
       monitor.get_new_id(),
       &group,
       format!("提交版本 {}", self.record.version_number),
       1,
     );
+    // Total 0 keeps the stage out of the group's percentage; the card shows
+    // an indeterminate bar while the platform works (§3.2.2.2).
+    let platform = upload_handle(&app, monitor.get_new_id(), &group, "平台处理".to_string(), 0);
     let tasks = Tasks {
       group: group.clone(),
       pack,
-      finish,
+      commit,
+      platform,
     };
     let handles: Vec<Handle> = tasks.all().cloned().collect();
     monitor.register_job_group(&group, &handles);
 
-    let finish_id = tasks.finish.read().unwrap().desc.task_id;
+    let anchor_id = tasks.commit.read().unwrap().desc.task_id;
     let job = tauri::async_runtime::spawn(self.run(tasks, token));
-    monitor.bind_job(finish_id, job);
+    monitor.bind_job(anchor_id, job);
     Ok(group)
   }
 
   async fn run(mut self, tasks: Tasks, _token: ActiveToken) {
     let app = self.app.clone();
     let dir = jobs_dir();
-    let finish_id = tasks.finish.read().unwrap().desc.task_id;
+    let anchor_id = tasks.commit.read().unwrap().desc.task_id;
     let mut guard = CancelGuard {
       app: app.clone(),
       job_id: self.record.id.clone(),
       version_id: self.record.version_id,
       armed: true,
     };
-    let result = self.execute(&tasks).await;
+    let result = self.execute(&tasks, &mut guard).await;
     guard.armed = false;
 
     match &result {
       Ok(_) => {}
-      Err(error) => {
+      Err(failure) => {
         tasks.abandon();
-        // Kept, so the user can send it again or give it up.
-        self.record.phase = Phase::Failed;
-        self.record.error = Some(error.0.clone());
-        let _ = self.record.save(&dir);
+        // A fresh failure is written to the record and told to the
+        // frontend; a recorded one is left exactly as the platform stage
+        // saved it (§3.2.2: a lost watch stays `Processing`).
+        if let Some(message) = record_failure(&mut self.record, failure) {
+          let _ = self.record.save(&dir);
+          emit_finished(&app, &tasks.group, &self.record, None, Some(message));
+        }
       }
     }
     app
       .state::<Pin<Box<TaskMonitor>>>()
-      .finish_job_group(&tasks.group, finish_id, result.is_ok());
-    if let Err(error) = result {
-      let _ = app.emit_to(
-        "main",
-        FINISHED_EVENT,
-        PublishFinished {
-          instance_id: self.record.instance_id.clone(),
-          group: tasks.group.clone(),
-          job_id: self.record.id.clone(),
-          outcome: None,
-          error: Some(error.0),
-        },
-      );
-    }
+      .finish_job_group(&tasks.group, anchor_id, result.is_ok());
   }
 
   async fn status(&self) -> USTBLResult<Value> {
@@ -485,7 +507,11 @@ impl PublishJob {
     }
   }
 
-  async fn execute(&mut self, tasks: &Tasks) -> USTBLResult<()> {
+  async fn execute(
+    &mut self,
+    tasks: &Tasks,
+    guard: &mut CancelGuard,
+  ) -> Result<(), ExecuteFailure> {
     let started = Instant::now();
     log::info!(
       "Modpack publish {} started for version {}",
@@ -502,14 +528,10 @@ impl PublishJob {
     );
     if current != "published" && current != "processing" {
       if self.record.upload.is_some() {
-        let pack = tasks
-          .pack
-          .as_ref()
-          .ok_or_else(|| USTBLError("缺少增量包任务".into()))?;
         let upload_started = Instant::now();
-        if let Err(error) = self.upload_pack(pack, &tasks.group).await {
-          pack.write().unwrap().mark_failed(error.0.clone());
-          return Err(error);
+        if let Err(error) = self.upload_pack(&tasks.pack, &tasks.group).await {
+          tasks.pack.write().unwrap().mark_failed(error.0.clone());
+          return Err(ExecuteFailure::Fresh(error));
         }
         log::info!(
           "Modpack publish {} upload completed in {:.2}s",
@@ -517,14 +539,14 @@ impl PublishJob {
           upload_started.elapsed().as_secs_f64()
         );
       }
-      tasks.finish.write().unwrap().mark_started();
+      tasks.commit.write().unwrap().mark_started();
       self.record.phase = Phase::Processing;
       self.record.error = None;
       self.record.save(&jobs_dir())?;
       let commit_started = Instant::now();
       if let Err(error) = self.commit().await {
-        tasks.finish.write().unwrap().mark_failed(error.0.clone());
-        return Err(error);
+        tasks.commit.write().unwrap().mark_failed(error.0.clone());
+        return Err(ExecuteFailure::Fresh(error));
       }
       log::info!(
         "Modpack publish {} commit accepted in {:.2}s",
@@ -532,40 +554,178 @@ impl PublishJob {
         commit_started.elapsed().as_secs_f64()
       );
     } else {
-      tasks.finish.write().unwrap().mark_started();
+      // Resumed while the platform was already at work: the first two
+      // stages are done, only the platform stage is watched.
+      complete(&tasks.pack);
     }
+    complete(&tasks.commit);
 
-    // The upload task ends once the platform has accepted the commit. Platform
-    // processing is monitored independently and survives launcher restarts.
+    // The group stays on the list for the platform stage (§3.2.2): the card
+    // shows an indeterminate bar until the version is published or fails.
     self.record.phase = Phase::Processing;
     self.record.error = None;
     self.record.save(&jobs_dir())?;
-    complete(&tasks.finish);
+    // The version is the platform's now: a processing version refuses
+    // DELETE, so from here on cancelling the card only stops the watch and
+    // the record stays `Processing` for the next resume — the guard that
+    // would have deleted the version and the record must not fire.
+    guard.armed = false;
+    tasks.platform.write().unwrap().mark_started();
     log::info!(
-      "Modpack publish {} submitted in {:.2}s; platform processing continues in background",
+      "Modpack publish {} submitted in {:.2}s; platform processing runs on the task card",
       self.record.id,
       started.elapsed().as_secs_f64()
     );
-    self.clone_for_monitor().monitor_in_background();
-    Ok(())
+    self.monitor(tasks).await
   }
 
-  fn clone_for_monitor(&self) -> Self {
-    Self {
-      app: self.app.clone(),
-      uploader: self.uploader.clone(),
-      record: self.record.clone(),
-      concurrency: self.concurrency,
+  /// The platform stage (§3.2.2.2): polls the version's status and writes
+  /// what happens onto the card. Returns `Ok` once the version is published
+  /// (the record is gone by then); every other ending is a `Recorded`
+  /// failure, the record already saved — `Failed` for a real failure,
+  /// still `Processing` with the error set when the platform stopped
+  /// answering, so the next launcher start picks the watch up again (§3.2.2).
+  async fn monitor(&mut self, tasks: &Tasks) -> Result<(), ExecuteFailure> {
+    let started = Instant::now();
+    let mut misses = 0;
+    let mut last_status = String::new();
+    loop {
+      // A paused group stops polling: the watch resumes with the group.
+      while self
+        .app
+        .state::<Pin<Box<TaskMonitor>>>()
+        .is_group_stopped(&tasks.group)
+      {
+        sleep(Duration::from_secs(1)).await;
+      }
+      let state = match self.poll_status().await {
+        Ok(Some(state)) => {
+          misses = 0;
+          state
+        }
+        Ok(None) => {
+          misses += 1;
+          log::warn!(
+            "Modpack publish {} status check missed ({}/{})",
+            self.record.id,
+            misses,
+            POLL_MISSES
+          );
+          if misses >= POLL_MISSES {
+            // Shown on the card (§3.2.2), not as a separate entry: the
+            // record stays `Processing`, and the next launcher start
+            // resumes the watch through `resume_monitors`.
+            let message = "暂时无法确认平台处理进度，请稍后重新启动启动器继续".to_string();
+            tasks.platform.write().unwrap().mark_failed(message.clone());
+            self.record.phase = Phase::Processing;
+            self.record.error = Some(message.clone());
+            let _ = self.record.save(&jobs_dir());
+            return Err(ExecuteFailure::Recorded);
+          }
+          sleep(POLL).await;
+          continue;
+        }
+        Err(error) => {
+          tasks.platform.write().unwrap().mark_failed(error.0.clone());
+          self.record.phase = Phase::Failed;
+          self.record.error = Some(error.0.clone());
+          let _ = self.record.save(&jobs_dir());
+          emit_finished(&self.app, &tasks.group, &self.record, None, Some(error.0.clone()));
+          return Err(ExecuteFailure::Recorded);
+        }
+      };
+      let status = state["status"].as_str().unwrap_or_default();
+      if status != last_status {
+        log::info!(
+          "Modpack publish {} status changed: {} -> {} after {:.2}s processing",
+          self.record.id,
+          last_status,
+          status,
+          started.elapsed().as_secs_f64()
+        );
+        last_status = status.to_string();
+      }
+      if status == "failed" {
+        let message = state["error"]
+          .as_str()
+          .filter(|text| !text.is_empty())
+          .unwrap_or("平台处理增量包失败")
+          .to_string();
+        tasks.platform.write().unwrap().mark_failed(message.clone());
+        self.record.phase = Phase::Failed;
+        self.record.error = Some(message.clone());
+        let _ = self.record.save(&jobs_dir());
+        emit_finished(&self.app, &tasks.group, &self.record, None, Some(message.clone()));
+        return Err(ExecuteFailure::Recorded);
+      }
+      // §8.4: the platform can revert the version to `uploading` during the
+      // complete phase when its own probe finds the cloud upload session
+      // gone (3 consecutive 500s) — the pack has to be sent again under a
+      // new generation. The task becomes resumable; resuming re-enters
+      // `upload_pack`, whose reconciliation adopts the server's new
+      // generation before anything signs or reports under it (§9.1).
+      if status == "uploading" {
+        let message = state["error"]
+          .as_str()
+          .filter(|text| !text.is_empty())
+          .unwrap_or("云盘上传会话已失效，需要重新上传")
+          .to_string();
+        tasks.platform.write().unwrap().mark_failed(message.clone());
+        self.record.phase = Phase::Failed;
+        self.record.error = Some(message.clone());
+        let _ = self.record.save(&jobs_dir());
+        emit_finished(&self.app, &tasks.group, &self.record, None, Some(message.clone()));
+        return Err(ExecuteFailure::Recorded);
+      }
+      if status == "published" {
+        let files: Vec<LocalFile> = self
+          .record
+          .files
+          .iter()
+          .map(|file| LocalFile {
+            path: file.path.clone(),
+            key: FileKey {
+              sha1: file.sha1.clone(),
+              size: file.size,
+            },
+          })
+          .collect();
+        let slug = state["project_slug"]
+          .as_str()
+          .unwrap_or(&self.record.project_slug)
+          .to_string();
+        let adoption = match instance_of(&self.app, &self.record.instance_id) {
+          Ok(instance) => {
+            adopt_published(
+              &self.app,
+              &instance,
+              &slug,
+              self.record.version_id,
+              &self.record.version_number,
+              &files,
+              self.record.mmc_pack.as_ref(),
+            )
+            .await
+          }
+          Err(_) => super::commands::Adoption::RecordFailed,
+        };
+        JobRecord::remove(&jobs_dir(), &self.record.id);
+        let outcome = PublishOutcome {
+          version_id: self.record.version_id,
+          skipped: self.record.skipped.clone(),
+          adoption,
+        };
+        complete(&tasks.platform);
+        log::info!(
+          "Modpack publish {} platform processing completed in {:.2}s",
+          self.record.id,
+          started.elapsed().as_secs_f64()
+        );
+        emit_finished(&self.app, &tasks.group, &self.record, Some(outcome), None);
+        return Ok(());
+      }
+      sleep(POLL).await;
     }
-  }
-
-  pub(super) fn monitor_in_background(self) {
-    if monitor_is_running(&self.record.id) {
-      return;
-    }
-    tauri::async_runtime::spawn(async move {
-      monitor_platform(self).await;
-    });
   }
 
   /// A request that never got an answer may still have been queued, so each
@@ -1349,142 +1509,9 @@ async fn sign_request(
   Ok(signed)
 }
 
-async fn monitor_platform(job: PublishJob) {
-  let Some(_token) = take_monitor(&job.record.id) else {
-    return;
-  };
-  let started = Instant::now();
-  let mut misses = 0;
-  let mut last_status = String::new();
-  loop {
-    let state = match job.poll_status().await {
-      Ok(Some(state)) => {
-        misses = 0;
-        state
-      }
-      Ok(None) => {
-        misses += 1;
-        log::warn!(
-          "Modpack publish {} status check missed ({}/{})",
-          job.record.id,
-          misses,
-          POLL_MISSES
-        );
-        if misses >= POLL_MISSES {
-          let mut record = job.record.clone();
-          record.phase = Phase::Processing;
-          record.error = Some("暂时无法确认平台处理进度，请稍后重新启动启动器继续".into());
-          let _ = record.save(&jobs_dir());
-          return;
-        }
-        sleep(POLL).await;
-        continue;
-      }
-      Err(error) => {
-        let mut record = job.record.clone();
-        record.phase = Phase::Failed;
-        record.error = Some(error.0.clone());
-        let _ = record.save(&jobs_dir());
-        emit_finished(&job.app, &record, None, Some(error.0));
-        return;
-      }
-    };
-    let status = state["status"].as_str().unwrap_or_default();
-    if status != last_status {
-      log::info!(
-        "Modpack publish {} status changed: {} -> {} after {:.2}s processing",
-        job.record.id,
-        last_status,
-        status,
-        started.elapsed().as_secs_f64()
-      );
-      last_status = status.to_string();
-    }
-    if status == "failed" {
-      let message = state["error"]
-        .as_str()
-        .filter(|text| !text.is_empty())
-        .unwrap_or("平台处理增量包失败")
-        .to_string();
-      let mut record = job.record.clone();
-      record.phase = Phase::Failed;
-      record.error = Some(message.clone());
-      let _ = record.save(&jobs_dir());
-      emit_finished(&job.app, &record, None, Some(message));
-      return;
-    }
-    // §8.4: the platform can revert the version to `uploading` during the
-    // complete phase when its own probe finds the cloud upload session
-    // gone (3 consecutive 500s) — the pack has to be sent again under a new
-    // generation. Polling stops here and the task becomes resumable, same
-    // as any other `Failed` task; resuming re-enters `upload_pack`, whose
-    // reconciliation adopts the server's new generation before anything
-    // signs or reports under it (§9.1).
-    if status == "uploading" {
-      let message = state["error"]
-        .as_str()
-        .filter(|text| !text.is_empty())
-        .unwrap_or("云盘上传会话已失效，需要重新上传")
-        .to_string();
-      let mut record = job.record.clone();
-      record.phase = Phase::Failed;
-      record.error = Some(message.clone());
-      let _ = record.save(&jobs_dir());
-      emit_finished(&job.app, &record, None, Some(message));
-      return;
-    }
-    if status == "published" {
-      let files: Vec<LocalFile> = job
-        .record
-        .files
-        .iter()
-        .map(|file| LocalFile {
-          path: file.path.clone(),
-          key: FileKey {
-            sha1: file.sha1.clone(),
-            size: file.size,
-          },
-        })
-        .collect();
-      let slug = state["project_slug"]
-        .as_str()
-        .unwrap_or(&job.record.project_slug)
-        .to_string();
-      let adoption = match instance_of(&job.app, &job.record.instance_id) {
-        Ok(instance) => {
-          adopt_published(
-            &job.app,
-            &instance,
-            &slug,
-            job.record.version_id,
-            &job.record.version_number,
-            &files,
-            job.record.mmc_pack.as_ref(),
-          )
-          .await
-        }
-        Err(_) => super::commands::Adoption::RecordFailed,
-      };
-      JobRecord::remove(&jobs_dir(), &job.record.id);
-      let outcome = PublishOutcome {
-        version_id: job.record.version_id,
-        skipped: job.record.skipped.clone(),
-        adoption,
-      };
-      log::info!(
-        "Modpack publish {} platform processing completed in {:.2}s",
-        job.record.id,
-        started.elapsed().as_secs_f64()
-      );
-      emit_finished(&job.app, &job.record, Some(outcome), None);
-      return;
-    }
-    sleep(POLL).await;
-  }
-}
-
 fn emit_finished(
   app: &AppHandle,
+  group: &str,
   record: &JobRecord,
   outcome: Option<PublishOutcome>,
   error: Option<String>,
@@ -1494,7 +1521,7 @@ fn emit_finished(
     FINISHED_EVENT,
     PublishFinished {
       instance_id: record.instance_id.clone(),
-      group: format!("modpack-publish-monitor: {}", record.version_number),
+      group: group.to_string(),
       job_id: record.id.clone(),
       outcome,
       error,
@@ -1504,6 +1531,7 @@ fn emit_finished(
 
 #[cfg(test)]
 mod tests {
+  use super::super::record::RECORD_SCHEMA;
   use super::*;
 
   #[test]
@@ -1746,5 +1774,42 @@ mod tests {
     assert!(!batch.contains(&2));
     assert!(!batch.contains(&4));
     assert_eq!(batch, vec![1, 3, 5]);
+  }
+
+  /// A record resumed from an earlier failure carries that failure's error
+  /// until the platform stage begins. When the resumed run fails early
+  /// (first status check, upload, commit), `run` must still overwrite the
+  /// record with the new error and tell the frontend — the stale message
+  /// must not shield the fresh failure just because it exists.
+  #[test]
+  fn a_fresh_failure_overwrites_the_old_error_a_resumed_record_carries() {
+    let mut record = JobRecord {
+      schema: RECORD_SCHEMA,
+      id: "job".into(),
+      phase: Phase::Failed,
+      error: Some("MODPACK_UPLOAD_CLOUD_UNAVAILABLE".into()),
+      created_at: 1,
+      instance_id: "i".into(),
+      instance_name: "n".into(),
+      project_slug: "p".into(),
+      version_id: 1,
+      version_number: "1".into(),
+      files: vec![],
+      mmc_pack: None,
+      skipped: vec![],
+      objects: vec![],
+      pack: None,
+      upload: None,
+    };
+    let fresh = ExecuteFailure::Fresh(USTBLError("平台上已找不到这个版本".into()));
+    let message = record_failure(&mut record, &fresh);
+    assert_eq!(message, Some("平台上已找不到这个版本".to_string()));
+    assert_eq!(record.phase, Phase::Failed);
+    assert_eq!(record.error.as_deref(), Some("平台上已找不到这个版本"));
+
+    // The platform stage saved the record itself; `run` leaves it alone.
+    let mut record = JobRecord { ..record };
+    assert_eq!(record_failure(&mut record, &ExecuteFailure::Recorded), None);
+    assert_eq!(record.error.as_deref(), Some("平台上已找不到这个版本"));
   }
 }

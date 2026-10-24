@@ -22,6 +22,13 @@ interface InstanceBasicSettingsProps {
   setIconSrc: (iconSrc: string) => void;
   gameDirectory: GameDirectory | undefined;
   setGameDirectory: (directory: GameDirectory) => void;
+  /** Label of the description row; the instance settings wording by default. */
+  descriptionLabel?: string;
+  /**
+   * Fold a long description to this many lines (in full while editing) and
+   * keep its label from being squeezed.
+   */
+  descriptionMaxLines?: number;
 }
 
 export const InstanceBasicSettings: React.FC<InstanceBasicSettingsProps> = ({
@@ -33,6 +40,8 @@ export const InstanceBasicSettings: React.FC<InstanceBasicSettingsProps> = ({
   setIconSrc,
   gameDirectory,
   setGameDirectory,
+  descriptionLabel,
+  descriptionMaxLines,
 }) => {
   const { config } = useLauncherConfig();
 
@@ -61,13 +70,20 @@ export const InstanceBasicSettings: React.FC<InstanceBasicSettingsProps> = ({
           ),
         },
         {
-          title: t("InstanceSettingsPage.description"),
+          title: descriptionLabel ?? t("InstanceSettingsPage.description"),
+          isTitleFixed: descriptionMaxLines !== undefined,
           children: (
             <Editable
               isTextArea={true}
               value={description}
               onEditSubmit={setDescription}
-              textProps={{ className: "secondary-text", fontSize: "xs-sm" }}
+              textProps={{
+                className: "secondary-text",
+                fontSize: "xs-sm",
+                ...(descriptionMaxLines
+                  ? { noOfLines: descriptionMaxLines }
+                  : {}),
+              }}
               inputProps={{ fontSize: "xs-sm" }}
             />
           ),

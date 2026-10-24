@@ -639,7 +639,7 @@
     }
   },
   "DownloadTasksPage": {
-    "title": "下载任务",
+    "title": "下载与上传任务",
     "unfinishedPublish": {
       "title": "未完成的发布",
       "phase": {
@@ -1275,9 +1275,7 @@
       "exportModPack": "导出为整合包",
       "star": "星标此实例",
       "unstar": "取消星标",
-      "publishModPack": "发布到校园整合包",
-      "updateModpack": "更新整合包",
-      "updateModpackAvailable": "更新整合包（有新版本）"
+      "publishModPack": "发布到校园整合包"
     },
     "instanceTabList": {
       "overview": "概览",
@@ -2658,6 +2656,7 @@
             "MODPACK_UPDATE_BUSY": "该整合包正在更新中",
             "MODPACK_UPDATE_VERIFY_FAILED": "下载的文件校验失败，未对实例做任何修改",
             "MODPACK_UPDATE_STALE": "本地文件在检查后发生了变化，请重新检查更新",
+            "MODPACK_UPDATE_PREPARE_CANCELLED": "更新预览已取消",
             "MODPACK_UPDATE_REMOTE_INVALID": "新版本的文件清单不合法，已拒绝更新",
             "MODPACK_UPDATE_LINE_MISMATCH": "新版本的游戏版本或加载器与此实例不一致，无法更新",
             "MODPACK_UPDATE_UNSUPPORTED": "此实例暂不支持自动更新",
@@ -2692,6 +2691,7 @@
             "MODPACK_UPDATE_BUSY": "该整合包正在更新中",
             "MODPACK_UPDATE_VERIFY_FAILED": "下载的文件校验失败，未对实例做任何修改",
             "MODPACK_UPDATE_STALE": "本地文件在检查后发生了变化，请重新检查更新",
+            "MODPACK_UPDATE_PREPARE_CANCELLED": "更新预览已取消",
             "MODPACK_UPDATE_REMOTE_INVALID": "新版本的文件清单不合法，已拒绝更新",
             "MODPACK_UPDATE_LINE_MISMATCH": "新版本的游戏版本或加载器与此实例不一致，无法更新",
             "MODPACK_UPDATE_UNSUPPORTED": "此实例暂不支持自动更新",
@@ -2731,6 +2731,7 @@
             "MODPACK_UPDATE_BUSY": "该整合包正在更新中",
             "MODPACK_UPDATE_VERIFY_FAILED": "下载的文件校验失败，未对实例做任何修改",
             "MODPACK_UPDATE_STALE": "本地文件在检查后发生了变化，请重新检查更新",
+            "MODPACK_UPDATE_PREPARE_CANCELLED": "更新预览已取消",
             "MODPACK_UPDATE_REMOTE_INVALID": "新版本的文件清单不合法，已拒绝更新",
             "MODPACK_UPDATE_LINE_MISMATCH": "新版本的游戏版本或加载器与此实例不一致，无法更新",
             "MODPACK_UPDATE_UNSUPPORTED": "此实例暂不支持自动更新",
@@ -3160,7 +3161,8 @@
       "gameVersion": "游戏版本",
       "modLoader": "模组加载器",
       "modpackVersion": "整合包版本",
-      "modpackInfo": "整合包信息"
+      "modpackInfo": "整合包信息",
+      "summary": "简介"
     },
     "button": {
       "install": "安装"
@@ -3197,7 +3199,8 @@
       "delete": "删除 {{count}}",
       "loaderChange": "模组加载器将从 {{from}} 切换到 {{to}}",
       "conflicts": "有 {{count}} 个文件与本地修改冲突，请选择处理方式（默认保留本地）",
-      "autoMerged": "已自动合并 {{count}} 个配置文件",
+      "autoMerged": "自动合并 {{count}}",
+      "showAll": "显示全部（还有 {{count}} 项）",
       "reinstallRequired": "{{latest}} 更改了整合包的组件链，无法就地更新，请重新安装该整合包"
     },
     "conflictKind": {
@@ -3218,7 +3221,6 @@
       "remoteSide": "新版本"
     },
     "button": {
-      "preview": "预览更新",
       "apply": "开始更新",
       "sync": "同步版本记录",
       "resume": "恢复跟随",
@@ -3238,6 +3240,7 @@
     "reason": {
       "MODPACK_UPDATE_UNLINK_PENDING": "上次更新尚未完成，请先恢复或回滚后再解除跟随",
       "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线",
+      "MODPACK_UPDATE_PREPARE_CANCELLED": "更新预览已取消",
       "MODPACK_UPDATE_UNSUPPORTED": "该实例缺少可用的安装记录或未开启版本隔离",
       "MODPACK_UPDATE_NOT_ISOLATED": "该实例没有开启版本隔离，无法安全对比更新。请在实例设置中开启后重试",
       "MODPACK_UPDATE_BASELINE_MISSING": "该实例缺少整合包的安装记录或记录已损坏，无法对比更新",
@@ -3306,7 +3309,8 @@
         "needsRepair": "需修复",
         "waitingLoader": "等待加载器",
         "unknown": "检查失败",
-        "notChecked": "未检查"
+        "notChecked": "未检查",
+        "unlinked": "已解除跟随"
       },
       "action": {
         "update": "更新",
@@ -3321,6 +3325,45 @@
       "installed": "已安装",
       "installedHint": "本地已有 {{count}} 个对应实例，点击查看",
       "unlinkedToast": "整合包已被删除，实例 {{name}} 已解除跟随"
+    }
+  },
+  "ModpackInstanceDetailsModal": {
+    "header": {
+      "title": "{{name}} 的整合包详情"
+    },
+    "section": {
+      "instance": "实例",
+      "follow": "当前跟随"
+    },
+    "instance": {
+      "name": "名称",
+      "version": "游戏版本",
+      "loader": "模组加载器",
+      "modpackVersion": "整合包版本"
+    },
+    "follow": {
+      "platform": "来源",
+      "project": "整合包",
+      "projectGone": "平台上找不到这个整合包",
+      "current": "当前版本",
+      "latest": "最新版本",
+      "status": "状态",
+      "following": "跟随中",
+      "paused": "已暂停"
+    },
+    "action": {
+      "pause": "暂停跟随",
+      "resume": "恢复跟随",
+      "unlink": "解除跟随",
+      "viewMods": "查看模组"
+    },
+    "notFollowing": "这个实例没有跟随整合包。"
+  },
+  "NotifyModpackUpdatesModal": {
+    "title": "有整合包更新",
+    "button": {
+      "later": "稍后",
+      "goToSync": "前往更新"
     }
   }
 }

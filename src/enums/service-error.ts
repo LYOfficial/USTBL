@@ -49,6 +49,7 @@ export enum InstanceError {
   ModpackUpdateVerifyFailed = "MODPACK_UPDATE_VERIFY_FAILED",
   ModpackUpdateMergeInvalid = "MODPACK_UPDATE_MERGE_INVALID",
   ModpackUpdateStale = "MODPACK_UPDATE_STALE",
+  ModpackUpdatePrepareCancelled = "MODPACK_UPDATE_PREPARE_CANCELLED",
   ModpackUpdateRemoteInvalid = "MODPACK_UPDATE_REMOTE_INVALID",
   ModpackUpdateLineMismatch = "MODPACK_UPDATE_LINE_MISMATCH",
   ModpackUpdateUnsupported = "MODPACK_UPDATE_UNSUPPORTED",

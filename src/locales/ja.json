@@ -639,7 +639,7 @@
     }
   },
   "DownloadTasksPage": {
-    "title": "ダウンロードタスク",
+    "title": "ダウンロード・アップロードタスク",
     "unfinishedPublish": {
       "title": "未完了の公開",
       "phase": {
@@ -1275,9 +1275,7 @@
       "exportModPack": "モッドパックエクスポート",
       "star": "このインスタンスをスター",
       "unstar": "このインスタンスを非スター",
-      "publishModPack": "キャンパスModパックに公開",
-      "updateModpack": "モッドパックを更新",
-      "updateModpackAvailable": "モッドパックを更新（新バージョンあり）"
+      "publishModPack": "キャンパスModパックに公開"
     },
     "instanceTabList": {
       "overview": "概要",
@@ -2658,6 +2656,7 @@
             "MODPACK_UPDATE_BUSY": "このModパックは更新中です",
             "MODPACK_UPDATE_VERIFY_FAILED": "ダウンロードしたファイルの検証に失敗しました。インスタンスは変更されていません",
             "MODPACK_UPDATE_STALE": "確認後にローカルファイルが変更されました。もう一度更新を確認してください",
+            "MODPACK_UPDATE_PREPARE_CANCELLED": "更新プレビューはキャンセルされました",
             "MODPACK_UPDATE_REMOTE_INVALID": "新しいバージョンのファイル一覧が無効なため、更新を拒否しました",
             "MODPACK_UPDATE_LINE_MISMATCH": "新しいバージョンのゲームバージョンまたはModローダーがこのインスタンスと異なります",
             "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスは自動更新できません",
@@ -2692,6 +2691,7 @@
             "MODPACK_UPDATE_BUSY": "このModパックは更新中です",
             "MODPACK_UPDATE_VERIFY_FAILED": "ダウンロードしたファイルの検証に失敗しました。インスタンスは変更されていません",
             "MODPACK_UPDATE_STALE": "確認後にローカルファイルが変更されました。もう一度更新を確認してください",
+            "MODPACK_UPDATE_PREPARE_CANCELLED": "更新プレビューはキャンセルされました",
             "MODPACK_UPDATE_REMOTE_INVALID": "新しいバージョンのファイル一覧が無効なため、更新を拒否しました",
             "MODPACK_UPDATE_LINE_MISMATCH": "新しいバージョンのゲームバージョンまたはModローダーがこのインスタンスと異なります",
             "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスは自動更新できません",
@@ -2731,6 +2731,7 @@
             "MODPACK_UPDATE_BUSY": "このModパックは更新中です",
             "MODPACK_UPDATE_VERIFY_FAILED": "ダウンロードしたファイルの検証に失敗しました。インスタンスは変更されていません",
             "MODPACK_UPDATE_STALE": "確認後にローカルファイルが変更されました。もう一度更新を確認してください",
+            "MODPACK_UPDATE_PREPARE_CANCELLED": "更新プレビューはキャンセルされました",
             "MODPACK_UPDATE_REMOTE_INVALID": "新しいバージョンのファイル一覧が無効なため、更新を拒否しました",
             "MODPACK_UPDATE_LINE_MISMATCH": "新しいバージョンのゲームバージョンまたはModローダーがこのインスタンスと異なります",
             "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスは自動更新できません",
@@ -3160,7 +3161,8 @@
       "gameVersion": "ゲームバージョン",
       "modLoader": "Mod ローダー",
       "modpackVersion": "Modpack バージョン",
-      "modpackInfo": "Modpack 情報"
+      "modpackInfo": "Modpack 情報",
+      "summary": "概要"
     },
     "button": {
       "install": "インストール"
@@ -3197,7 +3199,8 @@
       "delete": "削除 {{count}}",
       "loaderChange": "MODローダーを {{from}} から {{to}} に切り替えます",
       "conflicts": "{{count}} 個のファイルがローカルの変更と競合しています。処理を選択してください（既定はローカルを保持）",
-      "autoMerged": "{{count}} 個の設定ファイルを自動的にマージしました",
+      "autoMerged": "自動マージ {{count}}",
+      "showAll": "すべて表示（あと {{count}} 件）",
       "reinstallRequired": "{{latest}} はコンポーネント構成を変更するため、そのまま更新できません。モッドパックを再インストールしてください"
     },
     "conflictKind": {
@@ -3218,7 +3221,6 @@
       "remoteSide": "新しいバージョン"
     },
     "button": {
-      "preview": "更新をプレビュー",
       "apply": "更新する",
       "sync": "バージョン記録を同期",
       "resume": "追従を再開",
@@ -3238,6 +3240,7 @@
     "reason": {
       "MODPACK_UPDATE_UNLINK_PENDING": "前回の更新が完了していません。先に復旧またはロールバックしてから解除してください",
       "MODPACK_UPDATE_LINE_GONE": "プラットフォームにこのモッドパックのラインはもうありません",
+      "MODPACK_UPDATE_PREPARE_CANCELLED": "更新プレビューはキャンセルされました",
       "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスには利用できるインストール記録がないか、バージョン分離が無効です",
       "MODPACK_UPDATE_NOT_ISOLATED": "このインスタンスはバージョン分離が無効のため、安全に比較できません。インスタンス設定で有効にして再試行してください",
       "MODPACK_UPDATE_BASELINE_MISSING": "このインスタンスにはモッドパックのインストール記録がないか、記録が破損しているため比較できません",
@@ -3306,7 +3309,8 @@
         "needsRepair": "要修復",
         "waitingLoader": "ローダー待ち",
         "unknown": "確認に失敗",
-        "notChecked": "未確認"
+        "notChecked": "未確認",
+        "unlinked": "フォロー解除済み"
       },
       "action": {
         "update": "更新",
@@ -3321,6 +3325,45 @@
       "installed": "インストール済み",
       "installedHint": "この端末に該当するインスタンスが {{count}} 件あります。クリックで表示",
       "unlinkedToast": "モッドパックが削除されたため、インスタンス {{name}} の追従を解除しました"
+    }
+  },
+  "ModpackInstanceDetailsModal": {
+    "header": {
+      "title": "{{name}} のモッドパック詳細"
+    },
+    "section": {
+      "instance": "インスタンス",
+      "follow": "フォロー中"
+    },
+    "instance": {
+      "name": "名前",
+      "version": "ゲームバージョン",
+      "loader": "モッドローダー",
+      "modpackVersion": "モッドパックバージョン"
+    },
+    "follow": {
+      "platform": "ソース",
+      "project": "プロジェクト",
+      "projectGone": "プラットフォームにこのモッドパックが見つかりません",
+      "current": "現在のバージョン",
+      "latest": "最新バージョン",
+      "status": "状態",
+      "following": "フォロー中",
+      "paused": "一時停止中"
+    },
+    "action": {
+      "pause": "一時停止",
+      "resume": "再開",
+      "unlink": "フォロー解除",
+      "viewMods": "モッドを見る"
+    },
+    "notFollowing": "このインスタンスはモッドパックをフォローしていません。"
+  },
+  "NotifyModpackUpdatesModal": {
+    "title": "モッドパックの更新があります",
+    "button": {
+      "later": "後で",
+      "goToSync": "更新へ"
     }
   }
 }

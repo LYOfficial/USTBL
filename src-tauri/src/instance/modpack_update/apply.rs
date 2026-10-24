@@ -311,6 +311,7 @@ pub fn can_roll_back_last(root: &Path) -> bool {
 /// Put the instance back the way it was before the last update. Files the
 /// player changed since then are overwritten, so callers confirm first. The
 /// backup is spent afterwards; returns whether there was one.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn roll_back_last(root: &Path) -> USTBLResult<bool> {
   roll_back_last_checked(root, || Ok(()))
 }
@@ -1342,5 +1343,85 @@ mod tests {
         .is_err()
     );
     assert!(!root.0.parent().unwrap().join("evil.jar").exists());
+  }
+
+  /// "Take remote" on every conflict, a text file answered block by block
+  /// included, leaves nothing for the local scan to report afterwards.
+  #[tokio::test]
+  async fn taking_every_remote_side_leaves_no_local_changes() {
+    use crate::instance::helpers::modpack::baseline::BaselineFile;
+    use crate::instance::modpack_update::commands::selected_hunk_contents;
+    use crate::instance::modpack_update::diff::{resolve, ConflictChoice};
+    use crate::instance::modpack_update::plan::{count_local_changes, prepare_with_contents};
+
+    let root = setup();
+    root.write("mods/a.jar", "a1-edited");
+    root.write("mods/b.jar", "b1");
+    // Edited here with Windows line endings; the new version changes the same line.
+    root.write("config/c.toml", "x = 2\r\ny = 1\r\n");
+    let base_text = "x = 1\ny = 1\n";
+    let files: Vec<BaselineFile> = [
+      ("mods/a.jar", "a1"),
+      ("mods/b.jar", "b1"),
+      ("config/c.toml", base_text),
+    ]
+    .iter()
+    .map(|(path, content)| {
+      let key = sha1_of(content.as_bytes());
+      BaselineFile {
+        path: path.to_string(),
+        sha1: key.sha1,
+        size: key.size,
+      }
+    })
+    .collect();
+    base_store::store(&root.0, &files[2], base_text.as_bytes()).unwrap();
+    let installed = ModpackBaseline::build(&origin("1"), loader("0.15.0"), files);
+
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let remote_text = "x = 3\ny = 1\n";
+    let remote_files = vec![
+      url_file("mods/a.jar", "a2", &mut env),
+      url_file("mods/b.jar", "b2", &mut env),
+      url_file("config/c.toml", remote_text, &mut env),
+    ];
+    let mut update = request(&root, remote_files, Vec::new(), "0.15.0");
+    let contents = BTreeMap::from([("config/c.toml".to_string(), remote_text.as_bytes().to_vec())]);
+    let prepared = prepare_with_contents(&root.0, &installed, &update.remote, &contents)
+      .await
+      .unwrap();
+    assert_eq!(prepared.diff.conflicts.len(), 2);
+    assert!(prepared
+      .diff
+      .conflicts
+      .iter()
+      .any(|conflict| conflict.path == "config/c.toml" && !conflict.hunks.is_empty()));
+
+    // What the update dialog sends for "take remote for all".
+    let mut choices = BTreeMap::new();
+    for conflict in &prepared.diff.conflicts {
+      if conflict.hunks.is_empty() {
+        choices.insert(conflict.path.clone(), ConflictChoice::TakeRemote);
+      }
+      for index in 0..conflict.hunks.len() {
+        choices.insert(
+          format!("{}#{index}", conflict.path),
+          ConflictChoice::TakeRemote,
+        );
+      }
+    }
+    update.merged_contents = selected_hunk_contents(&prepared, &mut choices).unwrap();
+    update.operations = resolve(&prepared.diff, &choices);
+
+    apply(&env, update).await.unwrap();
+
+    let baseline = ModpackBaseline::load(&root.0).await.unwrap();
+    assert_eq!(count_local_changes(&root.0, &baseline).await.unwrap(), 0);
+    assert_eq!(root.read("mods/a.jar").as_deref(), Some("a2"));
+    assert_eq!(root.read("mods/b.jar").as_deref(), Some("b2"));
+    assert_eq!(root.read("config/c.toml").as_deref(), Some(remote_text));
   }
 }

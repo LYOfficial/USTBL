@@ -13,6 +13,7 @@ import { useGlobalData } from "@/contexts/global-data";
 import { useSharedModals } from "@/contexts/shared-modal";
 import { useToast } from "@/contexts/toast";
 import { OtherResourceType } from "@/enums/resource";
+import { CampusUnfinishedPublish } from "@/models/campus-modpack";
 import {
   CreatedPTaskEventStatus,
   FailedPTaskEventStatus,
@@ -42,6 +43,10 @@ import { takePendingModpackOrigin } from "@/utils/modpack-origin";
 interface TaskContextType {
   tasks: TaskGroupDesc[];
   generalPercent: number | undefined; // General progress percentage for all tasks
+  /** Publish records waiting on the user (§3.2.3); the nav-bar task button
+   * counts these too, so it stays visible after a restart. */
+  unfinishedPublishes: CampusUnfinishedPublish[];
+  refreshUnfinishedPublishes: () => void;
   handleScheduleProgressiveTaskGroup: (
     taskGroup: string,
     params: TaskParam[]
@@ -590,9 +595,28 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
     openSharedModal,
   ]);
 
+  const [unfinishedPublishes, setUnfinishedPublishes] = useState<
+    CampusUnfinishedPublish[]
+  >([]);
+  const refreshUnfinishedPublishes = useCallback(() => {
+    CampusModpackService.listCampusModpackPublishJobs().then((response) => {
+      if (response.status === "success") setUnfinishedPublishes(response.data);
+    });
+  }, []);
+
+  // The records drive the nav-bar task button too, so they are fetched here
+  // once, on every publish ending, and on a slow timer — the components
+  // showing them never poll on their own (§3.2.2, 10-23 addition).
+  useEffect(() => {
+    refreshUnfinishedPublishes();
+    const timer = setInterval(refreshUnfinishedPublishes, 3000);
+    return () => clearInterval(timer);
+  }, [refreshUnfinishedPublishes]);
+
   // A publish runs in the background; this is where its result is told.
   useEffect(() => {
     return CampusModpackService.onPublishFinished((payload) => {
+      refreshUnfinishedPublishes();
       if (payload.error !== undefined) {
         toast({
           title: t("Services.instance.publishCampusModpack.error.title"),
@@ -619,7 +643,7 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
         status: "success",
       });
     });
-  }, [getInstanceList, t, toast]);
+  }, [getInstanceList, refreshUnfinishedPublishes, t, toast]);
 
   useEffect(() => {
     if (!tasks || !tasks.length) setGeneralPercent(undefined);
@@ -645,6 +669,8 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
       value={{
         tasks,
         generalPercent,
+        unfinishedPublishes,
+        refreshUnfinishedPublishes,
         handleScheduleProgressiveTaskGroup,
         handleCancelProgressiveTaskGroup,
         handleStopProgressiveTaskGroup,

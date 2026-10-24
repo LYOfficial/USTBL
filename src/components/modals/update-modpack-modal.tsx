@@ -1,11 +1,11 @@
 import {
   Alert,
   AlertIcon,
-  Badge,
   Box,
   Button,
   ButtonGroup,
   HStack,
+  Icon,
   Modal,
   ModalBody,
   ModalCloseButton,
@@ -19,16 +19,18 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { useRouter } from "next/router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { LuChevronDown, LuChevronRight } from "react-icons/lu";
 import { DiffFile, DiffHunks, regionHunk } from "@/components/common/diff-view";
 import { useLauncherConfig } from "@/contexts/config";
 import { useGlobalData } from "@/contexts/global-data";
-import { useSharedModals } from "@/contexts/shared-modal";
 import { useToast } from "@/contexts/toast";
+import { InstanceError } from "@/enums/service-error";
 import { CampusInstallProgress } from "@/models/campus-modpack";
 import {
   ModpackConflictChoice,
+  ModpackFileChange,
   ModpackUpdateCheck,
   ModpackUpdatePlan,
 } from "@/models/modpack-update";
@@ -40,7 +42,110 @@ interface UpdateModpackModalProps extends Omit<ModalProps, "children"> {
   instanceName: string;
 }
 
-type Phase = "checking" | "checked" | "planning" | "planned" | "applying";
+type CheckPhase = "checking" | "checked" | "applying";
+
+type PlanPhase = "idle" | "planning" | "planned" | "planFailed";
+
+interface PlanError {
+  message: string;
+  details?: string;
+}
+
+/** Conflict choices remembered per instance while the launcher runs. */
+const rememberedChoices = new Map<
+  string,
+  { planHash: string; choices: Record<string, ModpackConflictChoice> }
+>();
+
+const formatSize = (size?: number) => {
+  if (size === undefined) return "";
+  if (size < 1024) return `${size} B`;
+  const units = ["KiB", "MiB", "GiB"];
+  let value = size / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(value >= 100 ? 0 : 1)} ${units[unit]}`;
+};
+
+const fileName = (path: string) => path.split("/").pop() ?? path;
+
+/** One collapsible group of file changes, capped until "show all". */
+const ChangeGroup: React.FC<{
+  title: string;
+  colorScheme: string;
+  changes: ModpackFileChange[];
+  renderSize: (change: ModpackFileChange) => string;
+}> = ({ title, colorScheme, changes, renderSize }) => {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  if (changes.length === 0) return null;
+  const sorted = [...changes].sort((a, b) => a.path.localeCompare(b.path));
+  const shown = showAll ? sorted : sorted.slice(0, 100);
+  return (
+    <Box borderWidth="1px" borderRadius="md">
+      <HStack
+        as="button"
+        type="button"
+        w="full"
+        px={3}
+        py={2}
+        spacing={2}
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+      >
+        <Icon as={open ? LuChevronDown : LuChevronRight} />
+        <Text fontWeight="medium" color={`${colorScheme}.500`}>
+          {t(title, { count: changes.length })}
+        </Text>
+      </HStack>
+      {open && (
+        <VStack align="stretch" spacing={0} borderTopWidth="1px">
+          {shown.map((change) => (
+            <HStack
+              key={change.path}
+              justify="space-between"
+              spacing={3}
+              px={3}
+              py={1.5}
+              borderTopWidth="1px"
+            >
+              <Box minW={0}>
+                <Text fontSize="sm" noOfLines={1} wordBreak="break-all">
+                  {fileName(change.path)}
+                </Text>
+                {change.path.includes("/") && (
+                  <Text fontSize="xs" className="secondary-text" noOfLines={1}>
+                    {change.path}
+                  </Text>
+                )}
+              </Box>
+              <Text fontSize="xs" className="secondary-text" flexShrink={0}>
+                {renderSize(change)}
+              </Text>
+            </HStack>
+          ))}
+          {!showAll && sorted.length > shown.length && (
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() => setShowAll(true)}
+              borderTopWidth="1px"
+              borderRadius={0}
+            >
+              {t("UpdateModpackModal.plan.showAll", {
+                count: sorted.length - shown.length,
+              })}
+            </Button>
+          )}
+        </VStack>
+      )}
+    </Box>
+  );
+};
 
 const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
   instanceId,
@@ -52,10 +157,10 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
   const toast = useToast();
   const router = useRouter();
   const { getInstanceList, checkModpackUpdate } = useGlobalData();
-  const { openGenericConfirmDialog } = useSharedModals();
   const primaryColor = config.appearance.theme.primaryColor;
 
-  const [phase, setPhase] = useState<Phase>("checking");
+  const [checkPhase, setCheckPhase] = useState<CheckPhase>("checking");
+  const [planPhase, setPlanPhase] = useState<PlanPhase>("planning");
   const [check, setCheck] = useState<ModpackUpdateCheck | null>(null);
   const [plan, setPlan] = useState<ModpackUpdatePlan | null>(null);
   const [choices, setChoices] = useState<Record<string, ModpackConflictChoice>>(
@@ -63,10 +168,45 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
   );
   const [progress, setProgress] = useState<CampusInstallProgress | null>(null);
   const [confirmingRollback, setConfirmingRollback] = useState(false);
+  const [planError, setPlanError] = useState<PlanError | null>(null);
+  const choicesRef = useRef(choices);
+  choicesRef.current = choices;
+  // Each run of the open/retry flow gets a token; a preview that answers to
+  // an older token is stale (cancelled by the check or a retry) and dropped.
+  const roundRef = useRef(0);
+
+  const preparePlan = useCallback(
+    async (round: number) => {
+      const response =
+        await ModpackUpdateService.prepareModpackUpdate(instanceId);
+      if (roundRef.current !== round) return;
+      if (response.status === "success") {
+        setPlan(response.data);
+        // Restore the choices the player made the last time this exact plan
+        // was shown.
+        const remembered = rememberedChoices.get(instanceId);
+        if (remembered && remembered.planHash === response.data.planHash) {
+          setChoices(remembered.choices);
+        }
+        setPlanPhase("planned");
+      } else if (
+        response.details !== InstanceError.ModpackUpdatePrepareCancelled
+      ) {
+        setPlanError({ message: response.message, details: response.details });
+        setPlanPhase("planFailed");
+      } else {
+        setPlanPhase("idle");
+      }
+    },
+    [instanceId]
+  );
 
   const runCheck = useCallback(async () => {
-    setPhase("checking");
+    const round = ++roundRef.current;
+    setCheckPhase("checking");
+    setPlanPhase("planning");
     setPlan(null);
+    setPlanError(null);
     setChoices({});
     setConfirmingRollback(false);
     // An interrupted update is rolled back before anything is compared.
@@ -75,14 +215,52 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
     if (recovered.status === "success" && recovered.data) {
       getInstanceList(true);
     }
-    // Opening the dialog is the moment to also look for local edits.
-    setCheck(await checkModpackUpdate(instanceId, true));
-    setPhase("checked");
-  }, [instanceId, getInstanceList, checkModpackUpdate]);
+    // Check and preview run at the same time: the preview hits its cache
+    // when nothing changed, and the check is the light listing request.
+    const preparePromise = preparePlan(round);
+    const result = await checkModpackUpdate(instanceId, false);
+    if (roundRef.current !== round) return;
+    setCheck(result);
+    setCheckPhase("checked");
+    if (result.status !== "available") {
+      // No update: the preview is not worth waiting for; its answer, whenever
+      // it comes, belongs to a finished round and is dropped.
+      roundRef.current += 1;
+      void ModpackUpdateService.cancelModpackUpdatePrepare(instanceId);
+      setPlanPhase("idle");
+      if (result.status === "upToDate") {
+        // Only now is the local scan worth its hashing.
+        const scanned = await checkModpackUpdate(instanceId, true);
+        setCheck(scanned);
+      }
+    }
+    await preparePromise;
+  }, [instanceId, getInstanceList, checkModpackUpdate, preparePlan]);
 
+  // The opening check runs once per instance. runCheck also depends on
+  // getInstanceList, whose identity changes on every instance list update
+  // (e.g. play time writes), so it must not retrigger this effect: that
+  // would restart recover + scan + prepare and discard the choices.
+  const runCheckRef = useRef(runCheck);
+  runCheckRef.current = runCheck;
   useEffect(() => {
-    runCheck();
-  }, [runCheck]);
+    void runCheckRef.current();
+  }, [instanceId]);
+
+  // Remember the current choices when the dialog closes, by plan hash.
+  const planRef = useRef(plan);
+  planRef.current = plan;
+  useEffect(() => {
+    return () => {
+      const plan = planRef.current;
+      if (plan) {
+        rememberedChoices.set(instanceId, {
+          planHash: plan.planHash,
+          choices: choicesRef.current,
+        });
+      }
+    };
+  }, [instanceId]);
 
   useEffect(() => {
     return CampusModpackService.onInstallProgress((payload) => {
@@ -90,27 +268,10 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
     });
   }, [instanceId]);
 
-  const handlePrepare = useCallback(async () => {
-    setPhase("planning");
-    const response =
-      await ModpackUpdateService.prepareModpackUpdate(instanceId);
-    if (response.status === "success") {
-      setPlan(response.data);
-      setPhase("planned");
-    } else {
-      toast({
-        title: response.message,
-        description: response.details,
-        status: "error",
-      });
-      setPhase("checked");
-    }
-  }, [instanceId, toast]);
-
   const handleApply = useCallback(async () => {
     if (!plan) return;
     setProgress(null);
-    setPhase("applying");
+    setCheckPhase("applying");
     const response = await ModpackUpdateService.applyModpackUpdate(
       instanceId,
       plan.planHash,
@@ -118,6 +279,10 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
     );
     getInstanceList(true);
     if (response.status === "success") {
+      // The ledger reads local changes from the cached check; refresh it so
+      // conflicts answered with the remote side stop counting.
+      void checkModpackUpdate(instanceId, true);
+      rememberedChoices.delete(instanceId);
       toast({
         title: response.message,
         description: plan.toLabel,
@@ -145,6 +310,7 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
     instanceId,
     choices,
     getInstanceList,
+    checkModpackUpdate,
     toast,
     t,
     router,
@@ -153,7 +319,7 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
   ]);
 
   const handleRollback = useCallback(async () => {
-    setPhase("applying");
+    setCheckPhase("applying");
     setProgress(null);
     const response =
       await ModpackUpdateService.rollbackModpackUpdate(instanceId);
@@ -242,45 +408,10 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
     }
   }, [instanceId, getInstanceList, runCheck, toast]);
 
-  const handleUnlink = useCallback(async () => {
-    const response = await ModpackUpdateService.unlinkModpackOrigin(instanceId);
-    if (response.status === "success") {
-      getInstanceList(true);
-      toast({ title: response.message, status: "success" });
-      modalProps.onClose();
-    } else {
-      toast({
-        title: response.message,
-        description: response.details,
-        status: "error",
-      });
-    }
-  }, [instanceId, getInstanceList, toast, modalProps]);
-
-  const confirmUnlink = useCallback(() => {
-    openGenericConfirmDialog({
-      title: t("UpdateModpackModal.unlink.confirmTitle"),
-      body: t("UpdateModpackModal.unlink.confirmBody"),
-      btnOK: t("UpdateModpackModal.unlink.button"),
-      isAlert: true,
-      onOKCallback: () => {
-        void handleUnlink();
-      },
-    });
-  }, [openGenericConfirmDialog, t, handleUnlink]);
-
   const reasonText = (code?: string) =>
     code
       ? t(`UpdateModpackModal.reason.${code}`, { defaultValue: code })
       : undefined;
-
-  const counts = plan
-    ? {
-        add: plan.changes.filter((c) => c.kind === "add").length,
-        update: plan.changes.filter((c) => c.kind === "update").length,
-        delete: plan.changes.filter((c) => c.kind === "delete").length,
-      }
-    : null;
 
   const renderChecked = () => {
     if (!check) return null;
@@ -338,7 +469,7 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
   };
 
   const renderPlan = () => {
-    if (!plan || !counts) return null;
+    if (!plan) return null;
     if (plan.reinstallRequired) {
       return (
         <Alert status="warning">
@@ -356,22 +487,14 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
         </Text>
       );
     }
+    const adds = plan.changes.filter((c) => c.kind === "add");
+    const updates = plan.changes.filter((c) => c.kind === "update");
+    const deletes = plan.changes.filter((c) => c.kind === "delete");
     return (
       <VStack align="stretch" spacing={3}>
         <Text>
           {t("UpdateModpackModal.plan.summary", { latest: plan.toLabel })}
         </Text>
-        <HStack spacing={2}>
-          <Badge colorScheme="green">
-            {t("UpdateModpackModal.plan.add", { count: counts.add })}
-          </Badge>
-          <Badge colorScheme="blue">
-            {t("UpdateModpackModal.plan.update", { count: counts.update })}
-          </Badge>
-          <Badge colorScheme="red">
-            {t("UpdateModpackModal.plan.delete", { count: counts.delete })}
-          </Badge>
-        </HStack>
         {plan.loaderChange && (
           <Text fontSize="xs-sm">
             {t("UpdateModpackModal.plan.loaderChange", {
@@ -380,13 +503,36 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
             })}
           </Text>
         )}
-        {plan.autoMerged.length > 0 && (
-          <Text fontSize="xs-sm" color="green.500">
-            {t("UpdateModpackModal.plan.autoMerged", {
-              count: plan.autoMerged.length,
-            })}
-          </Text>
-        )}
+        <VStack align="stretch" spacing={2}>
+          <ChangeGroup
+            title="UpdateModpackModal.plan.add"
+            colorScheme="green"
+            changes={adds}
+            renderSize={(change) => formatSize(change.remote?.size)}
+          />
+          <ChangeGroup
+            title="UpdateModpackModal.plan.update"
+            colorScheme="blue"
+            changes={updates}
+            renderSize={(change) =>
+              `${formatSize(change.localSize)} → ${formatSize(change.remote?.size)}`
+            }
+          />
+          <ChangeGroup
+            title="UpdateModpackModal.plan.delete"
+            colorScheme="red"
+            changes={deletes}
+            renderSize={(change) => formatSize(change.localSize)}
+          />
+          <ChangeGroup
+            title="UpdateModpackModal.plan.autoMerged"
+            colorScheme="green"
+            changes={plan.autoMerged}
+            renderSize={(change) =>
+              `${formatSize(change.localSize)} → ${formatSize(change.remote?.size)}`
+            }
+          />
+        </VStack>
         {plan.conflicts.length > 0 && (
           <VStack align="stretch" spacing={3}>
             <HStack justify="space-between" spacing={2}>
@@ -548,15 +694,22 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
     </VStack>
   );
 
-  const busy = phase === "checking" || phase === "planning";
-  const applying = phase === "applying";
+  const applying = checkPhase === "applying";
+  const checking = checkPhase === "checking";
+  // Waiting for the player: the actions on the instance are open.
+  const idle =
+    !applying &&
+    !checking &&
+    (planPhase === "idle" ||
+      planPhase === "planned" ||
+      planPhase === "planFailed");
 
   return (
     <Modal
       scrollBehavior="inside"
       // Diffs need the width; the rest of the flow stays compact.
       size={
-        phase === "planned" && plan && plan.conflicts.length > 0
+        planPhase === "planned" && plan && plan.conflicts.length > 0
           ? { base: "2xl", lg: "4xl" }
           : { base: "lg", lg: "xl" }
       }
@@ -572,17 +725,29 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
         </ModalHeader>
         {!applying && <ModalCloseButton />}
         <ModalBody>
-          {busy && (
-            <Text className="secondary-text">
+          {(checking || planPhase === "planning") && (
+            <Text className="secondary-text" mb={3}>
               {t(
-                phase === "checking"
+                checking
                   ? "UpdateModpackModal.status.checking"
                   : "UpdateModpackModal.status.planning"
               )}
             </Text>
           )}
-          {phase === "checked" && renderChecked()}
-          {phase === "checked" && check?.canRollBack && (
+          {!checking && renderChecked()}
+          {planPhase === "planFailed" && planError && (
+            <Alert status="error" mt={3}>
+              <AlertIcon />
+              <VStack align="start" spacing={1}>
+                <Text>{planError.message}</Text>
+                {planError.details && (
+                  <Text fontSize="xs">{planError.details}</Text>
+                )}
+              </VStack>
+            </Alert>
+          )}
+          {planPhase === "planned" && renderPlan()}
+          {idle && check?.canRollBack && (
             <VStack align="start" spacing={2} mt={4}>
               <Text fontSize="xs" className="secondary-text">
                 {t("UpdateModpackModal.rollback.hint")}
@@ -595,16 +760,10 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
               )}
             </VStack>
           )}
-          {phase === "planned" && renderPlan()}
           {applying && renderApplying()}
         </ModalBody>
-        <ModalFooter>
-          {phase === "checked" && check?.status === "available" && (
-            <Button colorScheme={primaryColor} onClick={handlePrepare}>
-              {t("UpdateModpackModal.button.preview")}
-            </Button>
-          )}
-          {phase === "checked" && check?.canRollBack && (
+        <ModalFooter gap={2}>
+          {idle && check?.canRollBack && (
             <Button
               variant="ghost"
               colorScheme={confirmingRollback ? "red" : undefined}
@@ -621,27 +780,32 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
               )}
             </Button>
           )}
-          {phase === "checked" && check?.status === "paused" && (
+          {idle && check?.status === "paused" && (
             <Button colorScheme={primaryColor} onClick={handleResume}>
               {t("UpdateModpackModal.button.resume")}
             </Button>
           )}
-          {phase === "checked" &&
+          {idle &&
             (check?.status === "unknown" ||
               check?.status === "needsRepair") && (
               <Button variant="ghost" onClick={runCheck}>
                 {t("UpdateModpackModal.button.retry")}
               </Button>
             )}
-          {phase === "checked" &&
-            check &&
-            check.status !== "notFollowing" &&
-            !check.unlinked && (
-              <Button variant="ghost" colorScheme="red" onClick={confirmUnlink}>
-                {t("UpdateModpackModal.unlink.button")}
-              </Button>
-            )}
-          {phase === "planned" && plan && !plan.reinstallRequired && (
+          {planPhase === "planFailed" && (
+            <Button
+              colorScheme={primaryColor}
+              onClick={() => {
+                const round = ++roundRef.current;
+                setPlanPhase("planning");
+                setPlanError(null);
+                void preparePlan(round);
+              }}
+            >
+              {t("UpdateModpackModal.button.retry")}
+            </Button>
+          )}
+          {planPhase === "planned" && plan && !plan.reinstallRequired && (
             <Button colorScheme={primaryColor} onClick={handleApply}>
               {t(
                 plan.fastForward

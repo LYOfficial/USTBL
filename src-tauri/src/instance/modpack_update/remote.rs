@@ -11,6 +11,7 @@ use crate::instance::helpers::modpack::misc::is_launcher_metadata_path;
 use crate::instance::helpers::modpack::multimc::profile::safe_relative;
 use crate::instance::models::misc::InstanceError;
 use crate::tasks::download::DownloadParam;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -36,6 +37,31 @@ pub enum FileSource {
   /// Stored in the campus platform's packs, found by the file's sha1. The
   /// session is told which files are wanted before any is fetched.
   Pack(Arc<PackSession>),
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum StoredFileSource {
+  Download { param: Box<DownloadParam> },
+  ArchiveEntry { archive: PathBuf, entry: String },
+  Pack { version_id: i64 },
+}
+
+impl From<&FileSource> for StoredFileSource {
+  fn from(source: &FileSource) -> Self {
+    match source {
+      FileSource::Download(param) => StoredFileSource::Download {
+        param: param.clone(),
+      },
+      FileSource::ArchiveEntry { archive, entry } => StoredFileSource::ArchiveEntry {
+        archive: archive.clone(),
+        entry: entry.clone(),
+      },
+      FileSource::Pack(session) => StoredFileSource::Pack {
+        version_id: session.version_id(),
+      },
+    }
+  }
 }
 
 #[derive(Debug, Clone)]
@@ -70,6 +96,100 @@ pub struct RemoteModpack {
   /// Present exactly when `components` is.
   pub component_pack: Option<ComponentPack>,
   pub files: Vec<RemoteFile>,
+}
+
+// ---- stored form (the remote cache) -------------------------------------------
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredRemoteFile {
+  pub path: String,
+  pub key: FileKey,
+  pub source: StoredFileSource,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredComponentPack {
+  pub mmc_pack: serde_json::Value,
+  #[serde(default)]
+  pub instance_cfg: BTreeMap<String, String>,
+  #[serde(default)]
+  pub files: Vec<StoredRemoteFile>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredRemoteModpack {
+  pub version_id: String,
+  pub label: String,
+  pub game_version: String,
+  pub loader: BaselineLoader,
+  #[serde(default)]
+  pub components: Option<Vec<ComponentRef>>,
+  #[serde(default)]
+  pub component_pack: Option<StoredComponentPack>,
+  pub files: Vec<StoredRemoteFile>,
+}
+
+impl From<&RemoteModpack> for StoredRemoteModpack {
+  fn from(remote: &RemoteModpack) -> Self {
+    let file = |file: &RemoteFile| StoredRemoteFile {
+      path: file.path.clone(),
+      key: file.key.clone(),
+      source: StoredFileSource::from(&file.source),
+    };
+    Self {
+      version_id: remote.version_id.clone(),
+      label: remote.label.clone(),
+      game_version: remote.game_version.clone(),
+      loader: remote.loader.clone(),
+      components: remote.components.clone(),
+      component_pack: remote
+        .component_pack
+        .as_ref()
+        .map(|pack| StoredComponentPack {
+          mmc_pack: pack.mmc_pack.clone(),
+          instance_cfg: pack.instance_cfg.clone(),
+          files: pack.files.iter().map(file).collect(),
+        }),
+      files: remote.files.iter().map(file).collect(),
+    }
+  }
+}
+
+impl RemoteModpack {
+  /// Rebuild a remote from its stored form; pack sources get a fresh session
+  /// from `make_session`.
+  pub fn from_stored(
+    stored: StoredRemoteModpack,
+    make_session: impl Fn(i64) -> Arc<PackSession>,
+  ) -> Self {
+    let file = |file: StoredRemoteFile| RemoteFile {
+      path: file.path,
+      key: file.key,
+      source: match file.source {
+        StoredFileSource::Download { param } => FileSource::Download(param),
+        StoredFileSource::ArchiveEntry { archive, entry } => {
+          FileSource::ArchiveEntry { archive, entry }
+        }
+        StoredFileSource::Pack { version_id } => FileSource::Pack(make_session(version_id)),
+      },
+    };
+    Self {
+      version_id: stored.version_id,
+      label: stored.label,
+      game_version: stored.game_version,
+      loader: stored.loader,
+      components: stored.components,
+      component_pack: stored.component_pack.map(|pack| ComponentPack {
+        mmc_pack: pack.mmc_pack,
+        instance_cfg: pack.instance_cfg,
+        files: pack.files.into_iter().map(file).collect(),
+      }),
+      files: stored.files.into_iter().map(file).collect(),
+    }
+  }
 }
 
 impl RemoteModpack {

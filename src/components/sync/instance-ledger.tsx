@@ -14,11 +14,9 @@ import { useLauncherConfig } from "@/contexts/config";
 import { useGlobalData } from "@/contexts/global-data";
 import { useSharedModals } from "@/contexts/shared-modal";
 import { ModLoaderType } from "@/enums/instance";
-import { CampusModpackProject } from "@/models/campus-modpack";
 import { InstanceSummary } from "@/models/instance/misc";
 import {
   LedgerBadge,
-  campusProjectRefs,
   ledgerBadge,
   ledgerInstances,
   ledgerLocalChanges,
@@ -33,12 +31,11 @@ const BADGE_COLORS: Record<LedgerBadge, string> = {
   waitingLoader: "yellow",
   unknown: "gray",
   notChecked: "gray",
+  unlinked: "gray",
 };
 
 interface InstanceLedgerProps {
   instances: InstanceSummary[];
-  /** Campus projects, to name the lines of campus instances. */
-  projects: CampusModpackProject[];
   /** The row to flash after a jump from a project card. */
   highlightId: string | null;
 }
@@ -52,7 +49,6 @@ export const ledgerRowId = (instanceId: string) => `sync-row-${instanceId}`;
  */
 export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
   instances,
-  projects,
   highlightId,
 }) => {
   const { t } = useTranslation();
@@ -103,12 +99,6 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
   const lineLabel = (instance: InstanceSummary): string => {
     const origin = instance.origin;
     if (!origin) return instance.version;
-    const project =
-      origin.platform === "campus"
-        ? projects.find((item) =>
-            campusProjectRefs(item).includes(origin.projectId)
-          )
-        : undefined;
     const platformName =
       origin.platform === "campus"
         ? t("InstanceSyncPage.ledger.platform.campus")
@@ -116,10 +106,7 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
           ? "Modrinth"
           : "CurseForge";
     return [
-      project?.name ??
-        (origin.platform === "campus"
-          ? `${platformName} ${origin.projectId}`
-          : platformName),
+      platformName,
       origin.gameVersion,
       describeLoader(origin.loaderType),
     ].join(" · ");
@@ -147,6 +134,11 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
         items={rows.map((instance) => {
           const check = modpackChecks[instance.id];
           const badge = ledgerBadge(instance, check);
+          const openDetails = () =>
+            openSharedModal("modpack-instance-details", {
+              instanceId: instance.id,
+              instanceName: instance.name,
+            });
           const openUpdate = () =>
             openSharedModal("update-modpack", {
               instanceId: instance.id,
@@ -171,20 +163,11 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
                   })
                 : null;
 
-          // The update dialog is also where a paused, broken or failed line is
-          // resumed, repaired or rolled back, so every followed row can reach it.
-          // Local edits have their own button: grey until the scan finds some.
           const actions = (
             <HStack spacing={1}>
-              {badge === "available" && (
-                <Button
-                  size="xs"
-                  colorScheme={primaryColor}
-                  onClick={openUpdate}
-                >
-                  {t("InstanceSyncPage.ledger.action.update")}
-                </Button>
-              )}
+              <Button size="xs" variant="outline" onClick={openDetails}>
+                {t("InstanceSyncPage.ledger.action.details")}
+              </Button>
               <Button
                 size="xs"
                 variant="outline"
@@ -197,16 +180,9 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
                     })
                   : t("InstanceSyncPage.ledger.action.viewChanges")}
               </Button>
-              {badge !== "available" && (
-                <CommonIconButton
-                  icon="update"
-                  label={t("InstanceSyncPage.ledger.action.details")}
-                  withTooltip
-                  size="xs"
-                  h={18}
-                  onClick={openUpdate}
-                />
-              )}
+              <Button size="xs" colorScheme={primaryColor} onClick={openUpdate}>
+                {t("InstanceSyncPage.ledger.action.update")}
+              </Button>
             </HStack>
           );
 

@@ -639,7 +639,7 @@
     }
   },
   "DownloadTasksPage": {
-    "title": "Tâches de téléchargement en cours",
+    "title": "Tâches de téléchargement et d'envoi",
     "unfinishedPublish": {
       "title": "Publications inachevées",
       "phase": {
@@ -1275,9 +1275,7 @@
       "exportModPack": "Exporter en tant que modpack",
       "star": "Mettre en favori cette instance",
       "unstar": "Retirer des favoris",
-      "publishModPack": "Publier dans les modpacks du campus",
-      "updateModpack": "Mettre à jour le pack",
-      "updateModpackAvailable": "Mettre à jour le pack (nouvelle version)"
+      "publishModPack": "Publier dans les modpacks du campus"
     },
     "instanceTabList": {
       "overview": "Aperçu",
@@ -2658,6 +2656,7 @@
             "MODPACK_UPDATE_BUSY": "Ce pack de mods est déjà en cours de mise à jour",
             "MODPACK_UPDATE_VERIFY_FAILED": "Un fichier téléchargé a échoué à la vérification ; l’instance n’a pas été modifiée",
             "MODPACK_UPDATE_STALE": "Les fichiers locaux ont changé après la vérification ; vérifiez de nouveau les mises à jour",
+            "MODPACK_UPDATE_PREPARE_CANCELLED": "L'aperçu de la mise à jour a été annulé",
             "MODPACK_UPDATE_REMOTE_INVALID": "La liste de fichiers de la nouvelle version est invalide ; la mise à jour a été refusée",
             "MODPACK_UPDATE_LINE_MISMATCH": "La nouvelle version cible une autre version du jeu ou un autre chargeur que cette instance",
             "MODPACK_UPDATE_UNSUPPORTED": "Cette instance ne peut pas être mise à jour automatiquement",
@@ -2692,6 +2691,7 @@
             "MODPACK_UPDATE_BUSY": "Ce pack de mods est déjà en cours de mise à jour",
             "MODPACK_UPDATE_VERIFY_FAILED": "Un fichier téléchargé a échoué à la vérification ; l’instance n’a pas été modifiée",
             "MODPACK_UPDATE_STALE": "Les fichiers locaux ont changé après la vérification ; vérifiez de nouveau les mises à jour",
+            "MODPACK_UPDATE_PREPARE_CANCELLED": "L'aperçu de la mise à jour a été annulé",
             "MODPACK_UPDATE_REMOTE_INVALID": "La liste de fichiers de la nouvelle version est invalide ; la mise à jour a été refusée",
             "MODPACK_UPDATE_LINE_MISMATCH": "La nouvelle version cible une autre version du jeu ou un autre chargeur que cette instance",
             "MODPACK_UPDATE_UNSUPPORTED": "Cette instance ne peut pas être mise à jour automatiquement",
@@ -2731,6 +2731,7 @@
             "MODPACK_UPDATE_BUSY": "Ce pack de mods est déjà en cours de mise à jour",
             "MODPACK_UPDATE_VERIFY_FAILED": "Un fichier téléchargé a échoué à la vérification ; l’instance n’a pas été modifiée",
             "MODPACK_UPDATE_STALE": "Les fichiers locaux ont changé après la vérification ; vérifiez de nouveau les mises à jour",
+            "MODPACK_UPDATE_PREPARE_CANCELLED": "L'aperçu de la mise à jour a été annulé",
             "MODPACK_UPDATE_REMOTE_INVALID": "La liste de fichiers de la nouvelle version est invalide ; la mise à jour a été refusée",
             "MODPACK_UPDATE_LINE_MISMATCH": "La nouvelle version cible une autre version du jeu ou un autre chargeur que cette instance",
             "MODPACK_UPDATE_UNSUPPORTED": "Cette instance ne peut pas être mise à jour automatiquement",
@@ -3160,7 +3161,8 @@
       "gameVersion": "Version du jeu",
       "modLoader": "Chargeur de mods",
       "modpackVersion": "Version du modpack",
-      "modpackInfo": "Infos du modpack"
+      "modpackInfo": "Infos du modpack",
+      "summary": "Résumé"
     },
     "button": {
       "install": "Installer"
@@ -3197,7 +3199,8 @@
       "delete": "{{count}} supprimé(s)",
       "loaderChange": "Le chargeur de mods passera de {{from}} à {{to}}",
       "conflicts": "{{count}} fichiers entrent en conflit avec vos modifications. Choisissez (le local est conservé par défaut)",
-      "autoMerged": "{{count}} fichiers de configuration ont été fusionnés automatiquement",
+      "autoMerged": "{{count}} fusionnés automatiquement",
+      "showAll": "Tout afficher (encore {{count}})",
       "reinstallRequired": "{{latest}} modifie la chaîne de composants du pack et ne peut pas être appliquée sur place. Réinstallez le pack"
     },
     "conflictKind": {
@@ -3218,7 +3221,6 @@
       "remoteSide": "Nouvelle version"
     },
     "button": {
-      "preview": "Aperçu de la mise à jour",
       "apply": "Mettre à jour",
       "sync": "Synchroniser la version",
       "resume": "Reprendre le suivi",
@@ -3238,6 +3240,7 @@
     "reason": {
       "MODPACK_UPDATE_UNLINK_PENDING": "La dernière mise à jour n'est pas terminée. Restaurez-la ou annulez-la avant de retirer le suivi",
       "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack",
+      "MODPACK_UPDATE_PREPARE_CANCELLED": "L'aperçu de la mise à jour a été annulé",
       "MODPACK_UPDATE_UNSUPPORTED": "Cette instance n'a pas d'enregistrement d'installation utilisable ou l'isolation de version est désactivée",
       "MODPACK_UPDATE_NOT_ISOLATED": "L'isolation de version est désactivée pour cette instance, la comparaison n'est pas sûre. Activez-la dans les paramètres de l'instance puis réessayez",
       "MODPACK_UPDATE_BASELINE_MISSING": "Cette instance n'a pas d'enregistrement d'installation du pack, ou il est endommagé ; comparaison impossible",
@@ -3306,7 +3309,8 @@
         "needsRepair": "À réparer",
         "waitingLoader": "En attente du chargeur",
         "unknown": "Échec de la vérification",
-        "notChecked": "Non vérifié"
+        "notChecked": "Non vérifié",
+        "unlinked": "Suivi annulé"
       },
       "action": {
         "update": "Mettre à jour",
@@ -3321,6 +3325,45 @@
       "installed": "Installé",
       "installedHint": "{{count}} instance(s) correspondante(s) sur cet appareil, cliquez pour voir",
       "unlinkedToast": "Le pack a été supprimé, l'instance {{name}} n'est plus suivie"
+    }
+  },
+  "ModpackInstanceDetailsModal": {
+    "header": {
+      "title": "Détails du modpack de {{name}}"
+    },
+    "section": {
+      "instance": "Instance",
+      "follow": "Suivi"
+    },
+    "instance": {
+      "name": "Nom",
+      "version": "Version du jeu",
+      "loader": "Chargeur de mods",
+      "modpackVersion": "Version du modpack"
+    },
+    "follow": {
+      "platform": "Source",
+      "project": "Projet",
+      "projectGone": "Modpack introuvable sur la plateforme",
+      "current": "Version actuelle",
+      "latest": "Dernière version",
+      "status": "Statut",
+      "following": "Suivi",
+      "paused": "En pause"
+    },
+    "action": {
+      "pause": "Pause",
+      "resume": "Reprendre",
+      "unlink": "Annuler le suivi",
+      "viewMods": "Voir les mods"
+    },
+    "notFollowing": "Cette instance ne suit pas de modpack."
+  },
+  "NotifyModpackUpdatesModal": {
+    "title": "Mises à jour de modpack disponibles",
+    "button": {
+      "later": "Plus tard",
+      "goToSync": "Aller à la mise à jour"
     }
   }
 }

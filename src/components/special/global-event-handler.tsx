@@ -12,6 +12,7 @@ import { useDragAndDrop, useTauriFileDrop } from "@/hooks/drag-and-drop";
 import useKeyboardShortcut from "@/hooks/keyboard-shortcut";
 import { AccountService } from "@/services/account";
 import { appendFriendMessage } from "@/services/friend-message-cache";
+import { ModpackUpdateService } from "@/services/modpack-update";
 import { buildUpdateNotificationMessage } from "@/utils/tray-notification";
 
 // Handle global keyboard shortcuts, DnD events, etc.
@@ -20,7 +21,12 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
 }) => {
   const { openSharedModal } = useSharedModals();
   const toast = useToast();
-  const { selectedInstance } = useGlobalData();
+  const {
+    selectedInstance,
+    getInstanceList,
+    modpackChecks,
+    startupChecksDone,
+  } = useGlobalData();
   const { newerVersion } = useLauncherConfig();
   const router = useRouter();
   const isStandAlone =
@@ -149,6 +155,71 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
       });
     });
   }, [isStandAlone, newerVersion, openSharedModal]);
+
+  // Announce modpack updates found by the startup check, once per launch,
+  // after every followed instance has been checked.
+  const modpackNoticeAnnounced = useRef(false);
+  useEffect(() => {
+    if (isStandAlone || !startupChecksDone || modpackNoticeAnnounced.current)
+      return;
+    modpackNoticeAnnounced.current = true;
+
+    const available = Object.entries(modpackChecks).filter(
+      ([, check]) => check.status === "available" && check.latestVersionId
+    );
+    if (available.length === 0) return;
+
+    (async () => {
+      const updates: {
+        instanceId: string;
+        instanceName: string;
+        currentLabel?: string;
+        latestLabel?: string;
+      }[] = [];
+      for (const [instanceId, check] of available) {
+        const noticed =
+          await ModpackUpdateService.getModpackUpdateNotice(instanceId);
+        const noticedVersionId =
+          noticed.status === "success" ? noticed.data : null;
+        if (noticedVersionId !== check.latestVersionId) {
+          const instance = getInstanceList()?.find((i) => i.id === instanceId);
+          updates.push({
+            instanceId,
+            instanceName: instance?.name ?? instanceId,
+            currentLabel: check.currentLabel,
+            latestLabel: check.latestLabel,
+          });
+        }
+      }
+      if (updates.length === 0) return;
+
+      // Record before announcing, so a repeated startup does not re-announce.
+      for (const update of updates) {
+        await ModpackUpdateService.setModpackUpdateNotice(
+          update.instanceId,
+          modpackChecks[update.instanceId].latestVersionId!
+        );
+      }
+
+      openSharedModal("notify-modpack-updates", { updates });
+
+      const unfocused = await isMainWindowUnfocused();
+      if (unfocused) {
+        const summary = updates
+          .map((u) => `${u.instanceName} → ${u.latestLabel ?? "?"}`)
+          .join("; ");
+        void invoke("show_message_notification", {
+          message: summary,
+        });
+      }
+    })();
+  }, [
+    isStandAlone,
+    startupChecksDone,
+    modpackChecks,
+    getInstanceList,
+    openSharedModal,
+  ]);
 
   useEffect(() => {
     let disposed = false;

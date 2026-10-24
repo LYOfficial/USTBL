@@ -4,6 +4,8 @@ export interface CampusModpackLine {
   loaderType: string;
   loaderVersion: string;
   versionNumber: string;
+  /** Changelog of the newest version; absent from older platforms. */
+  changelog?: string | null;
 }
 
 export interface CampusModpackProject {
@@ -58,8 +60,8 @@ export interface CampusUnfinishedPublish {
   versionNumber: string;
   phase: "uploading" | "processing" | "failed";
   error: string | null;
-  /** On the task list right now. */
-  running: boolean;
+  /** Whether "继续" may be offered; a terminal failure only gets "放弃". */
+  resumable: boolean;
   createdAt: number;
 }
 

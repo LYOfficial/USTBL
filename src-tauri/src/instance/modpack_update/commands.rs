@@ -4,13 +4,13 @@ use super::apply::{
   apply, can_roll_back_last, ensure_unlink_safe, materialize_remote_file, prepare_packs,
   recover_checked, roll_back_last_checked, Progress, Recovery, UpdateEnv, UpdateRequest,
 };
-use super::sources::campus_project_gone;
 use super::diff::{resolve, Conflict, ConflictChoice, FileChange};
-use super::plan::{
-  count_local_changes, local_changes, prepare, prepare_with_contents, requires_reinstall,
-  LocalChange,
-};
 use super::merge::merge_with_choices;
+use super::notice::{read_update_notice, write_update_notice, UpdateNotice};
+use super::plan::{
+  compare, count_local_changes, finish, local_changes, requires_reinstall, LocalChange,
+};
+use super::plan_cache::{self, PlanCache};
 use super::remote::ComponentPack;
 use super::restore::restore_component_profile;
 use super::sources::{download_param, latest_version, resolve_remote, LatestVersion};
@@ -34,7 +34,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_opener::reveal_item_in_dir;
 
@@ -82,14 +82,14 @@ pub struct UpdateCheck {
   pub unlinked: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, serde::Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoaderChange {
   pub from: BaselineLoader,
   pub to: BaselineLoader,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, serde::Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdatePlan {
   pub from_version_id: String,
@@ -344,12 +344,15 @@ pub async fn check_modpack_update(
   if target.instance.mod_loader.status != ModLoaderStatus::Installed {
     return Ok(check_of(CheckStatus::WaitingLoader, &target));
   }
-  match latest_version(&app, &target.origin).await {
+  match light_check(&app, &target).await {
     // The status stays `Available`; the count rides along so the local
     // edits can be shown next to the update.
-    Ok(Some(latest)) => Ok(UpdateCheck {
-      latest_version_id: Some(latest.version_id),
-      latest_label: Some(latest.label),
+    Ok(LightCheck::Available {
+      latest_version_id,
+      latest_label,
+    }) => Ok(UpdateCheck {
+      latest_version_id: Some(latest_version_id),
+      latest_label: Some(latest_label),
       local_changes: if scan_local == Some(true) {
         Some(count_local_changes(&target.root, &baseline).await?)
       } else {
@@ -357,7 +360,7 @@ pub async fn check_modpack_update(
       },
       ..check_of(CheckStatus::Available, &target)
     }),
-    Ok(None) => {
+    Ok(LightCheck::UpToDate) => {
       let mut check = check_of(CheckStatus::UpToDate, &target);
       if scan_local == Some(true) {
         let changed = count_local_changes(&target.root, &baseline).await?;
@@ -368,46 +371,84 @@ pub async fn check_modpack_update(
       }
       Ok(check)
     }
-    Err(err) => {
-      // A line the platform no longer lists may mean the whole project was
-      // deleted. Confirm before detaching: any other failure keeps the
-      // identity and stays `Unknown`.
-      if err.0 == InstanceError::ModpackUpdateLineGone.to_string()
-        && target.origin.platform == OriginPlatform::Campus
-        && campus_project_gone(&app, &target.origin.project_id).await == Some(true)
-      {
-        return match unlink_origin(&app, &instance_id, &target).await {
-          Ok(()) => {
-            // The ledger groups rows by the origin in the instance list, so it
-            // has to hear about the lost identity right away.
-            refresh_and_update_instances(&app, false).await;
-            Ok(UpdateCheck {
-              unlinked: true,
-              ..check_of(CheckStatus::NotFollowing, &target)
-            })
-          }
-          Err(error) => Ok(UpdateCheck {
-            reason: Some(error.0),
-            ..check_of(CheckStatus::Unknown, &target)
-          }),
-        };
+    Ok(LightCheck::LineGone) => Ok(UpdateCheck {
+      reason: Some(InstanceError::ModpackUpdateLineGone.to_string()),
+      ..check_of(CheckStatus::Unknown, &target)
+    }),
+    Ok(LightCheck::ProjectGone) => {
+      // The project listing already confirmed the deletion, so the identity
+      // is dropped on this same check.
+      match unlink_origin(&app, &instance_id, &target).await {
+        Ok(()) => {
+          // The ledger groups rows by the origin in the instance list, so it
+          // has to hear about the lost identity right away.
+          refresh_and_update_instances(&app, false).await;
+          Ok(UpdateCheck {
+            unlinked: true,
+            ..check_of(CheckStatus::NotFollowing, &target)
+          })
+        }
+        Err(error) => Ok(UpdateCheck {
+          reason: Some(error.0),
+          ..check_of(CheckStatus::Unknown, &target)
+        }),
       }
-      Ok(UpdateCheck {
-        reason: Some(err.0),
-        ..check_of(CheckStatus::Unknown, &target)
-      })
     }
+    Err(err) => Ok(UpdateCheck {
+      reason: Some(err.0),
+      ..check_of(CheckStatus::Unknown, &target)
+    }),
   }
 }
 
+/// What a light check found: whether there is a newer version, or why that
+/// cannot be said. It never downloads a manifest.
+enum LightCheck {
+  UpToDate,
+  Available {
+    latest_version_id: String,
+    latest_label: String,
+  },
+  LineGone,
+  ProjectGone,
+}
+
+/// Ask the platform what the newest version is, cheaply. Campus instances are
+/// answered from the project listing (`GET /projects/{ref}`), which also
+/// carries the deletion proof on its 404; the other platforms query their
+/// version lists as before.
+async fn light_check(app: &AppHandle, target: &Target) -> USTBLResult<LightCheck> {
+  if target.origin.platform != OriginPlatform::Campus {
+    return match latest_version(app, &target.origin).await? {
+      Some(latest) => Ok(LightCheck::Available {
+        latest_version_id: latest.version_id,
+        latest_label: latest.label,
+      }),
+      None => Ok(LightCheck::UpToDate),
+    };
+  }
+  let Some(project) =
+    super::sources::campus_project_for_light_check(app, &target.origin.project_id).await?
+  else {
+    return Ok(LightCheck::ProjectGone);
+  };
+  Ok(
+    match super::sources::campus_line_status(&project.lines, &target.origin) {
+      super::sources::CampusLineStatus::Current => LightCheck::UpToDate,
+      super::sources::CampusLineStatus::Newer { id, version_number } => LightCheck::Available {
+        latest_version_id: id.to_string(),
+        latest_label: version_number,
+      },
+      super::sources::CampusLineStatus::LineGone => LightCheck::LineGone,
+    },
+  )
+}
+
 /// Drop the identity and baseline; the game files and isolation stay.
-async fn unlink_origin(
-  app: &AppHandle,
-  instance_id: &str,
-  target: &Target,
-) -> USTBLResult<()> {
+async fn unlink_origin(app: &AppHandle, instance_id: &str, target: &Target) -> USTBLResult<()> {
   ensure_unlink_safe(&target.root)?;
   fs::remove_file(target.root.join(BASELINE_FILE_NAME)).ok();
+  plan_cache::clear_plan_cache(&target.root);
   store_instance(app, instance_id, |instance| {
     instance.origin = None;
     instance.modpack_version = None;
@@ -432,15 +473,39 @@ pub async fn rollback_modpack_update(app: AppHandle, instance_id: String) -> UST
   ensure_not_running(&app, &instance_id)?;
   let root = target.root.clone();
   let check_app = app.clone();
-  let done = tokio::task::spawn_blocking(move || {
-    roll_back_last_checked(&root, || ensure_not_running(&check_app, &instance_id))
+  let done = tokio::task::spawn_blocking({
+    let root = root.clone();
+    move || roll_back_last_checked(&root, || ensure_not_running(&check_app, &instance_id))
   })
   .await
   .map_err(|e| crate::error::USTBLError(e.to_string()))??;
   if done {
+    plan_cache::clear_plan_cache(&root);
     refresh_and_update_instances(&app, false).await;
   }
   Ok(done)
+}
+
+/// The preview task of each instance. A new preview aborts the previous one.
+fn prepare_handles() -> &'static Mutex<HashMap<String, tokio::task::AbortHandle>> {
+  static HANDLES: OnceLock<Mutex<HashMap<String, tokio::task::AbortHandle>>> = OnceLock::new();
+  HANDLES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cancel_prepare(instance_id: &str) {
+  if let Ok(mut handles) = prepare_handles().lock() {
+    if let Some(handle) = handles.remove(instance_id) {
+      handle.abort();
+    }
+  }
+}
+
+/// Cancel the preview of this instance, if any. The preview answers with
+/// `ModpackUpdatePrepareCancelled`, which the dialog ignores.
+#[tauri::command]
+pub async fn cancel_modpack_update_prepare(instance_id: String) -> USTBLResult<()> {
+  cancel_prepare(&instance_id);
+  Ok(())
 }
 
 /// Pause or resume following. A paused instance is never checked; its identity
@@ -485,20 +550,201 @@ pub fn reveal_modpack_conflict_file(
 }
 
 /// Fetch the new version and compare it with the instance. Changes nothing
-/// except downloading the modpack archive into the update folder.
+/// except downloading the modpack archive into the update folder. The work
+/// runs as a registered task so the dialog can cancel it; a new preview of
+/// the same instance cancels the previous one.
 #[tauri::command]
 pub async fn prepare_modpack_update(
   app: AppHandle,
   instance_id: String,
 ) -> USTBLResult<UpdatePlan> {
-  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
-  ensure_not_running(&app, &instance_id)?;
+  // A new preview supersedes a previous one of this instance.
+  cancel_prepare(&instance_id);
+  let app_clone = app.clone();
+  let id = instance_id.clone();
+  let spawned = tokio::spawn(async move { prepare_inner(&app_clone, &id).await });
+  let abort_id = spawned.abort_handle().id();
+  if let Ok(mut handles) = prepare_handles().lock() {
+    handles.insert(instance_id.clone(), spawned.abort_handle());
+  }
+  let result = spawned.await;
+  // Only remove the handle if it is still this task's: a newer preview may
+  // have replaced it while this one was being cancelled or awaited.
+  if let Ok(mut handles) = prepare_handles().lock() {
+    if handles
+      .get(&instance_id)
+      .is_some_and(|held| held.id() == abort_id)
+    {
+      handles.remove(&instance_id);
+    }
+  }
+  match result {
+    Ok(result) => result,
+    Err(join_error) => Err(if join_error.is_cancelled() {
+      InstanceError::ModpackUpdatePrepareCancelled.into()
+    } else {
+      crate::error::USTBLError(join_error.to_string())
+    }),
+  }
+}
+
+/// Compare the newest version with the instance, hitting the cache when the
+/// baseline and the local files are unchanged since the last plan.
+async fn prepare_inner(app: &AppHandle, instance_id: &str) -> USTBLResult<UpdatePlan> {
+  let target = target(app, instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  ensure_not_running(app, instance_id)?;
   let baseline = load_baseline(&target).await?;
-  recover_checked(&target.root, || ensure_not_running(&app, &instance_id))?;
-  let latest = latest_version(&app, &target.origin)
+  if recover_checked(&target.root, || ensure_not_running(app, instance_id))? != Recovery::Nothing {
+    // Recovery moved the files, so any cached plan describes another state.
+    plan_cache::clear_plan_cache(&target.root);
+  }
+  let latest = match light_check(app, &target).await? {
+    LightCheck::Available {
+      latest_version_id,
+      latest_label,
+    } => LatestVersion {
+      version_id: latest_version_id,
+      label: latest_label,
+      // Only the id and label are carried over; the manifest is fetched
+      // below, and the version the line answers with wins.
+      payload: None,
+    },
+    LightCheck::UpToDate => return Err(InstanceError::ModpackUpdateStale.into()),
+    LightCheck::LineGone => return Err(InstanceError::ModpackUpdateLineGone.into()),
+    LightCheck::ProjectGone => return Err(InstanceError::ModpackUpdateLineGone.into()),
+  };
+
+  // Hit: version, install record and on-disk stat fingerprint all match.
+  let from_version_id = target.origin.version_id.clone();
+  let baseline_sha1 = plan_cache::baseline_sha1(&baseline);
+  if let Some(cache) = plan_cache::load_plan_cache(&target.root) {
+    if cache.to_version_id == latest.version_id
+      && cache.from_version_id == from_version_id
+      && cache.baseline_sha1 == baseline_sha1
+    {
+      let root = target.root.clone();
+      let paths = cache.paths.clone();
+      let fingerprint =
+        tokio::task::spawn_blocking(move || plan_cache::fingerprint_paths(&root, &paths))
+          .await
+          .map_err(|e| crate::error::USTBLError(e.to_string()))??;
+      if fingerprint == cache.fingerprint {
+        return Ok(cache.plan);
+      }
+    }
+  }
+
+  // Drop leftovers of an interrupted previous run before hashing anything.
+  cleanup_preview_leftovers(&target.root);
+
+  // The line answers the manifest; its version is authoritative for the plan
+  // even when it is newer than what the check just saw.
+  let latest = resolve_latest_for_plan(app, &target).await?;
+  let prepared = plan_prepared(app, &target, &baseline, &latest).await?;
+  // The fingerprint is taken over the same paths the plan covers.
+  let paths = plan_cache::plan_paths(&baseline, &prepared.remote);
+  let plan = plan_of(&target.origin, prepared);
+  let fingerprint = {
+    let root = target.root.clone();
+    let paths = paths.clone();
+    tokio::task::spawn_blocking(move || plan_cache::fingerprint_paths(&root, &paths))
+      .await
+      .map_err(|e| crate::error::USTBLError(e.to_string()))??
+  };
+  let cache = PlanCache::new(from_version_id, baseline_sha1, paths, fingerprint, plan.clone());
+  if let Err(error) = plan_cache::write_plan_cache(&target.root, &cache) {
+    log::warn!("cannot write modpack plan cache: {error:?}");
+  }
+  Ok(plan)
+}
+
+/// Run one comparison: hash the local files once, then reuse those hashes for
+/// the conflict setup and the merge step.
+async fn plan_prepared(
+  app: &AppHandle,
+  target: &Target,
+  baseline: &ModpackBaseline,
+  latest: &LatestVersion,
+) -> USTBLResult<PlannedRun> {
+  let remote = resolve_remote(
+    app,
+    &target.origin,
+    &target.root,
+    &target.instance.name,
+    latest,
+  )
+  .await?;
+  if requires_reinstall(baseline, &remote, is_fresh(&target.origin)) {
+    return Ok(PlannedRun {
+      version_id: remote.version_id.clone(),
+      label: remote.label.clone(),
+      diff: Default::default(),
+      plan_hash: String::new(),
+      loader_change: None,
+      reinstall_required: true,
+      remote,
+    });
+  }
+  let loader_change = (remote.loader != baseline.loader).then(|| LoaderChange {
+    from: baseline.loader.clone(),
+    to: remote.loader.clone(),
+  });
+  let compared = compare(&target.root, baseline, &remote).await?;
+  // Missing text bases are best effort; if any came back, the normalized
+  // comparison and the merge blocks change, so compare once more.
+  let compared = if recover_base_copies(app, target, baseline, &compared.diff.conflicts).await {
+    compare(&target.root, baseline, &remote).await?
+  } else {
+    compared
+  };
+  let remote_contents =
+    materialize_text_candidates(app, target, &remote, &compared.diff.conflicts).await?;
+  let prepared = finish(compared, &target.root, &remote, &remote_contents)?;
+  Ok(PlannedRun {
+    version_id: remote.version_id.clone(),
+    label: remote.label.clone(),
+    diff: prepared.diff,
+    plan_hash: prepared.plan_hash,
+    loader_change,
+    reinstall_required: false,
+    remote,
+  })
+}
+
+/// A full comparison run: the diff and everything applying the plan needs.
+struct PlannedRun {
+  version_id: String,
+  label: String,
+  diff: super::diff::Diff,
+  plan_hash: String,
+  loader_change: Option<LoaderChange>,
+  reinstall_required: bool,
+  remote: super::remote::RemoteModpack,
+}
+
+/// Drop files an interrupted preview could have left behind.
+fn cleanup_preview_leftovers(root: &Path) {
+  let update = root.join(super::remote::UPDATE_DIR);
+  let _ = fs::remove_dir_all(update.join("remote-preview"));
+  if let Ok(entries) = fs::read_dir(&update) {
+    for entry in entries.flatten() {
+      if entry
+        .file_name()
+        .to_string_lossy()
+        .starts_with("base-recovery-")
+      {
+        let _ = fs::remove_dir_all(entry.path());
+      }
+    }
+  }
+}
+
+/// Ask the line for the manifest of the newest version; the plan is computed
+/// against whatever the line answers, not against the check's answer.
+async fn resolve_latest_for_plan(app: &AppHandle, target: &Target) -> USTBLResult<LatestVersion> {
+  latest_version(app, &target.origin)
     .await?
-    .ok_or(InstanceError::ModpackUpdateStale)?;
-  plan_for(&app, &target, &baseline, &latest).await
+    .ok_or(InstanceError::ModpackUpdateStale.into())
 }
 
 /// An instance created for a modpack that has not installed a version yet.
@@ -510,73 +756,42 @@ fn fast_forward(changes: usize, conflicts: usize, loader_change: bool) -> bool {
   changes == 0 && conflicts == 0 && !loader_change
 }
 
-async fn plan_for(
-  app: &AppHandle,
-  target: &Target,
-  baseline: &ModpackBaseline,
-  latest: &LatestVersion,
-) -> USTBLResult<UpdatePlan> {
-  let remote = resolve_remote(
-    app,
-    &target.origin,
-    &target.root,
-    &target.instance.name,
-    latest,
-  )
-  .await?;
-  if requires_reinstall(baseline, &remote, is_fresh(&target.origin)) {
-    return Ok(UpdatePlan {
-      from_version_id: target.origin.version_id.clone(),
-      to_version_id: remote.version_id.clone(),
-      to_label: remote.label.clone(),
-      changes: Vec::new(),
-      conflicts: Vec::new(),
-      auto_merged: Vec::new(),
-      loader_change: None,
-      reinstall_required: true,
-      fast_forward: false,
-      plan_hash: String::new(),
-    });
-  }
-  let first = prepare(&target.root, baseline, &remote).await?;
-  recover_base_copies(app, target, baseline, &first.diff.conflicts).await;
-  let remote_contents = materialize_text_candidates(app, target, &remote, &first.diff.conflicts).await?;
-  let prepared = prepare_with_contents(&target.root, baseline, &remote, &remote_contents).await?;
-  let loader_change = (remote.loader != baseline.loader).then(|| LoaderChange {
-    from: baseline.loader.clone(),
-    to: remote.loader.clone(),
-  });
-  Ok(UpdatePlan {
-    from_version_id: target.origin.version_id.clone(),
-    to_version_id: remote.version_id.clone(),
-    to_label: remote.label.clone(),
-    fast_forward: fast_forward(
-      prepared.diff.changes.len() + prepared.diff.auto_merged.len(),
-      prepared.diff.conflicts.len(),
-      loader_change.is_some(),
-    ),
+/// The plan the dialog shows and the cache stores. A plan that needs a
+/// reinstall is never a fast forward.
+fn plan_of(origin: &InstanceOrigin, prepared: PlannedRun) -> UpdatePlan {
+  UpdatePlan {
+    from_version_id: origin.version_id.clone(),
+    to_version_id: prepared.version_id.clone(),
+    to_label: prepared.label.clone(),
+    fast_forward: !prepared.reinstall_required
+      && fast_forward(
+        prepared.diff.changes.len() + prepared.diff.auto_merged.len(),
+        prepared.diff.conflicts.len(),
+        prepared.loader_change.is_some(),
+      ),
     changes: prepared.diff.changes,
     conflicts: prepared.diff.conflicts,
     auto_merged: prepared.diff.auto_merged,
-    loader_change,
-    reinstall_required: false,
+    loader_change: prepared.loader_change,
+    reinstall_required: prepared.reinstall_required,
     plan_hash: prepared.plan_hash,
-  })
+  }
 }
 
 /// Fetch the installed version's copy of conflicting text files whose cached
 /// base is missing, so the conflict can be resolved block by block. Campus
-/// packs only; best effort, a failure leaves whole-file choices.
+/// packs only; best effort, a failure leaves whole-file choices. Returns
+/// whether anything was actually recovered.
 async fn recover_base_copies(
   app: &AppHandle,
   target: &Target,
   baseline: &ModpackBaseline,
   conflicts: &[Conflict],
-) {
+) -> bool {
   use crate::instance::helpers::modpack::base_store;
   use crate::instance::models::misc::OriginPlatform;
   if target.origin.platform != OriginPlatform::Campus || is_fresh(&target.origin) {
-    return;
+    return false;
   }
   let wanted: Vec<_> = baseline
     .files
@@ -584,20 +799,19 @@ async fn recover_base_copies(
     .filter(|file| {
       text::is_text_path(&file.path, &[])
         && conflicts.iter().any(|c| c.path == file.path)
-        && base_store::load(&target.root, &file.sha1).ok().flatten().is_none()
+        && base_store::load(&target.root, &file.sha1)
+          .ok()
+          .flatten()
+          .is_none()
     })
     .collect();
   if wanted.is_empty() {
-    return;
+    return false;
   }
   let attempt = async {
-    let remote = super::sources::campus_base_remote(
-      app,
-      &target.origin,
-      &target.root,
-      &target.instance.name,
-    )
-    .await?;
+    let remote =
+      super::sources::campus_base_remote(app, &target.origin, &target.root, &target.instance.name)
+        .await?;
     let env = AppEnv {
       app: app.clone(),
       instance_id: target.instance.id.clone(),
@@ -612,9 +826,14 @@ async fn recover_base_copies(
     let files: Vec<_> = remote
       .files
       .iter()
-      .filter(|f| wanted.iter().any(|b| b.path == f.path && b.sha1 == f.key.sha1))
+      .filter(|f| {
+        wanted
+          .iter()
+          .any(|b| b.path == f.path && b.sha1 == f.key.sha1)
+      })
       .collect();
-    let result = async {
+    let recovered = async {
+      let mut recovered = false;
       prepare_packs(&files).await?;
       for file in files {
         let dest = preview.join(&file.path);
@@ -622,21 +841,39 @@ async fn recover_base_copies(
         let bytes = tokio::fs::read(dest).await?;
         if let Some(base) = wanted.iter().find(|b| b.path == file.path) {
           base_store::store(&target.root, base, &bytes)?;
+          recovered = true;
         }
       }
-      Ok::<_, crate::error::USTBLError>(())
+      Ok::<_, crate::error::USTBLError>(recovered)
     }
     .await;
     let _ = tokio::fs::remove_dir_all(preview).await;
-    result
+    recovered
   }
   .await;
-  if let Err(error) = attempt {
-    log::warn!("cannot recover modpack text baseline: {error:?}");
+  match attempt {
+    Ok(recovered) => recovered,
+    Err(error) => {
+      log::warn!("cannot recover modpack text baseline: {error:?}");
+      false
+    }
   }
 }
 
-fn selected_hunk_contents(
+/// A merge keeps the local line endings. When nothing of the local side is
+/// left, write the published bytes instead: the file then matches the new
+/// baseline and the local scan does not report it as changed.
+fn remote_if_equivalent(path: &str, merged: Vec<u8>, remote: &[u8]) -> Vec<u8> {
+  match (
+    text::normalize_text(path, &merged),
+    text::normalize_text(path, remote),
+  ) {
+    (Some(merged_text), Some(remote_text)) if merged_text == remote_text => remote.to_vec(),
+    _ => merged,
+  }
+}
+
+pub(super) fn selected_hunk_contents(
   prepared: &super::plan::Prepared,
   choices: &mut BTreeMap<String, ConflictChoice>,
 ) -> USTBLResult<BTreeMap<String, Vec<u8>>> {
@@ -659,7 +896,7 @@ fn selected_hunk_contents(
     choices.insert(path.clone(), ConflictChoice::TakeRemote);
     let merged = merge_with_choices(path, base, local, remote, &selected)
       .map_err(|_| InstanceError::ModpackUpdateMergeInvalid)?;
-    result.insert(path.clone(), merged);
+    result.insert(path.clone(), remote_if_equivalent(path, merged, remote));
   }
   Ok(result)
 }
@@ -747,11 +984,19 @@ pub async fn apply_modpack_update(
   } else {
     baseline.component_refs()
   };
-  let first = prepare(&target.root, &baseline, &remote).await?;
-  recover_base_copies(&app, &target, &baseline, &first.diff.conflicts).await;
-  let remote_contents = materialize_text_candidates(&app, &target, &remote, &first.diff.conflicts).await?;
-  let prepared = prepare_with_contents(&target.root, &baseline, &remote, &remote_contents).await?;
+  let compared = compare(&target.root, &baseline, &remote).await?;
+  let compared = if recover_base_copies(&app, &target, &baseline, &compared.diff.conflicts).await {
+    compare(&target.root, &baseline, &remote).await?
+  } else {
+    compared
+  };
+  let remote_contents =
+    materialize_text_candidates(&app, &target, &remote, &compared.diff.conflicts).await?;
+  let prepared = finish(compared, &target.root, &remote, &remote_contents)?;
   if prepared.plan_hash != plan_hash {
+    // The cached plan the player looked at describes another state; drop it
+    // so a retry re-plans instead of serving it again.
+    plan_cache::clear_plan_cache(&target.root);
     return Err(InstanceError::ModpackUpdateStale.into());
   }
 
@@ -784,11 +1029,37 @@ pub async fn apply_modpack_update(
     // A rolled back update restored the files on disk; drop stale memory.
     refresh_and_update_instances(&app, false).await;
   }
+  // Applied or not, the preview was consumed.
+  plan_cache::clear_plan_cache(&target.root);
   result?;
   Ok(UpdateOutcome {
     version_id,
     loader_install_pending: env.loader_install_pending.load(Ordering::SeqCst),
   })
+}
+
+/// The modpack version the launcher already announced for this instance.
+/// `None` when no version was announced yet or the record is unreadable.
+#[tauri::command]
+pub async fn get_modpack_update_notice(
+  app: AppHandle,
+  instance_id: String,
+) -> USTBLResult<Option<String>> {
+  let instance = current_instance(&app, &instance_id)?;
+  let notice = read_update_notice(&instance.version_path);
+  Ok(notice.map(|n| n.version_id))
+}
+
+/// Remember that the launcher announced `version_id` for this instance, so a
+/// later startup check does not announce the same version again.
+#[tauri::command]
+pub async fn set_modpack_update_notice(
+  app: AppHandle,
+  instance_id: String,
+  version_id: String,
+) -> USTBLResult<()> {
+  let instance = current_instance(&app, &instance_id)?;
+  write_update_notice(&instance.version_path, &UpdateNotice { version_id })
 }
 
 /// Install the files of a campus modpack into the empty instance created for it.
@@ -823,20 +1094,56 @@ pub async fn recover_modpack_update(app: AppHandle, instance_id: String) -> USTB
   let instance = current_instance(&app, &instance_id)?;
   let root = instance.version_path.clone();
   let check_app = app.clone();
-  let outcome = tokio::task::spawn_blocking(move || {
-    recover_checked(&root, || ensure_not_running(&check_app, &instance_id))
+  let outcome = tokio::task::spawn_blocking({
+    let root = root.clone();
+    move || recover_checked(&root, || ensure_not_running(&check_app, &instance_id))
   })
   .await
   .map_err(|e| crate::error::USTBLError(e.to_string()))??;
   if outcome == Recovery::RolledBack {
     refresh_and_update_instances(&app, false).await;
   }
+  if outcome != Recovery::Nothing {
+    plan_cache::clear_plan_cache(&root);
+  }
   Ok(outcome != Recovery::Nothing)
 }
 
 #[cfg(test)]
 mod tests {
-  use super::fast_forward;
+  use super::*;
+  use crate::instance::models::misc::InstanceError;
+
+  #[test]
+  fn a_cancelled_preview_answers_with_the_cancelled_error() {
+    let join_error = tokio::runtime::Runtime::new().unwrap().block_on(async {
+      let spawned = tokio::spawn(async {
+        std::future::pending::<()>().await;
+      });
+      spawned.abort();
+      spawned.await.unwrap_err()
+    });
+    assert!(join_error.is_cancelled());
+    let mapped: crate::error::USTBLError = InstanceError::ModpackUpdatePrepareCancelled.into();
+    assert_eq!(mapped.0, "MODPACK_UPDATE_PREPARE_CANCELLED");
+  }
+
+  #[test]
+  fn a_merge_that_kept_nothing_local_writes_the_published_bytes() {
+    let remote = b"x = 3\ny = 1\n";
+    // Only the line endings are local: the published file is written.
+    let merged = b"x = 3\r\ny = 1\r\n".to_vec();
+    assert_eq!(
+      remote_if_equivalent("config/c.toml", merged, remote),
+      remote
+    );
+    // A kept local line stays, with the local line endings.
+    let merged = b"x = 2\r\ny = 1\r\n".to_vec();
+    assert_eq!(
+      remote_if_equivalent("config/c.toml", merged.clone(), remote),
+      merged
+    );
+  }
 
   #[test]
   fn only_a_plan_with_nothing_to_do_fast_forwards() {
@@ -844,5 +1151,42 @@ mod tests {
     assert!(!fast_forward(1, 0, false));
     assert!(!fast_forward(0, 1, false));
     assert!(!fast_forward(0, 0, true));
+  }
+
+  #[test]
+  fn a_reinstall_plan_never_fast_forwards() {
+    let origin = InstanceOrigin {
+      platform: OriginPlatform::Campus,
+      project_id: "p".into(),
+      version_id: "1".into(),
+      game_version: "1.21.1".into(),
+      loader_type: ModLoaderType::Fabric,
+      follow: true,
+    };
+    let run = PlannedRun {
+      version_id: "2".into(),
+      label: "2.0".into(),
+      diff: Default::default(),
+      plan_hash: "hh".into(),
+      loader_change: None,
+      reinstall_required: true,
+      remote: crate::instance::modpack_update::remote::RemoteModpack {
+        version_id: "2".into(),
+        label: "2.0".into(),
+        game_version: "1.21.1".into(),
+        loader: BaselineLoader {
+          loader_type: ModLoaderType::Fabric,
+          version: "0.16.0".into(),
+        },
+        components: None,
+        component_pack: None,
+        files: Vec::new(),
+      },
+    };
+    let plan = plan_of(&origin, run);
+    assert!(plan.reinstall_required);
+    assert!(!plan.fast_forward);
+    assert!(plan.changes.is_empty());
+    assert_eq!(plan.plan_hash, "hh");
   }
 }

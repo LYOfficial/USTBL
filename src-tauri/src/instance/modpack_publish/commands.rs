@@ -87,6 +87,9 @@ pub struct CampusLine {
   pub loader_type: String,
   pub loader_version: String,
   pub version_number: String,
+  /// Changelog of the line's newest version. Older platforms leave it out.
+  #[serde(default)]
+  pub changelog: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -690,19 +693,23 @@ pub struct UnfinishedPublish {
   pub version_number: String,
   pub phase: Phase,
   pub error: Option<String>,
-  /// On the task list right now.
-  pub running: bool,
+  /// §3.2.3: whether "继续" may be offered; a terminal failure only gets
+  /// "放弃" (v3 §8.4).
+  pub resumable: bool,
   pub created_at: i64,
 }
 
-/// Local records for uploads and platform-side publishes that are still being
-/// monitored or need user attention.
+/// Local publish records that need the user's attention (§3.2.3): an
+/// interrupted upload, a failed publish, or a platform-side publish whose
+/// watch is not on the task list right now. A record with a task group
+/// running shows there instead and never appears here.
 #[tauri::command]
 pub fn list_campus_modpack_publish_jobs() -> Vec<UnfinishedPublish> {
   JobRecord::list(&jobs_dir())
     .into_iter()
+    .filter(|record| !is_running(&record.id))
     .map(|record| UnfinishedPublish {
-      running: is_running(&record.id) || super::job::is_monitoring(&record.id),
+      resumable: record.resumable(),
       job_id: record.id,
       instance_id: record.instance_id,
       instance_name: record.instance_name,
@@ -763,6 +770,8 @@ pub async fn discard_campus_modpack_publish(app: AppHandle, job_id: String) -> U
     )
     .await?;
     if state.status().is_success() && state.json::<Value>().await?["status"] == "published" {
+      // Already out: the card comes back for the adoption, then the record
+      // is dropped by the platform stage itself.
       PublishJob {
         app: app.clone(),
         uploader: build_part_upload_client(&app),
@@ -770,7 +779,7 @@ pub async fn discard_campus_modpack_publish(app: AppHandle, job_id: String) -> U
         // Only platform processing is watched here, never a part upload.
         concurrency: None,
       }
-      .monitor_in_background();
+      .start()?;
       return Ok(());
     }
   }
@@ -1047,6 +1056,25 @@ mod tests {
     assert_eq!(out["project"]["slug"], "gtnh");
     assert_eq!(out["line"]["gameVersion"], "1.7.10");
     assert_eq!(out["line"]["versionNumber"], "2.8.0");
+  }
+
+  #[test]
+  fn a_listed_line_carries_its_changelog_when_the_platform_sends_one() {
+    let body = serde_json::json!([{
+      "id": 1, "slug": "gtnh", "name": "GTNH", "summary": "",
+      "lines": [
+        { "id": 7, "game_version": "1.7.10", "loader_type": "forge",
+          "loader_version": "10.13.4.1614", "version_number": "2.8.0",
+          "changelog": "修复崩溃\n更新模组" },
+        // An older platform has no changelog on the listing.
+        { "id": 8, "game_version": "1.12.2", "loader_type": "forge",
+          "loader_version": "14.23.5.2860", "version_number": "1.0.0" }
+      ]
+    }]);
+    let parsed: Vec<CampusProject> = serde_json::from_value(body).unwrap();
+    let out = serde_json::to_value(&parsed).unwrap();
+    assert_eq!(out[0]["lines"][0]["changelog"], "修复崩溃\n更新模组");
+    assert!(out[0]["lines"][1]["changelog"].is_null());
   }
 
   #[test]

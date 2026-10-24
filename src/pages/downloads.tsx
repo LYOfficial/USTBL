@@ -139,7 +139,7 @@ export const DownloadTasksPage = () => {
       }
     >
       <VStack align="stretch" px="10%" spacing={4}>
-        <UnfinishedPublishes refreshKey={tasks.length} />
+        <UnfinishedPublishes />
         {taskGroupList.length === 0 && <Empty withIcon={false} size="sm" />}
         {taskGroupList.map(([group, expanded]) => (
           <OptionItemGroup
@@ -287,6 +287,19 @@ export const DownloadTasksPage = () => {
                     size="xs"
                     value={group.progress}
                     colorScheme={primaryColor}
+                    // Every task in flight has no total (e.g. the platform
+                    // stage of a publish): the bar is indeterminate instead
+                    // of stalled mid-way by the estimated total.
+                    isIndeterminate={
+                      group.taskDescs.some(
+                        (t) => t.status === TaskDescStatusEnums.InProgress
+                      ) &&
+                      group.taskDescs
+                        .filter(
+                          (t) => t.status === TaskDescStatusEnums.InProgress
+                        )
+                        .every((t) => !t.total)
+                    }
                     borderRadius="sm"
                     mb={1}
                   />
@@ -317,8 +330,12 @@ export const DownloadTasksPage = () => {
                             size="xs"
                             value={task.progress}
                             colorScheme={primaryColor}
+                            // In progress without a total (e.g. the platform
+                            // stage of a publish) is indeterminate too.
                             isIndeterminate={
-                              task.status === TaskDescStatusEnums.Waiting
+                              task.status === TaskDescStatusEnums.Waiting ||
+                              (task.status === TaskDescStatusEnums.InProgress &&
+                                !task.total)
                             }
                             borderRadius="sm"
                           />

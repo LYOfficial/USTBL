@@ -37,8 +37,11 @@ const HeadNavBar = () => {
 
   const { openSharedModal } = useSharedModals();
   const [isAnimating, setIsAnimating] = useState(false);
-  const { tasks } = useTaskContext();
-  const isDownloadIndicatorShown = tasks.length > 0;
+  const { tasks, unfinishedPublishes } = useTaskContext();
+  // Unfinished publishes count too: they survive a restart as plain records,
+  // without any task group on the list (10-23 addition).
+  const isDownloadIndicatorShown =
+    tasks.length > 0 || unfinishedPublishes.length > 0;
 
   const unselectTabColor = useColorModeValue("gray.600", "gray.400");
 

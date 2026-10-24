@@ -44,7 +44,17 @@ pub enum Payload {
 pub struct LatestVersion {
   pub version_id: String,
   pub label: String,
-  pub payload: Payload,
+  pub payload: Option<Payload>,
+}
+
+impl LatestVersion {
+  /// The archive sha1 and download url of an Archive payload.
+  pub fn archive_ref(&self) -> Option<(&str, &str)> {
+    match &self.payload {
+      Some(Payload::Archive { url, sha1 }) => Some((sha1, url)),
+      _ => None,
+    }
+  }
 }
 
 pub fn loader_slug(loader: ModLoaderType) -> Option<&'static str> {
@@ -117,6 +127,20 @@ pub struct CampusVersion {
   pub loader_type: String,
   pub loader_version: String,
   pub manifest: CampusManifest,
+}
+
+/// A line of the project listing: its newest version, without the manifest.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct CampusLine {
+  pub id: i64,
+  pub version_number: String,
+  pub game_version: String,
+  pub loader_type: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CampusProject {
+  pub lines: Vec<CampusLine>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -304,6 +328,110 @@ pub fn campus_remote(
 
 // ---- archives ---------------------------------------------------------------
 
+/// A version's parsed remote, cached under the update folder. The archive of
+/// an Archive version is also kept next to it; a hit skips re-downloading,
+/// re-hashing and re-parsing it.
+const REMOTE_CACHE_SCHEMA: u32 = 1;
+
+fn remote_cache_path(root: &Path, version_id: &str) -> PathBuf {
+  remote_dir(root).join(format!("{version_id}.remote.json"))
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteCache {
+  pub schema: u32,
+  pub platform: OriginPlatform,
+  pub version_id: String,
+  /// Sha1 and size of the archive the remote was parsed from, Archive only.
+  pub archive_sha1: Option<String>,
+  pub archive_size: Option<u64>,
+  /// The instance root the `DownloadParam.dest` paths were built against.
+  pub root: PathBuf,
+  pub remote: super::remote::StoredRemoteModpack,
+}
+
+impl RemoteCache {
+  pub fn new(
+    origin: &InstanceOrigin,
+    root: &Path,
+    remote: &RemoteModpack,
+    archive: Option<(&str, u64)>,
+  ) -> Self {
+    Self {
+      schema: REMOTE_CACHE_SCHEMA,
+      platform: origin.platform,
+      version_id: remote.version_id.clone(),
+      archive_sha1: archive.map(|(sha1, _)| sha1.to_string()),
+      archive_size: archive.map(|(_, size)| size),
+      root: root.to_path_buf(),
+      remote: super::remote::StoredRemoteModpack::from(remote),
+    }
+  }
+
+  /// Whether this cache describes `version` fetched into `root` again. An
+  /// Archive cache additionally needs its archive, still there with the same
+  /// size (overrides are read from it).
+  pub fn matches(&self, origin: &InstanceOrigin, root: &Path, version: &LatestVersion) -> bool {
+    if self.schema != REMOTE_CACHE_SCHEMA
+      || self.platform != origin.platform
+      || self.version_id != version.version_id
+      || self.root != root
+    {
+      return false;
+    }
+    match (
+      version.archive_ref(),
+      &self.archive_sha1,
+      &self.archive_size,
+    ) {
+      (Some((sha1, _)), Some(cached_sha1), Some(cached_size)) => {
+        if cached_sha1 != sha1 {
+          return false;
+        }
+        let path = archive_path(root, sha1);
+        fs::metadata(&path)
+          .map(|meta| meta.len() as u64 == *cached_size)
+          .unwrap_or(false)
+      }
+      (None, None, None) => true,
+      _ => false,
+    }
+  }
+}
+
+/// The archive of an Archive payload: its sha1 and the path it is kept at.
+fn archive_path(root: &Path, sha1: &str) -> PathBuf {
+  remote_dir(root).join(format!("{sha1}.zip"))
+}
+
+pub fn load_remote_cache(
+  app: &AppHandle,
+  origin: &InstanceOrigin,
+  root: &Path,
+  version: &LatestVersion,
+) -> Option<RemoteModpack> {
+  let bytes = fs::read(remote_cache_path(root, &version.version_id)).ok()?;
+  let cache: RemoteCache = serde_json::from_slice(&bytes).ok()?;
+  if cache.matches(origin, root, version) {
+    Some(RemoteModpack::from_stored(cache.remote, |version_id| {
+      PackSession::new(AppTransport::new(app.clone()), version_id)
+    }))
+  } else {
+    None
+  }
+}
+
+pub fn write_remote_cache(root: &Path, cache: &RemoteCache) -> std::io::Result<()> {
+  let path = remote_cache_path(root, &cache.version_id);
+  if let Some(parent) = path.parent() {
+    fs::create_dir_all(parent)?;
+  }
+  let temp = path.with_extension("json.tmp");
+  fs::write(&temp, serde_json::to_vec_pretty(cache)?)?;
+  fs::rename(temp, path)
+}
+
 /// SHA-1 and size of one archive entry, streamed.
 pub fn hash_archive_entry(archive: &Path, entry: &str) -> USTBLResult<FileKey> {
   let mut zip = zip::ZipArchive::new(File::open(archive)?)?;
@@ -407,6 +535,41 @@ pub async fn remote_from_archive(
     component_pack: None,
     files: merge_files(downloads, overrides),
   })
+}
+
+// ---- light check --------------------------------------------------------------
+
+/// How the line a followed campus instance sits on compares with the newest
+/// publication, as seen from the project listing (no manifest is fetched).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CampusLineStatus {
+  /// The line's newest version is the one the instance follows.
+  Current,
+  /// The line has a newer version: its id and label.
+  Newer { id: i64, version_number: String },
+  /// The project exists but has no line for this game version and loader.
+  LineGone,
+}
+
+/// Match the followed line in a project listing, comparing the loader slug in
+/// lower case like the platform does.
+pub fn campus_line_status(lines: &[CampusLine], origin: &InstanceOrigin) -> CampusLineStatus {
+  let Some(loader) = loader_slug(origin.loader_type) else {
+    return CampusLineStatus::LineGone;
+  };
+  let Some(line) = lines.iter().find(|line| {
+    line.game_version == origin.game_version && line.loader_type.to_lowercase() == loader
+  }) else {
+    return CampusLineStatus::LineGone;
+  };
+  if line.id.to_string() == origin.version_id {
+    CampusLineStatus::Current
+  } else {
+    CampusLineStatus::Newer {
+      id: line.id,
+      version_number: line.version_number.clone(),
+    }
+  }
 }
 
 // ---- network ----------------------------------------------------------------
@@ -520,6 +683,11 @@ pub fn is_project_gone_detail(status: u16, detail: Option<&Value>) -> bool {
   status == 404 && detail == Some(&Value::String(PROJECT_GONE_DETAIL.into()))
 }
 
+/// The `detail` field of an error body, used to classify a 404.
+pub fn error_detail(body: Option<&Value>) -> Option<&Value> {
+  body.and_then(|body| body.get("detail"))
+}
+
 /// Whether a project reference is worth asking about. Both the install flow
 /// and publish adoption store the slug; the platform's `get_project` accepts a
 /// slug or a numeric id alike, so any non-empty ref may be queried. The
@@ -543,15 +711,103 @@ pub async fn campus_project_gone(app: &AppHandle, project_ref: &str) -> Option<b
     .ok()?;
   let status = response.status().as_u16();
   if status != 404 {
-    return if response.status().is_success() { Some(false) } else { None };
+    return if response.status().is_success() {
+      Some(false)
+    } else {
+      None
+    };
   }
   let detail = response.json::<Value>().await.ok()?.get("detail").cloned();
   Some(is_project_gone_detail(status, detail.as_ref()))
 }
 
+/// Fetch the project listing for the light check. A 404 whose detail is the
+/// deletion proof returns `None`; any other 404 is the line being gone.
+pub async fn campus_project_for_light_check(
+  app: &AppHandle,
+  project_ref: &str,
+) -> USTBLResult<Option<CampusProject>> {
+  let client = app.state::<reqwest::Client>();
+  let response = client
+    .get(format!("{CAMPUS_API}/projects/{project_ref}"))
+    .send()
+    .await?;
+  let status = response.status().as_u16();
+  if status == 404 {
+    let body = response.json::<Value>().await.ok();
+    if is_project_gone_detail(status, error_detail(body.as_ref())) {
+      return Ok(None);
+    }
+    return Err(InstanceError::ModpackUpdateLineGone.into());
+  }
+  Ok(Some(response.error_for_status()?.json().await?))
+}
+
 #[cfg(test)]
 mod project_gone_tests {
   use super::*;
+  use crate::instance::models::misc::{ModLoaderType, OriginPlatform};
+
+  fn origin_at(version_id: &str) -> InstanceOrigin {
+    InstanceOrigin {
+      platform: OriginPlatform::Campus,
+      project_id: "p".into(),
+      version_id: version_id.into(),
+      game_version: "1.21.1".into(),
+      loader_type: ModLoaderType::Fabric,
+      follow: true,
+    }
+  }
+
+  fn line(id: i64, version_number: &str, game_version: &str, loader_type: &str) -> CampusLine {
+    CampusLine {
+      id,
+      version_number: version_number.into(),
+      game_version: game_version.into(),
+      loader_type: loader_type.into(),
+    }
+  }
+
+  #[test]
+  fn line_status_tells_current_newer_and_gone_apart() {
+    let lines = vec![
+      line(7, "1.2.0", "1.21.1", "fabric"),
+      line(9, "3.0.0", "1.20.1", "forge"),
+    ];
+    // The followed version is the line's newest: up to date.
+    assert_eq!(
+      campus_line_status(&lines, &origin_at("7")),
+      CampusLineStatus::Current
+    );
+    // Any other version of the line is an update.
+    assert_eq!(
+      campus_line_status(&lines, &origin_at("5")),
+      CampusLineStatus::Newer {
+        id: 7,
+        version_number: "1.2.0".into(),
+      }
+    );
+    // No line matches this game version / loader pair.
+    let mut other = origin_at("7");
+    other.game_version = "1.19.4".into();
+    assert_eq!(
+      campus_line_status(&lines, &other),
+      CampusLineStatus::LineGone
+    );
+    // The loader slug matches case-insensitively (the platform stores lower).
+    let lines = vec![line(7, "1.2.0", "1.21.1", "Fabric")];
+    assert_eq!(
+      campus_line_status(&lines, &origin_at("7")),
+      CampusLineStatus::Current
+    );
+    // A loader without a slug (LiteLoader, Quilt) never has a line.
+    let mut quilt = origin_at("7");
+    quilt.loader_type = ModLoaderType::Quilt;
+    assert_eq!(
+      campus_line_status(&lines, &quilt),
+      CampusLineStatus::LineGone
+    );
+  }
 
   #[test]
   fn only_the_exact_404_detail_confirms_deletion() {
@@ -576,6 +832,15 @@ mod project_gone_tests {
     assert!(campus_project_queryable("24"));
     assert!(!campus_project_queryable(""));
   }
+
+  #[test]
+  fn a_404_with_another_detail_is_not_a_deletion() {
+    // The exact detail is the deletion proof; anything else keeps the line.
+    let body = serde_json::json!({"detail": "Not Found"});
+    assert!(!is_project_gone_detail(404, error_detail(Some(&body))));
+    let gone = serde_json::json!({"detail": PROJECT_GONE_DETAIL});
+    assert!(is_project_gone_detail(404, error_detail(Some(&gone))));
+  }
 }
 
 pub async fn campus_base_remote(
@@ -594,7 +859,7 @@ pub async fn campus_base_remote(
   let latest = LatestVersion {
     version_id: origin.version_id.clone(),
     label: version.version_number.clone(),
-    payload: Payload::Campus(Box::new(version)),
+    payload: Some(Payload::Campus(Box::new(version))),
   };
   resolve_remote(app, origin, root, name, &latest).await
 }
@@ -622,7 +887,7 @@ pub async fn latest_version(
       Ok(Some(LatestVersion {
         version_id: version.id.to_string(),
         label: version.version_number.clone(),
-        payload: Payload::Campus(Box::new(version)),
+        payload: Some(Payload::Campus(Box::new(version))),
       }))
     }
     platform => {
@@ -650,18 +915,18 @@ pub async fn latest_version(
       Ok(Some(LatestVersion {
         version_id: item.file_id,
         label: item.name,
-        payload: Payload::Archive {
+        payload: Some(Payload::Archive {
           url: item.download_url,
           sha1: item.sha1.to_lowercase(),
-        },
+        }),
       }))
     }
   }
 }
 
-/// Fetch whatever the new version needs to be described file by file. Archives
-/// are cached under the update folder so applying right after planning does
-/// not download them twice.
+/// Fetch whatever the new version needs to be described file by file. The
+/// parsed result is cached per version under the update folder, so a plan and
+/// the apply right after it resolve the remote only once.
 pub async fn resolve_remote(
   app: &AppHandle,
   origin: &InstanceOrigin,
@@ -671,25 +936,44 @@ pub async fn resolve_remote(
 ) -> USTBLResult<RemoteModpack> {
   let dir = remote_dir(root);
   fs::create_dir_all(&dir)?;
-  let remote = match &latest.payload {
-    Payload::Archive { url, sha1 } => {
-      let path = dir.join(format!("{sha1}.zip"));
-      let cached = tokio::task::spawn_blocking({
-        let path = path.clone();
-        let sha1 = sha1.clone();
-        move || hash_file(&path).is_ok_and(|(actual, _)| actual == sha1)
-      })
-      .await
-      .map_err(|e| USTBLError(e.to_string()))?;
-      if !cached {
-        download_url(app, url, &path, Some(sha1)).await?;
+  let remote = if let Some(remote) = load_remote_cache(app, origin, root, latest) {
+    remote
+  } else {
+    let payload = latest
+      .payload
+      .as_ref()
+      .ok_or(InstanceError::ModpackUpdateRemoteInvalid)?;
+    let (remote, archive) = match payload {
+      Payload::Archive { url, sha1 } => {
+        let path = archive_path(root, sha1);
+        let cached = tokio::task::spawn_blocking({
+          let path = path.clone();
+          let sha1 = sha1.clone();
+          move || hash_file(&path).is_ok_and(|(actual, _)| actual == sha1)
+        })
+        .await
+        .map_err(|e| USTBLError(e.to_string()))?;
+        if !cached {
+          download_url(app, url, &path, Some(sha1)).await?;
+        }
+        let size = fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
+        (
+          remote_from_archive(app, &path, root, instance_name, origin, latest).await?,
+          Some((sha1.as_str(), size)),
+        )
       }
-      remote_from_archive(app, &path, root, instance_name, origin, latest).await?
+      Payload::Campus(version) => {
+        let packs = PackSession::new(AppTransport::new(app.clone()), version.id);
+        (campus_remote(version, &packs)?, None)
+      }
+    };
+    let archive = archive.map(|(sha1, size)| (sha1.to_string(), size));
+    let archive_ref = archive.as_ref().map(|(sha1, size)| (sha1.as_str(), *size));
+    let cache = RemoteCache::new(origin, root, &remote, archive_ref);
+    if let Err(error) = write_remote_cache(root, &cache) {
+      log::warn!("cannot write modpack remote cache: {error:?}");
     }
-    Payload::Campus(version) => {
-      let packs = PackSession::new(AppTransport::new(app.clone()), version.id);
-      campus_remote(version, &packs)?
-    }
+    remote
   };
   if remote.game_version != origin.game_version || remote.loader.loader_type != origin.loader_type {
     return Err(InstanceError::ModpackUpdateLineMismatch.into());
@@ -931,6 +1215,114 @@ mod tests {
     assert_eq!(merged.len(), 2);
     assert_eq!(merged[0].key.sha1, "3");
     assert!(matches!(merged[0].source, FileSource::ArchiveEntry { .. }));
+  }
+
+  fn origin_with(platform: OriginPlatform, version_id: &str) -> InstanceOrigin {
+    InstanceOrigin {
+      platform,
+      project_id: "p".into(),
+      version_id: version_id.into(),
+      game_version: "1.21.1".into(),
+      loader_type: ModLoaderType::Fabric,
+      follow: true,
+    }
+  }
+
+  fn archive_version(version_id: &str, sha1: &str) -> LatestVersion {
+    LatestVersion {
+      version_id: version_id.into(),
+      label: version_id.into(),
+      payload: Some(Payload::Archive {
+        url: "https://cdn.example/pack.zip".into(),
+        sha1: sha1.into(),
+      }),
+    }
+  }
+
+  fn remote_for_test() -> RemoteModpack {
+    RemoteModpack {
+      version_id: "7".into(),
+      label: "1.2.0".into(),
+      game_version: "1.21.1".into(),
+      loader: BaselineLoader {
+        loader_type: ModLoaderType::Fabric,
+        version: "0.16.0".into(),
+      },
+      components: None,
+      component_pack: None,
+      files: vec![
+        RemoteFile {
+          path: "mods/a.jar".into(),
+          key: FileKey {
+            sha1: "aa".repeat(20),
+            size: 3,
+          },
+          source: FileSource::Download(plain_download("https://cdn.example/a.jar").unwrap()),
+        },
+        RemoteFile {
+          path: "config/b.txt".into(),
+          key: FileKey {
+            sha1: "bb".repeat(20),
+            size: 5,
+          },
+          source: FileSource::ArchiveEntry {
+            archive: PathBuf::from("/tmp/pack.zip"),
+            entry: "overrides/config/b.txt".into(),
+          },
+        },
+      ],
+    }
+  }
+
+  #[test]
+  fn remote_cache_round_trips_and_matches_only_the_same_version_and_root() {
+    let root = std::env::temp_dir().join(format!("ustbl-remote-cache-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    let origin = origin_with(OriginPlatform::Modrinth, "7");
+    let version = archive_version("7", "cc".repeat(20).as_str());
+    let sha1 = "cc".repeat(20);
+    fs::create_dir_all(remote_dir(&root)).unwrap();
+    fs::write(archive_path(&root, &sha1), b"zip-bytes").unwrap();
+
+    let cache = RemoteCache::new(&origin, &root, &remote_for_test(), Some((&sha1, 9)));
+    assert!(cache.matches(&origin, &root, &version));
+
+    // Round trip through JSON.
+    let bytes = serde_json::to_vec(&cache).unwrap();
+    let back: RemoteCache = serde_json::from_slice(&bytes).unwrap();
+    assert!(back.matches(&origin, &root, &version));
+
+    // Another version id, platform or root does not match.
+    assert!(!back.matches(&origin, &root, &archive_version("8", &sha1)));
+    let other_platform = origin_with(OriginPlatform::CurseForge, "7");
+    assert!(!back.matches(&other_platform, &root, &version));
+    let other_root = root.join("moved");
+    assert!(!back.matches(&origin, &other_root, &version));
+
+    // The archive must still be there with the same size.
+    fs::write(archive_path(&root, &sha1), b"changed").unwrap();
+    assert!(!back.matches(&origin, &root, &version));
+    let _ = fs::remove_dir_all(&root);
+  }
+
+  #[test]
+  fn a_campus_remote_cache_needs_no_archive() {
+    let root = std::env::temp_dir().join(format!("ustbl-remote-cache-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    let origin = origin_with(OriginPlatform::Campus, "7");
+    let version = LatestVersion {
+      version_id: "7".into(),
+      label: "1.2.0".into(),
+      payload: None,
+    };
+    let cache = RemoteCache::new(&origin, &root, &remote_for_test(), None);
+    assert!(cache.matches(&origin, &root, &version));
+    assert!(!cache.matches(
+      &origin,
+      &root,
+      &archive_version("7", "cc".repeat(20).as_str())
+    ));
+    let _ = fs::remove_dir_all(&root);
   }
 
   #[test]

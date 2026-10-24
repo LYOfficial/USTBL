@@ -22,6 +22,12 @@ pub struct Prepared {
   pub conflict_sources: BTreeMap<String, (Vec<u8>, Vec<u8>, Vec<u8>)>,
 }
 
+/// The pieces of one comparison, so the conflict setup can finish the work
+/// without hashing the local files a second time.
+pub struct Compared {
+  pub diff: Diff,
+}
+
 fn baseline_keys(baseline: &ModpackBaseline) -> BTreeMap<String, FileKey> {
   baseline
     .files
@@ -185,24 +191,28 @@ pub async fn local_changes(
   .map_err(|e| USTBLError(e.to_string()))?
 }
 
-/// Hash the files both versions care about and compare the three states.
-pub async fn prepare(
-  root: &Path,
-  baseline: &ModpackBaseline,
-  remote: &RemoteModpack,
-) -> USTBLResult<Prepared> {
-  prepare_with_contents(root, baseline, remote, &BTreeMap::new()).await
-}
-
 /// Prepare an update and merge eligible text conflicts when remote bytes are
 /// available. Remote bytes are supplied by the caller because their source may
 /// be an archive, a campus pack, or a download.
+#[cfg(test)]
 pub async fn prepare_with_contents(
   root: &Path,
   baseline: &ModpackBaseline,
   remote: &RemoteModpack,
   remote_contents: &BTreeMap<String, Vec<u8>>,
 ) -> USTBLResult<Prepared> {
+  let compared = compare(root, baseline, remote).await?;
+  finish(compared, root, remote, remote_contents)
+}
+
+/// Hash the local files both versions care about once, returning the three
+/// states and the raw diff. Merging needs the remote bytes, which the caller
+/// fetches after this first look.
+pub async fn compare(
+  root: &Path,
+  baseline: &ModpackBaseline,
+  remote: &RemoteModpack,
+) -> USTBLResult<Compared> {
   let baseline_map = baseline_keys(baseline);
   let remote_map = remote.key_map();
   let paths: BTreeSet<String> = baseline_map
@@ -238,7 +248,19 @@ pub async fn prepare_with_contents(
       );
     }
   }
-  let mut diff = three_way(&baseline_map, &local, &remote_map);
+  let diff = three_way(&baseline_map, &local, &remote_map);
+  Ok(Compared { diff })
+}
+
+/// Finish a comparison after the remote bytes of conflicting text files were
+/// fetched: merge what merges itself and give the rest its line conflicts.
+pub fn finish(
+  compared: Compared,
+  root: &Path,
+  remote: &RemoteModpack,
+  remote_contents: &BTreeMap<String, Vec<u8>>,
+) -> USTBLResult<Prepared> {
+  let Compared { mut diff, .. } = compared;
   let mut merged_contents = BTreeMap::new();
   let mut conflict_sources = BTreeMap::new();
   let mut remaining = Vec::new();
@@ -251,7 +273,7 @@ pub async fn prepare_with_contents(
       remote_contents.get(&conflict.path),
       ) {
       (super::diff::ConflictKind::ModifiedLocallyChangedRemotely, Some(base), Some(_local_key), Some(remote_key), Some(remote_bytes)) => {
-        let base_bytes = base_store::load(&root, &base.sha1).ok().flatten();
+        let base_bytes = base_store::load(root, &base.sha1).ok().flatten();
         let local_bytes = std::fs::read(root.join(&conflict.path)).ok();
         base_bytes.and_then(|base_bytes| local_bytes.and_then(|local_bytes| {
           match merge_text(&conflict.path, &base_bytes, &local_bytes, remote_bytes) {
@@ -285,7 +307,7 @@ pub async fn prepare_with_contents(
         remote_contents.get(&conflict.path),
       ) {
         if let (Some(base_bytes), Ok(local_bytes)) = (
-          base_store::load(&root, &base.sha1).ok().flatten(),
+          base_store::load(root, &base.sha1).ok().flatten(),
           std::fs::read(root.join(&conflict.path)),
         ) {
           if let Ok(hunks) = text_conflicts(&conflict.path, &base_bytes, &local_bytes, remote_bytes) {
@@ -400,7 +422,7 @@ mod tests {
       ("mods/c.jar", "c2"),
     ]);
 
-    let prepared = prepare(&root, &baseline, &remote).await.unwrap();
+    let prepared = prepare_with_contents(&root, &baseline, &remote, &BTreeMap::new()).await.unwrap();
 
     let changes: Vec<_> = prepared
       .diff
@@ -429,18 +451,18 @@ mod tests {
     let baseline = baseline(&[("mods/a.jar", "a1")]);
     let remote_v2 = remote(&[("mods/a.jar", "a2")]);
 
-    let first = prepare(&root, &baseline, &remote_v2)
+    let first = prepare_with_contents(&root, &baseline, &remote_v2, &BTreeMap::new())
       .await
       .unwrap()
       .plan_hash;
-    let again = prepare(&root, &baseline, &remote_v2)
+    let again = prepare_with_contents(&root, &baseline, &remote_v2, &BTreeMap::new())
       .await
       .unwrap()
       .plan_hash;
     assert_eq!(first, again);
 
     fs::write(root.join("mods/a.jar"), "a1-edited").unwrap();
-    let edited = prepare(&root, &baseline, &remote_v2)
+    let edited = prepare_with_contents(&root, &baseline, &remote_v2, &BTreeMap::new())
       .await
       .unwrap()
       .plan_hash;
@@ -450,7 +472,7 @@ mod tests {
     other.version_id = "3".into();
     assert_ne!(
       first,
-      prepare(&root.clone(), &baseline, &other)
+      prepare_with_contents(&root.clone(), &baseline, &other, &BTreeMap::new())
         .await
         .unwrap()
         .plan_hash
@@ -461,10 +483,11 @@ mod tests {
   #[tokio::test]
   async fn a_pack_identical_to_the_baseline_has_nothing_to_do() {
     let root = instance(&[("mods/a.jar", "a1")]);
-    let prepared = prepare(
+    let prepared = prepare_with_contents(
       &root,
       &baseline(&[("mods/a.jar", "a1")]),
       &remote(&[("mods/a.jar", "a1")]),
+      &BTreeMap::new(),
     )
     .await
     .unwrap();
@@ -486,10 +509,11 @@ mod tests {
     )
     .unwrap();
     assert_eq!(baseline.files[0].sha1, sha1);
-    let prepared = prepare(
+    let prepared = prepare_with_contents(
       &root,
       &baseline,
       &remote(&[("config/a.toml", "a=2\n")]),
+      &BTreeMap::new(),
     )
     .await
     .unwrap();

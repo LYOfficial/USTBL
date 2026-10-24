@@ -45,6 +45,17 @@ export class ModpackUpdateService {
   }
 
   /**
+   * Stop the running preview of this instance, if any. The cancelled preview
+   * answers with `MODPACK_UPDATE_PREPARE_CANCELLED`, which callers ignore.
+   */
+  @responseHandler("instance")
+  static async cancelModpackUpdatePrepare(
+    instanceId: string
+  ): Promise<InvokeResponse<null>> {
+    return await invoke("cancel_modpack_update_prepare", { instanceId });
+  }
+
+  /**
    * Apply the plan the player confirmed. Conflicts without an answer keep the
    * local file.
    */
@@ -110,5 +121,22 @@ export class ModpackUpdateService {
     instanceId: string
   ): Promise<InvokeResponse<null>> {
     return await invoke("unlink_modpack_origin", { instanceId });
+  }
+
+  /** The modpack version the launcher already announced for this instance. */
+  @responseHandler("instance")
+  static async getModpackUpdateNotice(
+    instanceId: string
+  ): Promise<InvokeResponse<string | null>> {
+    return await invoke("get_modpack_update_notice", { instanceId });
+  }
+
+  /** Remember that the launcher announced `versionId` for this instance. */
+  @responseHandler("instance")
+  static async setModpackUpdateNotice(
+    instanceId: string,
+    versionId: string
+  ): Promise<InvokeResponse<null>> {
+    return await invoke("set_modpack_update_notice", { instanceId, versionId });
   }
 }
