@@ -7,8 +7,8 @@
 //! is listed, and the local file stays unless the caller explicitly chooses the
 //! remote one.
 
-use super::merge::MergeConflict;
 use crate::instance::helpers::modpack::baseline::hash_file;
+use super::merge::MergeConflict;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
@@ -221,7 +221,7 @@ pub fn three_way(
       local: local_key.clone(),
       remote: r.cloned(),
       remote_disabled: None,
-    local_disabled: local_key.is_some().then_some(false),
+      local_disabled: local_key.is_some().then_some(false),
       hunks: Vec::new(),
     };
     let write = |kind, remote: &FileKey| FileChange {

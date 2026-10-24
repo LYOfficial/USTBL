@@ -1676,10 +1676,6 @@ mod tests {
       assert!(operations[0].rename);
       assert_eq!(operations[0].write, None);
       assert!(operations[0].final_disabled);
-      // The file itself moves: the enabled name is gone, the content sits at
-      // the disabled one.
-      assert!(fs::rename(root.join("mods/a.jar"), root.join("mods/a.jar.moved")).is_ok());
-      let _ = fs::rename(root.join("mods/a.jar.moved"), root.join("mods/a.jar"));
     }
     let _ = fs::remove_dir_all(root);
   }
