@@ -3127,8 +3127,11 @@
     },
     "error": {
       "invalidVersion": "Please enter a valid version number",
-      "noFileSelected": "Please select at least one file",
-      "invalidProject": "Please complete the project information"
+      "noFileSelected": "Tick at least one file or set a rule",
+      "invalidProject": "Please complete the project information",
+      "bothVariants": "Both the enabled and disabled file of {{path}} exist. Delete one before publishing",
+      "tooManyRules": "At most {{max}} rules are allowed. Set folders instead of single files",
+      "previousRelease": "Could not read the line's previous release, so publishing is paused. Pick the target again or retry later"
     },
     "errorMessage": {
       "name": {
@@ -3150,11 +3153,27 @@
       "hashing": "Checking files ({{done}}/{{total}})",
       "packing": "Packing new content"
     },
-    "skipped": "{{count}} file(s) were left out (disabled mods or launcher files)",
+    "tree": {
+      "legend": "Include: ships with the version. Ignore: this version leaves it alone and players keep theirs. Delete: removed on players' update. Click the state button to cycle; a folder's state applies to every file under it.",
+      "include": "Include",
+      "ignore": "Ignore",
+      "delete": "Delete",
+      "remove": "Remove",
+      "mixed": "Mixed",
+      "once": "First install only",
+      "onceHint": "Placed only when a player first installs; never updated afterwards and not restored if the player deletes it",
+      "restore": "Restore inheritance",
+      "restoreHint": "Drop the setting here and follow the folder above",
+      "disabled": "Disabled",
+      "missing": "No longer on disk",
+      "conflict": "Both the enabled and disabled file exist",
+      "toggle": "{{name}}: currently {{state}}, click to change to {{next}}"
+    },
+    "skipped": "{{count}} launcher file(s) were left out",
     "adoption": {
       "keptOther": "The instance already follows another modpack or line, so its source record was left alone.",
       "notIsolated": "Version isolation is off for this instance, so it was not linked to this modpack.",
-      "localChanged": "Local files changed during upload, so the instance was not linked to this version.",
+      "localChanged": "The instance does not match the version just published (for example a file marked Delete is still on disk), so it was not linked to it. The next update will handle it from the version's contents.",
       "recordFailed": "The version was published, but the instance could not be linked to it. The next check compares as usual."
     },
     "started": {

@@ -3127,8 +3127,11 @@
     },
     "error": {
       "invalidVersion": "Veuillez saisir un numéro de version valide",
-      "noFileSelected": "Veuillez sélectionner au moins un fichier",
-      "invalidProject": "Veuillez compléter les informations du projet"
+      "noFileSelected": "Cochez au moins un fichier ou définissez une règle",
+      "invalidProject": "Veuillez compléter les informations du projet",
+      "bothVariants": "Le fichier activé et le fichier désactivé de {{path}} existent tous les deux. Supprimez-en un avant de publier",
+      "tooManyRules": "{{max}} règles au maximum. Réglez des dossiers plutôt que des fichiers isolés",
+      "previousRelease": "Impossible de lire la version précédente de cette ligne ; la publication est suspendue. Choisissez à nouveau la cible ou réessayez plus tard"
     },
     "errorMessage": {
       "name": {
@@ -3150,11 +3153,27 @@
       "hashing": "Vérification des fichiers ({{done}}/{{total}})",
       "packing": "Création du paquet des nouveautés"
     },
-    "skipped": "{{count}} fichier(s) exclu(s) (mods désactivés ou fichiers du lanceur)",
+    "tree": {
+      "legend": "Inclure : publié avec la version. Ignorer : cette version n'y touche pas, les joueurs gardent le leur. Supprimer : retiré à la mise à jour des joueurs. Cliquez sur le bouton d'état pour changer ; l'état d'un dossier s'applique à tous ses fichiers.",
+      "include": "Inclure",
+      "ignore": "Ignorer",
+      "delete": "Supprimer",
+      "remove": "Retirer",
+      "mixed": "Mixte",
+      "once": "Première installation seulement",
+      "onceHint": "Posé uniquement à la première installation du joueur ; jamais mis à jour ensuite et non restauré si le joueur le supprime",
+      "restore": "Rétablir l'héritage",
+      "restoreHint": "Supprime le réglage ici et suit le dossier parent",
+      "disabled": "Désactivé",
+      "missing": "Absent du disque",
+      "conflict": "Les fichiers activé et désactivé existent tous les deux",
+      "toggle": "{{name}} : actuellement {{state}}, cliquez pour passer à {{next}}"
+    },
+    "skipped": "{{count}} fichier(s) du lanceur exclu(s)",
     "adoption": {
       "keptOther": "L'instance suit déjà un autre pack ou une autre ligne ; son enregistrement de source est inchangé.",
       "notIsolated": "L'isolation de version est désactivée pour cette instance ; elle n'a pas été liée à ce pack.",
-      "localChanged": "Des fichiers locaux ont changé pendant l'envoi ; l'instance n'a pas été liée à cette version.",
+      "localChanged": "L'instance ne correspond pas à la version publiée (par exemple un fichier marqué Supprimer est toujours sur le disque) ; elle n'y a pas été liée. La prochaine mise à jour s'appuiera sur le contenu de la version.",
       "recordFailed": "La version est publiée, mais l'instance n'a pas pu y être liée. La prochaine vérification comparera normalement."
     },
     "started": {

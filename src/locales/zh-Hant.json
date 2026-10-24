@@ -3127,8 +3127,11 @@
     },
     "error": {
       "invalidVersion": "請輸入有效的版本號",
-      "noFileSelected": "請至少選擇一個檔案",
-      "invalidProject": "請補全專案資訊"
+      "noFileSelected": "請至少勾選一個檔案，或設定一條規則",
+      "invalidProject": "請補全專案資訊",
+      "bothVariants": "{{path}} 的啟用和停用檔案同時存在，請刪掉其中一個再發布",
+      "tooManyRules": "規則最多 {{max}} 條，請把逐個檔案的設定合併到目錄上",
+      "previousRelease": "無法讀取這條線的上一版，已暫停發布。請重新選擇發布目標或稍後再試"
     },
     "errorMessage": {
       "name": {
@@ -3150,11 +3153,27 @@
       "hashing": "正在檢查檔案（{{done}}/{{total}}）",
       "packing": "正在打包新增內容"
     },
-    "skipped": "有 {{count}} 個檔案被排除（已停用的模組或啟動器檔案）",
+    "tree": {
+      "legend": "勾選：隨版本發布。忽略：這一版不管它，玩家本機的保持不動。刪除：玩家更新時直接刪掉。點擊狀態按鈕依序切換；目錄的狀態會套用到其下所有檔案。",
+      "include": "勾選",
+      "ignore": "忽略",
+      "delete": "刪除",
+      "remove": "移除",
+      "mixed": "混合",
+      "once": "僅首次安裝",
+      "onceHint": "只在玩家首次安裝時放入，之後不再更新；玩家刪除後也不會重裝",
+      "restore": "恢復繼承",
+      "restoreHint": "去掉這一處的設定，沿用上層目錄的規則",
+      "disabled": "已停用",
+      "missing": "磁碟上已沒有",
+      "conflict": "啟用和停用兩個檔案同時存在",
+      "toggle": "{{name}}：目前為「{{state}}」，點擊切換為「{{next}}」"
+    },
+    "skipped": "有 {{count}} 個啟動器檔案被排除",
     "adoption": {
       "keptOther": "該實例已跟隨其他整合包或其他線，未改動其來源記錄。",
       "notIsolated": "該實例未開啟版本隔離，未將其關聯到此整合包。",
-      "localChanged": "上傳期間本機檔案發生了變化，未將該實例關聯到此版本。",
+      "localChanged": "該實例與剛發布的版本不一致（例如標為刪除的檔案仍在磁碟上），未將其關聯到此版本，下次更新會按版本內容處理。",
       "recordFailed": "版本已發布，但未能記錄該實例與此版本的關聯，下次檢查將按常規比較。"
     },
     "started": {

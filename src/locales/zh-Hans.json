@@ -3127,8 +3127,11 @@
     },
     "error": {
       "invalidVersion": "请输入有效的版本号",
-      "noFileSelected": "请至少选择一个文件",
-      "invalidProject": "请补全项目信息"
+      "noFileSelected": "请至少勾选一个文件，或设置一条规则",
+      "invalidProject": "请补全项目信息",
+      "bothVariants": "{{path}} 的启用和禁用文件同时存在，请删掉其中一个再发布",
+      "tooManyRules": "规则最多 {{max}} 条，请把逐个文件的设置合并到目录上",
+      "previousRelease": "无法读取这条线的上一版，已暂停发布。请重新选择发布目标或稍后再试"
     },
     "errorMessage": {
       "name": {
@@ -3150,11 +3153,27 @@
       "hashing": "正在检查文件（{{done}}/{{total}}）",
       "packing": "正在打包新增内容"
     },
-    "skipped": "有 {{count}} 个文件被排除（已禁用的模组或启动器文件）",
+    "tree": {
+      "legend": "勾选：随版本发布。忽略：这一版不管它，玩家本地的保持不动。删除：玩家更新时直接删掉。点击状态按钮依次切换；目录的状态会应用到其下所有文件。",
+      "include": "勾选",
+      "ignore": "忽略",
+      "delete": "删除",
+      "remove": "移除",
+      "mixed": "混合",
+      "once": "仅首次安装",
+      "onceHint": "只在玩家首次安装时放入，之后不再更新；玩家删除后也不会重装",
+      "restore": "恢复继承",
+      "restoreHint": "去掉这一处的设置，沿用上层目录的规则",
+      "disabled": "已禁用",
+      "missing": "磁盘上已没有",
+      "conflict": "启用和禁用两个文件同时存在",
+      "toggle": "{{name}}：当前为“{{state}}”，点击切换为“{{next}}”"
+    },
+    "skipped": "有 {{count}} 个启动器文件被排除",
     "adoption": {
       "keptOther": "该实例已跟随其他整合包或其他线，未改动其来源记录。",
       "notIsolated": "该实例未开启版本隔离，未将其关联到此整合包。",
-      "localChanged": "上传期间本地文件发生了变化，未将该实例关联到此版本。",
+      "localChanged": "该实例与刚发布的版本不一致（例如标为删除的文件仍在磁盘上），未将其关联到此版本，下次更新会按版本内容处理。",
       "recordFailed": "版本已发布，但未能记录该实例与此版本的关联，下次检查将按常规比较。"
     },
     "started": {

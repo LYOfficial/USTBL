@@ -46,6 +46,25 @@ export interface CampusPublishStarted {
   jobId: string;
 }
 
+export interface CampusPublishFile {
+  /** Always the enabled name. */
+  path: string;
+  disabled: boolean;
+  once: boolean;
+}
+
+export interface CampusPublishRule {
+  path: string;
+  kind: "file" | "dir";
+  state: "ignore" | "delete";
+}
+
+/** What the line's current release lists. */
+export interface CampusPreviousRelease {
+  files: CampusPublishFile[];
+  rules: CampusPublishRule[];
+}
+
 export interface CampusNewProject {
   name: string;
   summary: string;
