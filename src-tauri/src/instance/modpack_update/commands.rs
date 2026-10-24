@@ -770,7 +770,7 @@ fn is_fresh(origin: &InstanceOrigin) -> bool {
 /// A plan fast-forwards when nothing but the baseline moves. A `Retire`
 /// change only rewrites the entry (the file itself stays), so it does not
 /// count; everything else, a conflict or a loader change does.
-fn fast_forward<'a>(
+pub(crate) fn fast_forward<'a>(
   mut changes: impl Iterator<Item = &'a super::diff::FileChange>,
   conflicts: usize,
   loader_change: bool,

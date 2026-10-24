@@ -9,13 +9,12 @@ use super::cancel::{apply_cancel, cancel_remote, CancelOutcome};
 use super::commands::{
   adopt_published, authed_json, failure, failure_code, failure_detail, instance_of, PublishOutcome,
 };
-use super::manifest::{LocalFile, PackObject};
+use super::manifest::PackObject;
 use super::pack::{is_verified, mark_verified, rebuild_pack, verify_pack};
 use super::record::{jobs_dir, paths, JobRecord, Phase, RecordedUpload};
 use super::transfer::{report, SentBytes};
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::models::misc::InstanceError;
-use crate::instance::modpack_update::diff::FileKey;
 use crate::tasks::monitor::TaskMonitor;
 use crate::tasks::upload::upload_handle;
 use crate::tasks::PTaskHandle;
@@ -76,6 +75,19 @@ pub(super) fn ensure_not_running(job_id: &str) -> USTBLResult<()> {
     return Err(USTBLError("任务正在进行，请先在任务列表中取消".into()));
   }
   Ok(())
+}
+
+/// Start a discard: register as the job's one cancel exchange first, then
+/// check it is not running. The other order leaves a gap where a resume can
+/// start the job after the check and release its own token before the discard
+/// takes one, and the discard then drops a running job. With the token held,
+/// a resume is refused up front, and one that finished starting is seen by
+/// the check. The token goes back when the check fails.
+pub(super) fn begin_discard(job_id: &str) -> USTBLResult<CancellingToken> {
+  let token = CancellingToken::take(job_id)
+    .ok_or_else(|| USTBLError("取消处理尚未完成，请稍后再试".into()))?;
+  ensure_not_running(job_id)?;
+  Ok(token)
 }
 
 /// After a restart, a record the platform is still processing gets its task
@@ -799,18 +811,6 @@ impl PublishJob {
         return Err(ExecuteFailure::Recorded);
       }
       if status == "published" {
-        let files: Vec<LocalFile> = self
-          .record
-          .files
-          .iter()
-          .map(|file| LocalFile {
-            path: file.path.clone(),
-            key: FileKey {
-              sha1: file.sha1.clone(),
-              size: file.size,
-            },
-          })
-          .collect();
         let slug = state["project_slug"]
           .as_str()
           .unwrap_or(&self.record.project_slug)
@@ -823,8 +823,6 @@ impl PublishJob {
               &slug,
               self.record.version_id,
               &self.record.version_number,
-              &files,
-              self.record.mmc_pack.as_ref(),
             )
             .await
           }
@@ -1694,6 +1692,35 @@ mod tests {
     assert!(ensure_not_running("job-discard-active").is_err());
     drop(token);
     assert!(ensure_not_running("job-discard-active").is_ok());
+  }
+
+  /// A resume holds the cancelling token while it starts the job and lets go
+  /// once `ACTIVE` has taken over. A discard that checked "not running" before
+  /// taking its own token could slip in between those two moments; taking the
+  /// token first closes the gap from both sides.
+  #[test]
+  fn a_discard_cannot_slip_in_while_a_resume_is_starting_the_job() {
+    // The resume is still starting: it holds the token, the job is not
+    // active yet. The discard is refused before it looks at anything else.
+    let resuming = CancellingToken::take("job-discard-race").unwrap();
+    assert!(begin_discard("job-discard-race").is_err());
+    assert!(is_cancelling("job-discard-race"));
+
+    // The resume finished starting: the job is active, the token is gone.
+    // The discard now finds the job running.
+    let active = ActiveToken::take("job-discard-race").unwrap();
+    drop(resuming);
+    assert!(begin_discard("job-discard-race").is_err());
+    // A refused discard does not keep the job's token.
+    assert!(!is_cancelling("job-discard-race"));
+
+    drop(active);
+    let token = begin_discard("job-discard-race").unwrap();
+    assert!(is_cancelling("job-discard-race"));
+    // While the discard is on the wire a resume cannot start.
+    assert!(CancellingToken::take("job-discard-race").is_none());
+    drop(token);
+    assert!(!is_cancelling("job-discard-race"));
   }
 
   #[test]

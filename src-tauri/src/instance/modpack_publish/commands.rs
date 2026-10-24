@@ -2,8 +2,10 @@
 
 use super::cancel::{apply_cancel, cancel_remote, CancelOutcome};
 use super::components::plan_components;
-use super::job::{ensure_not_running, is_running, start_monitor, CancellingToken, PublishJob};
-use super::manifest::{partition_publishable_paths, plan_files, LocalFile};
+use super::job::{begin_discard, is_running, start_monitor, CancellingToken, PublishJob};
+use super::manifest::{
+  disabled_state_allowed, disk_path, partition_publishable, plan_files, LocalFile, PublishFile,
+};
 use super::pack::{build_pack, mark_verified, verify_pack};
 use super::record::{
   jobs_dir, paths, JobRecord, Phase, RecordedFile, RecordedObject, RecordedPack, RecordedUpload,
@@ -14,7 +16,7 @@ use crate::account::models::AccountInfo;
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::misc::{get_instance_game_config, get_instance_subdir_paths};
 use crate::instance::helpers::modpack::baseline::{
-  canonical_loader_version, components_of_mmc_pack, hash_file, BaselineFile, BaselineLoader,
+  canonical_loader_version, hash_file, BaselineLoader,
   ModpackBaseline,
 };
 use crate::instance::helpers::modpack::multimc::profile::safe_relative;
@@ -23,8 +25,11 @@ use crate::instance::models::misc::{
   Instance, InstanceError, InstanceOrigin, InstanceSubdirType, OriginPlatform,
 };
 use crate::instance::modpack_update::commands::store_instance;
+use crate::instance::modpack_update::commands::fast_forward;
 use crate::instance::modpack_update::diff::FileKey;
-use crate::instance::modpack_update::sources::{loader_slug, CAMPUS_API};
+use crate::instance::modpack_update::plan::{compare, Compared};
+use crate::instance::modpack_update::remote::RemoteRule;
+use crate::instance::modpack_update::sources::{campus_base_remote, loader_slug, CAMPUS_API};
 use crate::utils::web::build_part_upload_client;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -298,25 +303,51 @@ pub async fn delete_campus_modpack_project(app: AppHandle, project: String) -> U
   Ok(())
 }
 
+/// The file a ticked entry is read from. A mod is listed under its enabled
+/// name whichever way it sits on disk; the other variant existing as well would
+/// make the choice ambiguous, so that is refused instead of picking one.
+fn checked_disk_path(root: &Path, picked: &PublishFile) -> USTBLResult<String> {
+  safe_relative(&picked.path)?;
+  if !disabled_state_allowed(&picked.path, picked.disabled) {
+    return Err(USTBLError(format!(
+      "只有 mods 目录下的文件可以以禁用状态发布：{}",
+      picked.path
+    )));
+  }
+  if disabled_state_allowed(&picked.path, true)
+    && root
+      .join(disk_path(&picked.path, !picked.disabled))
+      .exists()
+  {
+    return Err(USTBLError(format!(
+      "{} 的启用和禁用文件同时存在，请删掉其中一个再发布",
+      picked.path
+    )));
+  }
+  Ok(disk_path(&picked.path, picked.disabled))
+}
+
 /// Keep the result in selection order, but report each file as soon as it finishes.
 async fn hash_selection<F>(
   root: &Path,
-  selected: &[String],
+  selected: &[PublishFile],
   mut on_file: F,
 ) -> USTBLResult<Vec<LocalFile>>
 where
   F: FnMut(usize),
 {
   let mut pending =
-    futures::stream::iter(selected.iter().cloned().enumerate().map(|(index, path)| {
+    futures::stream::iter(selected.iter().cloned().enumerate().map(|(index, picked)| {
       let root = root.to_path_buf();
       async move {
         let file = tokio::task::spawn_blocking(move || {
-          safe_relative(&path)?;
-          let (sha1, size) = hash_file(&root.join(&path))?;
+          let on_disk = checked_disk_path(&root, &picked)?;
+          let (sha1, size) = hash_file(&root.join(on_disk))?;
           Ok::<LocalFile, USTBLError>(LocalFile {
-            path,
+            path: picked.path,
             key: FileKey { sha1, size },
+            disabled: picked.disabled,
+            once: picked.once,
           })
         })
         .await
@@ -337,14 +368,37 @@ where
   Ok(indexed.into_iter().map(|(_, file)| file).collect())
 }
 
-/// Paths the line's current release already lists, so the publish dialog can
-/// keep them selected. Empty when the project has no release on this line.
+/// A file of the line's current release, as the publish tree needs it.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviousFile {
+  pub path: String,
+  #[serde(default)]
+  pub disabled: bool,
+  #[serde(default)]
+  pub once: bool,
+}
+
+/// What the line's current release lists: the starting point of the publish
+/// tree. Rules come back exactly as published.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviousRelease {
+  #[serde(default)]
+  pub files: Vec<PreviousFile>,
+  #[serde(default)]
+  pub rules: Vec<RemoteRule>,
+}
+
+/// The files and rules the line's current release lists, so the publish dialog
+/// starts from them. `None` when the project has no release on this line; any
+/// other failure is an error, since publishing on top of a guess would lose rules.
 #[tauri::command]
-pub async fn fetch_campus_modpack_previous_paths(
+pub async fn fetch_campus_modpack_previous_release(
   app: AppHandle,
   instance_id: String,
   project: String,
-) -> USTBLResult<Vec<String>> {
+) -> USTBLResult<Option<PreviousRelease>> {
   let valid = !project.is_empty()
     && project
       .chars()
@@ -364,20 +418,18 @@ pub async fn fetch_campus_modpack_previous_paths(
     .send()
     .await?;
   if response.status() == reqwest::StatusCode::NOT_FOUND {
-    return Ok(Vec::new());
+    return Ok(None);
   }
   if !response.status().is_success() {
     return Err(failure(response).await);
   }
   let body: Value = response.json().await?;
-  Ok(
-    body["manifest"]["files"]
-      .as_array()
-      .into_iter()
-      .flatten()
-      .filter_map(|file| file["path"].as_str().map(str::to_string))
-      .collect(),
-  )
+  Ok(Some(previous_release_of(&body["manifest"])?))
+}
+
+fn previous_release_of(manifest: &Value) -> USTBLResult<PreviousRelease> {
+  serde_json::from_value(manifest.clone())
+    .map_err(|_| InstanceError::ModpackUpdateRemoteInvalid.into())
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -443,7 +495,8 @@ pub async fn publish_campus_modpack(
   new_project: Option<NewProject>,
   version_number: String,
   changelog: String,
-  files: Vec<String>,
+  files: Vec<PublishFile>,
+  rules: Vec<RemoteRule>,
 ) -> USTBLResult<PublishStarted> {
   ensure_manager(&app)?;
   if project.is_some() == new_project.is_some() {
@@ -466,6 +519,7 @@ pub async fn publish_campus_modpack(
     version_number,
     changelog,
     files,
+    rules,
   )
   .await;
   let (record, concurrency) = match prepared {
@@ -508,6 +562,18 @@ pub async fn publish_campus_modpack(
   }
 }
 
+/// Two ticked entries for one path (case folded) would leave the manifest to
+/// whichever the sort kept, so they are refused instead.
+fn reject_duplicates(files: &[PublishFile]) -> USTBLResult<()> {
+  let mut seen = HashSet::new();
+  for file in files {
+    if !seen.insert(file.path.to_lowercase()) {
+      return Err(USTBLError(format!("{} 被重复选择", file.path)));
+    }
+  }
+  Ok(())
+}
+
 fn is_slug(value: &str) -> bool {
   !value.is_empty()
     && value
@@ -527,7 +593,8 @@ async fn prepare(
   new_project: Option<NewProject>,
   version_number: String,
   changelog: String,
-  files: Vec<String>,
+  files: Vec<PublishFile>,
+  rules: Vec<RemoteRule>,
 ) -> USTBLResult<(JobRecord, usize)> {
   let instance = instance_of(app, instance_id)?;
   let root = instance.version_path.clone();
@@ -540,7 +607,11 @@ async fn prepare(
   // with `check_campus_modpack_publishable`, this guard is the backstop).
   let snapshot = load_required_snapshot(&root).await?;
 
-  let (files, skipped) = partition_publishable_paths(files, &instance.name);
+  reject_duplicates(&files)?;
+  for rule in &rules {
+    safe_relative(&rule.path)?;
+  }
+  let (files, skipped) = partition_publishable(files, &instance.name);
   let total = files.len();
   report(app, instance_id, Stage::Hashing, 0, total);
   let hashed = hash_selection(&root, &files, |done| {
@@ -548,10 +619,11 @@ async fn prepare(
   })
   .await?;
   report(app, instance_id, Stage::Hashing, total, total);
-  let mut plan = plan_files(hashed, &instance.name);
+  let mut plan = plan_files(hashed, rules, &instance.name);
   plan.skipped.extend(skipped);
   plan.skipped.sort();
-  if plan.files.is_empty() {
+  // A version may list no file at all when it only deletes or ignores.
+  if plan.files.is_empty() && plan.rules.is_empty() {
     return Err(USTBLError("没有可发布的文件".into()));
   }
   if let Some(snapshot) = snapshot {
@@ -835,13 +907,11 @@ pub async fn resume_campus_modpack_publish(
 #[tauri::command]
 pub async fn discard_campus_modpack_publish(app: AppHandle, job_id: String) -> USTBLResult<()> {
   ensure_manager(&app)?;
-  ensure_not_running(&job_id)?;
   // Held from before the remote request until the action — and the watch
   // it may start — is fully done: a second discard, a resume, or the
   // guard's own cleanup can never slip in while this one is on the wire
   // and race the record or the restarted task.
-  let _cancelling = CancellingToken::take(&job_id)
-    .ok_or_else(|| USTBLError("取消处理尚未完成，请稍后再试".into()))?;
+  let _cancelling = begin_discard(&job_id)?;
   let dir = jobs_dir();
   let version_id = JobRecord::load(&dir, &job_id)?.version_id;
   let remote = cancel_remote(&app, version_id).await;
@@ -855,29 +925,19 @@ pub async fn discard_campus_modpack_publish(app: AppHandle, job_id: String) -> U
   }
 }
 
-/// Fast-forward: after publishing, the instance holds exactly what the new
-/// version lists. When that still holds, record it as the instance's baseline,
-/// so the first check does not offer the publisher their own release.
+/// After publishing, the instance follows the new version when the update
+/// side would call it a fast forward: the same decision, run against the
+/// version the platform now lists. When that holds, record it as the
+/// instance's baseline, so the first check does not offer the publisher their
+/// own release.
 pub(super) async fn adopt_published(
   app: &AppHandle,
   instance: &Instance,
   project: &str,
   version_id: i64,
   version_number: &str,
-  files: &[LocalFile],
-  mmc_pack: Option<&Value>,
 ) -> Adoption {
-  match try_adopt(
-    app,
-    instance,
-    project,
-    version_id,
-    version_number,
-    files,
-    mmc_pack,
-  )
-  .await
-  {
+  match try_adopt(app, instance, project, version_id, version_number).await {
     Ok(adoption) => adoption,
     Err(error) => {
       // The release itself succeeded; a failed record only means the next
@@ -887,7 +947,6 @@ pub(super) async fn adopt_published(
     }
   }
 }
-
 fn may_follow(
   origin: Option<&InstanceOrigin>,
   project: &str,
@@ -924,14 +983,24 @@ fn adopt_action(
   Adoption::Followed
 }
 
+/// Whether the comparison of the instance with the published version moves
+/// nothing but the baseline. The instance is the source of the loader and the
+/// component chain, so those never count as a change here.
+fn is_fast_forward(compared: &Compared) -> bool {
+  compared.both_variants.is_empty()
+    && fast_forward(
+      compared.diff.changes.iter().chain(&compared.diff.auto_merged),
+      compared.diff.conflicts.len(),
+      false,
+    )
+}
+
 async fn try_adopt(
   app: &AppHandle,
   instance: &Instance,
   project: &str,
   version_id: i64,
   version_number: &str,
-  files: &[LocalFile],
-  mmc_pack: Option<&Value>,
 ) -> USTBLResult<Adoption> {
   let loader_type = instance.mod_loader.loader_type;
   let origin = instance.origin.as_ref();
@@ -954,16 +1023,8 @@ async fn try_adopt(
     return Ok(Adoption::NotIsolated);
   }
 
-  // Rescan: the game may have rewritten a file while the upload ran.
   let root = instance.version_path.clone();
-  let expected: Vec<LocalFile> = files.to_vec();
-  let paths: Vec<String> = expected.iter().map(|file| file.path.clone()).collect();
-  let rescanned = hash_selection(&root, &paths, |_| {}).await?;
-  if rescanned != expected {
-    return Ok(Adoption::LocalChanged);
-  }
-
-  let origin = InstanceOrigin {
+  let new_origin = InstanceOrigin {
     platform: OriginPlatform::Campus,
     project_id: project.to_string(),
     version_id: version_id.to_string(),
@@ -971,33 +1032,41 @@ async fn try_adopt(
     loader_type,
     follow: instance.origin.as_ref().is_none_or(|origin| origin.follow),
   };
-  let mut baseline = ModpackBaseline::build(
-    &origin,
-    BaselineLoader {
-      loader_type,
-      version: canonical_loader_version(loader_type, &instance.mod_loader.version),
-    },
-    expected
-      .into_iter()
-      .map(|file| BaselineFile::managed(&file.path, file.key.clone(), false))
-      .collect(),
-  );
-  if let Some(mmc_pack) = mmc_pack {
-    baseline = baseline.with_components(components_of_mmc_pack(mmc_pack));
+  let loader = BaselineLoader {
+    loader_type,
+    version: canonical_loader_version(loader_type, &instance.mod_loader.version),
+  };
+  // The version as the platform lists it, the way an update would read it.
+  let remote = campus_base_remote(app, &new_origin, &root, &instance.name).await?;
+  // The line the instance already follows is the base; any other start (no
+  // identity, or a project that is gone) is a first install.
+  let following = origin.is_some_and(|o| may_follow(Some(o), project, &instance.version, loader_type));
+  let base = match ModpackBaseline::load(&root).await {
+    Ok(baseline) if following => baseline,
+    _ => ModpackBaseline::build(&new_origin, loader.clone(), Vec::new()),
+  };
+  let compared = compare(&root, &base, &remote).await?;
+  if !is_fast_forward(&compared) {
+    return Ok(Adoption::LocalChanged);
+  }
+
+  let mut baseline = ModpackBaseline::build(&new_origin, loader, compared.next_baseline);
+  if let Some(components) = remote.components.clone() {
+    baseline = baseline.with_components(components);
   }
   baseline.save(&instance.version_path).await?;
   let label = version_number.to_string();
   store_instance(app, &instance.id, move |stored| {
-    stored.origin = Some(origin);
+    stored.origin = Some(new_origin);
     stored.modpack_version = Some(label);
   })
   .await?;
   Ok(Adoption::Followed)
 }
-
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::instance::modpack_update::remote::{RemoteModpack, RuleKind, RuleState};
   use std::path::PathBuf;
 
   fn instance_dir(files: &[(&str, &str)]) -> PathBuf {
@@ -1010,11 +1079,19 @@ mod tests {
     root
   }
 
+  fn picked(path: &str) -> PublishFile {
+    PublishFile {
+      path: path.into(),
+      disabled: false,
+      once: false,
+    }
+  }
+
   #[tokio::test]
   async fn selection_is_hashed_and_cannot_escape_the_instance() {
     let root = instance_dir(&[("config/a.toml", "hello")]);
 
-    let hashed = hash_selection(&root, &["config/a.toml".to_string()], |_| {})
+    let hashed = hash_selection(&root, &[picked("config/a.toml")], |_| {})
       .await
       .unwrap();
     assert_eq!(hashed[0].key.size, 5);
@@ -1023,10 +1100,10 @@ mod tests {
       "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
     );
 
-    assert!(hash_selection(&root, &["../outside".to_string()], |_| {})
+    assert!(hash_selection(&root, &[picked("../outside")], |_| {})
       .await
       .is_err());
-    assert!(hash_selection(&root, &["missing.txt".to_string()], |_| {})
+    assert!(hash_selection(&root, &[picked("missing.txt")], |_| {})
       .await
       .is_err());
     let _ = fs::remove_dir_all(root);
@@ -1035,7 +1112,7 @@ mod tests {
   #[tokio::test]
   async fn hashing_reports_progress_and_preserves_selection_order() {
     let root = instance_dir(&[("config/a.toml", "a"), ("config/b.toml", "bb")]);
-    let selected = vec!["config/b.toml".to_string(), "config/a.toml".to_string()];
+    let selected = vec![picked("config/b.toml"), picked("config/a.toml")];
     let mut progress = Vec::new();
 
     let hashed = hash_selection(&root, &selected, |done| progress.push(done))
@@ -1044,7 +1121,179 @@ mod tests {
 
     assert_eq!(progress, [1, 2]);
     let paths: Vec<_> = hashed.into_iter().map(|file| file.path).collect();
-    assert_eq!(paths, selected);
+    assert_eq!(paths, ["config/b.toml", "config/a.toml"]);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn a_disabled_mod_is_hashed_from_its_disabled_file_and_both_variants_are_refused() {
+    let root = instance_dir(&[("mods/a.jar.disabled", "off"), ("mods/b.jar", "on")]);
+    let off = PublishFile {
+      path: "mods/a.jar".into(),
+      disabled: true,
+      once: true,
+    };
+    let hashed = hash_selection(&root, &[off], |_| {}).await.unwrap();
+    assert_eq!(hashed[0].path, "mods/a.jar");
+    assert_eq!(hashed[0].key.size, 3);
+    assert!(hashed[0].disabled && hashed[0].once);
+
+    // Both variants on disk: neither is picked silently.
+    fs::write(root.join("mods/b.jar.disabled"), "x").unwrap();
+    assert!(hash_selection(&root, &[picked("mods/b.jar")], |_| {})
+      .await
+      .is_err());
+    // Only mods can ship disabled.
+    let config = PublishFile {
+      path: "config/a.toml".into(),
+      disabled: true,
+      once: false,
+    };
+    assert!(hash_selection(&root, &[config], |_| {}).await.is_err());
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn duplicate_entries_are_refused_case_folded() {
+    assert!(reject_duplicates(&[picked("mods/a.jar"), picked("mods/b.jar")]).is_ok());
+    assert!(reject_duplicates(&[picked("mods/a.jar"), picked("Mods/A.jar")]).is_err());
+  }
+
+  #[test]
+  fn the_previous_release_keeps_flags_and_rules_as_published() {
+    let manifest = serde_json::json!({
+      "format": "ustbl.modpack/3",
+      "files": [
+        { "path": "mods/a.jar", "sha1": "a", "size": 1, "disabled": true },
+        { "path": "config/x.toml", "sha1": "b", "size": 1, "once": true },
+        { "path": "options.txt", "sha1": "c", "size": 1 }
+      ],
+      "rules": [
+        { "path": "config/cache", "kind": "dir", "state": "ignore" },
+        { "path": "mods/gone.jar", "kind": "file", "state": "delete" }
+      ]
+    });
+    let release = previous_release_of(&manifest).unwrap();
+    let flags: Vec<_> = release.files.iter().map(|f| (f.disabled, f.once)).collect();
+    assert_eq!(flags, [(true, false), (false, true), (false, false)]);
+    assert_eq!(release.rules.len(), 2);
+    assert_eq!(release.rules[0].path, "config/cache");
+    assert_eq!(release.rules[1].kind, RuleKind::File);
+    assert_eq!(release.rules[1].state, RuleState::Delete);
+    let out = serde_json::to_value(&release).unwrap();
+    assert_eq!(out["files"][0]["disabled"], true);
+    assert_eq!(out["rules"][0]["state"], "ignore");
+  }
+
+  fn published(files: &[(&str, &str, bool, bool)], rules: Vec<RemoteRule>) -> RemoteModpack {
+    use crate::instance::modpack_update::remote::{FileSource, RemoteFile};
+    use sha1::Digest;
+    RemoteModpack {
+      version_id: "2".into(),
+      label: "2".into(),
+      game_version: "1.21.1".into(),
+      loader: BaselineLoader {
+        loader_type: crate::instance::models::misc::ModLoaderType::Fabric,
+        version: "0.16.0".into(),
+      },
+      components: None,
+      component_pack: None,
+      files: files
+        .iter()
+        .map(|(path, content, disabled, once)| RemoteFile {
+          path: path.to_string(),
+          key: FileKey {
+            sha1: hex::encode(sha1::Sha1::digest(content.as_bytes())),
+            size: content.len() as u64,
+          },
+          source: FileSource::ArchiveEntry {
+            archive: std::path::PathBuf::new(),
+            entry: path.to_string(),
+          },
+          disabled: *disabled,
+          once: *once,
+        })
+        .collect(),
+      rules,
+      rules_manifest: true,
+      path_index: Default::default(),
+    }
+  }
+
+  fn first_install() -> ModpackBaseline {
+    let origin = followed(OriginPlatform::Campus, "p", "1.21.1");
+    ModpackBaseline::build(
+      &origin,
+      BaselineLoader {
+        loader_type: origin.loader_type,
+        version: "0.16.0".into(),
+      },
+      Vec::new(),
+    )
+  }
+
+  fn rule(path: &str, kind: RuleKind, state: RuleState) -> RemoteRule {
+    RemoteRule {
+      path: path.into(),
+      kind,
+      state,
+    }
+  }
+
+  #[tokio::test]
+  async fn a_release_the_disk_matches_is_a_fast_forward_that_records_every_state() {
+    let root = instance_dir(&[
+      ("mods/a.jar", "a"),
+      ("mods/b.jar.disabled", "b"),
+      ("config/once.toml", "o"),
+      ("config/cache/x", "ignored"),
+    ]);
+    let remote = published(
+      &[
+        ("mods/a.jar", "a", false, false),
+        ("mods/b.jar", "b", true, false),
+        ("config/once.toml", "o", false, true),
+      ],
+      vec![rule("config/cache", RuleKind::Dir, RuleState::Ignore)],
+    );
+
+    let compared = compare(&root, &first_install(), &remote).await.unwrap();
+
+    assert!(is_fast_forward(&compared));
+    let entry = |path: &str| {
+      compared
+        .next_baseline
+        .iter()
+        .find(|file| file.path == path)
+        .unwrap()
+    };
+    assert!(entry("mods/a.jar").is_managed());
+    assert!(entry("mods/b.jar").is_managed() && entry("mods/b.jar").disabled);
+    // A once-only file is remembered but not managed.
+    assert!(!entry("config/once.toml").is_managed());
+    assert!(compared.next_baseline.iter().all(|f| f.path != "config/cache/x"));
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn a_red_target_still_on_disk_or_a_changed_file_blocks_the_adoption() {
+    let root = instance_dir(&[("mods/a.jar", "a"), ("old/stale.zip", "z")]);
+    let delete = published(
+      &[("mods/a.jar", "a", false, false)],
+      vec![rule("old/stale.zip", RuleKind::File, RuleState::Delete)],
+    );
+    let compared = compare(&root, &first_install(), &delete).await.unwrap();
+    assert!(!is_fast_forward(&compared));
+
+    // The same target gone from disk is fine.
+    fs::remove_file(root.join("old/stale.zip")).unwrap();
+    let compared = compare(&root, &first_install(), &delete).await.unwrap();
+    assert!(is_fast_forward(&compared));
+
+    // A file that no longer matches what was published.
+    fs::write(root.join("mods/a.jar"), "edited").unwrap();
+    let compared = compare(&root, &first_install(), &delete).await.unwrap();
+    assert!(!is_fast_forward(&compared));
     let _ = fs::remove_dir_all(root);
   }
 
