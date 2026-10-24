@@ -1489,7 +1489,7 @@ mod tests {
     let root = setup();
     // A managed enabled file flips to disabled; a disabled one flips back.
     root.write("mods/off.jar.disabled", "off");
-    let mut env = FakeEnv {
+    let env = FakeEnv {
       root: root.0.clone(),
       ..Default::default()
     };
