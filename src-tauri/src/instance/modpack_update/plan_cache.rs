@@ -130,6 +130,12 @@ pub fn plan_paths(
     .iter()
     .map(|file| file.path.clone())
     .chain(remote.files.iter().map(|file| file.path.clone()))
+    .chain(
+      remote
+        .rules
+        .iter()
+        .filter_map(|rule| (rule.kind == super::remote::RuleKind::File).then(|| rule.path.clone())),
+    )
     .collect();
   paths.sort();
   paths.dedup();
@@ -175,10 +181,15 @@ mod tests {
       },
       files
         .iter()
-        .map(|(path, size)| BaselineFile {
-          path: path.to_string(),
-          sha1: "aa".into(),
-          size: *size,
+        .map(|(path, size)| {
+          BaselineFile::managed(
+            path,
+            crate::instance::modpack_update::diff::FileKey {
+              sha1: "aa".into(),
+              size: *size,
+            },
+            false,
+          )
         })
         .collect(),
     )

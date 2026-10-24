@@ -1,5 +1,6 @@
 pub mod apply;
 pub mod commands;
+pub mod decide;
 pub mod diff;
 pub mod local_scan;
 pub mod merge;
