@@ -780,6 +780,12 @@
       "windows": "File Explorer"
     }
   },
+  "FirstLaunchJava25": {
+    "autoInstall": {
+      "title": "Installing Java 25",
+      "description": "First launch detected, downloading the Java 25 runtime automatically"
+    }
+  },
   "GameAdvancedSettingsPage": {
     "title": "Advanced Settings",
     "topWarning": "Advanced settings are for expert users. Changing them may break the game. Do not modify unless you know what you're doing.",
@@ -1492,7 +1498,8 @@
       "selectSuitableJRE": "Select Suitable Java Runtime",
       "validateGameFiles": "Validate Game and Dependency Files",
       "validateSelectedPlayer": "Validate Player's Credentials",
-      "launchGame": "Waiting for Game to Launch"
+      "launchGame": "Waiting for Game to Launch",
+      "selectedJava": "Selected Java: {{name}}"
     },
     "toast": {
       "noSelectedPlayer": "Please add and select a player first"

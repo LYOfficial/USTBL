@@ -780,6 +780,12 @@
       "windows": "文件资源管理器"
     }
   },
+  "FirstLaunchJava25": {
+    "autoInstall": {
+      "title": "自动安装 Java 25",
+      "description": "首次启动，正在自动下载 Java 25 运行时"
+    }
+  },
   "GameAdvancedSettingsPage": {
     "title": "高级游戏设置",
     "topWarning": "高级游戏设置仅提供给专业玩家使用。修改以下选项可能导致游戏无法启动。除非您充分了解其中的意义，否则请不要修改这些选项！",
@@ -1492,7 +1498,8 @@
       "selectSuitableJRE": "选择合适 Java 运行时",
       "validateGameFiles": "验证游戏与依赖文件完整性",
       "validateSelectedPlayer": "验证账户状态",
-      "launchGame": "等待游戏启动"
+      "launchGame": "等待游戏启动",
+      "selectedJava": "已选择 Java：{{name}}"
     },
     "toast": {
       "noSelectedPlayer": "请先添加并选择游戏角色"
