@@ -119,6 +119,14 @@ pub struct Conflict {
   #[serde(default)]
   pub local_disabled: Option<bool>,
   pub hunks: Vec<MergeConflict>,
+  /// The player ignored the local change here: the whole file, or every
+  /// block when ignored_hunks lists them all. Such a conflict defaults to
+  /// keeping the local side.
+  #[serde(default)]
+  pub ignored: bool,
+  /// Blocks (by index into hunks) whose local changes are all ignored.
+  #[serde(default)]
+  pub ignored_hunks: Vec<usize>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Default, Deserialize, Serialize)]
@@ -173,6 +181,8 @@ pub fn ship_managed(path: &str, b: &FileKey, r: &FileKey, local_key: Option<&Fil
     remote_disabled: None,
     local_disabled: local_key.is_some().then_some(false),
     hunks: Vec::new(),
+    ignored: false,
+    ignored_hunks: Vec::new(),
   };
   let write = |kind, remote: &FileKey| FileChange {
     path: path.to_string(),
@@ -223,6 +233,8 @@ pub fn three_way(
       remote_disabled: None,
       local_disabled: local_key.is_some().then_some(false),
       hunks: Vec::new(),
+      ignored: false,
+      ignored_hunks: Vec::new(),
     };
     let write = |kind, remote: &FileKey| FileChange {
       path: path.clone(),

@@ -3203,6 +3203,10 @@
     "header": {
       "title": "Update modpack: {{name}}"
     },
+    "ignored": {
+      "hunk": "You ignored this spot",
+      "file": "You ignored changes in this file. Your version is kept by default."
+    },
     "status": {
       "checking": "Checking for updates…",
       "planning": "Comparing the new version with local files…",
@@ -3310,6 +3314,19 @@
     },
     "button": {
       "publish": "Publish"
+    },
+    "ignore": {
+      "spot": "Ignore this spot",
+      "file": "Ignore whole file"
+    },
+    "ignored": {
+      "title": "Ignored ({{count}} files)",
+      "description": "Ignored changes do not count as local changes. Updates keep your content and merge around it.",
+      "wholeFile": "Whole file",
+      "spots": "Spots: {{count}}",
+      "lines": "Lines {{from}}–{{to}}",
+      "undo": "Undo",
+      "undoAll": "Undo all"
     },
     "publishHint": {
       "noPermission": "Publishing requires campus modpack management permission",

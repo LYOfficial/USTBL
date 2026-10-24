@@ -1,6 +1,7 @@
 import {
   Alert,
   AlertIcon,
+  Badge,
   Box,
   Button,
   ButtonGroup,
@@ -425,11 +426,17 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
       if (!plan) return;
       const next: Record<string, ModpackConflictChoice> = {};
       for (const conflict of plan.conflicts) {
+        // What the player ignored stays with them, whatever "all" says.
+        const skipTake = choice === "takeRemote";
         if (conflict.hunks.length === 0) {
-          next[conflict.path] = choice;
+          next[conflict.path] =
+            skipTake && conflict.ignored ? "keepLocal" : choice;
         } else {
           conflict.hunks.forEach((_, index) => {
-            next[`${conflict.path}#${index}`] = choice;
+            next[`${conflict.path}#${index}`] =
+              skipTake && conflict.ignoredHunks?.includes(index)
+                ? "keepLocal"
+                : choice;
           });
         }
       }
@@ -682,6 +689,16 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
                     </>
                   }
                 >
+                  {conflict.ignored && (
+                    <Text
+                      fontSize="xs"
+                      className="secondary-text"
+                      px={3}
+                      py={1.5}
+                    >
+                      {t("UpdateModpackModal.ignored.file")}
+                    </Text>
+                  )}
                   {byHunk && (
                     <VStack align="stretch" spacing={0}>
                       {conflict.hunks.map((hunk, index) => {
@@ -700,16 +717,23 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
                               py={1.5}
                               spacing={2}
                             >
-                              <Text fontSize="xs" className="secondary-text">
-                                {t("UpdateModpackModal.choice.hunk", {
-                                  number: index + 1,
-                                  from: hunk.baseStart + 1,
-                                  to: Math.max(
-                                    hunk.baseEnd,
-                                    hunk.baseStart + 1
-                                  ),
-                                })}
-                              </Text>
+                              <HStack spacing={2} minW={0}>
+                                <Text fontSize="xs" className="secondary-text">
+                                  {t("UpdateModpackModal.choice.hunk", {
+                                    number: index + 1,
+                                    from: hunk.baseStart + 1,
+                                    to: Math.max(
+                                      hunk.baseEnd,
+                                      hunk.baseStart + 1
+                                    ),
+                                  })}
+                                </Text>
+                                {conflict.ignoredHunks?.includes(index) && (
+                                  <Badge flexShrink={0}>
+                                    {t("UpdateModpackModal.ignored.hunk")}
+                                  </Badge>
+                                )}
+                              </HStack>
                               {renderChoice(key, choice)}
                             </HStack>
                             {(["keepLocal", "takeRemote"] as const).map(

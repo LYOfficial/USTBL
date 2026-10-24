@@ -9,9 +9,10 @@ use super::diff::{
   FileChange, FileKey, LocalState, Operation, DISABLED_SUFFIX,
 };
 use super::local_scan::{collect_states_cached, record_states, LocalScanCache};
+use super::ignores::{self, Ignores};
 use super::merge::{merge_text, text_conflicts, TextMergeError};
 use super::remote::{RemoteModpack, RemoteRule, RuleKind, RuleState};
-use super::text_diff::{unified_diff, DiffHunk, CONTEXT_LINES};
+use super::text_diff::{edits, lines_of, unified_diff_hiding, DiffHunk, CONTEXT_LINES};
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::modpack::baseline::{BaselineFile, ModpackBaseline};
 use crate::instance::helpers::modpack::{base_store, text};
@@ -54,6 +55,10 @@ pub struct Prepared {
   pub variants: BTreeMap<String, bool>,
   /// Delete-rule directories pruned after a deletion, by deleted path.
   pub prune_dirs: BTreeMap<String, Vec<String>>,
+  /// The local ignores that apply to the baseline, and the file as stored
+  /// (the apply writes the former back when they differ).
+  pub ignores: Ignores,
+  pub ignores_on_disk: Ignores,
 }
 
 /// The pieces of one comparison, so the conflict setup can finish the work
@@ -70,6 +75,9 @@ pub struct Compared {
   pub both_variants: Vec<String>,
   /// Delete-rule directories pruned after a deletion, by deleted path.
   pub prune_dirs: BTreeMap<String, Vec<String>>,
+  /// The local ignores that apply to the baseline, and the file as stored.
+  pub ignores: Ignores,
+  pub ignores_on_disk: Ignores,
 }
 
 /// The baseline entries by path, managed and dormant alike.
@@ -81,7 +89,12 @@ fn baseline_map(baseline: &ModpackBaseline) -> BTreeMap<String, BaselineFile> {
     .collect()
 }
 
-pub fn plan_hash(remote: &RemoteModpack, diff: &Diff, next_baseline: &[BaselineFile]) -> String {
+pub fn plan_hash(
+  remote: &RemoteModpack,
+  diff: &Diff,
+  next_baseline: &[BaselineFile],
+  ignores: &Ignores,
+) -> String {
   let mut hasher = Sha1::new();
   hasher.update(remote.version_id.as_bytes());
   hasher.update(b"\0");
@@ -90,6 +103,8 @@ pub fn plan_hash(remote: &RemoteModpack, diff: &Diff, next_baseline: &[BaselineF
   hasher.update(serde_json::to_vec(diff).unwrap_or_default());
   hasher.update(b"\0");
   hasher.update(serde_json::to_vec(next_baseline).unwrap_or_default());
+  hasher.update(b"\0");
+  hasher.update(serde_json::to_vec(ignores).unwrap_or_default());
   hex::encode(hasher.finalize())
 }
 
@@ -164,9 +179,6 @@ pub struct LocalChange {
   pub toggled: bool,
 }
 
-fn diff_lines(text: &str) -> Vec<String> {
-  text.lines().map(str::to_owned).collect()
-}
 
 /// Managed files that differ from what the modpack installed, by path. Text
 /// files that only differ in normalized-away noise are not changes. With
@@ -178,9 +190,12 @@ pub async fn local_changes(
   with_diff: bool,
 ) -> USTBLResult<Vec<LocalChange>> {
   let entries = baseline_map(baseline);
+  let ignores = ignores::read_valid(root, baseline);
   let keys: BTreeMap<String, FileKey> = entries
     .iter()
-    .filter(|(_, file)| file.is_managed())
+    .filter(|(path, file)| {
+      file.is_managed() && !ignores.files.get(*path).is_some_and(|entry| entry.whole)
+    })
     .filter_map(|(path, file)| file.key().map(|key| (path.clone(), key)))
     .collect();
   let disabled_map: BTreeMap<String, bool> = entries
@@ -256,9 +271,20 @@ pub async fn local_changes(
           .and_then(|base| text::normalize_text(&path, &base)),
         None => None,
       };
+      // Changes the player ignored do not count: a file whose every change
+      // is ignored reads like an unchanged one.
+      let entry = ignores.files.get(&path);
+      let lines = match (&base_text, &local_text) {
+        (Some(base), Some(local)) => Some((lines_of(base), lines_of(local))),
+        _ => None,
+      };
+      let same = lines.as_ref().is_some_and(|(base, local)| {
+        base == local
+          || entry.is_some_and(|entry| ignores::all_ignored(entry, &edits(base, local)))
+      });
       let (hunks, no_diff) = match (base_text, local_text) {
-        (Some(base), Some(local)) if base == local && !toggled => continue,
-        (Some(base), Some(local)) if base == local && toggled => {
+        (Some(_), Some(_)) if same && !toggled => continue,
+        (Some(_), Some(_)) if same && toggled => {
           changes.push(LocalChange {
             path,
             kind: if baseline_disabled {
@@ -274,8 +300,16 @@ pub async fn local_changes(
           });
           continue;
         }
-        (Some(base), Some(local)) => (
-          with_diff.then(|| unified_diff(&diff_lines(&base), &diff_lines(&local), CONTEXT_LINES)),
+        (Some(_), Some(_)) => (
+          with_diff
+            .then(|| {
+              lines.as_ref().map(|(base, local)| {
+                unified_diff_hiding(base, local, CONTEXT_LINES, &|edit| {
+                  entry.is_some_and(|entry| ignores::is_ignored(entry, edit))
+                })
+              })
+            })
+            .flatten(),
           None,
         ),
         (None, Some(_)) => (None, Some(NoDiffReason::BaseMissing)),
@@ -619,6 +653,8 @@ fn decide_path(
       remote_disabled,
       local_disabled: local.variant_disabled(),
       hunks: Vec::new(),
+      ignored: false,
+      ignored_hunks: Vec::new(),
     });
   }
   match decision.next {
@@ -706,9 +742,12 @@ pub async fn compare(
       );
     }
   }
+  let ignores_on_disk = ignores::read(&root);
+  let ignores = ignores_on_disk.validated(baseline);
+  let unchanged = ignores::unchanged_paths(&root, &ignores, &local);
   let context = DecisionContext {
     remote,
-    effectively_unchanged: &|_| false,
+    effectively_unchanged: &|path| unchanged.contains(path),
   };
   let mut diff = Diff::default();
   let mut next_baseline = BTreeMap::new();
@@ -747,6 +786,8 @@ pub async fn compare(
     variants,
     both_variants,
     prune_dirs,
+    ignores,
+    ignores_on_disk,
   })
 }
 
@@ -844,6 +885,8 @@ pub fn finish(
     next_baseline,
     variants,
     prune_dirs,
+    ignores,
+    ignores_on_disk,
     ..
   } = compared;
   let mut merged_contents = BTreeMap::new();
@@ -907,11 +950,24 @@ pub fn finish(
       remaining.push(conflict);
     }
   }
+  for conflict in &mut remaining {
+    let Some(entry) = ignores.files.get(&conflict.path) else {
+      continue;
+    };
+    let base = conflict
+      .baseline
+      .as_ref()
+      .and_then(|key| base_store::load(root, &key.sha1).ok().flatten());
+    let local = std::fs::read(root.join(&conflict.path)).ok();
+    ignores::annotate_conflict(conflict, entry, base.as_deref(), local.as_deref());
+  }
   diff.conflicts = remaining;
-  let plan_hash = plan_hash(remote, &diff, &next_baseline);
+  let plan_hash = plan_hash(remote, &diff, &next_baseline, &ignores);
   Ok(Prepared {
     diff,
     plan_hash,
+    ignores,
+    ignores_on_disk,
     merged_contents,
     conflict_sources,
     next_baseline,
@@ -1834,4 +1890,142 @@ mod tests {
     assert!(entry.is_managed());
     let _ = fs::remove_dir_all(root);
   }
-}
+
+  const TEN: &str = "a=1\nb=2\nc=3\nd=4\ne=5\nf=6\ng=7\nh=8\ni=9\nj=10\n";
+
+  fn ignore_range(root: &Path, installed: &ModpackBaseline, start: usize, end: usize) {
+    let sha1 = installed.files[0].sha1.clone();
+    ignores::add(
+      root,
+      installed,
+      &installed.files[0].path,
+      &sha1,
+      Some(ignores::Region { start, end }),
+    )
+    .unwrap();
+  }
+
+  #[tokio::test]
+  async fn ignored_changes_leave_the_local_change_list_and_count() {
+    let local = TEN.replace("b=2", "b=20").replace("i=9", "i=90");
+    let root = instance(&[("config/a.toml", &local)]);
+    let installed = baseline(&[("config/a.toml", TEN)]);
+    store_base(&root, &installed, TEN);
+    assert_eq!(count_local_changes(&root, &installed).await.unwrap(), 1);
+
+    ignore_range(&root, &installed, 1, 2);
+    let changes = local_changes(&root, &installed, true).await.unwrap();
+    assert_eq!(changes.len(), 1);
+    let hunks = changes[0].hunks.as_ref().unwrap();
+    assert_eq!(hunks.len(), 1);
+    assert_eq!(hunks[0].edits.len(), 1);
+    assert_eq!((hunks[0].edits[0].start, hunks[0].edits[0].end), (8, 9));
+
+    ignore_range(&root, &installed, 8, 9);
+    assert_eq!(count_local_changes(&root, &installed).await.unwrap(), 0);
+    assert!(local_changes(&root, &installed, true).await.unwrap().is_empty());
+
+    ignores::undo(&root, &installed, "config/a.toml", Some(ignores::Region { start: 8, end: 9 }))
+      .unwrap();
+    assert_eq!(count_local_changes(&root, &installed).await.unwrap(), 1);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn a_whole_file_ignore_hides_the_file_and_an_edited_record_is_dropped() {
+    let root = instance(&[("config/a.toml", "x=2\n"), ("mods/a.jar", "edited")]);
+    let installed = baseline(&[("config/a.toml", "x=1\n"), ("mods/a.jar", "orig")]);
+    for file in &installed.files {
+      ignores::add(&root, &installed, &file.path, &file.sha1, None).unwrap();
+    }
+    assert_eq!(count_local_changes(&root, &installed).await.unwrap(), 0);
+    // A baseline whose installed content moved no longer matches the record.
+    let moved = baseline(&[("config/a.toml", "x=9\n"), ("mods/a.jar", "orig")]);
+    assert_eq!(count_local_changes(&root, &moved).await.unwrap(), 1);
+    // A range of a file without a kept text cannot be recorded.
+    let sha1 = installed.files[1].sha1.clone();
+    assert_eq!(
+      ignores::add(&root, &installed, "mods/a.jar", &sha1, Some(ignores::Region { start: 0, end: 1 })),
+      Err(ignores::IgnoreError::Mismatch)
+    );
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn ignored_spots_annotate_conflicts_and_change_the_plan_hash() {
+    let local = TEN.replace("b=2", "b=20");
+    let remote_text = TEN.replace("b=2", "b=22");
+    let root = instance(&[("config/a.toml", &local)]);
+    let installed = baseline(&[("config/a.toml", TEN)]);
+    store_base(&root, &installed, TEN);
+    let remote = remote(&[("config/a.toml", &remote_text)]);
+    let contents = BTreeMap::from([("config/a.toml".to_string(), remote_text.clone().into_bytes())]);
+
+    let plain = prepare_with_contents(&root, &installed, &remote, &contents)
+      .await
+      .unwrap();
+    assert_eq!(plain.diff.conflicts.len(), 1);
+    assert!(!plain.diff.conflicts[0].ignored);
+    assert!(plain.diff.conflicts[0].ignored_hunks.is_empty());
+
+    ignore_range(&root, &installed, 1, 2);
+    let marked = prepare_with_contents(&root, &installed, &remote, &contents)
+      .await
+      .unwrap();
+    assert_eq!(marked.diff.conflicts.len(), 1);
+    assert!(marked.diff.conflicts[0].ignored);
+    assert_eq!(marked.diff.conflicts[0].ignored_hunks, vec![0]);
+    assert_ne!(plain.plan_hash, marked.plan_hash);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn a_remote_change_elsewhere_merges_around_an_ignored_spot() {
+    let local = TEN.replace("b=2", "b=20");
+    let remote_text = TEN.replace("i=9", "i=99");
+    let root = instance(&[("config/a.toml", &local)]);
+    let installed = baseline(&[("config/a.toml", TEN)]);
+    store_base(&root, &installed, TEN);
+    ignore_range(&root, &installed, 1, 2);
+    let remote = remote(&[("config/a.toml", &remote_text)]);
+    let contents = BTreeMap::from([("config/a.toml".to_string(), remote_text.clone().into_bytes())]);
+    let prepared = prepare_with_contents(&root, &installed, &remote, &contents)
+      .await
+      .unwrap();
+    assert!(prepared.diff.conflicts.is_empty(), "{:?}", prepared.diff.conflicts);
+    assert_eq!(prepared.diff.auto_merged.len(), 1);
+    let merged = String::from_utf8(prepared.merged_contents["config/a.toml"].clone()).unwrap();
+    assert!(merged.contains("b=20") && merged.contains("i=99"));
+    // The range survives the update, against the new installed content.
+    let update = ignores::plan_update(&root, &prepared, &contents, &BTreeMap::new()).unwrap();
+    let entry = &update.to.files["config/a.toml"];
+    assert_eq!(entry.base_sha1, key(&remote_text).sha1);
+    assert_eq!(entry.regions, vec![ignores::Region { start: 1, end: 2 }]);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn ignored_only_edits_count_as_unchanged_when_the_remote_drops_the_file() {
+    let local = TEN.replace("b=2", "b=20");
+    let root = instance(&[("config/a.toml", &local)]);
+    let installed = baseline(&[("config/a.toml", TEN)]);
+    store_base(&root, &installed, TEN);
+    let remote = remote(&[]);
+    let before = prepare_with_contents(&root, &installed, &remote, &BTreeMap::new())
+      .await
+      .unwrap();
+    assert_eq!(before.diff.conflicts.len(), 1);
+    assert_eq!(before.diff.conflicts[0].kind, ConflictKind::ModifiedLocallyRemovedRemotely);
+    ignore_range(&root, &installed, 1, 2);
+    let after = prepare_with_contents(&root, &installed, &remote, &BTreeMap::new())
+      .await
+      .unwrap();
+    assert!(after.diff.conflicts.is_empty());
+    assert_eq!(after.diff.changes.len(), 1);
+    assert_eq!(after.diff.changes[0].kind, ChangeKind::Delete);
+    // The file goes away, and its record with it.
+    let update = ignores::plan_update(&root, &after, &BTreeMap::new(), &BTreeMap::new()).unwrap();
+    assert!(update.from.files.contains_key("config/a.toml"));
+    assert!(update.to.is_empty());
+    let _ = fs::remove_dir_all(root);
+  }}

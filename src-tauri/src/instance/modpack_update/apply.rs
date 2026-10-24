@@ -169,6 +169,9 @@ pub struct UpdateRequest {
   /// The baseline entries the update records when it commits, as the decision
   /// computed them (dormant entries included).
   pub next_baseline: Vec<crate::instance::helpers::modpack::baseline::BaselineFile>,
+  /// The local ignores as the plan saw them and as the update leaves them;
+  /// `None` leaves the file alone. Written inside the transaction.
+  pub ignores: Option<super::ignores::IgnoresUpdate>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -255,6 +258,7 @@ fn meta_files(instance_name: &str, restoring_components: bool) -> Vec<String> {
     BASELINE_FILE_NAME.to_string(),
     INSTANCE_CONFIG_FILE.to_string(),
     format!("{instance_name}.json"),
+    super::ignores::meta_name(),
   ];
   if restoring_components {
     names.extend([
@@ -611,7 +615,11 @@ fn save_meta_backup(root: &Path, names: &[String]) -> io::Result<(Vec<String>, V
   for name in names {
     let file = root.join(name);
     if file.is_file() {
-      fs::copy(&file, meta.join(name))?;
+      let saved = meta.join(name);
+      if let Some(parent) = saved.parent() {
+        fs::create_dir_all(parent)?;
+      }
+      fs::copy(&file, saved)?;
       present.push(name.clone());
     } else {
       absent.push(name.clone());
@@ -644,6 +652,12 @@ pub async fn apply(env: &dyn UpdateEnv, request: UpdateRequest) -> USTBLResult<(
 
 async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
   let root = &request.root;
+  // The plan was made against these ignores; others on disk mean it is stale.
+  if let Some(update) = &request.ignores {
+    if super::ignores::read(root) != update.from {
+      return Err(InstanceError::ModpackUpdateStale.into());
+    }
+  }
   let remote_files: BTreeMap<&str, &RemoteFile> = request
     .remote
     .files
@@ -890,6 +904,9 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
       baseline = baseline.with_components(chain.clone());
     }
     baseline.save(root).await.map_err(io_error)?;
+    if let Some(update) = &request.ignores {
+      super::ignores::write(root, &update.to).map_err(io_error)?;
+    }
     // Cache the new text bases fetched during planning. Merged or kept-local
     // files do not match the new baseline on disk, so `sync` below would not
     // pick them up. A failed validation is only logged.
@@ -1100,6 +1117,7 @@ mod tests {
       })
       .collect();
     UpdateRequest {
+      ignores: None,
       root: root.0.clone(),
       instance_name: "pack".into(),
       operations,
@@ -1195,6 +1213,92 @@ mod tests {
     assert!(!journal_path(&root.0).exists());
   }
 
+  fn ignores_with(path: &str, start: usize, end: usize) -> super::super::ignores::Ignores {
+    use super::super::ignores::{IgnoreEntry, Ignores, Region};
+    Ignores {
+      files: BTreeMap::from([(
+        path.to_string(),
+        IgnoreEntry {
+          base_sha1: "aa".into(),
+          whole: false,
+          regions: vec![Region { start, end }],
+        },
+      )]),
+      ..Default::default()
+    }
+  }
+
+  fn ignores_update(
+    from: &super::super::ignores::Ignores,
+    to: &super::super::ignores::Ignores,
+  ) -> Option<super::super::ignores::IgnoresUpdate> {
+    Some(super::super::ignores::IgnoresUpdate {
+      from: from.clone(),
+      to: to.clone(),
+    })
+  }
+
+  #[tokio::test]
+  async fn the_new_ignores_are_written_with_the_update_and_an_empty_set_removes_the_file() {
+    use super::super::ignores;
+    let root = setup();
+    let env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let first = ignores_with("config/a.toml", 1, 2);
+    let none = ignores::Ignores::default();
+    let mut update = request(&root, Vec::new(), Vec::new(), "0.16.0");
+    update.ignores = ignores_update(&none, &first);
+    apply(&env, update).await.unwrap();
+    assert_eq!(ignores::read(&root.0), first);
+
+    let mut update = request(&root, Vec::new(), Vec::new(), "0.16.0");
+    update.origin = origin("2");
+    update.ignores = ignores_update(&first, &none);
+    apply(&env, update).await.unwrap();
+    assert!(!root.0.join(UPDATE_DIR).join(ignores::IGNORES_FILE).exists());
+  }
+
+  #[tokio::test]
+  async fn a_failed_update_puts_the_ignores_back() {
+    use super::super::ignores;
+    let root = setup();
+    let env = FakeEnv {
+      root: root.0.clone(),
+      fail_commit: true,
+      ..Default::default()
+    };
+    let before = ignores_with("config/a.toml", 1, 2);
+    ignores::write(&root.0, &before).unwrap();
+    let mut update = request(&root, Vec::new(), Vec::new(), "0.16.0");
+    update.ignores = ignores_update(&before, &ignores_with("config/a.toml", 5, 6));
+    assert!(apply(&env, update).await.is_err());
+    assert_eq!(ignores::read(&root.0), before);
+
+    // Without a file before, the failed update leaves none behind.
+    ignores::remove(&root.0);
+    let mut update = request(&root, Vec::new(), Vec::new(), "0.16.0");
+    update.ignores = ignores_update(&ignores::Ignores::default(), &before);
+    assert!(apply(&env, update).await.is_err());
+    assert!(!root.0.join(UPDATE_DIR).join(ignores::IGNORES_FILE).exists());
+  }
+
+  #[tokio::test]
+  async fn ignores_changed_since_the_plan_make_the_update_stale() {
+    use super::super::ignores;
+    let root = setup();
+    let env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    ignores::write(&root.0, &ignores_with("config/a.toml", 1, 2)).unwrap();
+    let mut update = request(&root, Vec::new(), Vec::new(), "0.16.0");
+    update.ignores = ignores_update(&ignores::Ignores::default(), &ignores::Ignores::default());
+    assert!(apply(&env, update).await.is_err());
+    assert!(env.committed.lock().unwrap().is_empty());
+    assert_eq!(root.read("pack.json").as_deref(), Some("client-v1"));
+  }
   #[tokio::test]
   async fn applies_changes_keeps_a_backup_and_leaves_no_residue() {
     let root = setup();

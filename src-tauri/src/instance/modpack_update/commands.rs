@@ -2,7 +2,8 @@
 
 use super::apply::{
   apply, can_roll_back_last, ensure_unlink_safe, materialize_remote_file, prepare_packs,
-  recover_checked, roll_back_last_checked, Progress, Recovery, UpdateEnv, UpdateRequest,
+  recover_checked, roll_back_last_checked, Progress, Recovery, UpdateEnv, UpdateGuard,
+  UpdateRequest,
 };
 use super::diff::{Conflict, ConflictChoice, FileChange};
 use super::merge::merge_with_choices;
@@ -449,6 +450,7 @@ async fn light_check(app: &AppHandle, target: &Target) -> USTBLResult<LightCheck
 async fn unlink_origin(app: &AppHandle, instance_id: &str, target: &Target) -> USTBLResult<()> {
   ensure_unlink_safe(&target.root)?;
   fs::remove_file(target.root.join(BASELINE_FILE_NAME)).ok();
+  super::ignores::remove(&target.root);
   plan_cache::clear_plan_cache(&target.root);
   store_instance(app, instance_id, |instance| {
     instance.origin = None;
@@ -538,6 +540,75 @@ pub async fn list_modpack_local_changes(
   let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let baseline = load_baseline(&target).await?;
   local_changes(&target.root, &baseline, true).await
+}
+
+/// Map the ignore store's refusals onto the update errors: a request that no
+/// longer matches the files is a stale one.
+fn ignore_error(error: super::ignores::IgnoreError) -> crate::error::USTBLError {
+  match error {
+    super::ignores::IgnoreError::Mismatch => InstanceError::ModpackUpdateStale.into(),
+    super::ignores::IgnoreError::Io(message) => crate::error::USTBLError(message),
+  }
+}
+
+/// Keep a local change as the player's own: one spot of a text file (`range`,
+/// as the local-change list gave it) or the whole file (`None`). Takes the
+/// update lock, so it never runs inside an update.
+#[tauri::command]
+pub async fn ignore_modpack_local_change(
+  app: AppHandle,
+  instance_id: String,
+  path: String,
+  baseline_sha1: String,
+  range: Option<super::ignores::Region>,
+) -> USTBLResult<()> {
+  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let _guard = UpdateGuard::acquire(&target.root)?;
+  let baseline = load_baseline(&target).await?;
+  let root = target.root.clone();
+  tokio::task::spawn_blocking(move || {
+    super::ignores::add(&root, &baseline, &path, &baseline_sha1, range)
+  })
+  .await
+  .map_err(|e| crate::error::USTBLError(e.to_string()))?
+  .map_err(ignore_error)?;
+  plan_cache::clear_plan_cache(&target.root);
+  Ok(())
+}
+
+/// The ignored spots and files of this instance, for the undo list.
+#[tauri::command]
+pub async fn list_modpack_ignores(
+  app: AppHandle,
+  instance_id: String,
+) -> USTBLResult<Vec<super::ignores::IgnoredItem>> {
+  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let baseline = load_baseline(&target).await?;
+  let root = target.root.clone();
+  tokio::task::spawn_blocking(move || super::ignores::list(&root, &baseline))
+    .await
+    .map_err(|e| crate::error::USTBLError(e.to_string()).into())
+}
+
+/// Take an ignore back: one spot (`range`) or everything recorded for the
+/// file (`None`).
+#[tauri::command]
+pub async fn unignore_modpack_local_change(
+  app: AppHandle,
+  instance_id: String,
+  path: String,
+  range: Option<super::ignores::Region>,
+) -> USTBLResult<()> {
+  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let _guard = UpdateGuard::acquire(&target.root)?;
+  let baseline = load_baseline(&target).await?;
+  let root = target.root.clone();
+  tokio::task::spawn_blocking(move || super::ignores::undo(&root, &baseline, &path, range))
+    .await
+    .map_err(|e| crate::error::USTBLError(e.to_string()))?
+    .map_err(ignore_error)?;
+  plan_cache::clear_plan_cache(&target.root);
+  Ok(())
 }
 
 /// Reveal a managed file in the system file manager for external editing.
@@ -1102,6 +1173,7 @@ pub async fn apply_modpack_update(
     "modpack update apply resolutions: instance={instance_id} plan_hash={plan_hash} resolutions=[{}]",
     describe_conflict_resolutions(&prepared.diff, &apply_choices).join(","),
   );
+  let ignores = super::ignores::plan_update(&target.root, &prepared, &base_texts, &apply_choices);
   let result = apply(
     &env,
     UpdateRequest {
@@ -1116,6 +1188,7 @@ pub async fn apply_modpack_update(
       merged_contents,
       base_texts,
       next_baseline: prepared.next_baseline.clone(),
+      ignores,
     },
   )
   .await;
@@ -1309,6 +1382,8 @@ mod tests {
           remote_disabled: None,
           local_disabled: Some(false),
           hunks: vec![hunk(0), hunk(4)],
+          ignored: false,
+          ignored_hunks: Vec::new(),
         },
         super::super::diff::Conflict {
           path: "mods/b.jar".into(),
@@ -1319,6 +1394,8 @@ mod tests {
           remote_disabled: None,
           local_disabled: Some(false),
           hunks: Vec::new(),
+          ignored: false,
+          ignored_hunks: Vec::new(),
         },
       ],
       ..Default::default()

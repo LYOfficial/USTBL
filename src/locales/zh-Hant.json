@@ -3203,6 +3203,10 @@
     "header": {
       "title": "更新整合包：{{name}}"
     },
+    "ignored": {
+      "hunk": "你忽略過這一處",
+      "file": "你忽略過這個檔案的改動，預設保留你的版本。"
+    },
     "status": {
       "checking": "正在檢查更新…",
       "planning": "正在比對新版本與本機檔案…",
@@ -3310,6 +3314,19 @@
     },
     "button": {
       "publish": "發布"
+    },
+    "ignore": {
+      "spot": "忽略此處",
+      "file": "忽略整個檔案"
+    },
+    "ignored": {
+      "title": "已忽略（{{count}} 個檔案）",
+      "description": "已忽略的改動不計入本機改動，更新時會保留你的內容，並避開這些位置合併。",
+      "wholeFile": "整個檔案",
+      "spots": "{{count}} 處",
+      "lines": "第 {{from}}–{{to}} 行",
+      "undo": "撤銷",
+      "undoAll": "全部撤銷"
     },
     "publishHint": {
       "noPermission": "需要校內整合包管理權限才能發布",

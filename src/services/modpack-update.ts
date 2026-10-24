@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
   ModpackConflictChoice,
+  ModpackIgnoredItem,
   ModpackLocalChange,
   ModpackUpdateCheck,
   ModpackUpdateOutcome,
@@ -81,6 +82,47 @@ export class ModpackUpdateService {
     instanceId: string
   ): Promise<InvokeResponse<ModpackLocalChange[]>> {
     return await invoke("list_modpack_local_changes", { instanceId });
+  }
+
+  /**
+   * Keep a local change as the player's own: one spot (`range`, the old-side
+   * lines of a diff edit) or the whole file when `range` is omitted.
+   */
+  @responseHandler("instance")
+  static async ignoreModpackLocalChange(
+    instanceId: string,
+    path: string,
+    baselineSha1: string,
+    range?: { start: number; end: number }
+  ): Promise<InvokeResponse<null>> {
+    return await invoke("ignore_modpack_local_change", {
+      instanceId,
+      path,
+      baselineSha1,
+      range: range ?? null,
+    });
+  }
+
+  /** The ignored spots and files of the instance. */
+  @responseHandler("instance")
+  static async listModpackIgnores(
+    instanceId: string
+  ): Promise<InvokeResponse<ModpackIgnoredItem[]>> {
+    return await invoke("list_modpack_ignores", { instanceId });
+  }
+
+  /** Take an ignore back: one spot, or everything recorded for the file. */
+  @responseHandler("instance")
+  static async unignoreModpackLocalChange(
+    instanceId: string,
+    path: string,
+    range?: { start: number; end: number }
+  ): Promise<InvokeResponse<null>> {
+    return await invoke("unignore_modpack_local_change", {
+      instanceId,
+      path,
+      range: range ?? null,
+    });
   }
 
   @responseHandler("instance")

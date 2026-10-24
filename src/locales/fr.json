@@ -3203,6 +3203,10 @@
     "header": {
       "title": "Mettre à jour le pack : {{name}}"
     },
+    "ignored": {
+      "hunk": "Vous avez ignoré cet endroit",
+      "file": "Vous avez ignoré les modifications de ce fichier. Votre version est conservée par défaut."
+    },
     "status": {
       "checking": "Recherche de mises à jour…",
       "planning": "Comparaison de la nouvelle version avec les fichiers locaux…",
@@ -3310,6 +3314,19 @@
     },
     "button": {
       "publish": "Publier"
+    },
+    "ignore": {
+      "spot": "Ignorer cet endroit",
+      "file": "Ignorer tout le fichier"
+    },
+    "ignored": {
+      "title": "Ignorés ({{count}} fichiers)",
+      "description": "Les modifications ignorées ne comptent pas comme modifications locales. Les mises à jour conservent votre contenu et fusionnent autour.",
+      "wholeFile": "Fichier entier",
+      "spots": "Endroits : {{count}}",
+      "lines": "Lignes {{from}}–{{to}}",
+      "undo": "Annuler",
+      "undoAll": "Tout annuler"
     },
     "publishHint": {
       "noPermission": "La publication nécessite la permission de gestion des modpacks du campus",

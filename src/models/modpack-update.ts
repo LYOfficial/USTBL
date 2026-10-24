@@ -63,6 +63,10 @@ export interface ModpackConflict {
   local?: ModpackFileKey;
   remote?: ModpackFileKey;
   hunks: ModpackMergeConflict[];
+  /** The player ignored the local change here: the file, or every block. */
+  ignored?: boolean;
+  /** Blocks (indexes into `hunks`) whose local changes are all ignored. */
+  ignoredHunks?: number[];
 }
 
 export interface ModpackMergeConflict {
@@ -84,6 +88,14 @@ export interface ModpackDiffLine {
   /** 1-based; absent on deleted lines. */
   newNumber?: number | null;
   text: string;
+  /** Which of the hunk's `edits` an added or deleted line belongs to. */
+  edit?: number | null;
+}
+
+/** The old-side line range of one change, 0-based, `[start, end)`. */
+export interface ModpackDiffEdit {
+  start: number;
+  end: number;
 }
 
 /** One `@@ -oldStart,oldLines +newStart,newLines @@` block. */
@@ -93,6 +105,8 @@ export interface ModpackDiffHunk {
   newStart: number;
   newLines: number;
   lines: ModpackDiffLine[];
+  /** The changes this hunk shows, in order; only local-change diffs have them. */
+  edits?: ModpackDiffEdit[];
 }
 
 export type ModpackLocalChangeKind =
@@ -115,6 +129,22 @@ export interface ModpackLocalChange {
 }
 
 export type ModpackConflictChoice = "keepLocal" | "takeRemote";
+
+/** A line range of the installed text the player keeps as their own. */
+export interface ModpackIgnoredRegion {
+  start: number;
+  end: number;
+  baseLines: string[];
+  localLines: string[];
+}
+
+export interface ModpackIgnoredItem {
+  path: string;
+  baseSha1: string;
+  /** The whole file is ignored. */
+  whole: boolean;
+  regions: ModpackIgnoredRegion[];
+}
 
 export interface ModpackBaselineLoader {
   type: ModLoaderType;
