@@ -3206,6 +3206,9 @@
       "add": "{{count}} added",
       "update": "{{count}} updated",
       "delete": "{{count}} removed",
+      "disable": "{{count}} disabled",
+      "enable": "{{count}} enabled",
+      "retire": "{{count}} retired",
       "loaderChange": "Mod loader will change from {{from}} to {{to}}",
       "conflicts": "{{count}} files conflict with local changes. Choose what to do (local is kept by default)",
       "autoMerged": "{{count}} auto-merged",
@@ -3217,7 +3220,7 @@
       "modifiedLocallyRemovedRemotely": "You edited it and the new version no longer ships it",
       "deletedLocallyChangedRemotely": "You deleted it and the new version changed it",
       "unmanagedFileInTheWay": "A file that is not part of the modpack is in the way",
-      "disabledLocally": "You disabled it and the new version touches it"
+      "remanage": "The modpack left it alone before and manages it again, but its content is neither the recorded nor the shipped one"
     },
     "choice": {
       "keepLocal": "Keep local",
@@ -3249,6 +3252,7 @@
     },
     "reason": {
       "MODPACK_UPDATE_UNLINK_PENDING": "The last update is not finished. Recover or roll it back before unfollowing",
+      "MODPACK_UPDATE_BOTH_VARIANTS": "A file and its .disabled variant both exist. Delete one of them before updating",
       "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack",
       "MODPACK_UPDATE_PREPARE_CANCELLED": "The update preview was cancelled",
       "MODPACK_UPDATE_UNSUPPORTED": "This instance has no usable install record or version isolation is off",
@@ -3272,15 +3276,18 @@
     "kind": {
       "modified": "Modified",
       "deleted": "Deleted",
-      "disabled": "Disabled"
+      "disabled": "Disabled",
+      "enabled": "Enabled"
     },
     "hint": {
       "deleted": "This file was deleted locally",
-      "disabled": "This file was disabled locally (.disabled)"
+      "disabled": "This file was disabled locally (.disabled)",
+      "enabled": "This file was enabled again locally"
     },
     "noDiff": {
       "notText": "Not a text file or too large; contents are not compared",
-      "baseMissing": "The installed content was not kept, so no diff can be shown"
+      "baseMissing": "The installed content was not kept, so no diff can be shown",
+      "bothVariants": "A file and its .disabled variant both exist. Delete one of them"
     },
     "button": {
       "publish": "Publish"

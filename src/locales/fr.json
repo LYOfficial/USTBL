@@ -3206,6 +3206,9 @@
       "add": "{{count}} ajouté(s)",
       "update": "{{count}} mis à jour",
       "delete": "{{count}} supprimé(s)",
+      "disable": "{{count}} désactivé(s)",
+      "enable": "{{count}} activé(s)",
+      "retire": "{{count}} mis en sommeil",
       "loaderChange": "Le chargeur de mods passera de {{from}} à {{to}}",
       "conflicts": "{{count}} fichiers entrent en conflit avec vos modifications. Choisissez (le local est conservé par défaut)",
       "autoMerged": "{{count}} fusionnés automatiquement",
@@ -3217,7 +3220,7 @@
       "modifiedLocallyRemovedRemotely": "Vous l'avez modifié et la nouvelle version ne l'inclut plus",
       "deletedLocallyChangedRemotely": "Vous l'avez supprimé et la nouvelle version l'a modifié",
       "unmanagedFileInTheWay": "Un fichier étranger au pack occupe l'emplacement",
-      "disabledLocally": "Vous l'avez désactivé et la nouvelle version le concerne"
+      "remanage": "Le pack l'avait laissé de côté et le gère à nouveau, mais son contenu diffère de l'enregistrement et de la nouvelle version"
     },
     "choice": {
       "keepLocal": "Garder le local",
@@ -3249,6 +3252,7 @@
     },
     "reason": {
       "MODPACK_UPDATE_UNLINK_PENDING": "La dernière mise à jour n'est pas terminée. Restaurez-la ou annulez-la avant de retirer le suivi",
+      "MODPACK_UPDATE_BOTH_VARIANTS": "Un fichier et sa variante .disabled existent tous les deux. Supprimez l'un des deux avant de mettre à jour",
       "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack",
       "MODPACK_UPDATE_PREPARE_CANCELLED": "L'aperçu de la mise à jour a été annulé",
       "MODPACK_UPDATE_UNSUPPORTED": "Cette instance n'a pas d'enregistrement d'installation utilisable ou l'isolation de version est désactivée",
@@ -3272,15 +3276,18 @@
     "kind": {
       "modified": "Modifié",
       "deleted": "Supprimé",
-      "disabled": "Désactivé"
+      "disabled": "Désactivé",
+      "enabled": "Activé"
     },
     "hint": {
       "deleted": "Ce fichier a été supprimé localement",
-      "disabled": "Ce fichier a été désactivé localement (.disabled)"
+      "disabled": "Ce fichier a été désactivé localement (.disabled)",
+      "enabled": "Ce fichier a été réactivé localement"
     },
     "noDiff": {
       "notText": "Fichier non texte ou trop volumineux ; contenu non comparé",
-      "baseMissing": "Le contenu installé n'a pas été conservé, aucune différence ne peut être affichée"
+      "baseMissing": "Le contenu installé n'a pas été conservé, aucune différence ne peut être affichée",
+      "bothVariants": "Un fichier et sa variante .disabled existent tous les deux. Supprimez l'un des deux"
     },
     "button": {
       "publish": "Publier"

@@ -31,7 +31,15 @@ export interface ModpackFileKey {
   size: number;
 }
 
-export type ModpackChangeKind = "add" | "update" | "delete";
+export type ModpackChangeKind =
+  | "add"
+  | "update"
+  | "delete"
+  /** The file only moves between its enabled and disabled variants. */
+  | "disable"
+  | "enable"
+  /** The modpack stops managing the file but leaves it on disk. */
+  | "retire";
 
 export interface ModpackFileChange {
   path: string;
@@ -45,7 +53,8 @@ export type ModpackConflictKind =
   | "modifiedLocallyRemovedRemotely"
   | "deletedLocallyChangedRemotely"
   | "unmanagedFileInTheWay"
-  | "disabledLocally";
+  /** A file the modpack left alone is managed again with other content. */
+  | "remanage";
 
 export interface ModpackConflict {
   path: string;
@@ -86,7 +95,12 @@ export interface ModpackDiffHunk {
   lines: ModpackDiffLine[];
 }
 
-export type ModpackLocalChangeKind = "modified" | "deleted" | "disabled";
+export type ModpackLocalChangeKind =
+  | "modified"
+  | "deleted"
+  /** Only the disabled state differs: the file sits at the other variant. */
+  | "disabled"
+  | "enabled";
 
 export interface ModpackLocalChange {
   path: string;
@@ -95,7 +109,9 @@ export interface ModpackLocalChange {
   local?: ModpackFileKey | null;
   /** Normalized line diff, installed → local; only for text files. */
   hunks?: ModpackDiffHunk[] | null;
-  noDiff?: "notText" | "baseMissing" | null;
+  noDiff?: "notText" | "baseMissing" | "bothVariants" | null;
+  /** A modified file whose disabled state also flipped. */
+  toggled?: boolean;
 }
 
 export type ModpackConflictChoice = "keepLocal" | "takeRemote";

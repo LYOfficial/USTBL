@@ -3206,6 +3206,9 @@
       "add": "追加 {{count}}",
       "update": "更新 {{count}}",
       "delete": "削除 {{count}}",
+      "disable": "無効化 {{count}}",
+      "enable": "有効化 {{count}}",
+      "retire": "休眠化 {{count}}",
       "loaderChange": "MODローダーを {{from}} から {{to}} に切り替えます",
       "conflicts": "{{count}} 個のファイルがローカルの変更と競合しています。処理を選択してください（既定はローカルを保持）",
       "autoMerged": "自動マージ {{count}}",
@@ -3217,7 +3220,7 @@
       "modifiedLocallyRemovedRemotely": "あなたが編集し、新バージョンには含まれません",
       "deletedLocallyChangedRemotely": "あなたが削除し、新バージョンで変更されています",
       "unmanagedFileInTheWay": "モッドパック外の同名ファイルがあります",
-      "disabledLocally": "あなたが無効化し、新バージョンも関係しています"
+      "remanage": "以前は管理対象外でしたが再管理され、内容は記録とも新バージョンとも異なります"
     },
     "choice": {
       "keepLocal": "ローカルを保持",
@@ -3249,6 +3252,7 @@
     },
     "reason": {
       "MODPACK_UPDATE_UNLINK_PENDING": "前回の更新が完了していません。先に復旧またはロールバックしてから解除してください",
+      "MODPACK_UPDATE_BOTH_VARIANTS": "同名ファイルとその .disabled 変体が同時に存在します。どちらかを削除してから更新してください",
       "MODPACK_UPDATE_LINE_GONE": "プラットフォームにこのモッドパックのラインはもうありません",
       "MODPACK_UPDATE_PREPARE_CANCELLED": "更新プレビューはキャンセルされました",
       "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスには利用できるインストール記録がないか、バージョン分離が無効です",
@@ -3272,15 +3276,18 @@
     "kind": {
       "modified": "変更",
       "deleted": "削除",
-      "disabled": "無効"
+      "disabled": "無効",
+      "enabled": "有効"
     },
     "hint": {
       "deleted": "このファイルはローカルで削除されました",
-      "disabled": "このファイルはローカルで無効化されています（.disabled）"
+      "disabled": "このファイルはローカルで無効化されています（.disabled）",
+      "enabled": "このファイルはローカルで再有効化されました"
     },
     "noDiff": {
       "notText": "テキストファイルではないか大きすぎるため、内容の差分は表示しません",
-      "baseMissing": "インストール時の内容が保存されていないため、差分を表示できません"
+      "baseMissing": "インストール時の内容が保存されていないため、差分を表示できません",
+      "bothVariants": "同名ファイルとその .disabled 変体が同時に存在します。どちらかを削除してください"
     },
     "button": {
       "publish": "公開"

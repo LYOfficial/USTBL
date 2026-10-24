@@ -3206,6 +3206,9 @@
       "add": "新增 {{count}}",
       "update": "更新 {{count}}",
       "delete": "刪除 {{count}}",
+      "disable": "停用 {{count}}",
+      "enable": "啟用 {{count}}",
+      "retire": "轉休眠 {{count}}",
       "loaderChange": "模組載入器將從 {{from}} 切換到 {{to}}",
       "conflicts": "有 {{count}} 個檔案與本機修改衝突，請選擇處理方式（預設保留本機）",
       "autoMerged": "自動合併 {{count}}",
@@ -3217,7 +3220,7 @@
       "modifiedLocallyRemovedRemotely": "你修改過，新版本已不再包含它",
       "deletedLocallyChangedRemotely": "你刪除了它，新版本更新了它",
       "unmanagedFileInTheWay": "同名檔案不屬於整合包，新版本想要寫入",
-      "disabledLocally": "你已停用它，新版本也涉及它"
+      "remanage": "整合包曾不再管它，現在重新管理它，而本地的內容與記錄和新版本都不同"
     },
     "choice": {
       "keepLocal": "保留本機",
@@ -3249,6 +3252,7 @@
     },
     "reason": {
       "MODPACK_UPDATE_UNLINK_PENDING": "上次更新尚未完成，請先恢復或回滾後再解除跟隨",
+      "MODPACK_UPDATE_BOTH_VARIANTS": "同名檔案及其 .disabled 變體同時存在，請刪除其中一個後再更新",
       "MODPACK_UPDATE_LINE_GONE": "平台上已不存在該整合包的這條線",
       "MODPACK_UPDATE_PREPARE_CANCELLED": "更新預覽已取消",
       "MODPACK_UPDATE_UNSUPPORTED": "該實例缺少可用的安裝記錄或未開啟版本隔離",
@@ -3272,15 +3276,18 @@
     "kind": {
       "modified": "修改",
       "deleted": "刪除",
-      "disabled": "停用"
+      "disabled": "停用",
+      "enabled": "啟用"
     },
     "hint": {
       "deleted": "本機已刪除此檔案",
-      "disabled": "本機已將此檔案停用（.disabled）"
+      "disabled": "本機已將此檔案停用（.disabled）",
+      "enabled": "本機已將此檔案重新啟用"
     },
     "noDiff": {
       "notText": "非文字檔案或檔案過大，不顯示內容差異",
-      "baseMissing": "沒有保存安裝時的內容，無法顯示差異"
+      "baseMissing": "沒有保存安裝時的內容，無法顯示差異",
+      "bothVariants": "同名檔案及其 .disabled 變體同時存在，請刪除其中一個"
     },
     "button": {
       "publish": "發布"

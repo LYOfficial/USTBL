@@ -559,6 +559,9 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
     const adds = plan.changes.filter((c) => c.kind === "add");
     const updates = plan.changes.filter((c) => c.kind === "update");
     const deletes = plan.changes.filter((c) => c.kind === "delete");
+    const disables = plan.changes.filter((c) => c.kind === "disable");
+    const enables = plan.changes.filter((c) => c.kind === "enable");
+    const retires = plan.changes.filter((c) => c.kind === "retire");
     return (
       <VStack align="stretch" spacing={3}>
         <Text>
@@ -591,6 +594,24 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
             title="UpdateModpackModal.plan.delete"
             colorScheme="red"
             changes={deletes}
+            renderSize={(change) => formatSize(change.localSize)}
+          />
+          <ChangeGroup
+            title="UpdateModpackModal.plan.disable"
+            colorScheme="gray"
+            changes={disables}
+            renderSize={(change) => formatSize(change.localSize)}
+          />
+          <ChangeGroup
+            title="UpdateModpackModal.plan.enable"
+            colorScheme="gray"
+            changes={enables}
+            renderSize={(change) => formatSize(change.localSize)}
+          />
+          <ChangeGroup
+            title="UpdateModpackModal.plan.retire"
+            colorScheme="gray"
+            changes={retires}
             renderSize={(change) => formatSize(change.localSize)}
           />
           <ChangeGroup
@@ -810,7 +831,7 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
               <VStack align="start" spacing={1}>
                 <Text>{planError.message}</Text>
                 {planError.details && (
-                  <Text fontSize="xs">{planError.details}</Text>
+                  <Text fontSize="xs">{reasonText(planError.details)}</Text>
                 )}
               </VStack>
             </Alert>

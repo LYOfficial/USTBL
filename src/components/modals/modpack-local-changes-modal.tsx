@@ -41,6 +41,7 @@ const KIND_COLORS: Record<ModpackLocalChangeKind, string> = {
   modified: "orange",
   deleted: "red",
   disabled: "gray",
+  enabled: "gray",
 };
 
 /** Beyond this many files, the diffs start folded. */
