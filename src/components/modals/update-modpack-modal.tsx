@@ -655,6 +655,14 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
                 </Button>
               </HStack>
             </HStack>
+            {plan.conflicts.some(
+              (conflict) =>
+                conflict.ignored || (conflict.ignoredHunks?.length ?? 0) > 0
+            ) && (
+              <Text fontSize="xs" className="secondary-text">
+                {t("UpdateModpackModal.ignored.takeAllNote")}
+              </Text>
+            )}
             {plan.conflicts.map((conflict) => {
               // A text conflict is answered block by block; anything else as
               // a whole file. Never both, so each answer has one control.

@@ -3205,7 +3205,8 @@
     },
     "ignored": {
       "hunk": "You ignored this spot",
-      "file": "You ignored changes in this file. Your version is kept by default."
+      "file": "You ignored changes in this file. Your version is kept by default.",
+      "takeAllNote": "Spots you ignored keep your version, even with \"Use new version for all\"."
     },
     "status": {
       "checking": "Checking for updates…",
@@ -3321,7 +3322,7 @@
     },
     "ignored": {
       "title": "Ignored ({{count}} files)",
-      "description": "Ignored changes do not count as local changes. Updates keep your content and merge around it.",
+      "description": "Ignored changes do not count as local changes. Updates keep your content; if the new version also changes the same spot, you are still asked to choose (your version is kept by default).",
       "wholeFile": "Whole file",
       "spots": "Spots: {{count}}",
       "lines": "Lines {{from}}–{{to}}",

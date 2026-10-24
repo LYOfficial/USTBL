@@ -3205,7 +3205,8 @@
     },
     "ignored": {
       "hunk": "Vous avez ignoré cet endroit",
-      "file": "Vous avez ignoré les modifications de ce fichier. Votre version est conservée par défaut."
+      "file": "Vous avez ignoré les modifications de ce fichier. Votre version est conservée par défaut.",
+      "takeAllNote": "Les endroits que vous avez ignorés gardent votre version, même avec « Tout prendre de la nouvelle version »."
     },
     "status": {
       "checking": "Recherche de mises à jour…",
@@ -3321,7 +3322,7 @@
     },
     "ignored": {
       "title": "Ignorés ({{count}} fichiers)",
-      "description": "Les modifications ignorées ne comptent pas comme modifications locales. Les mises à jour conservent votre contenu et fusionnent autour.",
+      "description": "Les modifications ignorées ne comptent pas comme modifications locales. Les mises à jour conservent votre contenu ; si la nouvelle version modifie aussi le même endroit, un choix vous est tout de même demandé (votre version est conservée par défaut).",
       "wholeFile": "Fichier entier",
       "spots": "Endroits : {{count}}",
       "lines": "Lignes {{from}}–{{to}}",
