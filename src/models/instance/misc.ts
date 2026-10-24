@@ -77,6 +77,8 @@ export interface ModpackMetaInfo {
 export interface ModpackFileList {
   all: string[];
   unchecked: string[];
+  /** Suggested-blacklist entries at the level the blacklist names them. */
+  suggested: { path: string; kind: "dir" | "file" }[];
 }
 
 export interface ExportModpackOptions {

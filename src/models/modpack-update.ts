@@ -31,7 +31,15 @@ export interface ModpackFileKey {
   size: number;
 }
 
-export type ModpackChangeKind = "add" | "update" | "delete";
+export type ModpackChangeKind =
+  | "add"
+  | "update"
+  | "delete"
+  /** The file only moves between its enabled and disabled variants. */
+  | "disable"
+  | "enable"
+  /** The modpack stops managing the file but leaves it on disk. */
+  | "retire";
 
 export interface ModpackFileChange {
   path: string;
@@ -45,7 +53,8 @@ export type ModpackConflictKind =
   | "modifiedLocallyRemovedRemotely"
   | "deletedLocallyChangedRemotely"
   | "unmanagedFileInTheWay"
-  | "disabledLocally";
+  /** A file the modpack left alone is managed again with other content. */
+  | "remanage";
 
 export interface ModpackConflict {
   path: string;
@@ -54,6 +63,10 @@ export interface ModpackConflict {
   local?: ModpackFileKey;
   remote?: ModpackFileKey;
   hunks: ModpackMergeConflict[];
+  /** The player ignored the local change here: the file, or every block. */
+  ignored?: boolean;
+  /** Blocks (indexes into `hunks`) whose local changes are all ignored. */
+  ignoredHunks?: number[];
 }
 
 export interface ModpackMergeConflict {
@@ -75,6 +88,14 @@ export interface ModpackDiffLine {
   /** 1-based; absent on deleted lines. */
   newNumber?: number | null;
   text: string;
+  /** Which of the hunk's `edits` an added or deleted line belongs to. */
+  edit?: number | null;
+}
+
+/** The old-side line range of one change, 0-based, `[start, end)`. */
+export interface ModpackDiffEdit {
+  start: number;
+  end: number;
 }
 
 /** One `@@ -oldStart,oldLines +newStart,newLines @@` block. */
@@ -84,9 +105,16 @@ export interface ModpackDiffHunk {
   newStart: number;
   newLines: number;
   lines: ModpackDiffLine[];
+  /** The changes this hunk shows, in order; only local-change diffs have them. */
+  edits?: ModpackDiffEdit[];
 }
 
-export type ModpackLocalChangeKind = "modified" | "deleted" | "disabled";
+export type ModpackLocalChangeKind =
+  | "modified"
+  | "deleted"
+  /** Only the disabled state differs: the file sits at the other variant. */
+  | "disabled"
+  | "enabled";
 
 export interface ModpackLocalChange {
   path: string;
@@ -95,10 +123,28 @@ export interface ModpackLocalChange {
   local?: ModpackFileKey | null;
   /** Normalized line diff, installed → local; only for text files. */
   hunks?: ModpackDiffHunk[] | null;
-  noDiff?: "notText" | "baseMissing" | null;
+  noDiff?: "notText" | "baseMissing" | "bothVariants" | null;
+  /** A modified file whose disabled state also flipped. */
+  toggled?: boolean;
 }
 
 export type ModpackConflictChoice = "keepLocal" | "takeRemote";
+
+/** A line range of the installed text the player keeps as their own. */
+export interface ModpackIgnoredRegion {
+  start: number;
+  end: number;
+  baseLines: string[];
+  localLines: string[];
+}
+
+export interface ModpackIgnoredItem {
+  path: string;
+  baseSha1: string;
+  /** The whole file is ignored. */
+  whole: boolean;
+  regions: ModpackIgnoredRegion[];
+}
 
 export interface ModpackBaselineLoader {
   type: ModLoaderType;

@@ -11,6 +11,7 @@ import {
 import React from "react";
 import { LuChevronDown, LuChevronRight } from "react-icons/lu";
 import {
+  ModpackDiffEdit,
   ModpackDiffHunk,
   ModpackDiffLine,
   ModpackDiffLineKind,
@@ -128,10 +129,11 @@ const Gutter: React.FC<{
   </Box>
 );
 
-const DiffRow: React.FC<{ line: ModpackDiffLine; colors: DiffColors }> = ({
-  line,
-  colors,
-}) => {
+const DiffRow: React.FC<{
+  line: ModpackDiffLine;
+  colors: DiffColors;
+  action?: React.ReactNode;
+}> = ({ line, colors, action }) => {
   const bg =
     line.kind === "add"
       ? colors.addBg
@@ -160,6 +162,19 @@ const DiffRow: React.FC<{ line: ModpackDiffLine; colors: DiffColors }> = ({
       <Box as="span" whiteSpace="pre" pr={4}>
         {line.text === "" ? " " : line.text}
       </Box>
+      {action && (
+        <Box
+          as="span"
+          ml="auto"
+          pl={2}
+          pr={2}
+          position="sticky"
+          right={0}
+          flex="0 0 auto"
+        >
+          {action}
+        </Box>
+      )}
     </Flex>
   );
 };
@@ -168,12 +183,21 @@ interface DiffHunksProps {
   hunks: ModpackDiffHunk[];
   /** Hide the `@@ … @@` rows, for a single region shown on its own. */
   hideHunkHeaders?: boolean;
+  /**
+   * A control shown on the first line of each change the hunk lists in
+   * `edits` (e.g. "ignore this spot").
+   */
+  renderEditAction?: (
+    edit: ModpackDiffEdit,
+    hunk: ModpackDiffHunk
+  ) => React.ReactNode;
 }
 
 /** The body of a GitHub-style unified diff. */
 export const DiffHunks: React.FC<DiffHunksProps> = ({
   hunks,
   hideHunkHeaders = false,
+  renderEditAction,
 }) => {
   const colors = useDiffColors();
   return (
@@ -199,9 +223,23 @@ export const DiffHunks: React.FC<DiffHunksProps> = ({
               </Box>
             </Flex>
           )}
-          {hunk.lines.map((line, lineIndex) => (
-            <DiffRow key={lineIndex} line={line} colors={colors} />
-          ))}
+          {hunk.lines.map((line, lineIndex) => {
+            const edit =
+              line.edit !== undefined && line.edit !== null
+                ? hunk.edits?.[line.edit]
+                : undefined;
+            const first =
+              edit !== undefined &&
+              hunk.lines[lineIndex - 1]?.edit !== line.edit;
+            return (
+              <DiffRow
+                key={lineIndex}
+                line={line}
+                colors={colors}
+                action={first && renderEditAction?.(edit, hunk)}
+              />
+            );
+          })}
         </React.Fragment>
       ))}
     </Box>

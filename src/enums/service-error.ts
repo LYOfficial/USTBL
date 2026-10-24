@@ -61,6 +61,7 @@ export enum InstanceError {
   ModpackUpdateBaselineMissing = "MODPACK_UPDATE_BASELINE_MISSING",
   ModpackUpdatePackUnavailable = "MODPACK_UPDATE_PACK_UNAVAILABLE",
   ModpackUpdateUnlinkPending = "MODPACK_UPDATE_UNLINK_PENDING",
+  ModpackUpdateBothVariants = "MODPACK_UPDATE_BOTH_VARIANTS",
   ModpackUploadRestarted = "MODPACK_UPLOAD_RESTARTED",
   ModpackUploadCloudUnavailable = "MODPACK_UPLOAD_CLOUD_UNAVAILABLE",
   ModpackUploadVerifyFailed = "MODPACK_UPLOAD_VERIFY_FAILED",

@@ -9,6 +9,8 @@
 //! not affect it.
 
 use crate::instance::models::misc::{InstanceOrigin, ModLoaderType, OriginPlatform};
+use crate::instance::modpack_update::diff::FileKey;
+use crate::instance::modpack_update::remote::RemoteRule;
 use crate::storage::{load_json_async, save_json_async};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -54,14 +56,76 @@ pub fn canonical_loader_version(loader_type: ModLoaderType, version: &str) -> St
   }
 }
 
-/// A file managed by the modpack. `path` is relative to the instance directory
-/// and always uses `/`.
+/// Whether the modpack still manages the file. A dormant entry only remembers
+/// the file existed: it never counts as a local change, is never hashed into
+/// the content hash and is never deleted for going unmentioned.
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BaselineFileState {
+  #[default]
+  Managed,
+  Dormant,
+}
+
+/// A file the modpack recorded. `path` is relative to the instance directory
+/// and always uses `/`. A dormant entry may carry no content at all (`sha1`
+/// and `size` empty); it then only says the file was seen once.
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BaselineFile {
   pub path: String,
+  #[serde(default)]
   pub sha1: String,
+  #[serde(default)]
   pub size: u64,
+  #[serde(default)]
+  pub disabled: bool,
+  #[serde(default)]
+  pub state: BaselineFileState,
+}
+
+impl BaselineFile {
+  /// A managed file.
+  pub fn managed(path: &str, key: FileKey, disabled: bool) -> Self {
+    Self {
+      path: path.into(),
+      sha1: key.sha1,
+      size: key.size,
+      disabled,
+      state: BaselineFileState::Managed,
+    }
+  }
+
+  /// A dormant file, with or without the content it had when it went dormant.
+  pub fn dormant(path: &str, key: Option<FileKey>, disabled: bool) -> Self {
+    let (sha1, size) = key
+      .map(|key| (key.sha1, key.size))
+      .unwrap_or((String::new(), 0));
+    Self {
+      path: path.into(),
+      sha1,
+      size,
+      disabled,
+      state: BaselineFileState::Dormant,
+    }
+  }
+
+  /// The comparison key of the entry, when it carries content.
+  pub fn key(&self) -> Option<FileKey> {
+    if self.sha1.is_empty() {
+      None
+    } else {
+      Some(FileKey {
+        sha1: self.sha1.clone(),
+        size: self.size,
+      })
+    }
+  }
+
+  /// Whether the entry manages the file on disk.
+  pub fn is_managed(&self) -> bool {
+    self.state == BaselineFileState::Managed
+  }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
@@ -148,21 +212,63 @@ pub fn hash_existing_files(
     .iter()
     .map(|relative| {
       let (sha1, size) = hash_file(&root.join(relative))?;
-      Ok(BaselineFile {
-        path: normalize_relative_path(relative),
-        sha1,
-        size,
-      })
+      Ok(BaselineFile::managed(
+        &normalize_relative_path(relative),
+        FileKey { sha1, size },
+        false,
+      ))
     })
     .collect()
 }
 
-/// Content hash over the loader, the optional component chain and every managed
-/// file, independent of the order the files were listed in.
+/// One file of the content-hash input. The baseline never records `once`;
+/// the remote side builds its entries straight from the manifest files.
+pub struct ContentHashFile {
+  pub path: String,
+  pub sha1: String,
+  pub size: u64,
+  pub disabled: bool,
+  pub once: bool,
+}
+
+impl ContentHashFile {
+  /// The hash entry of a baseline file; dormant entries never take part.
+  pub fn of_baseline(file: &BaselineFile) -> Option<Self> {
+    file.is_managed().then(|| Self {
+      path: file.path.clone(),
+      sha1: file.sha1.clone(),
+      size: file.size,
+      disabled: file.disabled,
+      once: false,
+    })
+  }
+}
+
+/// Content hash over the loader, the optional component chain, the publish
+/// rules and every managed file, independent of the order the files were
+/// listed in.
 pub fn compute_content_hash(
   loader: &BaselineLoader,
   components: Option<&Value>,
   files: &[BaselineFile],
+  rules: &[RemoteRule],
+) -> String {
+  let entries: Vec<ContentHashFile> = files
+    .iter()
+    .filter_map(ContentHashFile::of_baseline)
+    .collect();
+  hash_content_lines(loader, components, &entries, rules)
+}
+
+/// The shared hasher behind [`compute_content_hash`] and the remote manifest's
+/// content hash. A file line gains a `\0disabled` / `\0once` marker only when
+/// the flag is set, so a manifest without the new attributes hashes exactly
+/// like before. Rules sort by case-folded path.
+pub fn hash_content_lines(
+  loader: &BaselineLoader,
+  components: Option<&Value>,
+  files: &[ContentHashFile],
+  rules: &[RemoteRule],
 ) -> String {
   let mut hasher = Sha1::new();
   hasher.update(
@@ -176,10 +282,36 @@ pub fn compute_content_hash(
   if let Some(components) = components {
     hasher.update(format!("components\0{components}\n").as_bytes());
   }
-  let mut sorted: Vec<&BaselineFile> = files.iter().collect();
+  let mut sorted: Vec<&ContentHashFile> = files.iter().collect();
   sorted.sort_by(|a, b| a.path.cmp(&b.path));
   for file in sorted {
-    hasher.update(format!("file\0{}\0{}\0{}\n", file.path, file.sha1, file.size).as_bytes());
+    let mut line = format!("file\0{}\0{}\0{}", file.path, file.sha1, file.size);
+    if file.disabled {
+      line.push_str("\0disabled");
+    }
+    if file.once {
+      line.push_str("\0once");
+    }
+    line.push('\n');
+    hasher.update(line.as_bytes());
+  }
+  let mut rules: Vec<&RemoteRule> = rules.iter().collect();
+  rules.sort_by(|a, b| {
+    a.path
+      .to_lowercase()
+      .cmp(&b.path.to_lowercase())
+      .then(a.path.cmp(&b.path))
+  });
+  for rule in rules {
+    hasher.update(
+      format!(
+        "rule\0{}\0{}\0{}\n",
+        rule.path,
+        rule.kind.as_str(),
+        rule.state.as_str()
+      )
+      .as_bytes(),
+    );
   }
   hex::encode(hasher.finalize())
 }
@@ -195,7 +327,7 @@ impl ModpackBaseline {
       by_path.insert(file.path.clone(), file);
     }
     let files: Vec<BaselineFile> = by_path.into_values().collect();
-    let content_hash = compute_content_hash(&loader, None, &files);
+    let content_hash = compute_content_hash(&loader, None, &files, &[]);
     Self {
       schema: BASELINE_SCHEMA,
       origin: BaselineOrigin {
@@ -214,7 +346,7 @@ impl ModpackBaseline {
   pub fn with_components(mut self, components: Vec<ComponentRef>) -> Self {
     let value = serde_json::to_value(canonical_components(components))
       .expect("component refs serialize to JSON");
-    self.content_hash = compute_content_hash(&self.loader, Some(&value), &self.files);
+    self.content_hash = compute_content_hash(&self.loader, Some(&value), &self.files, &[]);
     self.components = Some(value);
     self
   }
@@ -272,11 +404,14 @@ mod tests {
   }
 
   fn file(path: &str, sha1: &str, size: u64) -> BaselineFile {
-    BaselineFile {
-      path: path.into(),
-      sha1: sha1.into(),
-      size,
-    }
+    BaselineFile::managed(
+      path,
+      FileKey {
+        sha1: sha1.into(),
+        size,
+      },
+      false,
+    )
   }
 
   #[test]
@@ -284,24 +419,110 @@ mod tests {
     let a = vec![file("mods/a.jar", "aa", 1), file("config/b.toml", "bb", 2)];
     let mut reversed = a.clone();
     reversed.reverse();
-    let base = compute_content_hash(&loader("0.16.0"), None, &a);
+    let base = compute_content_hash(&loader("0.16.0"), None, &a, &[]);
     assert_eq!(
       base,
-      compute_content_hash(&loader("0.16.0"), None, &reversed)
+      compute_content_hash(&loader("0.16.0"), None, &reversed, &[])
     );
-    assert_ne!(base, compute_content_hash(&loader("0.16.1"), None, &a));
+    assert_ne!(base, compute_content_hash(&loader("0.16.1"), None, &a, &[]));
     let mut changed = a.clone();
     changed[0].sha1 = "cc".into();
     assert_ne!(
       base,
-      compute_content_hash(&loader("0.16.0"), None, &changed)
+      compute_content_hash(&loader("0.16.0"), None, &changed, &[])
     );
     let mut resized = a.clone();
     resized[0].size = 9;
     assert_ne!(
       base,
-      compute_content_hash(&loader("0.16.0"), None, &resized)
+      compute_content_hash(&loader("0.16.0"), None, &resized, &[])
     );
+  }
+
+  #[test]
+  fn content_hash_counts_disabled_once_and_rules_but_skips_dormant() {
+    use crate::instance::modpack_update::remote::{RemoteRule, RuleKind, RuleState};
+    let a = vec![
+      file("mods/a.jar", "aa", 1),
+      BaselineFile::dormant("config/x.toml", Some(key_of("bb", 2)), true),
+    ];
+    let base = compute_content_hash(&loader("0.16.0"), None, &a, &[]);
+    // The dormant entry never takes part, whatever it carries.
+    let managed_only = vec![file("mods/a.jar", "aa", 1)];
+    assert_eq!(
+      base,
+      compute_content_hash(&loader("0.16.0"), None, &managed_only, &[])
+    );
+    // A disabled flag on a managed file changes the hash.
+    let disabled = vec![BaselineFile::managed(
+      "mods/a.jar",
+      FileKey {
+        sha1: "aa".into(),
+        size: 1,
+      },
+      true,
+    )];
+    assert_ne!(
+      base,
+      compute_content_hash(&loader("0.16.0"), None, &disabled, &[])
+    );
+    // Rules hash in as a set: order does not matter, content does.
+    let rule = |path: &str, kind: RuleKind, state: RuleState| RemoteRule {
+      path: path.into(),
+      kind,
+      state,
+    };
+    let rules = vec![
+      rule("config/cache", RuleKind::Dir, RuleState::Ignore),
+      rule("mods/old.jar", RuleKind::File, RuleState::Delete),
+    ];
+    let mut reversed = rules.clone();
+    reversed.reverse();
+    let with = compute_content_hash(&loader("0.16.0"), None, &managed_only, &rules);
+    assert_eq!(
+      with,
+      compute_content_hash(&loader("0.16.0"), None, &managed_only, &reversed)
+    );
+    assert_ne!(base, with);
+    let changed = vec![rule("config/other", RuleKind::Dir, RuleState::Ignore)];
+    assert_ne!(
+      with,
+      compute_content_hash(&loader("0.16.0"), None, &managed_only, &changed)
+    );
+    // `once` is part of the manifest identity too: it rides the shared line
+    // hasher, like a manifest file with the flag set.
+    let plain = hash_content_lines(
+      &loader("0.16.0"),
+      None,
+      &[ContentHashFile {
+        path: "mods/a.jar".into(),
+        sha1: "aa".into(),
+        size: 1,
+        disabled: false,
+        once: false,
+      }],
+      &[],
+    );
+    let once = hash_content_lines(
+      &loader("0.16.0"),
+      None,
+      &[ContentHashFile {
+        path: "mods/a.jar".into(),
+        sha1: "aa".into(),
+        size: 1,
+        disabled: false,
+        once: true,
+      }],
+      &[],
+    );
+    assert_ne!(plain, once);
+  }
+
+  fn key_of(sha1: &str, size: u64) -> FileKey {
+    FileKey {
+      sha1: sha1.into(),
+      size,
+    }
   }
 
   #[test]
@@ -337,7 +558,7 @@ mod tests {
     );
     assert_eq!(
       baseline.content_hash,
-      compute_content_hash(&baseline.loader, None, &baseline.files)
+      compute_content_hash(&baseline.loader, None, &baseline.files, &[])
     );
   }
 
@@ -384,7 +605,7 @@ mod tests {
     assert_ne!(with.content_hash, plain.content_hash);
     assert_eq!(
       with.content_hash,
-      compute_content_hash(&with.loader, with.components.as_ref(), &with.files)
+      compute_content_hash(&with.loader, with.components.as_ref(), &with.files, &[])
     );
     let parsed: ModpackBaseline =
       serde_json::from_str(&serde_json::to_string(&with).unwrap()).unwrap();

@@ -3,12 +3,35 @@
 use super::components::ComponentPlan;
 use crate::instance::helpers::modpack::misc::is_launcher_metadata_path;
 use crate::instance::modpack_update::diff::{FileKey, DISABLED_SUFFIX};
-use crate::instance::modpack_update::remote::UPDATE_DIR;
+use crate::instance::modpack_update::remote::{RemoteRule, UPDATE_DIR};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-pub const MANIFEST_FORMAT: &str = "ustbl.modpack/2";
+pub const MANIFEST_FORMAT: &str = "ustbl.modpack/3";
+
+/// One file the publisher ticked in the tree. `path` is always the enabled
+/// name; a disabled mod is read from `<path>.disabled` and ships with
+/// `disabled: true`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublishFile {
+  pub path: String,
+  #[serde(default)]
+  pub disabled: bool,
+  #[serde(default)]
+  pub once: bool,
+}
+
+/// Where the content of a file lives on disk.
+pub fn disk_path(path: &str, disabled: bool) -> String {
+  if disabled {
+    format!("{path}{DISABLED_SUFFIX}")
+  } else {
+    path.to_string()
+  }
+}
 
 /// Extensions of formats that are compressed already; deflating them again only
 /// costs time.
@@ -18,8 +41,11 @@ const STORED_EXTENSIONS: [&str; 14] = [
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalFile {
+  /// The enabled name, as the manifest lists it.
   pub path: String,
   pub key: FileKey,
+  pub disabled: bool,
+  pub once: bool,
 }
 
 /// One object of the delta pack: the content with this hash, and where it is.
@@ -34,7 +60,9 @@ pub struct PackObject {
 #[derive(Debug)]
 pub struct PublishPlan {
   pub files: Vec<LocalFile>,
-  /// Disabled mods and launcher metadata are never published.
+  /// The publisher's ignore/delete rules, exactly as set (never compressed).
+  pub rules: Vec<RemoteRule>,
+  /// Launcher metadata is never published.
   pub skipped: Vec<String>,
   /// Set for an instance imported from a MultiMC profile.
   pub components: Option<ComponentPlan>,
@@ -62,10 +90,16 @@ impl PublishPlan {
           "size": file.key.size,
           "sha1": file.key.sha1,
           "source": { "kind": "pack" },
+          "disabled": file.disabled,
+          "once": file.once,
         })
       })
       .collect();
-    let mut manifest = json!({ "format": MANIFEST_FORMAT, "files": files });
+    let mut manifest = json!({
+      "format": MANIFEST_FORMAT,
+      "files": files,
+      "rules": self.rules,
+    });
     if let Some(components) = &self.components {
       manifest["components"] = components.manifest();
     }
@@ -82,7 +116,7 @@ impl PublishPlan {
         .entry(file.key.sha1.clone())
         .or_insert_with(|| PackObject {
           sha1: file.key.sha1.clone(),
-          path: root.join(&file.path),
+          path: root.join(disk_path(&file.path, file.disabled)),
           stored: is_stored(&file.path),
         });
     }
@@ -99,6 +133,8 @@ impl PublishPlan {
   }
 }
 
+/// A listed path is an enabled name, so one that ends in `.disabled` is not a
+/// manifest path at all (a disabled mod is listed under its enabled name).
 fn is_publishable(path: &str, instance_name: &str) -> bool {
   let lowered = path.to_lowercase();
   !(lowered.ends_with(DISABLED_SUFFIX)
@@ -107,18 +143,29 @@ fn is_publishable(path: &str, instance_name: &str) -> bool {
     || lowered.starts_with(&format!("{UPDATE_DIR}/")))
 }
 
-/// Filter before hashing. Omitting a disabled variant also removes its enabled
-/// counterpart from the next manifest, which is how a publish deletes that mod.
-pub(super) fn partition_publishable_paths(
-  paths: Vec<String>,
-  instance_name: &str,
-) -> (Vec<String>, Vec<String>) {
-  paths
-    .into_iter()
-    .partition(|path| is_publishable(path, instance_name))
+/// Whether a ticked file may ship in the requested state: only a mod under
+/// `mods/` can be published disabled.
+pub fn disabled_state_allowed(path: &str, disabled: bool) -> bool {
+  !disabled || path.to_lowercase().starts_with("mods/")
 }
 
-pub fn plan_files(files: Vec<LocalFile>, instance_name: &str) -> PublishPlan {
+/// Filter before hashing: launcher metadata and the update folder never leave
+/// the instance, and nothing is read for them.
+pub(super) fn partition_publishable(
+  files: Vec<PublishFile>,
+  instance_name: &str,
+) -> (Vec<PublishFile>, Vec<String>) {
+  let (kept, skipped) = files
+    .into_iter()
+    .partition::<Vec<_>, _>(|file| is_publishable(&file.path, instance_name));
+  (kept, skipped.into_iter().map(|file| file.path).collect())
+}
+
+pub fn plan_files(
+  files: Vec<LocalFile>,
+  rules: Vec<RemoteRule>,
+  instance_name: &str,
+) -> PublishPlan {
   let mut skipped = Vec::new();
   let mut kept: Vec<LocalFile> = Vec::new();
   for file in files {
@@ -133,6 +180,7 @@ pub fn plan_files(files: Vec<LocalFile>, instance_name: &str) -> PublishPlan {
   skipped.sort();
   PublishPlan {
     files: kept,
+    rules,
     skipped,
     components: None,
   }
@@ -141,6 +189,7 @@ pub fn plan_files(files: Vec<LocalFile>, instance_name: &str) -> PublishPlan {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::instance::modpack_update::remote::{RuleKind, RuleState};
 
   fn file(path: &str, sha1: &str, size: u64) -> LocalFile {
     LocalFile {
@@ -149,85 +198,140 @@ mod tests {
         sha1: sha1.into(),
         size,
       },
+      disabled: false,
+      once: false,
     }
   }
 
-  #[test]
-  fn disabled_mods_and_launcher_files_are_skipped() {
-    let plan = plan_files(
-      vec![
-        file("mods/a.jar", "a", 1),
-        file("mods/b.jar.disabled", "b", 1),
-        file("ustblcfg.json", "c", 1),
-        file("ustbl-modpack-baseline.json", "d", 1),
-        file("pack.json", "e", 1),
-        file(".ustbl-update/backup/x", "f", 1),
-      ],
-      "pack",
-    );
+  fn picked(path: &str) -> PublishFile {
+    PublishFile {
+      path: path.into(),
+      disabled: false,
+      once: false,
+    }
+  }
 
-    assert_eq!(plan.files.len(), 1);
-    assert_eq!(plan.skipped.len(), 5);
+  fn plan(files: Vec<LocalFile>) -> PublishPlan {
+    plan_files(files, Vec::new(), "pack")
   }
 
   #[test]
-  fn a_disabled_mod_is_filtered_early_and_deletes_its_old_enabled_path() {
-    let (selected, skipped) = partition_publishable_paths(
+  fn launcher_files_are_filtered_before_hashing_but_disabled_mods_are_kept() {
+    let (kept, skipped) = partition_publishable(
       vec![
-        "mods/a.jar.disabled".to_string(),
-        "config/a.toml".to_string(),
+        picked("mods/a.jar"),
+        PublishFile {
+          path: "mods/b.jar".into(),
+          disabled: true,
+          once: false,
+        },
+        picked("ustblcfg.json"),
+        picked("ustbl-modpack-baseline.json"),
+        picked("pack.json"),
+        picked(".ustbl-update/backup/x"),
+        picked("mods/c.jar.disabled"),
       ],
       "pack",
     );
-    assert_eq!(selected, ["config/a.toml".to_string()]);
-    assert_eq!(skipped, ["mods/a.jar.disabled".to_string()]);
 
-    let plan = plan_files(
-      selected
-        .into_iter()
-        .map(|path| file(&path, "x", 1))
-        .collect(),
-      "pack",
-    );
+    let kept: Vec<_> = kept.iter().map(|file| file.path.as_str()).collect();
+    assert_eq!(kept, ["mods/a.jar", "mods/b.jar"]);
+    assert_eq!(skipped.len(), 5);
+  }
+
+  #[test]
+  fn a_disabled_mod_ships_under_its_enabled_name_and_is_read_from_the_disabled_file() {
+    let mut disabled = file("mods/a.jar", "a", 1);
+    disabled.disabled = true;
+    let plan = plan(vec![disabled, file("config/a.toml", "x", 1)]);
+
     let manifest = plan.manifest();
-    let published: Vec<_> = manifest["files"]
-      .as_array()
-      .unwrap()
-      .iter()
-      .map(|file| file["path"].as_str().unwrap())
-      .collect();
-    assert!(!published.contains(&"mods/a.jar"));
-    assert!(!published.contains(&"mods/a.jar.disabled"));
-    assert_eq!(published, ["config/a.toml"]);
+    let files = manifest["files"].as_array().unwrap();
+    assert_eq!(files[0]["path"], "config/a.toml");
+    assert_eq!(files[0]["disabled"], false);
+    assert_eq!(files[1]["path"], "mods/a.jar");
+    assert_eq!(files[1]["disabled"], true);
+    let objects = plan.objects(Path::new("/instance"));
+    assert_eq!(
+      objects["a"].path,
+      Path::new("/instance/mods/a.jar.disabled")
+    );
+    assert_eq!(objects["x"].path, Path::new("/instance/config/a.toml"));
+  }
+
+  #[test]
+  fn only_mods_can_ship_disabled() {
+    assert!(disabled_state_allowed("mods/a.jar", true));
+    assert!(disabled_state_allowed("Mods/a.jar", true));
+    assert!(!disabled_state_allowed("config/a.toml", true));
+    assert!(disabled_state_allowed("config/a.toml", false));
+  }
+
+  #[test]
+  fn once_and_rules_go_into_the_manifest_as_set() {
+    let mut once = file("config/x.toml", "x", 1);
+    once.once = true;
+    let rules = vec![
+      RemoteRule {
+        path: "config/yes_steve_model/cache".into(),
+        kind: RuleKind::Dir,
+        state: RuleState::Ignore,
+      },
+      RemoteRule {
+        path: "resourcepacks/old.zip".into(),
+        kind: RuleKind::File,
+        state: RuleState::Delete,
+      },
+    ];
+    let manifest = plan_files(vec![once], rules, "pack").manifest();
+
+    assert_eq!(manifest["files"][0]["once"], true);
+    assert_eq!(
+      manifest["rules"],
+      json!([
+        { "path": "config/yes_steve_model/cache", "kind": "dir", "state": "ignore" },
+        { "path": "resourcepacks/old.zip", "kind": "file", "state": "delete" },
+      ])
+    );
+  }
+
+  #[test]
+  fn a_version_may_carry_rules_and_no_files() {
+    let rules = vec![RemoteRule {
+      path: "mods/old.jar".into(),
+      kind: RuleKind::File,
+      state: RuleState::Delete,
+    }];
+    let manifest = plan_files(Vec::new(), rules, "pack").manifest();
+    assert_eq!(manifest["files"], json!([]));
+    assert_eq!(manifest["rules"].as_array().unwrap().len(), 1);
   }
 
   #[test]
   fn every_file_is_listed_as_a_pack_file_in_path_order() {
-    let plan = plan_files(
-      vec![
-        file("options.txt", "b", 5),
-        file("mods/a.jar", "a", 99_000_000),
-        file("empty.txt", "z", 0),
-      ],
-      "pack",
-    );
-    let manifest = plan.manifest();
-    assert_eq!(manifest["format"], "ustbl.modpack/2");
+    let manifest = plan(vec![
+      file("options.txt", "b", 5),
+      file("mods/a.jar", "a", 99_000_000),
+      file("empty.txt", "z", 0),
+    ])
+    .manifest();
+    assert_eq!(manifest["format"], "ustbl.modpack/3");
     let files = manifest["files"].as_array().unwrap();
+    assert!(files
+      .iter()
+      .all(|f| f["disabled"] == false && f["once"] == false));
     let paths: Vec<_> = files.iter().map(|f| f["path"].as_str().unwrap()).collect();
     assert_eq!(paths, ["empty.txt", "mods/a.jar", "options.txt"]);
     assert!(files.iter().all(|f| f["source"]["kind"] == "pack"));
+    assert_eq!(manifest["rules"], json!([]));
   }
 
   #[test]
   fn identical_content_is_one_object_and_the_manifest_lists_every_path() {
-    let plan = plan_files(
-      vec![
-        file("mods/a.jar", "same", 10),
-        file("mods/copy.jar", "same", 10),
-      ],
-      "pack",
-    );
+    let plan = plan(vec![
+      file("mods/a.jar", "same", 10),
+      file("mods/copy.jar", "same", 10),
+    ]);
 
     let objects = plan.objects(Path::new("/instance"));
     assert_eq!(objects.len(), 1);
@@ -237,14 +341,11 @@ mod tests {
 
   #[test]
   fn compressed_formats_are_stored_and_the_rest_deflated() {
-    let plan = plan_files(
-      vec![
-        file("mods/a.JAR", "1", 1),
-        file("config/a.toml", "2", 1),
-        file("resourcepacks/p.zip", "3", 1),
-      ],
-      "pack",
-    );
+    let plan = plan(vec![
+      file("mods/a.JAR", "1", 1),
+      file("config/a.toml", "2", 1),
+      file("resourcepacks/p.zip", "3", 1),
+    ]);
     let objects = plan.objects(Path::new("/i"));
     assert!(objects["1"].stored);
     assert!(!objects["2"].stored);
@@ -261,7 +362,7 @@ mod tests {
       },
       source: PathBuf::from(source),
     };
-    let mut plan = plan_files(vec![file("mods/big.jar", "big", 10)], "pack");
+    let mut plan = plan(vec![file("mods/big.jar", "big", 10)]);
     assert!(plan.manifest().get("components").is_none());
     plan.components = Some(ComponentPlan {
       mmc_pack: json!({"formatVersion": 1, "components": []}),

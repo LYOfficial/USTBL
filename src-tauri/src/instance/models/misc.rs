@@ -349,6 +349,7 @@ pub enum InstanceError {
   ModpackUpdateBaselineMissing,
   ModpackUpdatePackUnavailable,
   ModpackUpdateUnlinkPending,
+  ModpackUpdateBothVariants,
   ModpackUploadRestarted,
   ModpackUploadCloudUnavailable,
   ModpackUploadVerifyFailed,
@@ -370,6 +371,19 @@ impl std::error::Error for InstanceError {}
 pub struct ModpackFileList {
   pub all: Vec<String>,
   pub unchecked: Vec<String>,
+  /// The suggested-blacklist entries behind `unchecked`, at the level the
+  /// blacklist names them (a folder or a single file), so the publish tree
+  /// can ignore the entry instead of every file below it.
+  #[serde(default)]
+  pub suggested: Vec<SuggestedEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SuggestedEntry {
+  pub path: String,
+  /// `dir` or `file`.
+  pub kind: String,
 }
 
 #[cfg(test)]

@@ -9,7 +9,7 @@
 //! keep hashing everything themselves (their result decides what is written),
 //! but they refresh the entries of the files they just hashed.
 
-use super::diff::{DISABLED_SUFFIX, FileKey, LocalState};
+use super::diff::{FileKey, LocalState, DISABLED_SUFFIX};
 use crate::instance::helpers::modpack::baseline::hash_file;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io;
@@ -52,9 +52,12 @@ impl LocalScanCache {
   fn record(&mut self, root: &Path, path: &str, state: &LocalState) {
     // A placeholder (empty sha1) is not a computed state: it only says "not
     // the baseline it was scanned against". Caching it would report an
-    // untouched file as changed under every later baseline.
+    // untouched file as changed under every later baseline. `Both` is never
+    // cached either: which variant a later scan hashes first would decide the
+    // entry's meaning.
     let placeholder = match state {
       LocalState::Present(key) | LocalState::Disabled(key) => key.sha1.is_empty(),
+      LocalState::Both(..) => true,
       LocalState::Absent => false,
     };
     if placeholder {
@@ -83,7 +86,8 @@ impl LocalScanCache {
 }
 
 /// The file a path's state was taken from: `<path>.disabled` for a switched
-/// off file, the path itself otherwise.
+/// off file, the path itself otherwise. `Both` never gets recorded, so it has
+/// no file here.
 fn file_of(root: &Path, path: &str, state: &LocalState) -> PathBuf {
   match state {
     LocalState::Disabled(_) => root.join(format!("{path}{DISABLED_SUFFIX}")),
@@ -130,6 +134,21 @@ pub fn collect_states_cached(
 
 fn scan_one(root: &Path, path: &str, baseline: Option<&FileKey>) -> io::Result<LocalState> {
   let file = root.join(path);
+  let disabled = root.join(format!("{path}{DISABLED_SUFFIX}"));
+  if file.is_file() && disabled.is_file() {
+    let (enabled_sha1, enabled_size) = hash_file(&file)?;
+    let (disabled_sha1, disabled_size) = hash_file(&disabled)?;
+    return Ok(LocalState::Both(
+      FileKey {
+        sha1: enabled_sha1,
+        size: enabled_size,
+      },
+      FileKey {
+        sha1: disabled_sha1,
+        size: disabled_size,
+      },
+    ));
+  }
   if file.is_file() {
     // A size that already differs can never hash to the baseline key.
     if let Some(key) = baseline {
@@ -150,7 +169,6 @@ fn scan_one(root: &Path, path: &str, baseline: Option<&FileKey>) -> io::Result<L
       format!("{path} is not a regular file"),
     ));
   }
-  let disabled = root.join(format!("{path}{DISABLED_SUFFIX}"));
   if disabled.is_file() {
     let (sha1, size) = hash_file(&disabled)?;
     return Ok(LocalState::Disabled(FileKey { sha1, size }));

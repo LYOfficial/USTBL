@@ -1,6 +1,7 @@
 import {
   Alert,
   AlertIcon,
+  Badge,
   Box,
   Button,
   ButtonGroup,
@@ -425,11 +426,17 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
       if (!plan) return;
       const next: Record<string, ModpackConflictChoice> = {};
       for (const conflict of plan.conflicts) {
+        // What the player ignored stays with them, whatever "all" says.
+        const skipTake = choice === "takeRemote";
         if (conflict.hunks.length === 0) {
-          next[conflict.path] = choice;
+          next[conflict.path] =
+            skipTake && conflict.ignored ? "keepLocal" : choice;
         } else {
           conflict.hunks.forEach((_, index) => {
-            next[`${conflict.path}#${index}`] = choice;
+            next[`${conflict.path}#${index}`] =
+              skipTake && conflict.ignoredHunks?.includes(index)
+                ? "keepLocal"
+                : choice;
           });
         }
       }
@@ -559,6 +566,9 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
     const adds = plan.changes.filter((c) => c.kind === "add");
     const updates = plan.changes.filter((c) => c.kind === "update");
     const deletes = plan.changes.filter((c) => c.kind === "delete");
+    const disables = plan.changes.filter((c) => c.kind === "disable");
+    const enables = plan.changes.filter((c) => c.kind === "enable");
+    const retires = plan.changes.filter((c) => c.kind === "retire");
     return (
       <VStack align="stretch" spacing={3}>
         <Text>
@@ -591,6 +601,24 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
             title="UpdateModpackModal.plan.delete"
             colorScheme="red"
             changes={deletes}
+            renderSize={(change) => formatSize(change.localSize)}
+          />
+          <ChangeGroup
+            title="UpdateModpackModal.plan.disable"
+            colorScheme="gray"
+            changes={disables}
+            renderSize={(change) => formatSize(change.localSize)}
+          />
+          <ChangeGroup
+            title="UpdateModpackModal.plan.enable"
+            colorScheme="gray"
+            changes={enables}
+            renderSize={(change) => formatSize(change.localSize)}
+          />
+          <ChangeGroup
+            title="UpdateModpackModal.plan.retire"
+            colorScheme="gray"
+            changes={retires}
             renderSize={(change) => formatSize(change.localSize)}
           />
           <ChangeGroup
@@ -627,6 +655,14 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
                 </Button>
               </HStack>
             </HStack>
+            {plan.conflicts.some(
+              (conflict) =>
+                conflict.ignored || (conflict.ignoredHunks?.length ?? 0) > 0
+            ) && (
+              <Text fontSize="xs" className="secondary-text">
+                {t("UpdateModpackModal.ignored.takeAllNote")}
+              </Text>
+            )}
             {plan.conflicts.map((conflict) => {
               // A text conflict is answered block by block; anything else as
               // a whole file. Never both, so each answer has one control.
@@ -661,6 +697,16 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
                     </>
                   }
                 >
+                  {conflict.ignored && (
+                    <Text
+                      fontSize="xs"
+                      className="secondary-text"
+                      px={3}
+                      py={1.5}
+                    >
+                      {t("UpdateModpackModal.ignored.file")}
+                    </Text>
+                  )}
                   {byHunk && (
                     <VStack align="stretch" spacing={0}>
                       {conflict.hunks.map((hunk, index) => {
@@ -679,16 +725,23 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
                               py={1.5}
                               spacing={2}
                             >
-                              <Text fontSize="xs" className="secondary-text">
-                                {t("UpdateModpackModal.choice.hunk", {
-                                  number: index + 1,
-                                  from: hunk.baseStart + 1,
-                                  to: Math.max(
-                                    hunk.baseEnd,
-                                    hunk.baseStart + 1
-                                  ),
-                                })}
-                              </Text>
+                              <HStack spacing={2} minW={0}>
+                                <Text fontSize="xs" className="secondary-text">
+                                  {t("UpdateModpackModal.choice.hunk", {
+                                    number: index + 1,
+                                    from: hunk.baseStart + 1,
+                                    to: Math.max(
+                                      hunk.baseEnd,
+                                      hunk.baseStart + 1
+                                    ),
+                                  })}
+                                </Text>
+                                {conflict.ignoredHunks?.includes(index) && (
+                                  <Badge flexShrink={0}>
+                                    {t("UpdateModpackModal.ignored.hunk")}
+                                  </Badge>
+                                )}
+                              </HStack>
                               {renderChoice(key, choice)}
                             </HStack>
                             {(["keepLocal", "takeRemote"] as const).map(
@@ -810,7 +863,7 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
               <VStack align="start" spacing={1}>
                 <Text>{planError.message}</Text>
                 {planError.details && (
-                  <Text fontSize="xs">{planError.details}</Text>
+                  <Text fontSize="xs">{reasonText(planError.details)}</Text>
                 )}
               </VStack>
             </Alert>

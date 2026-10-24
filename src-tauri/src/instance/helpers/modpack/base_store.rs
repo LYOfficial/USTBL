@@ -48,16 +48,29 @@ pub fn store(root: &Path, file: &BaselineFile, bytes: &[u8]) -> io::Result<()> {
 /// An entry whose sha1 a baseline text file references is kept even when the
 /// file on disk differs from it: the update may have written merged or kept
 /// local content, while the base was cached separately. Only entries the new
-/// baseline no longer references are removed.
+/// baseline no longer references are removed. A dormant entry keeps its copy
+/// too; a disabled file reads from its `.disabled` variant.
 pub fn sync(root: &Path, files: &[BaselineFile]) -> io::Result<()> {
   let dir = base_dir(root);
   fs::create_dir_all(&dir)?;
   let mut referenced = std::collections::BTreeSet::new();
   for file in files {
+    if file.sha1.is_empty() {
+      continue;
+    }
     if is_text_path(&file.path, &[]) && base_path(root, &file.sha1).exists() {
       referenced.insert(file.sha1.clone());
     }
-    let source = root.join(&file.path);
+    let variant = if file.disabled {
+      format!(
+        "{}{}",
+        file.path,
+        crate::instance::modpack_update::diff::DISABLED_SUFFIX
+      )
+    } else {
+      file.path.clone()
+    };
+    let source = root.join(&variant);
     let bytes = match fs::read(&source) {
       Ok(bytes) if is_text_path(&file.path, &bytes) => bytes,
       Ok(_) => continue,
@@ -96,15 +109,43 @@ mod tests {
   fn recovered_base_is_verified_before_caching() {
     let root = std::env::temp_dir().join(format!("ustbl-recovered-{}", uuid::Uuid::new_v4()));
     let bytes = b"a=1\n";
-    let file = BaselineFile {
-      path: "config/a.properties".into(),
-      sha1: hex::encode(Sha1::digest(bytes)),
-      size: bytes.len() as u64,
-    };
+    let file = BaselineFile::managed(
+      "config/a.properties",
+      crate::instance::modpack_update::diff::FileKey {
+        sha1: hex::encode(Sha1::digest(bytes)),
+        size: bytes.len() as u64,
+      },
+      false,
+    );
     assert!(store(&root, &file, b"wrong").is_err());
     assert!(load(&root, &file.sha1).unwrap().is_none());
     store(&root, &file, bytes).unwrap();
     assert_eq!(load(&root, &file.sha1).unwrap().unwrap(), bytes);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn sync_reads_the_disabled_variant_of_a_disabled_entry() {
+    let root = std::env::temp_dir().join(format!("ustbl-base-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(root.join("config")).unwrap();
+    fs::create_dir_all(base_dir(&root)).unwrap();
+    let text = b"a=1\n";
+    let sha1 = hex::encode(Sha1::digest(text));
+    // The file sits at its disabled variant; the enabled name is absent.
+    fs::write(root.join("config/a.properties.disabled"), text).unwrap();
+    sync(
+      &root,
+      &[BaselineFile::managed(
+        "config/a.properties",
+        crate::instance::modpack_update::diff::FileKey {
+          sha1: sha1.clone(),
+          size: text.len() as u64,
+        },
+        true,
+      )],
+    )
+    .unwrap();
+    assert_eq!(load(&root, &sha1).unwrap(), Some(text.to_vec()));
     let _ = fs::remove_dir_all(root);
   }
 
@@ -119,11 +160,14 @@ mod tests {
     fs::write(base_path(&root, "old"), b"old").unwrap();
     sync(
       &root,
-      &[BaselineFile {
-        path: "config/a.properties".into(),
-        sha1: sha1.clone(),
-        size: text.len() as u64,
-      }],
+      &[BaselineFile::managed(
+        "config/a.properties",
+        crate::instance::modpack_update::diff::FileKey {
+          sha1: sha1.clone(),
+          size: text.len() as u64,
+        },
+        false,
+      )],
     )
     .unwrap();
     assert_eq!(load(&root, &sha1).unwrap(), Some(text.to_vec()));
@@ -149,11 +193,14 @@ mod tests {
     fs::write(base_path(&root, "old"), b"old").unwrap();
     sync(
       &root,
-      &[BaselineFile {
-        path: "config/a.properties".into(),
-        sha1: remote_sha1.clone(),
-        size: remote.len() as u64,
-      }],
+      &[BaselineFile::managed(
+        "config/a.properties",
+        crate::instance::modpack_update::diff::FileKey {
+          sha1: remote_sha1.clone(),
+          size: remote.len() as u64,
+        },
+        false,
+      )],
     )
     .unwrap();
     assert_eq!(load(&root, &remote_sha1).unwrap(), Some(remote.to_vec()));

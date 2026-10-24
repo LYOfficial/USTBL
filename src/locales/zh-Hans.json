@@ -3127,8 +3127,11 @@
     },
     "error": {
       "invalidVersion": "请输入有效的版本号",
-      "noFileSelected": "请至少选择一个文件",
-      "invalidProject": "请补全项目信息"
+      "noFileSelected": "请至少勾选一个文件，或设置一条规则",
+      "invalidProject": "请补全项目信息",
+      "bothVariants": "{{path}} 的启用和禁用文件同时存在，请删掉其中一个再发布",
+      "tooManyRules": "规则最多 {{max}} 条，请把逐个文件的设置合并到目录上",
+      "previousRelease": "无法读取这条线的上一版，已暂停发布。请重新选择发布目标或稍后再试"
     },
     "errorMessage": {
       "name": {
@@ -3150,11 +3153,27 @@
       "hashing": "正在检查文件（{{done}}/{{total}}）",
       "packing": "正在打包新增内容"
     },
-    "skipped": "有 {{count}} 个文件被排除（已禁用的模组或启动器文件）",
+    "tree": {
+      "legend": "勾选：随版本发布。忽略：这一版不管它，玩家本地的保持不动。删除：玩家更新时直接删掉。点击状态按钮依次切换；目录的状态会应用到其下所有文件，单独设置过的除外。",
+      "include": "勾选",
+      "ignore": "忽略",
+      "delete": "删除",
+      "remove": "移除",
+      "mixed": "混合",
+      "once": "仅首次安装",
+      "onceHint": "只在玩家首次安装时放入，之后不再更新；玩家删除后也不会重装",
+      "restore": "恢复继承",
+      "restoreHint": "去掉这一处的设置，沿用上层目录的规则",
+      "disabled": "已禁用",
+      "missing": "磁盘上已没有",
+      "conflict": "启用和禁用两个文件同时存在",
+      "toggle": "{{name}}：当前为“{{state}}”，点击切换为“{{next}}”"
+    },
+    "skipped": "有 {{count}} 个启动器文件被排除",
     "adoption": {
       "keptOther": "该实例已跟随其他整合包或其他线，未改动其来源记录。",
       "notIsolated": "该实例未开启版本隔离，未将其关联到此整合包。",
-      "localChanged": "上传期间本地文件发生了变化，未将该实例关联到此版本。",
+      "localChanged": "该实例与刚发布的版本不一致（例如标为删除的文件仍在磁盘上），未将其关联到此版本，下次更新会按版本内容处理。",
       "recordFailed": "版本已发布，但未能记录该实例与此版本的关联，下次检查将按常规比较。"
     },
     "started": {
@@ -3184,6 +3203,11 @@
     "header": {
       "title": "更新整合包：{{name}}"
     },
+    "ignored": {
+      "hunk": "你忽略过这一处",
+      "file": "你忽略过这个文件的改动，默认保留你的版本。",
+      "takeAllNote": "你忽略过的位置仍保留你的版本，不受“全部使用新版本”影响。"
+    },
     "status": {
       "checking": "正在检查更新…",
       "planning": "正在对比新版本与本地文件…",
@@ -3206,6 +3230,9 @@
       "add": "新增 {{count}}",
       "update": "更新 {{count}}",
       "delete": "删除 {{count}}",
+      "disable": "禁用 {{count}}",
+      "enable": "启用 {{count}}",
+      "retire": "转休眠 {{count}}",
       "loaderChange": "模组加载器将从 {{from}} 切换到 {{to}}",
       "conflicts": "有 {{count}} 个文件与本地修改冲突，请选择处理方式（默认保留本地）",
       "autoMerged": "自动合并 {{count}}",
@@ -3217,7 +3244,7 @@
       "modifiedLocallyRemovedRemotely": "你修改过，新版本已不再包含它",
       "deletedLocallyChangedRemotely": "你删除了它，新版本更新了它",
       "unmanagedFileInTheWay": "同名文件不属于整合包，新版本想要写入",
-      "disabledLocally": "你已禁用它，新版本也涉及它"
+      "remanage": "整合包曾不再管它，现在重新管理它，而本地的内容与记录和新版本都不同"
     },
     "choice": {
       "keepLocal": "保留本地",
@@ -3249,6 +3276,7 @@
     },
     "reason": {
       "MODPACK_UPDATE_UNLINK_PENDING": "上次更新尚未完成，请先恢复或回滚后再解除跟随",
+      "MODPACK_UPDATE_BOTH_VARIANTS": "同名文件及其 .disabled 变体同时存在，请删除其中一个后再更新",
       "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线",
       "MODPACK_UPDATE_PREPARE_CANCELLED": "更新预览已取消",
       "MODPACK_UPDATE_UNSUPPORTED": "该实例缺少可用的安装记录或未开启版本隔离",
@@ -3272,18 +3300,34 @@
     "kind": {
       "modified": "修改",
       "deleted": "删除",
-      "disabled": "禁用"
+      "disabled": "禁用",
+      "enabled": "启用"
     },
     "hint": {
       "deleted": "本地已删除此文件",
-      "disabled": "本地已将此文件禁用（.disabled）"
+      "disabled": "本地已将此文件禁用（.disabled）",
+      "enabled": "本地已将此文件重新启用"
     },
     "noDiff": {
       "notText": "非文本文件或文件过大，不显示内容差异",
-      "baseMissing": "没有保存安装时的内容，无法显示差异"
+      "baseMissing": "没有保存安装时的内容，无法显示差异",
+      "bothVariants": "同名文件及其 .disabled 变体同时存在，请删除其中一个"
     },
     "button": {
       "publish": "发布"
+    },
+    "ignore": {
+      "spot": "忽略此处",
+      "file": "忽略整个文件"
+    },
+    "ignored": {
+      "title": "已忽略（{{count}} 个文件）",
+      "description": "已忽略的改动不计入本地改动；更新时保留你的内容，新版本也改了同一处时仍会提示你选择（默认保留你的）。",
+      "wholeFile": "整个文件",
+      "spots": "{{count}} 处",
+      "lines": "第 {{from}}–{{to}} 行",
+      "undo": "撤销",
+      "undoAll": "全部撤销"
     },
     "publishHint": {
       "noPermission": "需要校内整合包管理权限才能发布",

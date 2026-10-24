@@ -2,14 +2,15 @@
 
 use super::apply::{
   apply, can_roll_back_last, ensure_unlink_safe, materialize_remote_file, prepare_packs,
-  recover_checked, roll_back_last_checked, Progress, Recovery, UpdateEnv, UpdateRequest,
+  recover_checked, roll_back_last_checked, Progress, Recovery, UpdateEnv, UpdateGuard,
+  UpdateRequest,
 };
-use super::diff::{resolve, Conflict, ConflictChoice, FileChange};
+use super::diff::{Conflict, ConflictChoice, FileChange};
 use super::merge::merge_with_choices;
 use super::notice::{read_update_notice, write_update_notice, UpdateNotice};
 use super::plan::{
   compare, count_local_changes, finish, invalidate_scan_cache, local_changes, requires_reinstall,
-  LocalChange,
+  resolve, LocalChange,
 };
 use super::plan_cache::{self, PlanCache};
 use super::remote::ComponentPack;
@@ -449,6 +450,7 @@ async fn light_check(app: &AppHandle, target: &Target) -> USTBLResult<LightCheck
 async fn unlink_origin(app: &AppHandle, instance_id: &str, target: &Target) -> USTBLResult<()> {
   ensure_unlink_safe(&target.root)?;
   fs::remove_file(target.root.join(BASELINE_FILE_NAME)).ok();
+  super::ignores::remove(&target.root);
   plan_cache::clear_plan_cache(&target.root);
   store_instance(app, instance_id, |instance| {
     instance.origin = None;
@@ -538,6 +540,75 @@ pub async fn list_modpack_local_changes(
   let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let baseline = load_baseline(&target).await?;
   local_changes(&target.root, &baseline, true).await
+}
+
+/// Map the ignore store's refusals onto the update errors: a request that no
+/// longer matches the files is a stale one.
+fn ignore_error(error: super::ignores::IgnoreError) -> crate::error::USTBLError {
+  match error {
+    super::ignores::IgnoreError::Mismatch => InstanceError::ModpackUpdateStale.into(),
+    super::ignores::IgnoreError::Io(message) => crate::error::USTBLError(message),
+  }
+}
+
+/// Keep a local change as the player's own: one spot of a text file (`range`,
+/// as the local-change list gave it) or the whole file (`None`). Takes the
+/// update lock, so it never runs inside an update.
+#[tauri::command]
+pub async fn ignore_modpack_local_change(
+  app: AppHandle,
+  instance_id: String,
+  path: String,
+  baseline_sha1: String,
+  range: Option<super::ignores::Region>,
+) -> USTBLResult<()> {
+  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let _guard = UpdateGuard::acquire(&target.root)?;
+  let baseline = load_baseline(&target).await?;
+  let root = target.root.clone();
+  tokio::task::spawn_blocking(move || {
+    super::ignores::add(&root, &baseline, &path, &baseline_sha1, range)
+  })
+  .await
+  .map_err(|e| crate::error::USTBLError(e.to_string()))?
+  .map_err(ignore_error)?;
+  plan_cache::clear_plan_cache(&target.root);
+  Ok(())
+}
+
+/// The ignored spots and files of this instance, for the undo list.
+#[tauri::command]
+pub async fn list_modpack_ignores(
+  app: AppHandle,
+  instance_id: String,
+) -> USTBLResult<Vec<super::ignores::IgnoredItem>> {
+  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let baseline = load_baseline(&target).await?;
+  let root = target.root.clone();
+  tokio::task::spawn_blocking(move || super::ignores::list(&root, &baseline))
+    .await
+    .map_err(|e| crate::error::USTBLError(e.to_string()).into())
+}
+
+/// Take an ignore back: one spot (`range`) or everything recorded for the
+/// file (`None`).
+#[tauri::command]
+pub async fn unignore_modpack_local_change(
+  app: AppHandle,
+  instance_id: String,
+  path: String,
+  range: Option<super::ignores::Region>,
+) -> USTBLResult<()> {
+  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let _guard = UpdateGuard::acquire(&target.root)?;
+  let baseline = load_baseline(&target).await?;
+  let root = target.root.clone();
+  tokio::task::spawn_blocking(move || super::ignores::undo(&root, &baseline, &path, range))
+    .await
+    .map_err(|e| crate::error::USTBLError(e.to_string()))?
+    .map_err(ignore_error)?;
+  plan_cache::clear_plan_cache(&target.root);
+  Ok(())
 }
 
 /// Reveal a managed file in the system file manager for external editing.
@@ -693,10 +764,22 @@ async fn plan_prepared(
     to: remote.loader.clone(),
   });
   let compared = compare(&target.root, baseline, &remote).await?;
+  if !compared.both_variants.is_empty() {
+    log::info!(
+      "modpack update plan refused: instance={} both variants on disk: {}",
+      target.instance.id,
+      compared.both_variants.join(", "),
+    );
+    return Err(InstanceError::ModpackUpdateBothVariants.into());
+  }
   // Missing text bases are best effort; if any came back, the normalized
   // comparison and the merge blocks change, so compare once more.
   let compared = if recover_base_copies(app, target, baseline, &compared.diff.conflicts).await {
-    compare(&target.root, baseline, &remote).await?
+    let again = compare(&target.root, baseline, &remote).await?;
+    if !again.both_variants.is_empty() {
+      return Err(InstanceError::ModpackUpdateBothVariants.into());
+    }
+    again
   } else {
     compared
   };
@@ -755,8 +838,17 @@ fn is_fresh(origin: &InstanceOrigin) -> bool {
   origin.version_id.is_empty()
 }
 
-fn fast_forward(changes: usize, conflicts: usize, loader_change: bool) -> bool {
-  changes == 0 && conflicts == 0 && !loader_change
+/// A plan fast-forwards when nothing but the baseline moves. A `Retire`
+/// change only rewrites the entry (the file itself stays), so it does not
+/// count; everything else, a conflict or a loader change does.
+pub(crate) fn fast_forward<'a>(
+  mut changes: impl Iterator<Item = &'a super::diff::FileChange>,
+  conflicts: usize,
+  loader_change: bool,
+) -> bool {
+  !changes.any(|change| change.kind != super::diff::ChangeKind::Retire)
+    && conflicts == 0
+    && !loader_change
 }
 
 /// The plan the dialog shows and the cache stores. A plan that needs a
@@ -768,7 +860,11 @@ fn plan_of(origin: &InstanceOrigin, prepared: PlannedRun) -> UpdatePlan {
     to_label: prepared.label.clone(),
     fast_forward: !prepared.reinstall_required
       && fast_forward(
-        prepared.diff.changes.len() + prepared.diff.auto_merged.len(),
+        prepared
+          .diff
+          .changes
+          .iter()
+          .chain(&prepared.diff.auto_merged),
         prepared.diff.conflicts.len(),
         prepared.loader_change.is_some(),
       ),
@@ -1028,8 +1124,19 @@ pub async fn apply_modpack_update(
     baseline.component_refs()
   };
   let compared = compare(&target.root, &baseline, &remote).await?;
+  if !compared.both_variants.is_empty() {
+    log::info!(
+      "modpack update apply refused: instance={instance_id} both variants on disk: {}",
+      compared.both_variants.join(", "),
+    );
+    return Err(InstanceError::ModpackUpdateBothVariants.into());
+  }
   let compared = if recover_base_copies(&app, &target, &baseline, &compared.diff.conflicts).await {
-    compare(&target.root, &baseline, &remote).await?
+    let again = compare(&target.root, &baseline, &remote).await?;
+    if !again.both_variants.is_empty() {
+      return Err(InstanceError::ModpackUpdateBothVariants.into());
+    }
+    again
   } else {
     compared
   };
@@ -1066,12 +1173,13 @@ pub async fn apply_modpack_update(
     "modpack update apply resolutions: instance={instance_id} plan_hash={plan_hash} resolutions=[{}]",
     describe_conflict_resolutions(&prepared.diff, &apply_choices).join(","),
   );
+  let ignores = super::ignores::plan_update(&target.root, &prepared, &base_texts, &apply_choices);
   let result = apply(
     &env,
     UpdateRequest {
       root: target.root.clone(),
       instance_name: target.instance.name.clone(),
-      operations: resolve(&prepared.diff, &apply_choices),
+      operations: resolve(&prepared, &apply_choices),
       remote,
       origin: target.origin.clone(),
       previous_loader: baseline.loader.clone(),
@@ -1079,6 +1187,8 @@ pub async fn apply_modpack_update(
       restore_components,
       merged_contents,
       base_texts,
+      next_baseline: prepared.next_baseline.clone(),
+      ignores,
     },
   )
   .await;
@@ -1204,10 +1314,21 @@ mod tests {
 
   #[test]
   fn only_a_plan_with_nothing_to_do_fast_forwards() {
-    assert!(fast_forward(0, 0, false));
-    assert!(!fast_forward(1, 0, false));
-    assert!(!fast_forward(0, 1, false));
-    assert!(!fast_forward(0, 0, true));
+    use super::super::diff::{ChangeKind, FileChange};
+    let change = |kind| FileChange {
+      path: "mods/a.jar".into(),
+      kind,
+      remote: None,
+      local_size: None,
+    };
+    let none: &[FileChange] = &[];
+    assert!(fast_forward(none.iter(), 0, false));
+    assert!(!fast_forward([change(ChangeKind::Update)].iter(), 0, false));
+    assert!(!fast_forward(none.iter(), 1, false));
+    assert!(!fast_forward(none.iter(), 0, true));
+    // A plan that only retires entries has no file action: it fast-forwards,
+    // and the retirements still write the baseline when applied.
+    assert!(fast_forward([change(ChangeKind::Retire)].iter(), 0, false));
   }
 
   /// The JSON the update dialog sends for "use the new version on the first
@@ -1258,7 +1379,11 @@ mod tests {
           baseline: Some(key("a1")),
           local: Some(key("al")),
           remote: Some(key("a2")),
+          remote_disabled: None,
+          local_disabled: Some(false),
           hunks: vec![hunk(0), hunk(4)],
+          ignored: false,
+          ignored_hunks: Vec::new(),
         },
         super::super::diff::Conflict {
           path: "mods/b.jar".into(),
@@ -1266,7 +1391,11 @@ mod tests {
           baseline: Some(key("b1")),
           local: Some(key("bl")),
           remote: Some(key("b2")),
+          remote_disabled: None,
+          local_disabled: Some(false),
           hunks: Vec::new(),
+          ignored: false,
+          ignored_hunks: Vec::new(),
         },
       ],
       ..Default::default()
@@ -1320,6 +1449,9 @@ mod tests {
         components: None,
         component_pack: None,
         files: Vec::new(),
+        rules: Vec::new(),
+        rules_manifest: false,
+        path_index: std::sync::Arc::new(std::sync::OnceLock::new()),
       },
     };
     let plan = plan_of(&origin, run);

@@ -23,6 +23,18 @@ pub struct DiffLine {
   /// 1-based line number on the new side; absent for deleted lines.
   pub new_number: Option<usize>,
   pub text: String,
+  /// Which of the hunk's `edits` a deleted or added line belongs to.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub edit: Option<usize>,
+}
+
+/// The old-side range of one change, 0-based: `old[start..end]`. An insertion
+/// has `start == end`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffEdit {
+  pub start: usize,
+  pub end: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -34,18 +46,26 @@ pub struct DiffHunk {
   pub new_start: usize,
   pub new_lines: usize,
   pub lines: Vec<DiffLine>,
+  /// The changes this hunk shows, in order.
+  pub edits: Vec<DiffEdit>,
 }
 
 /// One change: `old[start..end]` becomes `new[new_start..new_end]`.
-#[derive(Debug, Clone, Copy)]
-struct Edit {
-  start: usize,
-  end: usize,
-  new_start: usize,
-  new_end: usize,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Edit {
+  pub start: usize,
+  pub end: usize,
+  pub new_start: usize,
+  pub new_end: usize,
 }
 
-fn edits(old: &[String], new: &[String]) -> Vec<Edit> {
+/// The lines of a text as the diff and the local ignores count them.
+pub fn lines_of(text: &str) -> Vec<String> {
+  text.lines().map(str::to_owned).collect()
+}
+
+/// The changes that turn `old` into `new`, positioned on both sides.
+pub fn edits(old: &[String], new: &[String]) -> Vec<Edit> {
   // Trim what both sides share at the ends; most config edits are small.
   let prefix = old.iter().zip(new).take_while(|(a, b)| a == b).count();
   let suffix = old[prefix..]
@@ -80,24 +100,57 @@ fn edits(old: &[String], new: &[String]) -> Vec<Edit> {
 
 /// Diff two texts already split into lines, grouping changes whose context
 /// would touch into one hunk.
+#[cfg(test)]
 pub fn unified_diff(old: &[String], new: &[String], context: usize) -> Vec<DiffHunk> {
-  let edits = edits(old, new);
-  let mut groups: Vec<Vec<Edit>> = Vec::new();
-  for edit in edits {
-    match groups.last_mut() {
-      Some(group) if edit.start <= group.last().unwrap().end + 2 * context => group.push(edit),
-      _ => groups.push(vec![edit]),
+  unified_diff_hiding(old, new, context, &|_| false)
+}
+
+/// Like `unified_diff`, but changes for which `hidden` is true are left out.
+/// A hidden change splits hunks and cuts the context next to it short, so the
+/// shown line numbers stay true.
+pub fn unified_diff_hiding(
+  old: &[String],
+  new: &[String],
+  context: usize,
+  hidden: &dyn Fn(&Edit) -> bool,
+) -> Vec<DiffHunk> {
+  let all = edits(old, new);
+  // (edit, previous edit end, next edit start) with hidden ones kept as walls.
+  let mut groups: Vec<Vec<usize>> = Vec::new();
+  let mut last_visible: Option<usize> = None;
+  for (index, edit) in all.iter().enumerate() {
+    if hidden(edit) {
+      last_visible = None;
+      continue;
     }
+    match (groups.last_mut(), last_visible) {
+      (Some(group), Some(prev))
+        if prev == index.wrapping_sub(1) && edit.start <= all[prev].end + 2 * context =>
+      {
+        group.push(index)
+      }
+      _ => groups.push(vec![index]),
+    }
+    last_visible = Some(index);
   }
   groups
     .into_iter()
     .map(|group| {
-      let first = group[0];
-      let last = *group.last().unwrap();
-      let old_from = first.start.saturating_sub(context);
+      let first = all[group[0]];
+      let last = all[*group.last().unwrap()];
+      let before_wall = if group[0] == 0 {
+        0
+      } else {
+        all[group[0] - 1].end
+      };
+      let after_wall = all
+        .get(group.last().unwrap() + 1)
+        .map_or(old.len(), |next| next.start);
+      let old_from = first.start.saturating_sub(context).max(before_wall);
       let new_from = first.new_start - (first.start - old_from);
-      let old_to = (last.end + context).min(old.len());
+      let old_to = (last.end + context).min(after_wall);
       let mut lines = Vec::new();
+      let mut edits_shown = Vec::new();
       let (mut i, mut j) = (old_from, new_from);
       let push_context = |i: &mut usize, j: &mut usize, until: usize, lines: &mut Vec<DiffLine>| {
         while *i < until {
@@ -106,19 +159,26 @@ pub fn unified_diff(old: &[String], new: &[String], context: usize) -> Vec<DiffH
             old_number: Some(*i + 1),
             new_number: Some(*j + 1),
             text: old[*i].clone(),
+            edit: None,
           });
           *i += 1;
           *j += 1;
         }
       };
-      for edit in &group {
+      for (n, &index) in group.iter().enumerate() {
+        let edit = all[index];
         push_context(&mut i, &mut j, edit.start, &mut lines);
+        edits_shown.push(DiffEdit {
+          start: edit.start,
+          end: edit.end,
+        });
         for k in edit.start..edit.end {
           lines.push(DiffLine {
             kind: DiffLineKind::Delete,
             old_number: Some(k + 1),
             new_number: None,
             text: old[k].clone(),
+            edit: Some(n),
           });
         }
         for k in edit.new_start..edit.new_end {
@@ -127,6 +187,7 @@ pub fn unified_diff(old: &[String], new: &[String], context: usize) -> Vec<DiffH
             old_number: None,
             new_number: Some(k + 1),
             text: new[k].clone(),
+            edit: Some(n),
           });
         }
         i = edit.end;
@@ -150,11 +211,11 @@ pub fn unified_diff(old: &[String], new: &[String], context: usize) -> Vec<DiffH
         },
         new_lines,
         lines,
+        edits: edits_shown,
       }
     })
     .collect()
 }
-
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -227,5 +288,31 @@ mod tests {
   fn creating_a_file_starts_from_zero() {
     let hunks = unified_diff(&[], &lines("a\nb"), 3);
     assert_eq!(render(&hunks), "@@ -0,0 +1,2 @@\n+a\n+b\n");
+  }
+
+  #[test]
+  fn hidden_edits_split_hunks_and_cut_context() {
+    let old = lines("1\n2\n3\n4\n5\n6\n7");
+    let new = lines("1\ntwo\n3\n4\n5\nsix\n7");
+    let hunks = unified_diff_hiding(&old, &new, 3, &|e| e.start == 1);
+    assert_eq!(hunks.len(), 1);
+    assert_eq!(
+      render(&hunks),
+      "@@ -3,5 +3,5 @@\n 3\n 4\n 5\n-6\n+six\n 7\n"
+    );
+    assert_eq!(hunks[0].edits, vec![DiffEdit { start: 5, end: 6 }]);
+    assert_eq!(hunks[0].lines[3].edit, Some(0));
+    let both = unified_diff_hiding(&old, &new, 3, &|_| true);
+    assert!(both.is_empty());
+  }
+
+  #[test]
+  fn a_hidden_edit_between_two_shown_ones_keeps_them_apart() {
+    let old = lines("a\nb\nc\nd\ne");
+    let new = lines("A\nb\nC\nd\nE");
+    let hunks = unified_diff_hiding(&old, &new, 3, &|e| e.start == 2);
+    assert_eq!(hunks.len(), 2);
+    assert_eq!(hunks[0].edits, vec![DiffEdit { start: 0, end: 1 }]);
+    assert_eq!(hunks[1].edits, vec![DiffEdit { start: 4, end: 5 }]);
   }
 }

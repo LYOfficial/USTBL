@@ -28,10 +28,35 @@ pub struct FileKey {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum LocalState {
   Absent,
+  /// `<path>` exists; `<path>.disabled` does not.
   Present(FileKey),
-  /// Only `<path>.disabled` exists. A disabled file is a deliberate local
-  /// choice, so it always counts as a local change, whatever it contains.
+  /// Only `<path>.disabled` exists.
   Disabled(FileKey),
+  /// Both variants exist at once; keys are (enabled, disabled). The update
+  /// plan refuses such paths when the new version or the baseline involves
+  /// them: the player has to delete one variant by hand.
+  Both(FileKey, FileKey),
+}
+
+impl LocalState {
+  /// The content key of the file, from whichever variant holds it. `Both`
+  /// reads as the enabled variant.
+  pub fn key(&self) -> Option<&FileKey> {
+    match self {
+      LocalState::Absent => None,
+      LocalState::Present(key) | LocalState::Disabled(key) => Some(key),
+      LocalState::Both(enabled, _) => Some(enabled),
+    }
+  }
+
+  /// Which variant the file sits at, when it exists at all.
+  pub fn variant_disabled(&self) -> Option<bool> {
+    match self {
+      LocalState::Absent => None,
+      LocalState::Present(_) | LocalState::Both(..) => Some(false),
+      LocalState::Disabled(_) => Some(true),
+    }
+  }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Deserialize, Serialize)]
@@ -40,6 +65,12 @@ pub enum ChangeKind {
   Add,
   Update,
   Delete,
+  /// The file only moves between its enabled and disabled variants.
+  Disable,
+  Enable,
+  /// The modpack stops managing the file but leaves it on disk (it goes
+  /// dormant, or its baseline entry is dropped while it stays).
+  Retire,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
@@ -64,8 +95,9 @@ pub enum ConflictKind {
   DeletedLocallyChangedRemotely,
   /// A file the modpack never installed sits where the new version wants one.
   UnmanagedFileInTheWay,
-  /// Switched off here (`.disabled`) while the new version touches it.
-  DisabledLocally,
+  /// A file the modpack left alone (dormant) is managed again while the
+  /// local content is neither the recorded nor the shipped one.
+  Remanage,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
@@ -76,7 +108,25 @@ pub struct Conflict {
   pub baseline: Option<FileKey>,
   pub local: Option<FileKey>,
   pub remote: Option<FileKey>,
+  /// The variant the path's file ends up at: a take-remote answer writes the
+  /// remote file there; a kept-local file sitting at the other variant is
+  /// renamed. `None` leaves the variant alone (a path the remote no longer
+  /// ships has no disabled state to settle).
+  #[serde(default)]
+  pub remote_disabled: Option<bool>,
+  /// The variant the local file sits at, when one exists. Together with
+  /// `remote_disabled` it tells a keep-local answer whether the file moves.
+  #[serde(default)]
+  pub local_disabled: Option<bool>,
   pub hunks: Vec<MergeConflict>,
+  /// The player ignored the local change here: the whole file, or every
+  /// block when ignored_hunks lists them all. Such a conflict defaults to
+  /// keeping the local side.
+  #[serde(default)]
+  pub ignored: bool,
+  /// Blocks (by index into hunks) whose local changes are all ignored.
+  #[serde(default)]
+  pub ignored_hunks: Vec<usize>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Default, Deserialize, Serialize)]
@@ -95,6 +145,15 @@ impl Diff {
   pub fn is_empty(&self) -> bool {
     self.changes.is_empty() && self.conflicts.is_empty()
   }
+
+  /// Append another path's result.
+  #[cfg(test)]
+  pub fn extend(&mut self, other: Diff) {
+    self.changes.extend(other.changes);
+    self.conflicts.extend(other.conflicts);
+    self.auto_merged.extend(other.auto_merged);
+    self.already_current.extend(other.already_current);
+  }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Deserialize, Serialize)]
@@ -105,8 +164,53 @@ pub enum ConflictChoice {
   TakeRemote,
 }
 
+/// The content side of one managed path the new version also ships: the
+/// three-way comparison of 《整合包配置合并与块级发布》§6.1. The disabled
+/// state is decided elsewhere; here only keys are compared. `local_key` is
+/// the key of whichever variant is on disk. Only the tests use it directly;
+/// the decision function of `decide.rs` encodes the same rows.
+#[cfg(test)]
+pub fn ship_managed(path: &str, b: &FileKey, r: &FileKey, local_key: Option<&FileKey>) -> Diff {
+  let mut diff = Diff::default();
+  let conflict = |kind| Conflict {
+    path: path.to_string(),
+    kind,
+    baseline: Some(b.clone()),
+    local: local_key.cloned(),
+    remote: Some(r.clone()),
+    remote_disabled: None,
+    local_disabled: local_key.is_some().then_some(false),
+    hunks: Vec::new(),
+    ignored: false,
+    ignored_hunks: Vec::new(),
+  };
+  let write = |kind, remote: &FileKey| FileChange {
+    path: path.to_string(),
+    kind,
+    remote: Some(remote.clone()),
+    local_size: local_key.map(|key| key.size),
+  };
+  if b == r {
+    // The new version did not touch it, so whatever the player did stays.
+    return diff;
+  }
+  match local_key {
+    None => diff
+      .conflicts
+      .push(conflict(ConflictKind::DeletedLocallyChangedRemotely)),
+    Some(key) if key == b => diff.changes.push(write(ChangeKind::Update, r)),
+    Some(key) if key == r => diff.already_current.push(path.to_string()),
+    Some(_) => diff
+      .conflicts
+      .push(conflict(ConflictKind::ModifiedLocallyChangedRemotely)),
+  }
+  diff
+}
+
 /// Compare the three states. `local` must hold an entry for every path in
-/// `baseline` and `remote`; a missing entry is read as absent.
+/// `baseline` and `remote`; a missing entry is read as absent. Only the
+/// tests use it; the update engine decides path by path with `decide.rs`.
+#[cfg(test)]
 pub fn three_way(
   baseline: &BTreeMap<String, FileKey>,
   local: &BTreeMap<String, LocalState>,
@@ -119,17 +223,18 @@ pub fn three_way(
     let b = baseline.get(path);
     let r = remote.get(path);
     let l = local.get(path).unwrap_or(&LocalState::Absent);
-    let local_key = match l {
-      LocalState::Present(key) | LocalState::Disabled(key) => Some(key.clone()),
-      LocalState::Absent => None,
-    };
+    let local_key = l.key().cloned();
     let conflict = |kind| Conflict {
       path: path.clone(),
       kind,
       baseline: b.cloned(),
       local: local_key.clone(),
       remote: r.cloned(),
+      remote_disabled: None,
+      local_disabled: local_key.is_some().then_some(false),
       hunks: Vec::new(),
+      ignored: false,
+      ignored_hunks: Vec::new(),
     };
     let write = |kind, remote: &FileKey| FileChange {
       path: path.clone(),
@@ -140,41 +245,28 @@ pub fn three_way(
 
     match (b, r) {
       (None, None) => {}
-      (None, Some(r)) => match l {
-        LocalState::Absent => diff.changes.push(write(ChangeKind::Add, r)),
-        LocalState::Present(key) if key == r => diff.already_current.push(path.clone()),
-        LocalState::Present(_) => diff
+      (None, Some(r)) => match &local_key {
+        None => diff.changes.push(write(ChangeKind::Add, r)),
+        Some(key) if key == r => diff.already_current.push(path.clone()),
+        Some(_) => diff
           .conflicts
           .push(conflict(ConflictKind::UnmanagedFileInTheWay)),
-        LocalState::Disabled(_) => diff.conflicts.push(conflict(ConflictKind::DisabledLocally)),
       },
-      (Some(b), None) => match l {
-        LocalState::Absent => {}
-        LocalState::Present(key) if key == b => diff.changes.push(FileChange {
+      (Some(b), None) => match &local_key {
+        None => {}
+        Some(key) if key == b => diff.changes.push(FileChange {
           path: path.clone(),
           kind: ChangeKind::Delete,
           remote: None,
           local_size: Some(key.size),
         }),
-        LocalState::Present(_) => diff
+        Some(_) => diff
           .conflicts
           .push(conflict(ConflictKind::ModifiedLocallyRemovedRemotely)),
-        LocalState::Disabled(_) => diff.conflicts.push(conflict(ConflictKind::DisabledLocally)),
       },
-      (Some(b), Some(r)) if b == r => {
-        // The new version did not touch it, so whatever the player did stays.
+      (Some(b), Some(r)) => {
+        diff.extend(ship_managed(path, b, r, local_key.as_ref()));
       }
-      (Some(b), Some(r)) => match l {
-        LocalState::Absent => diff
-          .conflicts
-          .push(conflict(ConflictKind::DeletedLocallyChangedRemotely)),
-        LocalState::Present(key) if key == b => diff.changes.push(write(ChangeKind::Update, r)),
-        LocalState::Present(key) if key == r => diff.already_current.push(path.clone()),
-        LocalState::Present(_) => diff
-          .conflicts
-          .push(conflict(ConflictKind::ModifiedLocallyChangedRemotely)),
-        LocalState::Disabled(_) => diff.conflicts.push(conflict(ConflictKind::DisabledLocally)),
-      },
     }
   }
   diff
@@ -186,65 +278,60 @@ pub struct Operation {
   pub path: String,
   /// Content to write, or `None` to remove the file.
   pub write: Option<FileKey>,
-  /// Also move `<path>.disabled` out of the way.
-  pub clear_disabled: bool,
+  /// The variant the file ends up at when something is written.
+  pub final_disabled: bool,
+  /// The file only moves between its variants; `write` is `None`.
+  pub rename: bool,
+  /// Directories to remove afterwards if empty, deepest last; each entry is
+  /// walked up to and including itself. Only delete rules set this.
+  pub prune_dirs: Vec<String>,
 }
 
-/// Turn a diff and the player's answers into the steps to run. Unanswered
-/// conflicts keep the local file.
-pub fn resolve(diff: &Diff, choices: &BTreeMap<String, ConflictChoice>) -> Vec<Operation> {
-  let mut operations: Vec<Operation> = diff
-    .changes
-    .iter()
-    .chain(diff.auto_merged.iter())
-    .map(|change| Operation {
-      path: change.path.clone(),
-      write: change.remote.clone(),
-      clear_disabled: false,
-    })
-    .collect();
-  for conflict in &diff.conflicts {
-    if choices.get(&conflict.path).copied().unwrap_or_default() != ConflictChoice::TakeRemote {
-      continue;
-    }
-    operations.push(Operation {
-      path: conflict.path.clone(),
-      write: conflict.remote.clone(),
-      clear_disabled: conflict.kind == ConflictKind::DisabledLocally,
-    });
-  }
-  operations.sort_by(|a, b| a.path.cmp(&b.path));
-  operations
-}
-
-/// Read the on-disk state of the given relative paths.
+/// Read the on-disk state of the given relative paths, both filename variants
+/// included.
 pub fn collect_local_states(
   root: &Path,
   paths: &BTreeSet<String>,
 ) -> io::Result<BTreeMap<String, LocalState>> {
   let mut states = BTreeMap::new();
   for path in paths {
-    let file = root.join(path);
-    let state = if file.is_file() {
-      let (sha1, size) = hash_file(&file)?;
-      LocalState::Present(FileKey { sha1, size })
-    } else if file.exists() {
-      return Err(io::Error::new(
-        io::ErrorKind::InvalidInput,
-        format!("{path} is not a regular file"),
-      ));
-    } else {
-      let disabled = root.join(format!("{path}{DISABLED_SUFFIX}"));
-      if disabled.is_file() {
-        let (sha1, size) = hash_file(&disabled)?;
-        LocalState::Disabled(FileKey { sha1, size })
-      } else {
-        LocalState::Absent
-      }
-    };
-    states.insert(path.clone(), state);
+    states.insert(path.clone(), scan_path(root, path)?);
   }
   Ok(states)
+}
+
+/// The on-disk state of one relative path.
+pub fn scan_path(root: &Path, path: &str) -> io::Result<LocalState> {
+  let file = root.join(path);
+  let enabled = if file.is_file() {
+    let (sha1, size) = hash_file(&file)?;
+    Some(FileKey { sha1, size })
+  } else if file.exists() {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidInput,
+      format!("{path} is not a regular file"),
+    ));
+  } else {
+    None
+  };
+  let disabled_file = root.join(format!("{path}{DISABLED_SUFFIX}"));
+  let disabled = if disabled_file.is_file() {
+    let (sha1, size) = hash_file(&disabled_file)?;
+    Some(FileKey { sha1, size })
+  } else if disabled_file.exists() {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidInput,
+      format!("{path}{DISABLED_SUFFIX} is not a regular file"),
+    ));
+  } else {
+    None
+  };
+  Ok(match (enabled, disabled) {
+    (None, None) => LocalState::Absent,
+    (Some(key), None) => LocalState::Present(key),
+    (None, Some(key)) => LocalState::Disabled(key),
+    (Some(enabled), Some(disabled)) => LocalState::Both(enabled, disabled),
+  })
 }
 
 #[cfg(test)]
@@ -402,34 +489,36 @@ mod tests {
   }
 
   #[test]
-  fn disabled_files_count_as_local_changes_in_every_situation() {
+  fn a_disabled_variant_compares_by_content_like_the_enabled_one() {
+    // `three_way` only sees keys: a disabled file compares exactly like the
+    // enabled one with the same content. The disabled state itself is the
+    // decision layer's business, not the comparison's.
     let disabled = |tag: &str| LocalState::Disabled(key(tag));
-    let cases: [(&[(&str, &str)], &[(&str, &str)]); 3] = [
-      (&[("a", "a1")], &[("a", "a2")]),
-      (&[("a", "a1")], &[]),
-      (&[], &[("a", "a1")]),
-    ];
-    for (baseline, remote) in cases {
-      for tag in ["a1", "a2", "other"] {
-        let diff = three_way(
-          &map(baseline),
-          &local(&[("a", disabled(tag))]),
-          &map(remote),
-        );
-        assert!(diff.changes.is_empty(), "{baseline:?} {remote:?} {tag}");
-        assert_eq!(
-          conflict_kinds(&diff),
-          vec![("a".to_string(), ConflictKind::DisabledLocally)]
-        );
-      }
-    }
-    // The pack did not touch it, so the player's choice is simply respected.
     let diff = three_way(
       &map(&[("a", "a1")]),
       &local(&[("a", disabled("a1"))]),
-      &map(&[("a", "a1")]),
+      &map(&[("a", "a2")]),
     );
-    assert!(diff.is_empty());
+    assert_eq!(kinds(&diff), vec![("a".to_string(), ChangeKind::Update)]);
+    assert!(diff.conflicts.is_empty());
+    let diff = three_way(
+      &map(&[("a", "a1")]),
+      &local(&[("a", disabled("mine"))]),
+      &map(&[("a", "a2")]),
+    );
+    assert_eq!(
+      conflict_kinds(&diff),
+      vec![(
+        "a".to_string(),
+        ConflictKind::ModifiedLocallyChangedRemotely
+      )]
+    );
+    let diff = three_way(
+      &map(&[("a", "a1")]),
+      &local(&[("a", disabled("a1"))]),
+      &BTreeMap::new(),
+    );
+    assert_eq!(kinds(&diff), vec![("a".to_string(), ChangeKind::Delete)]);
   }
 
   #[test]
@@ -440,78 +529,46 @@ mod tests {
   }
 
   #[test]
-  fn resolve_keeps_local_files_unless_the_remote_one_is_chosen() {
-    let baseline = map(&[("a", "a1"), ("gone", "g1"), ("off", "o1")]);
-    let locals = local(&[
-      ("a", present("mine")),
-      ("gone", present("mine")),
-      ("off", LocalState::Disabled(key("o1"))),
-      ("new", present("mine")),
-    ]);
-    let remote = map(&[("a", "a2"), ("off", "o2"), ("new", "n1"), ("fresh", "f1")]);
-    let diff = three_way(&baseline, &locals, &remote);
-
-    let default = resolve(&diff, &BTreeMap::new());
-    assert_eq!(
-      default
-        .iter()
-        .map(|op| op.path.as_str())
-        .collect::<Vec<_>>(),
-      vec!["fresh"]
-    );
-
-    let mut choices = BTreeMap::new();
-    choices.insert("a".to_string(), ConflictChoice::TakeRemote);
-    choices.insert("gone".to_string(), ConflictChoice::TakeRemote);
-    choices.insert("off".to_string(), ConflictChoice::TakeRemote);
-    choices.insert("unknown".to_string(), ConflictChoice::TakeRemote);
-    let operations = resolve(&diff, &choices);
-    assert_eq!(
-      operations,
-      vec![
-        Operation {
-          path: "a".into(),
-          write: Some(key("a2")),
-          clear_disabled: false
-        },
-        Operation {
-          path: "fresh".into(),
-          write: Some(key("f1")),
-          clear_disabled: false
-        },
-        Operation {
-          path: "gone".into(),
-          write: None,
-          clear_disabled: false
-        },
-        Operation {
-          path: "off".into(),
-          write: Some(key("o2")),
-          clear_disabled: true
-        },
-      ]
-    );
+  fn both_variants_read_as_the_enabled_one_for_the_comparison() {
+    let states = local(&[("a", LocalState::Both(key("e"), key("d")))]);
+    let diff = three_way(&map(&[("a", "e")]), &states, &map(&[("a", "e2")]));
+    assert_eq!(kinds(&diff), vec![("a".to_string(), ChangeKind::Update)]);
   }
 
   #[test]
-  fn local_states_distinguish_present_disabled_and_absent() {
+  fn local_states_distinguish_present_disabled_both_and_absent() {
     let root = std::env::temp_dir().join(format!("ustbl-diff-test-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(root.join("mods")).unwrap();
     std::fs::write(root.join("mods/on.jar"), b"abc").unwrap();
     std::fs::write(root.join("mods/off.jar.disabled"), b"abc").unwrap();
+    std::fs::write(root.join("mods/dup.jar"), b"abc").unwrap();
+    std::fs::write(root.join("mods/dup.jar.disabled"), b"abcd").unwrap();
     std::fs::create_dir_all(root.join("mods/dir")).unwrap();
 
     let abc = FileKey {
       sha1: "a9993e364706816aba3e25717850c26c9cd0d89d".into(),
       size: 3,
     };
-    let paths: BTreeSet<String> = ["mods/on.jar", "mods/off.jar", "mods/none.jar"]
-      .iter()
-      .map(|p| p.to_string())
-      .collect();
+    let abcd = FileKey {
+      sha1: "81fe8bfe87576c3ecb22426f8e57847382917acf".into(),
+      size: 4,
+    };
+    let paths: BTreeSet<String> = [
+      "mods/on.jar",
+      "mods/off.jar",
+      "mods/dup.jar",
+      "mods/none.jar",
+    ]
+    .iter()
+    .map(|p| p.to_string())
+    .collect();
     let states = collect_local_states(&root, &paths).unwrap();
     assert_eq!(states["mods/on.jar"], LocalState::Present(abc.clone()));
-    assert_eq!(states["mods/off.jar"], LocalState::Disabled(abc));
+    assert_eq!(states["mods/off.jar"], LocalState::Disabled(abc.clone()));
+    assert_eq!(
+      states["mods/dup.jar"],
+      LocalState::Both(abc.clone(), abcd.clone())
+    );
     assert_eq!(states["mods/none.jar"], LocalState::Absent);
 
     let in_the_way: BTreeSet<String> = ["mods/dir".to_string()].into();

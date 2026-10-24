@@ -7,12 +7,14 @@ use crate::instance::helpers::modpack::multimc::snapshot::{
   is_component_instance, ComponentSnapshot,
 };
 use crate::instance::helpers::modpack::multimc::{MultiMcComponent, MultiMcManifest};
-use crate::instance::models::misc::{Instance, InstanceError, ModLoaderType, ModpackFileList};
+use crate::instance::models::misc::{
+  Instance, InstanceError, ModLoaderType, ModpackFileList, SuggestedEntry,
+};
 use crate::resource::helpers::modrinth::fetch_remote_resource_by_local_modrinth;
 use regex::{Regex, RegexSet};
 use serde::{Deserialize, Serialize};
 use sha1::Digest;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
@@ -230,6 +232,7 @@ pub fn list_files(instance: &Instance) -> USTBLResult<ModpackFileList> {
   let name = &instance.name;
   let mut files = Vec::new();
   let mut unchecked_files = Vec::new();
+  let mut suggested = BTreeSet::new();
 
   let walker = WalkDir::new(root).into_iter();
   let iter = walker.filter_entry(|entry| {
@@ -272,6 +275,9 @@ pub fn list_files(instance: &Instance) -> USTBLResult<ModpackFileList> {
           || SUGGESTED_REGEX_BLACKLIST.is_match(&rel_str)
         {
           unchecked_files.push(rel_str.clone());
+          if let Some(entry) = suggested_entry(&rel_str) {
+            suggested.insert(entry);
+          }
         }
 
         files.push(rel_str);
@@ -284,6 +290,27 @@ pub fn list_files(instance: &Instance) -> USTBLResult<ModpackFileList> {
   Ok(ModpackFileList {
     all: files,
     unchecked: unchecked_files,
+    suggested: suggested
+      .into_iter()
+      .map(|(path, kind)| SuggestedEntry {
+        path,
+        kind: kind.into(),
+      })
+      .collect(),
+  })
+}
+
+/// The suggested-blacklist entry that covers a listed file: the file itself,
+/// or the folder the blacklist names above it.
+fn suggested_entry(path: &str) -> Option<(String, &'static str)> {
+  SUGGESTED_BLACKLIST.iter().find_map(|entry| {
+    if path == *entry {
+      Some((entry.to_string(), "file"))
+    } else if path.starts_with(&format!("{entry}/")) {
+      Some((entry.to_string(), "dir"))
+    } else {
+      None
+    }
   })
 }
 
@@ -954,6 +981,24 @@ mod tests {
     assert_eq!(listed.all, vec!["mods/b.jar".to_string()]);
     let _ = fs::remove_dir_all(root);
   }
+
+  #[test]
+  fn suggested_entries_are_named_at_the_blacklists_own_level() {
+    assert_eq!(
+      suggested_entry("saves/world/level.dat"),
+      Some(("saves".into(), "dir"))
+    );
+    assert_eq!(
+      suggested_entry("options.txt"),
+      Some(("options.txt".into(), "file"))
+    );
+    assert_eq!(
+      suggested_entry("mods/VoxelMods/x.json"),
+      Some(("mods/VoxelMods".into(), "dir"))
+    );
+    assert_eq!(suggested_entry("mods/a.jar"), None);
+  }
+
   #[test]
   fn exported_cfg_drops_machine_state_and_applies_options() {
     let snapshot = ComponentSnapshot {

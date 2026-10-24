@@ -3127,8 +3127,11 @@
     },
     "error": {
       "invalidVersion": "Veuillez saisir un numéro de version valide",
-      "noFileSelected": "Veuillez sélectionner au moins un fichier",
-      "invalidProject": "Veuillez compléter les informations du projet"
+      "noFileSelected": "Cochez au moins un fichier ou définissez une règle",
+      "invalidProject": "Veuillez compléter les informations du projet",
+      "bothVariants": "Le fichier activé et le fichier désactivé de {{path}} existent tous les deux. Supprimez-en un avant de publier",
+      "tooManyRules": "{{max}} règles au maximum. Réglez des dossiers plutôt que des fichiers isolés",
+      "previousRelease": "Impossible de lire la version précédente de cette ligne ; la publication est suspendue. Choisissez à nouveau la cible ou réessayez plus tard"
     },
     "errorMessage": {
       "name": {
@@ -3150,11 +3153,27 @@
       "hashing": "Vérification des fichiers ({{done}}/{{total}})",
       "packing": "Création du paquet des nouveautés"
     },
-    "skipped": "{{count}} fichier(s) exclu(s) (mods désactivés ou fichiers du lanceur)",
+    "tree": {
+      "legend": "Inclure : publié avec la version. Ignorer : cette version n'y touche pas, les joueurs gardent le leur. Supprimer : retiré à la mise à jour des joueurs. Cliquez sur le bouton d'état pour changer ; l'état d'un dossier s'applique à tous ses fichiers, sauf ceux réglés individuellement.",
+      "include": "Inclure",
+      "ignore": "Ignorer",
+      "delete": "Supprimer",
+      "remove": "Retirer",
+      "mixed": "Mixte",
+      "once": "Première installation seulement",
+      "onceHint": "Posé uniquement à la première installation du joueur ; jamais mis à jour ensuite et non restauré si le joueur le supprime",
+      "restore": "Rétablir l'héritage",
+      "restoreHint": "Supprime le réglage ici et suit le dossier parent",
+      "disabled": "Désactivé",
+      "missing": "Absent du disque",
+      "conflict": "Les fichiers activé et désactivé existent tous les deux",
+      "toggle": "{{name}} : actuellement {{state}}, cliquez pour passer à {{next}}"
+    },
+    "skipped": "{{count}} fichier(s) du lanceur exclu(s)",
     "adoption": {
       "keptOther": "L'instance suit déjà un autre pack ou une autre ligne ; son enregistrement de source est inchangé.",
       "notIsolated": "L'isolation de version est désactivée pour cette instance ; elle n'a pas été liée à ce pack.",
-      "localChanged": "Des fichiers locaux ont changé pendant l'envoi ; l'instance n'a pas été liée à cette version.",
+      "localChanged": "L'instance ne correspond pas à la version publiée (par exemple un fichier marqué Supprimer est toujours sur le disque) ; elle n'y a pas été liée. La prochaine mise à jour s'appuiera sur le contenu de la version.",
       "recordFailed": "La version est publiée, mais l'instance n'a pas pu y être liée. La prochaine vérification comparera normalement."
     },
     "started": {
@@ -3184,6 +3203,11 @@
     "header": {
       "title": "Mettre à jour le pack : {{name}}"
     },
+    "ignored": {
+      "hunk": "Vous avez ignoré cet endroit",
+      "file": "Vous avez ignoré les modifications de ce fichier. Votre version est conservée par défaut.",
+      "takeAllNote": "Les endroits que vous avez ignorés gardent votre version, même avec « Tout prendre de la nouvelle version »."
+    },
     "status": {
       "checking": "Recherche de mises à jour…",
       "planning": "Comparaison de la nouvelle version avec les fichiers locaux…",
@@ -3206,6 +3230,9 @@
       "add": "{{count}} ajouté(s)",
       "update": "{{count}} mis à jour",
       "delete": "{{count}} supprimé(s)",
+      "disable": "{{count}} désactivé(s)",
+      "enable": "{{count}} activé(s)",
+      "retire": "{{count}} mis en sommeil",
       "loaderChange": "Le chargeur de mods passera de {{from}} à {{to}}",
       "conflicts": "{{count}} fichiers entrent en conflit avec vos modifications. Choisissez (le local est conservé par défaut)",
       "autoMerged": "{{count}} fusionnés automatiquement",
@@ -3217,7 +3244,7 @@
       "modifiedLocallyRemovedRemotely": "Vous l'avez modifié et la nouvelle version ne l'inclut plus",
       "deletedLocallyChangedRemotely": "Vous l'avez supprimé et la nouvelle version l'a modifié",
       "unmanagedFileInTheWay": "Un fichier étranger au pack occupe l'emplacement",
-      "disabledLocally": "Vous l'avez désactivé et la nouvelle version le concerne"
+      "remanage": "Le pack l'avait laissé de côté et le gère à nouveau, mais son contenu diffère de l'enregistrement et de la nouvelle version"
     },
     "choice": {
       "keepLocal": "Garder le local",
@@ -3249,6 +3276,7 @@
     },
     "reason": {
       "MODPACK_UPDATE_UNLINK_PENDING": "La dernière mise à jour n'est pas terminée. Restaurez-la ou annulez-la avant de retirer le suivi",
+      "MODPACK_UPDATE_BOTH_VARIANTS": "Un fichier et sa variante .disabled existent tous les deux. Supprimez l'un des deux avant de mettre à jour",
       "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack",
       "MODPACK_UPDATE_PREPARE_CANCELLED": "L'aperçu de la mise à jour a été annulé",
       "MODPACK_UPDATE_UNSUPPORTED": "Cette instance n'a pas d'enregistrement d'installation utilisable ou l'isolation de version est désactivée",
@@ -3272,18 +3300,34 @@
     "kind": {
       "modified": "Modifié",
       "deleted": "Supprimé",
-      "disabled": "Désactivé"
+      "disabled": "Désactivé",
+      "enabled": "Activé"
     },
     "hint": {
       "deleted": "Ce fichier a été supprimé localement",
-      "disabled": "Ce fichier a été désactivé localement (.disabled)"
+      "disabled": "Ce fichier a été désactivé localement (.disabled)",
+      "enabled": "Ce fichier a été réactivé localement"
     },
     "noDiff": {
       "notText": "Fichier non texte ou trop volumineux ; contenu non comparé",
-      "baseMissing": "Le contenu installé n'a pas été conservé, aucune différence ne peut être affichée"
+      "baseMissing": "Le contenu installé n'a pas été conservé, aucune différence ne peut être affichée",
+      "bothVariants": "Un fichier et sa variante .disabled existent tous les deux. Supprimez l'un des deux"
     },
     "button": {
       "publish": "Publier"
+    },
+    "ignore": {
+      "spot": "Ignorer cet endroit",
+      "file": "Ignorer tout le fichier"
+    },
+    "ignored": {
+      "title": "Ignorés ({{count}} fichiers)",
+      "description": "Les modifications ignorées ne comptent pas comme modifications locales. Les mises à jour conservent votre contenu ; si la nouvelle version modifie aussi le même endroit, un choix vous est tout de même demandé (votre version est conservée par défaut).",
+      "wholeFile": "Fichier entier",
+      "spots": "Endroits : {{count}}",
+      "lines": "Lignes {{from}}–{{to}}",
+      "undo": "Annuler",
+      "undoAll": "Tout annuler"
     },
     "publishHint": {
       "noPermission": "La publication nécessite la permission de gestion des modpacks du campus",

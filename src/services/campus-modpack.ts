@@ -6,8 +6,11 @@ import {
   CampusModpackProject,
   CampusModpackRecommendation,
   CampusNewProject,
+  CampusPreviousRelease,
+  CampusPublishFile,
   CampusPublishFinished,
   CampusPublishProgress,
+  CampusPublishRule,
   CampusPublishStarted,
   CampusUnfinishedPublish,
 } from "@/models/campus-modpack";
@@ -73,7 +76,8 @@ export class CampusModpackService {
     newProject: CampusNewProject | null,
     versionNumber: string,
     changelog: string,
-    files: string[]
+    files: CampusPublishFile[],
+    rules: CampusPublishRule[]
   ): Promise<InvokeResponse<CampusPublishStarted>> {
     return await invoke("publish_campus_modpack", {
       instanceId,
@@ -82,6 +86,7 @@ export class CampusModpackService {
       versionNumber,
       changelog,
       files,
+      rules,
     });
   }
 
@@ -107,14 +112,15 @@ export class CampusModpackService {
   }
 
   /**
-   * Paths the line's current release already lists; empty when it has none.
+   * The files and rules the line's current release lists; null when the line
+   * has no release yet. Any other failure is an error, never "no release".
    */
   @responseHandler("instance")
-  static async fetchCampusModpackPreviousPaths(
+  static async fetchCampusModpackPreviousRelease(
     instanceId: string,
     project: string
-  ): Promise<InvokeResponse<string[]>> {
-    return await invoke("fetch_campus_modpack_previous_paths", {
+  ): Promise<InvokeResponse<CampusPreviousRelease | null>> {
+    return await invoke("fetch_campus_modpack_previous_release", {
       instanceId,
       project,
     });

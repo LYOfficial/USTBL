@@ -1291,11 +1291,14 @@ pub async fn create_instance(
         download.size,
         download.param.dest.strip_prefix(&version_path),
       ) {
-        baseline_files.push(BaselineFile {
-          path: relative.to_string_lossy().into_owned(),
-          sha1: sha1.clone(),
-          size,
-        });
+        baseline_files.push(BaselineFile::managed(
+          &relative.to_string_lossy().into_owned(),
+          crate::instance::modpack_update::diff::FileKey {
+            sha1: sha1.clone(),
+            size,
+          },
+          false,
+        ));
       }
     }
     task_params.extend(
