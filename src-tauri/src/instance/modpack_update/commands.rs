@@ -4,12 +4,12 @@ use super::apply::{
   apply, can_roll_back_last, ensure_unlink_safe, materialize_remote_file, prepare_packs,
   recover_checked, roll_back_last_checked, Progress, Recovery, UpdateEnv, UpdateRequest,
 };
-use super::diff::{resolve, Conflict, ConflictChoice, FileChange};
+use super::diff::{Conflict, ConflictChoice, FileChange};
 use super::merge::merge_with_choices;
 use super::notice::{read_update_notice, write_update_notice, UpdateNotice};
 use super::plan::{
   compare, count_local_changes, finish, invalidate_scan_cache, local_changes, requires_reinstall,
-  LocalChange,
+  resolve, LocalChange,
 };
 use super::plan_cache::{self, PlanCache};
 use super::remote::ComponentPack;
@@ -693,10 +693,22 @@ async fn plan_prepared(
     to: remote.loader.clone(),
   });
   let compared = compare(&target.root, baseline, &remote).await?;
+  if !compared.both_variants.is_empty() {
+    log::info!(
+      "modpack update plan refused: instance={} both variants on disk: {}",
+      target.instance.id,
+      compared.both_variants.join(", "),
+    );
+    return Err(InstanceError::ModpackUpdateBothVariants.into());
+  }
   // Missing text bases are best effort; if any came back, the normalized
   // comparison and the merge blocks change, so compare once more.
   let compared = if recover_base_copies(app, target, baseline, &compared.diff.conflicts).await {
-    compare(&target.root, baseline, &remote).await?
+    let again = compare(&target.root, baseline, &remote).await?;
+    if !again.both_variants.is_empty() {
+      return Err(InstanceError::ModpackUpdateBothVariants.into());
+    }
+    again
   } else {
     compared
   };
@@ -1028,8 +1040,19 @@ pub async fn apply_modpack_update(
     baseline.component_refs()
   };
   let compared = compare(&target.root, &baseline, &remote).await?;
+  if !compared.both_variants.is_empty() {
+    log::info!(
+      "modpack update apply refused: instance={instance_id} both variants on disk: {}",
+      compared.both_variants.join(", "),
+    );
+    return Err(InstanceError::ModpackUpdateBothVariants.into());
+  }
   let compared = if recover_base_copies(&app, &target, &baseline, &compared.diff.conflicts).await {
-    compare(&target.root, &baseline, &remote).await?
+    let again = compare(&target.root, &baseline, &remote).await?;
+    if !again.both_variants.is_empty() {
+      return Err(InstanceError::ModpackUpdateBothVariants.into());
+    }
+    again
   } else {
     compared
   };
@@ -1071,7 +1094,7 @@ pub async fn apply_modpack_update(
     UpdateRequest {
       root: target.root.clone(),
       instance_name: target.instance.name.clone(),
-      operations: resolve(&prepared.diff, &apply_choices),
+      operations: resolve(&prepared, &apply_choices),
       remote,
       origin: target.origin.clone(),
       previous_loader: baseline.loader.clone(),
@@ -1079,6 +1102,7 @@ pub async fn apply_modpack_update(
       restore_components,
       merged_contents,
       base_texts,
+      next_baseline: prepared.next_baseline.clone(),
     },
   )
   .await;
@@ -1320,6 +1344,8 @@ mod tests {
         components: None,
         component_pack: None,
         files: Vec::new(),
+        rules: Vec::new(),
+        rules_manifest: false,
       },
     };
     let plan = plan_of(&origin, run);

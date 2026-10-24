@@ -80,6 +80,20 @@ struct JournalOp {
   had_original: bool,
   /// `<path>.disabled` existed and is moved aside too.
   moves_disabled: bool,
+  /// The update put a file at the enabled slot. Journals from before the
+  /// field existed wrote there unless the op was a removal; they never
+  /// distinguish, and the old rollback behaved the same either way.
+  #[serde(default)]
+  writes_enabled: Option<bool>,
+  /// The update left a file at the disabled slot (a disabled ship, or a
+  /// variant flip); a rollback removes it. Missing from old journals, which
+  /// never wrote there without moving the local file aside first.
+  #[serde(default)]
+  writes_disabled: bool,
+  /// Directories this op's deletion emptied, walked up to and including the
+  /// rule's directory; recreated on rollback.
+  #[serde(default)]
+  pruned_dirs: Vec<String>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
@@ -152,6 +166,9 @@ pub struct UpdateRequest {
   /// Cached as the baseline copy after the update so a locally edited file
   /// keeps a base to diff against.
   pub base_texts: BTreeMap<String, Vec<u8>>,
+  /// The baseline entries the update records when it commits, as the decision
+  /// computed them (dormant entries included).
+  pub next_baseline: Vec<crate::instance::helpers::modpack::baseline::BaselineFile>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -262,20 +279,25 @@ fn roll_back_from(root: &Path, backup: &Path, journal: &Journal) -> io::Result<(
   for op in journal.ops.iter().rev() {
     let target = root.join(&op.path);
     let saved = backup.join("files").join(&op.path);
-    if op.had_original {
-      if saved.is_file() {
-        remove_file_if_exists(&target)?;
-        move_file(&saved, &target)?;
-      }
-    } else {
+    // Restore or clear the enabled slot. Journals from before the field
+    // existed always wrote there unless the op was a removal; the old
+    // rollback behaved the same for both, so `unwrap_or(!had_original)`.
+    let wrote_enabled = op.writes_enabled.unwrap_or(!op.had_original);
+    if op.had_original && saved.is_file() {
+      remove_file_if_exists(&target)?;
+      move_file(&saved, &target)?;
+    } else if wrote_enabled {
       remove_file_if_exists(&target)?;
     }
+    let disabled = disabled_path(&op.path);
     if op.moves_disabled {
-      let disabled = disabled_path(&op.path);
       let saved = backup.join("files").join(&disabled);
+      remove_file_if_exists(&root.join(&disabled))?;
       if saved.is_file() {
         move_file(&saved, &root.join(&disabled))?;
       }
+    } else if op.writes_disabled {
+      remove_file_if_exists(&root.join(&disabled))?;
     }
   }
   for name in &journal.meta_present {
@@ -286,6 +308,17 @@ fn roll_back_from(root: &Path, backup: &Path, journal: &Journal) -> io::Result<(
   }
   for name in &journal.meta_absent {
     remove_file_if_exists(&root.join(name))?;
+  }
+  // Recreate the directories the update pruned, deepest first.
+  let mut dirs: Vec<&String> = journal
+    .ops
+    .iter()
+    .flat_map(|op| op.pruned_dirs.iter())
+    .collect();
+  dirs.sort_by_key(|dir| std::cmp::Reverse(dir.matches('/').count()));
+  dirs.dedup();
+  for dir in dirs {
+    fs::create_dir_all(root.join(dir))?;
   }
   Ok(())
 }
@@ -513,18 +546,62 @@ fn commit_files(root: &Path, operations: &[Operation], journal: &Journal) -> io:
   let backup = backup_dir(root);
   for (operation, op) in operations.iter().zip(&journal.ops) {
     let target = root.join(&op.path);
+    let disabled = disabled_path(&op.path);
+    if operation.rename {
+      // A variant flip without a content write: the source slot's file moves
+      // to the other name. The backup keeps a copy so a rollback can restore
+      // the slot in place.
+      let (source, dest, backed) = if operation.final_disabled {
+        (target.clone(), root.join(&disabled), &op.path)
+      } else {
+        (root.join(&disabled), target.clone(), &disabled)
+      };
+      let saved = backup.join("files").join(backed);
+      if let Some(parent) = saved.parent() {
+        fs::create_dir_all(parent)?;
+      }
+      fs::copy(&source, &saved)?;
+      move_file(&source, &dest)?;
+      continue;
+    }
     if op.had_original {
       move_file(&target, &backup.join("files").join(&op.path))?;
     }
     if op.moves_disabled {
-      let disabled = disabled_path(&op.path);
       move_file(&root.join(&disabled), &backup.join("files").join(&disabled))?;
     }
-    if operation.write.is_some() {
-      move_file(&staging_dir(root).join(&op.path), &target)?;
+    if let Some(_key) = &operation.write {
+      let staged = staging_dir(root).join(&op.path);
+      if operation.final_disabled {
+        move_file(&staged, &root.join(&disabled))?;
+      } else {
+        move_file(&staged, &target)?;
+      }
     }
   }
   Ok(())
+}
+
+/// Remove the directories a delete rule emptied: from each deleted file up
+/// to and including the rule's own directory, whenever nothing else remains.
+fn prune_empty_dirs(root: &Path, operations: &[Operation]) {
+  for operation in operations {
+    for rule_dir in &operation.prune_dirs {
+      let mut dir = PathBuf::from(&operation.path);
+      while let Some(parent) = dir.parent().map(Path::to_path_buf) {
+        // Never climb past the rule's own directory.
+        if parent.components().count() < PathBuf::from(rule_dir).components().count() {
+          break;
+        }
+        match fs::remove_dir(root.join(&parent)) {
+          Ok(()) => {}
+          // Not empty, gone already, or not ours: stop walking this branch.
+          Err(_) => break,
+        }
+        dir = parent;
+      }
+    }
+  }
 }
 
 fn save_meta_backup(root: &Path, names: &[String]) -> io::Result<(Vec<String>, Vec<String>)> {
@@ -734,11 +811,31 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
   let ops: Vec<JournalOp> = request
     .operations
     .iter()
-    .map(|operation| JournalOp {
-      path: operation.path.clone(),
-      had_original: root.join(&operation.path).is_file(),
-      moves_disabled: operation.clear_disabled
-        && root.join(disabled_path(&operation.path)).is_file(),
+    .map(|operation| {
+      let has_enabled = root.join(&operation.path).is_file();
+      let has_disabled = root.join(disabled_path(&operation.path)).is_file();
+      if operation.rename {
+        // A flip copies its source slot into the backup; the rollback
+        // restores that slot from there and clears the slot the flip wrote.
+        // The source slot is the occupied one: enabled for a flip to
+        // disabled, the disabled variant for a flip back.
+        return JournalOp {
+          path: operation.path.clone(),
+          had_original: has_enabled,
+          moves_disabled: has_disabled,
+          writes_enabled: Some(!operation.final_disabled),
+          writes_disabled: operation.final_disabled,
+          pruned_dirs: Vec::new(),
+        };
+      }
+      JournalOp {
+        path: operation.path.clone(),
+        had_original: has_enabled,
+        moves_disabled: has_disabled,
+        writes_enabled: Some(operation.write.is_some() && !operation.final_disabled),
+        writes_disabled: operation.write.is_some() && operation.final_disabled,
+        pruned_dirs: operation.prune_dirs.clone(),
+      }
     })
     .collect();
   fs::create_dir_all(backup_dir(root)).map_err(io_error)?;
@@ -768,10 +865,14 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
     }
     let (root_owned, operations, snapshot) =
       (root.clone(), request.operations.clone(), journal.clone());
-    tokio::task::spawn_blocking(move || commit_files(&root_owned, &operations, &snapshot))
-      .await
-      .map_err(|e| crate::error::USTBLError(e.to_string()))?
-      .map_err(io_error)?;
+    tokio::task::spawn_blocking(move || {
+      commit_files(&root_owned, &operations, &snapshot)?;
+      prune_empty_dirs(&root_owned, &operations);
+      Ok::<_, io::Error>(())
+    })
+    .await
+    .map_err(|e| crate::error::USTBLError(e.to_string()))?
+    .map_err(io_error)?;
 
     env.report(Progress {
       stage: Stage::Finalizing,
@@ -783,7 +884,7 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
     let mut baseline = ModpackBaseline::build(
       &origin,
       request.remote.loader.clone(),
-      request.remote.baseline_files(),
+      request.next_baseline.clone(),
     );
     if let Some(chain) = &request.components {
       baseline = baseline.with_components(chain.clone());
@@ -977,6 +1078,8 @@ mod tests {
         custom_headers: None,
         transfer_options: Default::default(),
       })),
+      disabled: false,
+      once: false,
     }
   }
 
@@ -986,6 +1089,16 @@ mod tests {
     operations: Vec<Operation>,
     new_loader: &str,
   ) -> UpdateRequest {
+    let next_baseline = files
+      .iter()
+      .map(|file| {
+        crate::instance::helpers::modpack::baseline::BaselineFile::managed(
+          &file.path,
+          file.key.clone(),
+          false,
+        )
+      })
+      .collect();
     UpdateRequest {
       root: root.0.clone(),
       instance_name: "pack".into(),
@@ -998,6 +1111,8 @@ mod tests {
         components: None,
         component_pack: None,
         files,
+        rules: Vec::new(),
+        rules_manifest: false,
       },
       origin: origin("1"),
       previous_loader: loader("0.15.0"),
@@ -1005,6 +1120,7 @@ mod tests {
       restore_components: false,
       merged_contents: BTreeMap::new(),
       base_texts: BTreeMap::new(),
+      next_baseline,
     }
   }
 
@@ -1012,7 +1128,9 @@ mod tests {
     Operation {
       path: file.path.clone(),
       write: Some(file.key.clone()),
-      clear_disabled: false,
+      final_disabled: false,
+      rename: false,
+      prune_dirs: Vec::new(),
     }
   }
 
@@ -1020,7 +1138,9 @@ mod tests {
     Operation {
       path: path.into(),
       write: None,
-      clear_disabled: false,
+      final_disabled: false,
+      rename: false,
+      prune_dirs: Vec::new(),
     }
   }
 
@@ -1084,9 +1204,13 @@ mod tests {
     };
     let new = url_file("mods/new.jar", "new", &mut env);
     let updated = url_file("mods/old.jar", "old-v2", &mut env);
-    let mut update_op = write_op(&updated);
-    update_op.clear_disabled = true;
-    let operations = vec![write_op(&new), update_op, remove_op("mods/gone.jar")];
+    // old.jar is updated while its disabled variant is on disk too; the
+    // update clears both slots and writes the new enabled file.
+    let operations = vec![
+      write_op(&new),
+      write_op(&updated),
+      remove_op("mods/gone.jar"),
+    ];
 
     apply(
       &env,
@@ -1265,16 +1389,25 @@ mod tests {
           path: "mods/old.jar".into(),
           had_original: true,
           moves_disabled: false,
+          writes_enabled: Some(true),
+          writes_disabled: false,
+          pruned_dirs: Vec::new(),
         },
         JournalOp {
           path: "mods/new.jar".into(),
           had_original: false,
           moves_disabled: false,
+          writes_enabled: Some(true),
+          writes_disabled: false,
+          pruned_dirs: Vec::new(),
         },
         JournalOp {
           path: "mods/gone.jar".into(),
           had_original: true,
           moves_disabled: false,
+          writes_enabled: Some(false),
+          writes_disabled: false,
+          pruned_dirs: Vec::new(),
         },
       ],
       meta_present: vec!["ustblcfg.json".into()],
@@ -1351,6 +1484,143 @@ mod tests {
   }
 
   #[tokio::test]
+  async fn rename_ops_flip_variants_and_roll_back_cleanly() {
+    let root = setup();
+    // A managed enabled file flips to disabled; a disabled one flips back.
+    root.write("mods/off.jar.disabled", "off");
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let operations = vec![
+      Operation {
+        path: "mods/old.jar".into(),
+        write: None,
+        final_disabled: true,
+        rename: true,
+        prune_dirs: Vec::new(),
+      },
+      Operation {
+        path: "mods/off.jar".into(),
+        write: None,
+        final_disabled: false,
+        rename: true,
+        prune_dirs: Vec::new(),
+      },
+    ];
+    let mut update = request(&root, Vec::new(), operations, "0.16.0");
+    // The baseline records the flipped states.
+    update.next_baseline = vec![
+      crate::instance::helpers::modpack::baseline::BaselineFile::managed(
+        "mods/old.jar",
+        sha1_of(b"old"),
+        true,
+      ),
+      crate::instance::helpers::modpack::baseline::BaselineFile::managed(
+        "mods/off.jar",
+        sha1_of(b"off"),
+        false,
+      ),
+    ];
+    apply(&env, update).await.unwrap();
+
+    assert_eq!(root.read("mods/old.jar"), None);
+    assert_eq!(root.read("mods/old.jar.disabled").as_deref(), Some("old"));
+    assert_eq!(root.read("mods/off.jar").as_deref(), Some("off"));
+    assert_eq!(root.read("mods/off.jar.disabled"), None);
+
+    assert!(roll_back_last(&root.0).unwrap());
+    assert_eq!(root.read("mods/old.jar").as_deref(), Some("old"));
+    assert_eq!(root.read("mods/old.jar.disabled"), None);
+    assert_eq!(root.read("mods/off.jar"), None);
+    assert_eq!(root.read("mods/off.jar.disabled").as_deref(), Some("off"));
+  }
+
+  #[tokio::test]
+  async fn delete_rule_ops_prune_empty_dirs_and_the_rollback_recreates_them() {
+    let root = Root::new();
+    root.write("mods/old/a.jar", "a");
+    root.write("mods/old/sub/b.jar.disabled", "b");
+    root.write("mods/old/keep.jar", "keep");
+    root.write("ustblcfg.json", "cfg-v1");
+    root.write("pack.json", "client-v1");
+    let env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let delete = |path: &str| Operation {
+      path: path.into(),
+      write: None,
+      final_disabled: false,
+      rename: false,
+      prune_dirs: vec!["mods/old".into()],
+    };
+    let operations = vec![delete("mods/old/a.jar"), delete("mods/old/sub/b.jar")];
+
+    apply(&env, request(&root, Vec::new(), operations, "0.16.0"))
+      .await
+      .unwrap();
+
+    assert_eq!(root.read("mods/old/a.jar"), None);
+    assert_eq!(root.read("mods/old/sub/b.jar.disabled"), None);
+    // sub emptied out and went with its file; mods/old stays: keep.jar lives.
+    assert!(!root.0.join("mods/old/sub").exists());
+    assert_eq!(root.read("mods/old/keep.jar").as_deref(), Some("keep"));
+
+    assert!(roll_back_last(&root.0).unwrap());
+    assert_eq!(root.read("mods/old/a.jar").as_deref(), Some("a"));
+    assert_eq!(
+      root.read("mods/old/sub/b.jar.disabled").as_deref(),
+      Some("b")
+    );
+  }
+
+  #[tokio::test]
+  async fn a_mid_apply_failure_rolls_back_the_new_actions() {
+    let root = Root::new();
+    root.write("mods/old/a.jar", "a");
+    root.write("mods/dormant.jar", "stale");
+    root.write("mods/flip.jar", "flip");
+    root.write("ustblcfg.json", "cfg-v1");
+    root.write("pack.json", "client-v1");
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      fail_commit: true,
+      ..Default::default()
+    };
+    // A remanage conflict answered "take remote": stale content is replaced.
+    let remanaged = url_file("mods/dormant.jar", "fresh", &mut env);
+    let delete = Operation {
+      path: "mods/old/a.jar".into(),
+      write: None,
+      final_disabled: false,
+      rename: false,
+      prune_dirs: vec!["mods/old".into()],
+    };
+    let flip = Operation {
+      path: "mods/flip.jar".into(),
+      write: None,
+      final_disabled: true,
+      rename: true,
+      prune_dirs: Vec::new(),
+    };
+    let operations = vec![write_op(&remanaged), delete, flip];
+
+    assert!(
+      apply(&env, request(&root, vec![remanaged], operations, "0.16.0"))
+        .await
+        .is_err()
+    );
+
+    assert_eq!(root.read("mods/old/a.jar").as_deref(), Some("a"));
+    assert_eq!(root.read("mods/dormant.jar").as_deref(), Some("stale"));
+    assert_eq!(root.read("mods/flip.jar").as_deref(), Some("flip"));
+    assert_eq!(root.read("mods/flip.jar.disabled"), None);
+    assert!(root.0.join("mods/old").exists());
+    assert!(!journal_path(&root.0).exists());
+  }
+
+  #[tokio::test]
   async fn files_can_come_from_an_archive() {
     let root = setup();
     let archive = root.0.join("pack.zip");
@@ -1376,6 +1646,8 @@ mod tests {
         archive,
         entry: "overrides/config/a.toml".into(),
       },
+      disabled: false,
+      once: false,
     };
     let operations = vec![write_op(&file)];
 
@@ -1554,6 +1826,8 @@ mod tests {
         path: path.to_string(),
         key: sha1_of(data),
         source: FileSource::Pack(session.clone()),
+        disabled: false,
+        once: false,
       })
       .collect()
   }
@@ -1700,6 +1974,8 @@ mod tests {
       path: "config/p.toml".into(),
       key: sha1_of(b"from-pack"),
       source: FileSource::Pack(session),
+      disabled: false,
+      once: false,
     };
     let operations = vec![write_op(&file)];
 
@@ -1851,8 +2127,10 @@ mod tests {
   async fn taking_every_remote_side_leaves_no_local_changes() {
     use crate::instance::helpers::modpack::baseline::BaselineFile;
     use crate::instance::modpack_update::commands::selected_hunk_contents;
-    use crate::instance::modpack_update::diff::{resolve, ConflictChoice};
-    use crate::instance::modpack_update::plan::{count_local_changes, prepare_with_contents};
+    use crate::instance::modpack_update::diff::ConflictChoice;
+    use crate::instance::modpack_update::plan::{
+      count_local_changes, prepare_with_contents, resolve,
+    };
 
     let root = setup();
     root.write("mods/a.jar", "a1-edited");
@@ -1866,14 +2144,7 @@ mod tests {
       ("config/c.toml", base_text),
     ]
     .iter()
-    .map(|(path, content)| {
-      let key = sha1_of(content.as_bytes());
-      BaselineFile {
-        path: path.to_string(),
-        sha1: key.sha1,
-        size: key.size,
-      }
-    })
+    .map(|(path, content)| BaselineFile::managed(path, sha1_of(content.as_bytes()), false))
     .collect();
     base_store::store(&root.0, &files[2], base_text.as_bytes()).unwrap();
     let installed = ModpackBaseline::build(&origin("1"), loader("0.15.0"), files);
@@ -1914,7 +2185,8 @@ mod tests {
       }
     }
     update.merged_contents = selected_hunk_contents(&prepared, &mut choices).unwrap();
-    update.operations = resolve(&prepared.diff, &choices);
+    update.operations = resolve(&prepared, &choices);
+    update.next_baseline = prepared.next_baseline.clone();
 
     apply(&env, update).await.unwrap();
 
@@ -1932,9 +2204,9 @@ mod tests {
   async fn keeping_local_hunks_still_caches_the_new_base() {
     use crate::instance::helpers::modpack::baseline::BaselineFile;
     use crate::instance::modpack_update::commands::selected_hunk_contents;
-    use crate::instance::modpack_update::diff::{resolve, ConflictChoice};
+    use crate::instance::modpack_update::diff::ConflictChoice;
     use crate::instance::modpack_update::plan::{
-      count_local_changes, local_changes, prepare_with_contents,
+      count_local_changes, local_changes, prepare_with_contents, resolve,
     };
 
     let root = setup();
@@ -1945,11 +2217,7 @@ mod tests {
     let installed = ModpackBaseline::build(
       &origin("1"),
       loader("0.15.0"),
-      vec![BaselineFile {
-        path: "config/c.toml".to_string(),
-        sha1: key.sha1.clone(),
-        size: key.size,
-      }],
+      vec![BaselineFile::managed("config/c.toml", key.clone(), false)],
     );
     base_store::store(&root.0, &installed.files[0], base_text.as_bytes()).unwrap();
 
@@ -1972,7 +2240,8 @@ mod tests {
       choices.insert(format!("config/c.toml#{index}"), ConflictChoice::KeepLocal);
     }
     update.merged_contents = selected_hunk_contents(&prepared, &mut choices).unwrap();
-    update.operations = resolve(&prepared.diff, &choices);
+    update.operations = resolve(&prepared, &choices);
+    update.next_baseline = prepared.next_baseline.clone();
     update.base_texts = contents.clone();
 
     apply(&env, update).await.unwrap();
@@ -2004,11 +2273,7 @@ mod tests {
     let installed = ModpackBaseline::build(
       &origin("1"),
       loader("0.15.0"),
-      vec![BaselineFile {
-        path: "config/c.toml".to_string(),
-        sha1: key.sha1.clone(),
-        size: key.size,
-      }],
+      vec![BaselineFile::managed("config/c.toml", key.clone(), false)],
     );
     base_store::store(&root.0, &installed.files[0], base_text.as_bytes()).unwrap();
 
@@ -2026,8 +2291,8 @@ mod tests {
     assert_eq!(prepared.diff.auto_merged.len(), 1);
 
     update.merged_contents = prepared.merged_contents.clone();
-    update.operations =
-      crate::instance::modpack_update::diff::resolve(&prepared.diff, &BTreeMap::new());
+    update.operations = crate::instance::modpack_update::plan::resolve(&prepared, &BTreeMap::new());
+    update.next_baseline = prepared.next_baseline.clone();
     // The command fetched these bytes while the file was still a text
     // conflict, before `finish` merged it, and passes them on for the base
     // cache.

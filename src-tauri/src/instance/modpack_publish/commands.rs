@@ -979,11 +979,7 @@ async fn try_adopt(
     },
     expected
       .into_iter()
-      .map(|file| BaselineFile {
-        path: file.path,
-        sha1: file.key.sha1,
-        size: file.key.size,
-      })
+      .map(|file| BaselineFile::managed(&file.path, file.key.clone(), false))
       .collect(),
   );
   if let Some(mmc_pack) = mmc_pack {

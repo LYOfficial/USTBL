@@ -897,11 +897,14 @@ mod tests {
     session.prepare(&[sha1.clone()]).await.unwrap();
     let fetched = work.join("recovery/a.properties");
     session.fetch(&sha1, &fetched).await.unwrap();
-    let file = BaselineFile {
-      path: "config/a.properties".into(),
-      sha1: sha1.clone(),
-      size: bytes.len() as u64,
-    };
+    let file = BaselineFile::managed(
+      "config/a.properties",
+      crate::instance::modpack_update::diff::FileKey {
+        sha1: sha1.clone(),
+        size: bytes.len() as u64,
+      },
+      false,
+    );
     base_store::store(&work, &file, &fs::read(fetched).unwrap()).unwrap();
     assert_eq!(base_store::load(&work, &sha1).unwrap().unwrap(), bytes);
     assert!(fake.calls().iter().any(|call| call.starts_with("range")));
