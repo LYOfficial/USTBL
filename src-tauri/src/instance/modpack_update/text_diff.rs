@@ -6,10 +6,6 @@ use serde::Serialize;
 /// Lines of unchanged text kept around each change.
 pub const CONTEXT_LINES: usize = 3;
 
-/// Above this many line pairs the middle of the file is shown as one
-/// replacement instead of running the quadratic line matcher.
-const MAX_MATCH_CELLS: usize = 4_000_000;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum DiffLineKind {
@@ -62,14 +58,6 @@ fn edits(old: &[String], new: &[String]) -> Vec<Edit> {
   let new_mid = &new[prefix..new.len() - suffix];
   if old_mid.is_empty() && new_mid.is_empty() {
     return Vec::new();
-  }
-  if old_mid.len().saturating_mul(new_mid.len()) > MAX_MATCH_CELLS {
-    return vec![Edit {
-      start: prefix,
-      end: prefix + old_mid.len(),
-      new_start: prefix,
-      new_end: prefix + new_mid.len(),
-    }];
   }
   // Hunks are positioned on the old side; walk them to find the new side.
   let mut result = Vec::new();

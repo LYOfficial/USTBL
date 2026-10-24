@@ -7,7 +7,7 @@
 //! half way, the journal is enough to put every file back.
 
 use super::diff::{Operation, DISABLED_SUFFIX};
-use super::packs::PackSession;
+use super::packs::{FetchGroup, PackFetch, PackSession};
 use super::remote::{ComponentPack, FileSource, RemoteFile, RemoteModpack, UPDATE_DIR};
 use crate::error::USTBLResult;
 use crate::instance::helpers::modpack::base_store;
@@ -26,7 +26,9 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
 
 const JOURNAL_FILE: &str = "journal.json";
 const JOURNAL_SCHEMA: u32 = 1;
@@ -146,6 +148,10 @@ pub struct UpdateRequest {
   /// Content for automatically merged text files. Other operations fetch the
   /// remote file through its normal source.
   pub merged_contents: BTreeMap<String, Vec<u8>>,
+  /// New-version text bytes the caller already has, keyed by relative path.
+  /// Cached as the baseline copy after the update so a locally edited file
+  /// keeps a base to diff against.
+  pub base_texts: BTreeMap<String, Vec<u8>>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -394,6 +400,23 @@ fn extract_entry(archive: &Path, entry: &str, dest: &Path) -> USTBLResult<()> {
 /// Tell every pack session which of its files are about to be fetched, so it
 /// can locate just those.
 pub async fn prepare_packs(files: &[&RemoteFile]) -> USTBLResult<()> {
+  for (session, mut wanted) in pack_sessions(files) {
+    wanted.sort();
+    wanted.dedup();
+    let locating = Instant::now();
+    session.prepare(&wanted).await?;
+    log::info!(
+      "modpack pack locate: version {}, {} sha1s, {:?} elapsed",
+      session.version_id(),
+      wanted.len(),
+      locating.elapsed()
+    );
+  }
+  Ok(())
+}
+
+/// The pack sessions behind `files`, each with the sha1s it has to fetch.
+fn pack_sessions(files: &[&RemoteFile]) -> Vec<(Arc<PackSession>, Vec<String>)> {
   let mut sessions: Vec<(Arc<PackSession>, Vec<String>)> = Vec::new();
   for file in files {
     let FileSource::Pack(session) = &file.source else {
@@ -407,10 +430,7 @@ pub async fn prepare_packs(files: &[&RemoteFile]) -> USTBLResult<()> {
       None => sessions.push((session.clone(), vec![file.key.sha1.clone()])),
     }
   }
-  for (session, wanted) in sessions {
-    session.prepare(&wanted).await?;
-  }
-  Ok(())
+  sessions
 }
 
 async fn stage_file(env: &dyn UpdateEnv, dest: PathBuf, file: &RemoteFile) -> USTBLResult<()> {
@@ -447,6 +467,45 @@ pub async fn materialize_remote_file(
   file: &RemoteFile,
 ) -> USTBLResult<()> {
   stage_file(env, dest, file).await
+}
+
+/// One unit of fetch work: a single file from a download or an archive, or
+/// one group of pack entries a single merged Range request can cover. A
+/// group of one file is read on its own.
+enum FetchUnit<'a> {
+  Single(&'a RemoteFile, PathBuf),
+  Group(Arc<PackSession>, FetchGroup),
+}
+
+impl FetchUnit<'_> {
+  fn file_count(&self) -> usize {
+    match self {
+      FetchUnit::Single(..) => 1,
+      FetchUnit::Group(_, group) => group.file_count(),
+    }
+  }
+}
+
+/// Group `to_fetch` into fetch units. Every pack file goes to its session's
+/// batch (wherever it sits in `to_fetch`), which the session splits into
+/// merged groups by pack offset; everything else is a single file. The
+/// groups are independent of each other and can run concurrently.
+fn fetch_units<'a>(
+  to_fetch: &[(&'a RemoteFile, PathBuf)],
+  planned: Vec<(Arc<PackSession>, Vec<FetchGroup>)>,
+) -> Vec<FetchUnit<'a>> {
+  let mut units: Vec<FetchUnit<'a>> = Vec::new();
+  for (file, dest) in to_fetch {
+    if !matches!(file.source, FileSource::Pack(_)) {
+      units.push(FetchUnit::Single(file, dest.clone()));
+    }
+  }
+  for (session, groups) in planned {
+    for group in groups {
+      units.push(FetchUnit::Group(session.clone(), group));
+    }
+  }
+  units
 }
 
 /// Move originals aside and put the staged files in place.
@@ -565,6 +624,41 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
   }
   let wanted: Vec<&RemoteFile> = to_fetch.iter().map(|(file, _)| *file).collect();
   prepare_packs(&wanted).await?;
+  // Plan every session's merged groups up front: all of its files, wherever
+  // they sit in `to_fetch`, are grouped by pack offset. Each group becomes
+  // one unit of fetch work, so the groups run concurrently.
+  let mut planned: Vec<(Arc<PackSession>, Vec<FetchGroup>)> = Vec::new();
+  let mut batches: Vec<(Arc<PackSession>, Vec<PackFetch>)> = Vec::new();
+  for (file, dest) in &to_fetch {
+    let FileSource::Pack(session) = &file.source else {
+      continue;
+    };
+    match batches
+      .iter_mut()
+      .find(|(known, _)| Arc::ptr_eq(known, session))
+    {
+      Some((_, batch)) => batch.push(PackFetch {
+        sha1: file.key.sha1.clone(),
+        dest: dest.clone(),
+      }),
+      None => batches.push((
+        session.clone(),
+        vec![PackFetch {
+          sha1: file.key.sha1.clone(),
+          dest: dest.clone(),
+        }],
+      )),
+    }
+  }
+  for (session, batch) in batches {
+    let (located, generation) = session.located().await?;
+    let groups = session.plan_groups(&located, generation, &batch)?;
+    planned.push((session, groups));
+  }
+  let sessions: Vec<Arc<PackSession>> = planned
+    .iter()
+    .map(|(session, _)| session.clone())
+    .collect();
   let total = to_fetch.len();
   env.report(Progress {
     stage: Stage::Fetching,
@@ -572,28 +666,54 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
     total,
   });
   let mut done = 0;
+  let fetching = Instant::now();
   // Driven by hand rather than with `buffer_unordered`: the combinator's
   // closure makes the future fail the `Send` check of the command handler.
-  let mut pending = to_fetch.into_iter();
+  let mut pending = fetch_units(&to_fetch, planned).into_iter();
   let mut running = FuturesUnordered::new();
-  loop {
+  let fetching_result: USTBLResult<()> = loop {
     while running.len() < FETCH_CONCURRENCY {
-      let Some((file, dest)) = pending.next() else {
+      let Some(unit) = pending.next() else {
         break;
       };
-      running.push(stage_file(env, dest, file));
+      let files = unit.file_count();
+      running.push(async move {
+        let result = match &unit {
+          FetchUnit::Single(file, dest) => stage_file(env, dest.clone(), file).await,
+          FetchUnit::Group(session, group) => session.fetch_group(group).await,
+        };
+        result.map(|()| files)
+      });
     }
     let Some(result) = running.next().await else {
-      break;
+      break Ok(());
     };
-    result?;
-    done += 1;
-    env.report(Progress {
-      stage: Stage::Fetching,
-      done,
-      total,
-    });
+    match result {
+      Ok(files) => {
+        done += files;
+        env.report(Progress {
+          stage: Stage::Fetching,
+          done,
+          total,
+        });
+      }
+      Err(error) => break Err(error),
+    }
+  };
+  // The measurement behind the "merged or not" comparison, per pack session.
+  for session in sessions {
+    let stats = session.stats();
+    let requests = stats.requests.load(Ordering::Relaxed);
+    if requests > 0 {
+      log::info!(
+        "modpack pack fetch: {requests} requests, {} bytes, {} merged batches, {:?} elapsed",
+        stats.bytes.load(Ordering::Relaxed),
+        stats.merged.load(Ordering::Relaxed),
+        fetching.elapsed()
+      );
+    }
   }
+  fetching_result?;
   for (path, bytes) in &request.merged_contents {
     let dest = staging_dir(root).join(path);
     if let Some(parent) = dest.parent() {
@@ -669,6 +789,16 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
       baseline = baseline.with_components(chain.clone());
     }
     baseline.save(root).await.map_err(io_error)?;
+    // Cache the new text bases fetched during planning. Merged or kept-local
+    // files do not match the new baseline on disk, so `sync` below would not
+    // pick them up. A failed validation is only logged.
+    for (path, bytes) in &request.base_texts {
+      if let Some(file) = baseline.files.iter().find(|file| &file.path == path) {
+        if let Err(error) = base_store::store(root, file, bytes) {
+          log::warn!("cannot store modpack text baseline for {path}: {error:?}");
+        }
+      }
+    }
     tokio::task::spawn_blocking({
       let root = root.clone();
       let files = baseline.files.clone();
@@ -874,6 +1004,7 @@ mod tests {
       components: None,
       restore_components: false,
       merged_contents: BTreeMap::new(),
+      base_texts: BTreeMap::new(),
     }
   }
 
@@ -1305,6 +1436,258 @@ mod tests {
     }
   }
 
+  /// A platform whose pack holds `files`, keyed by their real sha1. `gaps[i]`
+  /// inserts that many filler bytes between entry i and entry i+1, so the
+  /// groups can be steered around the merge thresholds. Range reads are
+  /// counted, and the peak number of them in flight at once is tracked; each
+  /// read sleeps briefly so the peak reflects real overlap.
+  struct MultiFilePack {
+    pack: Vec<u8>,
+    entries: BTreeMap<String, crate::instance::modpack_update::packs::EntryLocation>,
+    ranges: Mutex<Vec<(u64, u64)>>,
+    /// Version id and number of sha1s of every locate.
+    locates: Mutex<Vec<(i64, usize)>>,
+    flying: std::sync::atomic::AtomicUsize,
+    peak: std::sync::atomic::AtomicUsize,
+  }
+
+  impl MultiFilePack {
+    fn new(files: &[(&str, &[u8])]) -> Self {
+      Self::spaced(files, &[])
+    }
+
+    fn spaced(files: &[(&str, &[u8])], gaps: &[usize]) -> Self {
+      use crate::instance::modpack_update::packs::{EntryLocation, DEFLATED};
+      use std::io::Write;
+      let mut pack = Vec::new();
+      let mut entries = BTreeMap::new();
+      for (index, (sha1, data)) in files.iter().enumerate() {
+        let mut encoder =
+          flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(data).unwrap();
+        let compressed = encoder.finish().unwrap();
+        let mut crc = flate2::Crc::new();
+        crc.update(data);
+        entries.insert(
+          sha1.to_string(),
+          EntryLocation {
+            pack: 1,
+            data_offset: pack.len() as u64,
+            compress_type: DEFLATED,
+            compressed_size: compressed.len() as u64,
+            size: data.len() as u64,
+            crc32: crc.sum(),
+          },
+        );
+        pack.extend(compressed);
+        if let Some(gap) = gaps.get(index) {
+          pack.extend(vec![0u8; *gap]);
+        }
+      }
+      Self {
+        pack,
+        entries,
+        ranges: Mutex::default(),
+        locates: Mutex::default(),
+        flying: std::sync::atomic::AtomicUsize::new(0),
+        peak: std::sync::atomic::AtomicUsize::new(0),
+      }
+    }
+  }
+
+  #[async_trait]
+  impl crate::instance::modpack_update::packs::PackTransport for MultiFilePack {
+    async fn locate(
+      &self,
+      version_id: i64,
+      sha1s: &[String],
+    ) -> Result<
+      crate::instance::modpack_update::packs::Located,
+      crate::instance::modpack_update::packs::TransportError,
+    > {
+      use crate::instance::modpack_update::packs::{Located, PackLocation};
+      self.locates.lock().unwrap().push((version_id, sha1s.len()));
+      Ok(Located {
+        packs: vec![PackLocation {
+          id: 1,
+          url: "https://cloud.example/p".into(),
+          method: "GET".into(),
+          headers: Default::default(),
+        }],
+        entries: sha1s
+          .iter()
+          .map(|sha1| (sha1.clone(), self.entries[sha1]))
+          .collect(),
+      })
+    }
+    async fn read_range(
+      &self,
+      _: &crate::instance::modpack_update::packs::PackLocation,
+      start: u64,
+      length: u64,
+      dest: &Path,
+    ) -> Result<(), crate::instance::modpack_update::packs::TransportError> {
+      let flying = self.flying.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+      self
+        .peak
+        .fetch_max(flying, std::sync::atomic::Ordering::SeqCst);
+      self.ranges.lock().unwrap().push((start, length));
+      // Give the other groups a chance to overlap with this read.
+      tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+      fs::create_dir_all(dest.parent().unwrap()).unwrap();
+      let (start, length) = (start as usize, length as usize);
+      fs::write(dest, &self.pack[start..start + length]).unwrap();
+      self.flying.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+      Ok(())
+    }
+  }
+
+  /// Pack files for `contents` on `session`, keyed by their real sha1s, and
+  /// the matching RemoteFile list.
+  fn pack_remote_files(
+    contents: &[(&str, &[u8])],
+    session: &Arc<PackSession>,
+  ) -> Vec<RemoteFile> {
+    contents
+      .iter()
+      .map(|(path, data)| RemoteFile {
+        path: path.to_string(),
+        key: sha1_of(data),
+        source: FileSource::Pack(session.clone()),
+      })
+      .collect()
+  }
+
+  fn sha1s_of<'a>(contents: &[(&str, &'a [u8])]) -> Vec<(String, &'a [u8])> {
+    contents
+      .iter()
+      .map(|(_, data)| (hex::encode(Sha1::digest(data)), *data))
+      .collect()
+  }
+
+  #[tokio::test]
+  async fn neighbouring_pack_files_are_fetched_with_one_range_request() {
+    let root = setup();
+    let env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let contents: [(&str, &[u8]); 3] = [
+      ("mods/a.jar", b"alpha"),
+      ("mods/b.jar", b"beta"),
+      ("mods/c.jar", b"gamma"),
+    ];
+    let sha1s = sha1s_of(&contents);
+    let transport = Arc::new(MultiFilePack::new(
+      &sha1s
+        .iter()
+        .map(|(sha1, data)| (sha1.as_str(), *data))
+        .collect::<Vec<(&str, &[u8])>>(),
+    ));
+    let session = PackSession::new(transport.clone(), 3);
+    let remote_files = pack_remote_files(&contents, &session);
+    let operations = remote_files.iter().map(write_op).collect();
+
+    apply(&env, request(&root, remote_files, operations, "0.15.0"))
+      .await
+      .unwrap();
+
+    // Three entries back to back in one pack: a single merged range.
+    assert_eq!(transport.ranges.lock().unwrap().len(), 1);
+    assert_eq!(root.read("mods/a.jar").as_deref(), Some("alpha"));
+    assert_eq!(root.read("mods/b.jar").as_deref(), Some("beta"));
+    assert_eq!(root.read("mods/c.jar").as_deref(), Some("gamma"));
+  }
+
+  #[tokio::test]
+  async fn pack_files_interrupted_by_another_source_still_merge() {
+    let root = setup();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    // The two pack files sit at the ends of the operation list, with a
+    // download between them: they are not neighbours in `to_fetch`, but they
+    // are neighbours in the pack.
+    let contents: [(&str, &[u8]); 2] = [("mods/a.jar", b"alpha"), ("mods/c.jar", b"gamma")];
+    let sha1s = sha1s_of(&contents);
+    let transport = Arc::new(MultiFilePack::new(
+      &sha1s
+        .iter()
+        .map(|(sha1, data)| (sha1.as_str(), *data))
+        .collect::<Vec<(&str, &[u8])>>(),
+    ));
+    let session = PackSession::new(transport.clone(), 3);
+    let pack_files = pack_remote_files(&contents, &session);
+    let download = url_file("mods/b.jar", "beta", &mut env);
+    let remote_files = vec![
+      pack_files[0].clone(),
+      download,
+      pack_files[1].clone(),
+    ];
+    let operations = remote_files.iter().map(write_op).collect();
+
+    apply(&env, request(&root, remote_files, operations, "0.15.0"))
+      .await
+      .unwrap();
+
+    // Both pack files are read with one merged request despite the download
+    // between them in the operation list.
+    assert_eq!(transport.ranges.lock().unwrap().len(), 1);
+    assert_eq!(root.read("mods/a.jar").as_deref(), Some("alpha"));
+    assert_eq!(root.read("mods/b.jar").as_deref(), Some("beta"));
+    assert_eq!(root.read("mods/c.jar").as_deref(), Some("gamma"));
+  }
+
+  #[tokio::test]
+  async fn distant_groups_are_fetched_concurrently() {
+    let root = setup();
+    let env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    // Six entries with a gap over MERGE_GAP between every two: six groups.
+    let contents: [(&str, &[u8]); 6] = [
+      ("mods/a.jar", b"alpha"),
+      ("mods/b.jar", b"beta"),
+      ("mods/c.jar", b"gamma"),
+      ("mods/d.jar", b"delta"),
+      ("mods/e.jar", b"epsilon"),
+      ("mods/f.jar", b"zeta"),
+    ];
+    let sha1s = sha1s_of(&contents);
+    let gap = crate::instance::modpack_update::packs::MERGE_GAP as usize + 1;
+    let transport = Arc::new(MultiFilePack::spaced(
+      &sha1s
+        .iter()
+        .map(|(sha1, data)| (sha1.as_str(), *data))
+        .collect::<Vec<(&str, &[u8])>>(),
+      &[gap, gap, gap, gap, gap],
+    ));
+    let session = PackSession::new(transport.clone(), 3);
+    let remote_files = pack_remote_files(&contents, &session);
+    let operations = remote_files.iter().map(write_op).collect();
+
+    apply(&env, request(&root, remote_files, operations, "0.15.0"))
+      .await
+      .unwrap();
+
+    let ranges = transport.ranges.lock().unwrap();
+    // No merging possible across the gaps: one read per entry.
+    assert_eq!(ranges.len(), 6);
+    // But the groups run side by side.
+    let peak = transport.peak.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(peak > 1, "expected concurrent groups, peak was {peak}");
+    assert!(peak <= FETCH_CONCURRENCY);
+    drop(ranges);
+    for (path, data) in contents {
+      assert_eq!(
+        root.read(path).as_deref(),
+        Some(std::str::from_utf8(data).unwrap())
+      );
+    }
+  }
+
   #[tokio::test]
   async fn files_can_come_from_the_platform_packs() {
     let root = setup();
@@ -1325,6 +1708,123 @@ mod tests {
       .unwrap();
 
     assert_eq!(root.read("config/p.toml").as_deref(), Some("from-pack"));
+  }
+
+  const CACHED_FILES: [(&str, &[u8]); 3] = [
+    ("mods/a.jar", b"alpha"),
+    ("mods/b.jar", b"beta"),
+    ("mods/c.jar", b"gamma"),
+  ];
+  const CACHED_COMPONENTS: [(&str, &[u8]); 2] = [
+    ("patches/com.example.json", b"patch-bytes"),
+    ("libraries/l.jar", b"lib"),
+  ];
+
+  /// A pack holding every file of `CACHED_FILES` and `CACHED_COMPONENTS`.
+  fn cached_pack() -> Arc<MultiFilePack> {
+    let sha1s: Vec<_> = sha1s_of(&CACHED_FILES)
+      .into_iter()
+      .chain(sha1s_of(&CACHED_COMPONENTS))
+      .collect();
+    Arc::new(MultiFilePack::new(
+      &sha1s
+        .iter()
+        .map(|(sha1, data)| (sha1.as_str(), *data))
+        .collect::<Vec<(&str, &[u8])>>(),
+    ))
+  }
+
+  /// An update restoring the component pack whose files are pack files of
+  /// version 3, except the second file of each list, which is in version 4.
+  fn two_version_request(root: &Root, transport: &Arc<MultiFilePack>) -> UpdateRequest {
+    let three = PackSession::new(transport.clone(), 3);
+    let four = PackSession::new(transport.clone(), 4);
+    let mut files = pack_remote_files(&CACHED_FILES, &three);
+    files[1].source = FileSource::Pack(four.clone());
+    let mut component = pack_remote_files(&CACHED_COMPONENTS, &three);
+    component[1].source = FileSource::Pack(four);
+    let operations = files.iter().map(write_op).collect();
+    let mut update = request(root, files, operations, "0.16.0");
+    update.remote.component_pack = Some(ComponentPack {
+      mmc_pack: serde_json::json!({ "components": [], "formatVersion": 1 }),
+      instance_cfg: BTreeMap::new(),
+      files: component,
+    });
+    update.restore_components = true;
+    update
+  }
+
+  /// `remote` written to the remote cache and read back the way
+  /// `load_remote_cache` does, with sessions on `transport`. Also returns how
+  /// many sessions were made.
+  fn through_remote_cache(
+    root: &Root,
+    remote: &RemoteModpack,
+    transport: &Arc<MultiFilePack>,
+  ) -> (RemoteModpack, usize) {
+    use crate::instance::modpack_update::sources::RemoteCache;
+    let cache = RemoteCache::new(&origin("2"), &root.0, remote, None);
+    let bytes = serde_json::to_vec(&cache).unwrap();
+    let back: RemoteCache = serde_json::from_slice(&bytes).unwrap();
+    let made = std::cell::Cell::new(0);
+    let remote = RemoteModpack::from_stored(back.remote, |version_id| {
+      made.set(made.get() + 1);
+      PackSession::new(transport.clone(), version_id)
+    });
+    (remote, made.get())
+  }
+
+  #[test]
+  fn a_remote_read_back_from_the_cache_has_one_pack_session_per_version() {
+    let root = Root::new();
+    let transport = cached_pack();
+    let update = two_version_request(&root, &transport);
+
+    let (remote, made) = through_remote_cache(&root, &update.remote, &transport);
+
+    assert_eq!(made, 2);
+    let files: Vec<&RemoteFile> = remote
+      .files
+      .iter()
+      .chain(&remote.component_pack.as_ref().unwrap().files)
+      .collect();
+    let sessions: Vec<_> = pack_sessions(&files)
+      .into_iter()
+      .map(|(session, wanted)| (session.version_id(), wanted.len()))
+      .collect();
+    assert_eq!(sessions, [(3, 3), (4, 2)]);
+  }
+
+  #[tokio::test]
+  async fn an_update_read_back_from_the_cache_locates_each_version_once() {
+    let root = setup();
+    let env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let transport = cached_pack();
+    let mut update = two_version_request(&root, &transport);
+    update.remote = through_remote_cache(&root, &update.remote, &transport).0;
+
+    apply(&env, update).await.unwrap();
+
+    assert_eq!(
+      transport.locates.lock().unwrap().as_slice(),
+      [(3, 3), (4, 2)]
+    );
+    for (path, data) in CACHED_FILES {
+      assert_eq!(
+        root.read(path).as_deref(),
+        Some(std::str::from_utf8(data).unwrap())
+      );
+    }
+    assert_eq!(
+      env.restored.lock().unwrap().as_slice(),
+      [
+        "patches/com.example.json=patch-bytes",
+        "libraries/l.jar=lib"
+      ]
+    );
   }
 
   #[tokio::test]
@@ -1423,5 +1923,131 @@ mod tests {
     assert_eq!(root.read("mods/a.jar").as_deref(), Some("a2"));
     assert_eq!(root.read("mods/b.jar").as_deref(), Some("b2"));
     assert_eq!(root.read("config/c.toml").as_deref(), Some(remote_text));
+  }
+
+  /// A text conflict answered "keep local" block by block still has its new
+  /// base cached, so the local-change list can show the line diff instead of
+  /// `BaseMissing`.
+  #[tokio::test]
+  async fn keeping_local_hunks_still_caches_the_new_base() {
+    use crate::instance::helpers::modpack::baseline::BaselineFile;
+    use crate::instance::modpack_update::commands::selected_hunk_contents;
+    use crate::instance::modpack_update::diff::{resolve, ConflictChoice};
+    use crate::instance::modpack_update::plan::{
+      count_local_changes, local_changes, prepare_with_contents,
+    };
+
+    let root = setup();
+    root.write("config/c.toml", "x = 2\ny = 1\n");
+    let base_text = "x = 1\ny = 1\n";
+    let remote_text = "x = 3\ny = 1\n";
+    let key = sha1_of(base_text.as_bytes());
+    let installed = ModpackBaseline::build(
+      &origin("1"),
+      loader("0.15.0"),
+      vec![BaselineFile {
+        path: "config/c.toml".to_string(),
+        sha1: key.sha1.clone(),
+        size: key.size,
+      }],
+    );
+    base_store::store(&root.0, &installed.files[0], base_text.as_bytes()).unwrap();
+
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let remote_files = vec![url_file("config/c.toml", remote_text, &mut env)];
+    let mut update = request(&root, remote_files, Vec::new(), "0.15.0");
+    let contents = BTreeMap::from([("config/c.toml".to_string(), remote_text.as_bytes().to_vec())]);
+    let prepared = prepare_with_contents(&root.0, &installed, &update.remote, &contents)
+      .await
+      .unwrap();
+    assert_eq!(prepared.diff.conflicts.len(), 1);
+    assert!(!prepared.diff.conflicts[0].hunks.is_empty());
+
+    // Keep every local block, as the dialog sends for per-hunk choices.
+    let mut choices = BTreeMap::new();
+    for index in 0..prepared.diff.conflicts[0].hunks.len() {
+      choices.insert(format!("config/c.toml#{index}"), ConflictChoice::KeepLocal);
+    }
+    update.merged_contents = selected_hunk_contents(&prepared, &mut choices).unwrap();
+    update.operations = resolve(&prepared.diff, &choices);
+    update.base_texts = contents.clone();
+
+    apply(&env, update).await.unwrap();
+
+    let baseline = ModpackBaseline::load(&root.0).await.unwrap();
+    assert_eq!(count_local_changes(&root.0, &baseline).await.unwrap(), 1);
+    let changes = local_changes(&root.0, &baseline, true).await.unwrap();
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].path, "config/c.toml");
+    assert!(changes[0].hunks.is_some());
+    assert_eq!(changes[0].no_diff, None);
+  }
+
+  /// An automatically merged text file keeps its line diff in the
+  /// local-change list as well: the new base survives the update.
+  #[tokio::test]
+  async fn an_auto_merged_file_keeps_its_line_diff() {
+    use crate::instance::helpers::modpack::baseline::BaselineFile;
+    use crate::instance::modpack_update::plan::{
+      count_local_changes, local_changes, prepare_with_contents,
+    };
+
+    let root = setup();
+    // Local edits line 1, the new version edits line 3: they merge cleanly.
+    root.write("config/c.toml", "x = 2\ny = 1\nz = 1\n");
+    let base_text = "x = 1\ny = 1\nz = 1\n";
+    let remote_text = "x = 1\ny = 1\nz = 3\n";
+    let key = sha1_of(base_text.as_bytes());
+    let installed = ModpackBaseline::build(
+      &origin("1"),
+      loader("0.15.0"),
+      vec![BaselineFile {
+        path: "config/c.toml".to_string(),
+        sha1: key.sha1.clone(),
+        size: key.size,
+      }],
+    );
+    base_store::store(&root.0, &installed.files[0], base_text.as_bytes()).unwrap();
+
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let remote_files = vec![url_file("config/c.toml", remote_text, &mut env)];
+    let mut update = request(&root, remote_files, Vec::new(), "0.15.0");
+    let contents = BTreeMap::from([("config/c.toml".to_string(), remote_text.as_bytes().to_vec())]);
+    let prepared = prepare_with_contents(&root.0, &installed, &update.remote, &contents)
+      .await
+      .unwrap();
+    assert!(prepared.diff.conflicts.is_empty());
+    assert_eq!(prepared.diff.auto_merged.len(), 1);
+
+    update.merged_contents = prepared.merged_contents.clone();
+    update.operations =
+      crate::instance::modpack_update::diff::resolve(&prepared.diff, &BTreeMap::new());
+    // The command fetched these bytes while the file was still a text
+    // conflict, before `finish` merged it, and passes them on for the base
+    // cache.
+    update.base_texts = contents.clone();
+
+    apply(&env, update).await.unwrap();
+
+    assert_eq!(
+      root.read("config/c.toml").as_deref(),
+      Some("x = 2\ny = 1\nz = 3\n")
+    );
+    let baseline = ModpackBaseline::load(&root.0).await.unwrap();
+    assert_eq!(count_local_changes(&root.0, &baseline).await.unwrap(), 1);
+    let changes = local_changes(&root.0, &baseline, true).await.unwrap();
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].path, "config/c.toml");
+    let hunks = changes[0].hunks.as_ref().expect("line diff expected");
+    assert!(hunks
+      .iter()
+      .any(|hunk| hunk.lines.iter().any(|line| line.text == "x = 2")));
+    assert_eq!(changes[0].no_diff, None);
   }
 }

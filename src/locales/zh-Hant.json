@@ -2612,7 +2612,7 @@
           "title": "Export failed",
           "description": {
             "MODPACK_EXPORT_COMPONENT_INSTANCE": "Component-profile instances can only be exported as MultiMC",
-            "MODPACK_EXPORT_PROFILE_MISSING": "This instance was imported by an older version and lacks the component data needed for export. Re-import the modpack and try again"
+            "MODPACK_EXPORT_PROFILE_MISSING": "This instance was imported by an older version and lacks the component data needed for export or publish. Re-import the modpack; re-importing creates a new instance, so saves and configs need to be migrated manually"
           }
         }
       },
@@ -2665,6 +2665,15 @@
             "MODPACK_UPDATE_LINE_GONE": "平台上已不存在該整合包的這條線",
             "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暫時取不到此版本所需的檔案，請稍後重試",
             "MODPACK_UPDATE_MERGE_INVALID": "按區塊選擇後設定檔的格式無效，請調整選擇後重試"
+          }
+        }
+      },
+      "checkCampusModpackPublishable": {
+        "success": "This instance can be published",
+        "error": {
+          "title": "This instance cannot be published",
+          "description": {
+            "MODPACK_EXPORT_PROFILE_MISSING": "This instance was imported by an older version and lacks the component data needed for export or publish. Re-import the modpack; re-importing creates a new instance, so saves and configs need to be migrated manually"
           }
         }
       },
@@ -3229,7 +3238,8 @@
       "confirmRollback": "確認撤銷"
     },
     "toast": {
-      "loaderPending": "模組載入器需要重新安裝，請在下載頁查看進度"
+      "loaderPending": "模組載入器需要重新安裝，請在下載頁查看進度",
+      "planChanged": "更新計劃已變化，請重新選擇衝突"
     },
     "unlink": {
       "button": "解除跟隨",
@@ -3315,12 +3325,11 @@
       "action": {
         "update": "更新",
         "details": "詳情",
-        "viewChanges": "查看改動",
-        "viewChangesCount": "查看改動（{{count}}）"
+        "viewChanges": "查看改動"
       },
       "updateTo": "可更新到 {{latest}}",
       "platform": {
-        "campus": "校內"
+        "campus": "USTB"
       },
       "installed": "已安裝",
       "installedHint": "本地已有 {{count}} 個對應實例，點擊查看",

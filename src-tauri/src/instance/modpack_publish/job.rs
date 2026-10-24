@@ -5,11 +5,12 @@
 //! own and shows on the task list next to the downloads. Everything it needs to
 //! start over after a failure or a restart is in the [`JobRecord`].
 
+use super::cancel::{apply_cancel, cancel_remote, CancelOutcome};
 use super::commands::{
   adopt_published, authed_json, failure, failure_code, failure_detail, instance_of, PublishOutcome,
 };
 use super::manifest::{LocalFile, PackObject};
-use super::pack::{build_pack, verify_pack};
+use super::pack::{is_verified, mark_verified, rebuild_pack, verify_pack};
 use super::record::{jobs_dir, paths, JobRecord, Phase, RecordedUpload};
 use super::transfer::{report, SentBytes};
 use crate::error::{USTBLError, USTBLResult};
@@ -70,22 +71,103 @@ pub(super) fn is_running(job_id: &str) -> bool {
   ACTIVE.lock().unwrap().iter().any(|id| id == job_id)
 }
 
+pub(super) fn ensure_not_running(job_id: &str) -> USTBLResult<()> {
+  if is_running(job_id) {
+    return Err(USTBLError("任务正在进行，请先在任务列表中取消".into()));
+  }
+  Ok(())
+}
+
 /// After a restart, a record the platform is still processing gets its task
 /// card back (§3.2.2): the card starts right at the platform stage instead
 /// of the publish being watched invisibly in the background.
 pub(crate) fn resume_monitors(app: &AppHandle) {
   for record in JobRecord::list(&jobs_dir()) {
     if record.phase == Phase::Processing {
-      let _ = PublishJob {
-        app: app.clone(),
-        uploader: crate::utils::web::build_part_upload_client(app),
-        record,
-        // Only platform processing is watched here, never a part upload.
-        concurrency: None,
-      }
-      .start();
+      start_monitor(app, record);
     }
   }
+}
+
+/// Jobs whose cancel cleanup or discard is still on the wire. Process-local
+/// only: nothing about it is persisted. While a job id is listed here,
+/// `resume_campus_modpack_publish` and `discard_campus_modpack_publish`
+/// refuse to touch it, so neither can race the cleanup's own read of the
+/// record or the watch it may start.
+static CANCELLING: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+#[cfg(test)]
+fn is_cancelling(job_id: &str) -> bool {
+  CANCELLING.lock().unwrap().iter().any(|id| id == job_id)
+}
+
+/// Registered synchronously before any cancel cleanup or discard reaches
+/// the network, and released only when the whole exchange — remote answer,
+/// record action, and the watch it may start — is fully done. Never
+/// inferred from the job's own `ActiveToken`, which drops with the
+/// cancelled task itself, long before the cleanup's remote calls finish.
+pub(super) struct CancellingToken(String);
+
+impl CancellingToken {
+  pub(super) fn take(job_id: &str) -> Option<Self> {
+    let mut cancelling = CANCELLING.lock().unwrap();
+    if cancelling.iter().any(|id| id == job_id) {
+      return None;
+    }
+    cancelling.push(job_id.to_string());
+    Some(Self(job_id.to_string()))
+  }
+}
+
+impl Drop for CancellingToken {
+  fn drop(&mut self) {
+    CANCELLING.lock().unwrap().retain(|id| id != &self.0);
+  }
+}
+
+/// The cancel guard's cleanup, run as its own task so it does not outlive
+/// the app. The remote answer decides through the shared action; the record
+/// it applies to is re-read from disk at that point, never the snapshot the
+/// guard was created with. The `cancelling` registration outlives the whole
+/// exchange and is released last, after the watch (if any) is running and
+/// `ACTIVE` can take over the duplicate protection.
+async fn cleanup_cancelled(app: &AppHandle, job_id: String, version_id: i64) {
+  let remote = cancel_remote(app, version_id).await;
+  let app_for_watch = app.clone();
+  let outcome = apply_cancel(&jobs_dir(), &job_id, remote, move |record| {
+    start_monitor(&app_for_watch, record);
+  });
+  match outcome {
+    CancelOutcome::Removed => {}
+    CancelOutcome::Kept(reason) => {
+      log::warn!(
+        "Modpack publish {job_id} was cancelled but the platform could not confirm \
+         the version is gone ({}); keeping the local record for a later continue or discard",
+        reason.0
+      );
+    }
+    CancelOutcome::Watching => {}
+    CancelOutcome::RecordKept(error) => {
+      log::warn!(
+        "Modpack publish {job_id} was cancelled but its record could not be read back or saved: {error:?}"
+      );
+    }
+  }
+}
+
+/// Watch the platform stage of `record` through the ordinary job path —
+/// the same one `resume_monitors` and a 409-conflicted discard use. A
+/// failed start (the job already runs) only means the watch is picked up
+/// again later; the record itself is never touched here.
+pub(super) fn start_monitor(app: &AppHandle, record: JobRecord) {
+  let _ = PublishJob {
+    app: app.clone(),
+    uploader: crate::utils::web::build_part_upload_client(app),
+    record,
+    // Only platform processing is watched here, never a part upload.
+    concurrency: None,
+  }
+  .start();
 }
 
 struct ActiveToken(String);
@@ -146,9 +228,13 @@ struct PublishFinished {
   error: Option<String>,
 }
 
-/// Cancelling the task drops the job; that gives the version up on the platform
-/// and forgets the record. Closing the launcher drops it too but must keep
-/// both, so the cleanup is a task of its own that does not outlive the app.
+/// Cancelling the task drops the job; that gives the version up on the
+/// platform and — only once the platform confirms the version is gone —
+/// forgets the record (§3.2, v3 §12). Closing the launcher drops the job
+/// too but must keep both, so the cleanup is a task of its own that does
+/// not outlive the app. The guard holds only the job's identity: the record
+/// is re-read from disk once the remote answer is in, since the job may
+/// have kept writing it until the very moment it was cancelled.
 struct CancelGuard {
   app: AppHandle,
   job_id: String,
@@ -162,15 +248,16 @@ impl Drop for CancelGuard {
       return;
     }
     let (app, job_id, version_id) = (self.app.clone(), self.job_id.clone(), self.version_id);
+    // Registered synchronously, before the cleanup ever reaches the
+    // runtime: a resume or discard coming in right after the cancel must
+    // already see the job as busy. The token lives in the cleanup task
+    // and drops when it is fully done.
+    let Some(token) = CancellingToken::take(&job_id) else {
+      return;
+    };
     tauri::async_runtime::spawn(async move {
-      let _ = authed_json(
-        &app,
-        reqwest::Method::DELETE,
-        &format!("/versions/{version_id}"),
-        None,
-      )
-      .await;
-      JobRecord::remove(&jobs_dir(), &job_id);
+      let _token = token;
+      cleanup_cancelled(&app, job_id, version_id).await;
     });
   }
 }
@@ -338,6 +425,30 @@ async fn read_part(pack: &Path, offset: u64, length: u64) -> USTBLResult<(Bytes,
   Ok((Bytes::from(buffer), digest))
 }
 
+/// The task card is titled after the project's display name, not the slug the
+/// server generated. `?` and `@` are the group id's own separators and cannot
+/// appear in the name.
+fn display_project(record: &JobRecord) -> String {
+  let name = record
+    .project_name
+    .as_deref()
+    .map(str::trim)
+    .filter(|name| !name.is_empty())
+    .unwrap_or(record.project_slug.as_str());
+  name
+    .chars()
+    .map(|c| {
+      if matches!(c, '?' | '@' | '\n' | '\r') {
+        ' '
+      } else {
+        c
+      }
+    })
+    .collect::<String>()
+    .trim()
+    .to_string()
+}
+
 pub(super) struct PublishJob {
   pub app: AppHandle,
   pub uploader: reqwest::Client,
@@ -364,7 +475,7 @@ impl PublishJob {
     let monitor = app.state::<Pin<Box<TaskMonitor>>>();
     let group = format!(
       "modpack-publish?{} {}@{}",
-      self.record.project_slug,
+      display_project(&self.record),
       self.record.version_number,
       chrono::Utc::now().timestamp_millis()
     );
@@ -438,7 +549,9 @@ impl PublishJob {
         // frontend; a recorded one is left exactly as the platform stage
         // saved it (§3.2.2: a lost watch stays `Processing`).
         if let Some(message) = record_failure(&mut self.record, failure) {
-          let _ = self.record.save(&dir);
+          if let Err(error) = self.record.save(&dir) {
+            log::warn!("Modpack publish {} could not save its record: {error:?}", self.record.id);
+          }
           emit_finished(&app, &tasks.group, &self.record, None, Some(message));
         }
       }
@@ -619,7 +732,9 @@ impl PublishJob {
             tasks.platform.write().unwrap().mark_failed(message.clone());
             self.record.phase = Phase::Processing;
             self.record.error = Some(message.clone());
-            let _ = self.record.save(&jobs_dir());
+            if let Err(error) = self.record.save(&jobs_dir()) {
+              log::warn!("Modpack publish {} could not save its record: {error:?}", self.record.id);
+            }
             return Err(ExecuteFailure::Recorded);
           }
           sleep(POLL).await;
@@ -629,7 +744,9 @@ impl PublishJob {
           tasks.platform.write().unwrap().mark_failed(error.0.clone());
           self.record.phase = Phase::Failed;
           self.record.error = Some(error.0.clone());
-          let _ = self.record.save(&jobs_dir());
+          if let Err(error) = self.record.save(&jobs_dir()) {
+            log::warn!("Modpack publish {} could not save its record: {error:?}", self.record.id);
+          }
           emit_finished(&self.app, &tasks.group, &self.record, None, Some(error.0.clone()));
           return Err(ExecuteFailure::Recorded);
         }
@@ -654,7 +771,9 @@ impl PublishJob {
         tasks.platform.write().unwrap().mark_failed(message.clone());
         self.record.phase = Phase::Failed;
         self.record.error = Some(message.clone());
-        let _ = self.record.save(&jobs_dir());
+        if let Err(error) = self.record.save(&jobs_dir()) {
+          log::warn!("Modpack publish {} could not save its record: {error:?}", self.record.id);
+        }
         emit_finished(&self.app, &tasks.group, &self.record, None, Some(message.clone()));
         return Err(ExecuteFailure::Recorded);
       }
@@ -673,7 +792,9 @@ impl PublishJob {
         tasks.platform.write().unwrap().mark_failed(message.clone());
         self.record.phase = Phase::Failed;
         self.record.error = Some(message.clone());
-        let _ = self.record.save(&jobs_dir());
+        if let Err(error) = self.record.save(&jobs_dir()) {
+          log::warn!("Modpack publish {} could not save its record: {error:?}", self.record.id);
+        }
         emit_finished(&self.app, &tasks.group, &self.record, None, Some(message.clone()));
         return Err(ExecuteFailure::Recorded);
       }
@@ -779,7 +900,9 @@ impl PublishJob {
   /// passes the same self-check the upload itself relies on (§13.2): on a
   /// rebuild, because the delta pack never touched disk before; when it is
   /// already there, because a previous run may have been interrupted mid
-  /// write.
+  /// write. A pack this process just built and verified skips the read-back
+  /// (its bytes are known); one resumed from disk after a restart always gets
+  /// the full check.
   async fn ensure_pack(&self) -> USTBLResult<std::path::PathBuf> {
     let pack = self
       .record
@@ -790,23 +913,27 @@ impl PublishJob {
     let exists = tokio::fs::metadata(&path)
       .await
       .is_ok_and(|meta| meta.len() == pack.size);
-    if !exists {
-      let objects: Vec<PackObject> = self.record.objects.iter().map(PackObject::from).collect();
-      let target = path.clone();
-      let built = tokio::task::spawn_blocking(move || build_pack(&objects, &target))
+    if exists && is_verified(&path) {
+      return Ok(path);
+    }
+    let check_path = path.clone();
+    if exists {
+      tokio::task::spawn_blocking(move || verify_pack(&check_path, Some(&pack.sha1)))
         .await
         .map_err(|e| USTBLError(e.to_string()))??;
-      if built.sha1 != pack.sha1 || built.size != pack.size {
-        let _ = tokio::fs::remove_file(&path).await;
-        return Err(USTBLError(
-          "实例中的文件在上次发布后发生了变化，无法继续，请放弃这个任务后重新发布".into(),
-        ));
-      }
-    }
-    let (check_path, check_sha1) = (path.clone(), pack.sha1.clone());
-    tokio::task::spawn_blocking(move || verify_pack(&check_path, &check_sha1))
+    } else {
+      let objects: Vec<PackObject> = self.record.objects.iter().map(PackObject::from).collect();
+      tokio::task::spawn_blocking(move || {
+        rebuild_pack(&objects, &check_path, &pack.sha1, pack.size)
+      })
       .await
       .map_err(|e| USTBLError(e.to_string()))??;
+    }
+    if let Ok(meta) = tokio::fs::metadata(&path).await {
+      if let Ok(modified) = meta.modified() {
+        mark_verified(&path, meta.len(), modified);
+      }
+    }
     Ok(path)
   }
 
@@ -1562,6 +1689,14 @@ mod tests {
   }
 
   #[test]
+  fn discard_gate_rejects_an_active_job() {
+    let token = ActiveToken::take("job-discard-active").unwrap();
+    assert!(ensure_not_running("job-discard-active").is_err());
+    drop(token);
+    assert!(ensure_not_running("job-discard-active").is_ok());
+  }
+
+  #[test]
   fn reconciliation_picks_up_only_the_current_generations_parts() {
     let body = json!({
       "status": "uploading",
@@ -1792,6 +1927,7 @@ mod tests {
       instance_id: "i".into(),
       instance_name: "n".into(),
       project_slug: "p".into(),
+      project_name: None,
       version_id: 1,
       version_number: "1".into(),
       files: vec![],
@@ -1811,5 +1947,21 @@ mod tests {
     let mut record = JobRecord { ..record };
     assert_eq!(record_failure(&mut record, &ExecuteFailure::Recorded), None);
     assert_eq!(record.error.as_deref(), Some("平台上已找不到这个版本"));
+  }
+
+  /// The `cancelling` registration a resume or a discard checks: it exists
+  /// from the moment the guard fires until the cleanup is fully done, so
+  /// neither command can slip in between the job's task dying and the
+  /// cleanup's last remote answer.
+  #[test]
+  fn a_job_is_busy_while_its_cancel_cleanup_runs_and_free_after() {
+    assert!(!is_cancelling("job-cancel-x"));
+    let token = CancellingToken::take("job-cancel-x").unwrap();
+    assert!(is_cancelling("job-cancel-x"));
+    // One cleanup at a time; a second registration never happens in
+    // production (the guard fires once), but the registry must refuse it.
+    assert!(CancellingToken::take("job-cancel-x").is_none());
+    drop(token);
+    assert!(!is_cancelling("job-cancel-x"));
   }
 }

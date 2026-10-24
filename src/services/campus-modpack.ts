@@ -120,6 +120,17 @@ export class CampusModpackService {
     });
   }
 
+  /**
+   * Gate the publish dialog on open: fails when the instance was imported by
+   * an older launcher version and lacks the component data for publishing.
+   */
+  @responseHandler("instance")
+  static async checkCampusModpackPublishable(
+    instanceId: string
+  ): Promise<InvokeResponse<null>> {
+    return await invoke("check_campus_modpack_publishable", { instanceId });
+  }
+
   static onPublishFinished(
     callback: (payload: CampusPublishFinished) => void
   ): () => void {

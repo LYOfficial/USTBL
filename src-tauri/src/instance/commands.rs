@@ -257,6 +257,7 @@ pub fn delete_instance(app: AppHandle, instance_id: String) -> USTBLResult<()> {
     fs::remove_dir_all(path)?;
   }
   // not update state here. if send success to frontend, it will call retrieve_instance_list and update state there.
+  crate::instance::modpack_update::plan::invalidate_scan_cache(path);
 
   if config_state.states.shared.selected_instance_id == instance_id {
     config_state.partial_update(

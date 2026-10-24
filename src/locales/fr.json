@@ -2607,7 +2607,7 @@
           "title": "Échec de l’exportation",
           "description": {
             "MODPACK_EXPORT_COMPONENT_INSTANCE": "Une instance à profil de composants ne peut être exportée qu’au format MultiMC",
-            "MODPACK_EXPORT_PROFILE_MISSING": "Cette instance a été importée par une ancienne version et ne contient pas les données de composants nécessaires à l’exportation. Réimportez le pack de mods puis réessayez"
+            "MODPACK_EXPORT_PROFILE_MISSING": "Cette instance a été importée par une ancienne version et ne contient pas les données de composants nécessaires à l’exportation ou à la publication. Réimportez le pack de mods ; la réimportation crée une nouvelle instance, les sauvegardes et les configurations doivent être migrées manuellement"
           }
         }
       },
@@ -2665,6 +2665,15 @@
             "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack",
             "MODPACK_UPDATE_PACK_UNAVAILABLE": "Les fichiers de cette version sont momentanément indisponibles sur la plateforme. Réessayez plus tard",
             "MODPACK_UPDATE_MERGE_INVALID": "Les blocs sélectionnés produisent une configuration invalide. Modifiez vos choix et réessayez"
+          }
+        }
+      },
+      "checkCampusModpackPublishable": {
+        "success": "Cette instance peut être publiée",
+        "error": {
+          "title": "Cette instance ne peut pas être publiée",
+          "description": {
+            "MODPACK_EXPORT_PROFILE_MISSING": "Cette instance a été importée par une ancienne version et ne contient pas les données de composants nécessaires à l’exportation ou à la publication. Réimportez le pack de mods ; la réimportation crée une nouvelle instance, les sauvegardes et les configurations doivent être migrées manuellement"
           }
         }
       },
@@ -3229,7 +3238,8 @@
       "confirmRollback": "Confirmer l'annulation"
     },
     "toast": {
-      "loaderPending": "Le chargeur de mods doit être réinstallé. Consultez la page des téléchargements"
+      "loaderPending": "Le chargeur de mods doit être réinstallé. Consultez la page des téléchargements",
+      "planChanged": "Le plan de mise à jour a changé. Choisissez de nouveau comment résoudre les conflits"
     },
     "unlink": {
       "button": "Ne plus suivre",
@@ -3315,12 +3325,11 @@
       "action": {
         "update": "Mettre à jour",
         "details": "Détails",
-        "viewChanges": "Voir les modifications",
-        "viewChangesCount": "Voir les modifications ({{count}})"
+        "viewChanges": "Voir les modifications"
       },
       "updateTo": "Mise à jour vers {{latest}}",
       "platform": {
-        "campus": "Campus"
+        "campus": "USTB"
       },
       "installed": "Installé",
       "installedHint": "{{count}} instance(s) correspondante(s) sur cet appareil, cliquez pour voir",

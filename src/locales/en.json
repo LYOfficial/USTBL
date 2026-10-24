@@ -2612,7 +2612,7 @@
           "title": "Export failed",
           "description": {
             "MODPACK_EXPORT_COMPONENT_INSTANCE": "Component-profile instances can only be exported as MultiMC",
-            "MODPACK_EXPORT_PROFILE_MISSING": "This instance was imported by an older version and lacks the component data needed for export. Re-import the modpack and try again"
+            "MODPACK_EXPORT_PROFILE_MISSING": "This instance was imported by an older version and lacks the component data needed for export or publish. Re-import the modpack; re-importing creates a new instance, so saves and configs need to be migrated manually"
           }
         }
       },
@@ -2665,6 +2665,15 @@
             "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack",
             "MODPACK_UPDATE_PACK_UNAVAILABLE": "The files of this version are temporarily unavailable on the platform. Try again later",
             "MODPACK_UPDATE_MERGE_INVALID": "The selected blocks produce an invalid configuration. Adjust your choices and try again"
+          }
+        }
+      },
+      "checkCampusModpackPublishable": {
+        "success": "This instance can be published",
+        "error": {
+          "title": "This instance cannot be published",
+          "description": {
+            "MODPACK_EXPORT_PROFILE_MISSING": "This instance was imported by an older version and lacks the component data needed for export or publish. Re-import the modpack; re-importing creates a new instance, so saves and configs need to be migrated manually"
           }
         }
       },
@@ -3229,7 +3238,8 @@
       "confirmRollback": "Confirm undo"
     },
     "toast": {
-      "loaderPending": "The mod loader needs to be installed again. See the downloads page"
+      "loaderPending": "The mod loader needs to be installed again. See the downloads page",
+      "planChanged": "The update plan changed. Choose how to resolve the conflicts again"
     },
     "unlink": {
       "button": "Unfollow",
@@ -3315,12 +3325,11 @@
       "action": {
         "update": "Update",
         "details": "Details",
-        "viewChanges": "View changes",
-        "viewChangesCount": "View changes ({{count}})"
+        "viewChanges": "View changes"
       },
       "updateTo": "Update to {{latest}}",
       "platform": {
-        "campus": "Campus"
+        "campus": "USTB"
       },
       "installed": "Installed",
       "installedHint": "{{count}} matching instance(s) on this device, click to view",

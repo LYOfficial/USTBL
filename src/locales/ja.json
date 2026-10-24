@@ -2612,7 +2612,7 @@
           "title": "Export failed",
           "description": {
             "MODPACK_EXPORT_COMPONENT_INSTANCE": "Component-profile instances can only be exported as MultiMC",
-            "MODPACK_EXPORT_PROFILE_MISSING": "This instance was imported by an older version and lacks the component data needed for export. Re-import the modpack and try again"
+            "MODPACK_EXPORT_PROFILE_MISSING": "This instance was imported by an older version and lacks the component data needed for export or publish. Re-import the modpack; re-importing creates a new instance, so saves and configs need to be migrated manually"
           }
         }
       },
@@ -2665,6 +2665,15 @@
             "MODPACK_UPDATE_LINE_GONE": "プラットフォームにこのモッドパックのラインはもうありません",
             "MODPACK_UPDATE_PACK_UNAVAILABLE": "このバージョンのファイルはプラットフォーム上で一時的に利用できません。しばらくしてからやり直してください",
             "MODPACK_UPDATE_MERGE_INVALID": "選択したブロックでは設定形式が無効になります。選択を変更して再試行してください"
+          }
+        }
+      },
+      "checkCampusModpackPublishable": {
+        "success": "This instance can be published",
+        "error": {
+          "title": "This instance cannot be published",
+          "description": {
+            "MODPACK_EXPORT_PROFILE_MISSING": "This instance was imported by an older version and lacks the component data needed for export or publish. Re-import the modpack; re-importing creates a new instance, so saves and configs need to be migrated manually"
           }
         }
       },
@@ -3229,7 +3238,8 @@
       "confirmRollback": "取り消しを確定"
     },
     "toast": {
-      "loaderPending": "MODローダーの再インストールが必要です。ダウンロードページをご確認ください"
+      "loaderPending": "MODローダーの再インストールが必要です。ダウンロードページをご確認ください",
+      "planChanged": "更新プランが変わりました。競合の解決方法をもう一度選んでください"
     },
     "unlink": {
       "button": "追従を解除",
@@ -3315,12 +3325,11 @@
       "action": {
         "update": "更新",
         "details": "詳細",
-        "viewChanges": "変更を表示",
-        "viewChangesCount": "変更を表示（{{count}}）"
+        "viewChanges": "変更を表示"
       },
       "updateTo": "{{latest}} に更新できます",
       "platform": {
-        "campus": "校内"
+        "campus": "USTB"
       },
       "installed": "インストール済み",
       "installedHint": "この端末に該当するインスタンスが {{count}} 件あります。クリックで表示",

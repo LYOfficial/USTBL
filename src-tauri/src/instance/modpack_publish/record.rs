@@ -89,6 +89,10 @@ pub struct JobRecord {
   pub instance_id: String,
   pub instance_name: String,
   pub project_slug: String,
+  /// Human-readable project name for the task card; older records only have
+  /// the slug and fall back to it.
+  #[serde(default)]
+  pub project_name: Option<String>,
   pub version_id: i64,
   pub version_number: String,
   /// The files the version lists; the instance is compared with them once the
@@ -234,6 +238,7 @@ mod tests {
       instance_id: "instance".into(),
       instance_name: "GTNH".into(),
       project_slug: "gtnh".into(),
+      project_name: None,
       version_id: 7,
       version_number: "2.8.0".into(),
       files: vec![RecordedFile {

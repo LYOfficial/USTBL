@@ -36,6 +36,10 @@ import {
 } from "@/models/modpack-update";
 import { CampusModpackService } from "@/services/campus-modpack";
 import { ModpackUpdateService } from "@/services/modpack-update";
+import {
+  RememberedChoices,
+  resolvePlanChoices,
+} from "@/utils/modpack-update-choices";
 
 interface UpdateModpackModalProps extends Omit<ModalProps, "children"> {
   instanceId: string;
@@ -52,10 +56,7 @@ interface PlanError {
 }
 
 /** Conflict choices remembered per instance while the launcher runs. */
-const rememberedChoices = new Map<
-  string,
-  { planHash: string; choices: Record<string, ModpackConflictChoice> }
->();
+const rememberedChoices: RememberedChoices = new Map();
 
 const formatSize = (size?: number) => {
   if (size === undefined) return "";
@@ -174,67 +175,113 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
   // Each run of the open/retry flow gets a token; a preview that answers to
   // an older token is stale (cancelled by the check or a retry) and dropped.
   const roundRef = useRef(0);
+  const planRef = useRef(plan);
+  planRef.current = plan;
+  // After a failed apply the choices stay until the re-check proves the plan
+  // still is the one they were made for. The failed plan's hash travels in a
+  // ref: runCheck's setPlan(null) clears planRef long before the new prepare
+  // answers.
+  const keepChoicesForRecheckRef = useRef(false);
+  const failedPlanHashRef = useRef<string | null>(null);
+  // Synchronous in-flight guards so two clicks inside the same render frame
+  // cannot both enter the backend. State updates alone are async and leave a
+  // window for double submission.
+  const applyInFlight = useRef(false);
+  const checkInFlight = useRef(false);
+  const rollbackInFlight = useRef(false);
+  const resumeInFlight = useRef(false);
+  const prepareInFlight = useRef(false);
 
   const preparePlan = useCallback(
     async (round: number) => {
-      const response =
-        await ModpackUpdateService.prepareModpackUpdate(instanceId);
-      if (roundRef.current !== round) return;
-      if (response.status === "success") {
-        setPlan(response.data);
-        // Restore the choices the player made the last time this exact plan
-        // was shown.
-        const remembered = rememberedChoices.get(instanceId);
-        if (remembered && remembered.planHash === response.data.planHash) {
-          setChoices(remembered.choices);
+      if (prepareInFlight.current) return;
+      prepareInFlight.current = true;
+      try {
+        const response =
+          await ModpackUpdateService.prepareModpackUpdate(instanceId);
+        if (roundRef.current !== round) return;
+        if (response.status === "success") {
+          const recheck = keepChoicesForRecheckRef.current;
+          keepChoicesForRecheckRef.current = false;
+          const failedPlanHash = failedPlanHashRef.current;
+          failedPlanHashRef.current = null;
+          const resolved = resolvePlanChoices({
+            instanceId,
+            newPlanHash: response.data.planHash,
+            failedPlanHash,
+            recheckAfterFailure: recheck,
+            remembered: rememberedChoices,
+            currentChoices: choicesRef.current,
+          });
+          setChoices(resolved.choices);
+          if (resolved.toastPlanChanged) {
+            toast({
+              title: t("UpdateModpackModal.toast.planChanged"),
+              status: "info",
+            });
+          }
+          setPlan(response.data);
+          setPlanPhase("planned");
+        } else if (
+          response.details !== InstanceError.ModpackUpdatePrepareCancelled
+        ) {
+          setPlanError({
+            message: response.message,
+            details: response.details,
+          });
+          setPlanPhase("planFailed");
+        } else {
+          setPlanPhase("idle");
         }
-        setPlanPhase("planned");
-      } else if (
-        response.details !== InstanceError.ModpackUpdatePrepareCancelled
-      ) {
-        setPlanError({ message: response.message, details: response.details });
-        setPlanPhase("planFailed");
-      } else {
-        setPlanPhase("idle");
+      } finally {
+        prepareInFlight.current = false;
       }
     },
-    [instanceId]
+    [instanceId, t, toast]
   );
 
   const runCheck = useCallback(async () => {
-    const round = ++roundRef.current;
-    setCheckPhase("checking");
-    setPlanPhase("planning");
-    setPlan(null);
-    setPlanError(null);
-    setChoices({});
-    setConfirmingRollback(false);
-    // An interrupted update is rolled back before anything is compared.
-    const recovered =
-      await ModpackUpdateService.recoverModpackUpdate(instanceId);
-    if (recovered.status === "success" && recovered.data) {
-      getInstanceList(true);
-    }
-    // Check and preview run at the same time: the preview hits its cache
-    // when nothing changed, and the check is the light listing request.
-    const preparePromise = preparePlan(round);
-    const result = await checkModpackUpdate(instanceId, false);
-    if (roundRef.current !== round) return;
-    setCheck(result);
-    setCheckPhase("checked");
-    if (result.status !== "available") {
-      // No update: the preview is not worth waiting for; its answer, whenever
-      // it comes, belongs to a finished round and is dropped.
-      roundRef.current += 1;
-      void ModpackUpdateService.cancelModpackUpdatePrepare(instanceId);
-      setPlanPhase("idle");
-      if (result.status === "upToDate") {
-        // Only now is the local scan worth its hashing.
-        const scanned = await checkModpackUpdate(instanceId, true);
-        setCheck(scanned);
+    if (checkInFlight.current) return;
+    checkInFlight.current = true;
+    try {
+      const round = ++roundRef.current;
+      setCheckPhase("checking");
+      setPlanPhase("planning");
+      setPlan(null);
+      setPlanError(null);
+      if (!keepChoicesForRecheckRef.current) {
+        setChoices({});
       }
+      setConfirmingRollback(false);
+      // An interrupted update is rolled back before anything is compared.
+      const recovered =
+        await ModpackUpdateService.recoverModpackUpdate(instanceId);
+      if (recovered.status === "success" && recovered.data) {
+        getInstanceList(true);
+      }
+      // Check and preview run at the same time: the preview hits its cache
+      // when nothing changed, and the check is the light listing request.
+      const preparePromise = preparePlan(round);
+      const result = await checkModpackUpdate(instanceId, false);
+      if (roundRef.current !== round) return;
+      setCheck(result);
+      setCheckPhase("checked");
+      if (result.status !== "available") {
+        // No update: the preview is not worth waiting for; its answer, whenever
+        // it comes, belongs to a finished round and is dropped.
+        roundRef.current += 1;
+        void ModpackUpdateService.cancelModpackUpdatePrepare(instanceId);
+        setPlanPhase("idle");
+        if (result.status === "upToDate") {
+          // Only now is the local scan worth its hashing.
+          const scanned = await checkModpackUpdate(instanceId, true);
+          setCheck(scanned);
+        }
+      }
+      await preparePromise;
+    } finally {
+      checkInFlight.current = false;
     }
-    await preparePromise;
   }, [instanceId, getInstanceList, checkModpackUpdate, preparePlan]);
 
   // The opening check runs once per instance. runCheck also depends on
@@ -248,8 +295,6 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
   }, [instanceId]);
 
   // Remember the current choices when the dialog closes, by plan hash.
-  const planRef = useRef(plan);
-  planRef.current = plan;
   useEffect(() => {
     return () => {
       const plan = planRef.current;
@@ -269,41 +314,52 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
   }, [instanceId]);
 
   const handleApply = useCallback(async () => {
-    if (!plan) return;
-    setProgress(null);
-    setCheckPhase("applying");
-    const response = await ModpackUpdateService.applyModpackUpdate(
-      instanceId,
-      plan.planHash,
-      choices
-    );
-    getInstanceList(true);
-    if (response.status === "success") {
-      // The ledger reads local changes from the cached check; refresh it so
-      // conflicts answered with the remote side stop counting.
-      void checkModpackUpdate(instanceId, true);
-      rememberedChoices.delete(instanceId);
-      toast({
-        title: response.message,
-        description: plan.toLabel,
-        status: "success",
-      });
-      if (response.data.loaderInstallPending) {
+    if (!plan || applyInFlight.current) return;
+    applyInFlight.current = true;
+    try {
+      setProgress(null);
+      setCheckPhase("applying");
+      // Take the plan off the screen so its buttons stop rendering.
+      setPlanPhase("idle");
+      const response = await ModpackUpdateService.applyModpackUpdate(
+        instanceId,
+        plan.planHash,
+        choices
+      );
+      getInstanceList(true);
+      if (response.status === "success") {
+        // The ledger reads local changes from the cached check; refresh it so
+        // conflicts answered with the remote side stop counting.
+        void checkModpackUpdate(instanceId, true);
+        rememberedChoices.delete(instanceId);
         toast({
-          title: t("UpdateModpackModal.toast.loaderPending"),
-          status: "info",
+          title: response.message,
+          description: plan.toLabel,
+          status: "success",
         });
-        router.push("/downloads");
+        if (response.data.loaderInstallPending) {
+          toast({
+            title: t("UpdateModpackModal.toast.loaderPending"),
+            status: "info",
+          });
+          router.push("/downloads");
+        }
+        modalProps.onClose();
+      } else {
+        toast({
+          title: response.message,
+          description: response.details,
+          status: "error",
+        });
+        // The plan may be stale or rolled back; start over from a fresh check.
+        // The choices stay for the re-check: it clears them itself when the
+        // plan turns out to be another one (and says so).
+        keepChoicesForRecheckRef.current = true;
+        failedPlanHashRef.current = plan.planHash;
+        runCheck();
       }
-      modalProps.onClose();
-    } else {
-      toast({
-        title: response.message,
-        description: response.details,
-        status: "error",
-      });
-      // The plan may be stale or rolled back; start over from a fresh check.
-      runCheck();
+    } finally {
+      applyInFlight.current = false;
     }
   }, [
     plan,
@@ -319,24 +375,31 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
   ]);
 
   const handleRollback = useCallback(async () => {
-    setCheckPhase("applying");
-    setProgress(null);
-    const response =
-      await ModpackUpdateService.rollbackModpackUpdate(instanceId);
-    getInstanceList(true);
-    if (response.status === "success") {
-      toast({
-        title: response.message,
-        status: response.data ? "success" : "info",
-      });
-    } else {
-      toast({
-        title: response.message,
-        description: response.details,
-        status: "error",
-      });
+    if (rollbackInFlight.current) return;
+    rollbackInFlight.current = true;
+    try {
+      setCheckPhase("applying");
+      setPlanPhase("idle");
+      setProgress(null);
+      const response =
+        await ModpackUpdateService.rollbackModpackUpdate(instanceId);
+      getInstanceList(true);
+      if (response.status === "success") {
+        toast({
+          title: response.message,
+          status: response.data ? "success" : "info",
+        });
+      } else {
+        toast({
+          title: response.message,
+          description: response.details,
+          status: "error",
+        });
+      }
+      runCheck();
+    } finally {
+      rollbackInFlight.current = false;
     }
-    runCheck();
   }, [instanceId, getInstanceList, runCheck, toast]);
 
   const revealConflictFile = useCallback(
@@ -392,19 +455,25 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
   );
 
   const handleResume = useCallback(async () => {
-    const response = await ModpackUpdateService.setModpackFollow(
-      instanceId,
-      true
-    );
-    if (response.status === "success") {
-      getInstanceList(true);
-      runCheck();
-    } else {
-      toast({
-        title: response.message,
-        description: response.details,
-        status: "error",
-      });
+    if (resumeInFlight.current) return;
+    resumeInFlight.current = true;
+    try {
+      const response = await ModpackUpdateService.setModpackFollow(
+        instanceId,
+        true
+      );
+      if (response.status === "success") {
+        getInstanceList(true);
+        runCheck();
+      } else {
+        toast({
+          title: response.message,
+          description: response.details,
+          status: "error",
+        });
+      }
+    } finally {
+      resumeInFlight.current = false;
     }
   }, [instanceId, getInstanceList, runCheck, toast]);
 
@@ -792,7 +861,7 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
                 {t("UpdateModpackModal.button.retry")}
               </Button>
             )}
-          {planPhase === "planFailed" && (
+          {!applying && planPhase === "planFailed" && (
             <Button
               colorScheme={primaryColor}
               onClick={() => {
@@ -805,15 +874,18 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
               {t("UpdateModpackModal.button.retry")}
             </Button>
           )}
-          {planPhase === "planned" && plan && !plan.reinstallRequired && (
-            <Button colorScheme={primaryColor} onClick={handleApply}>
-              {t(
-                plan.fastForward
-                  ? "UpdateModpackModal.button.sync"
-                  : "UpdateModpackModal.button.apply"
-              )}
-            </Button>
-          )}
+          {!applying &&
+            planPhase === "planned" &&
+            plan &&
+            !plan.reinstallRequired && (
+              <Button colorScheme={primaryColor} onClick={handleApply}>
+                {t(
+                  plan.fastForward
+                    ? "UpdateModpackModal.button.sync"
+                    : "UpdateModpackModal.button.apply"
+                )}
+              </Button>
+            )}
         </ModalFooter>
       </ModalContent>
     </Modal>

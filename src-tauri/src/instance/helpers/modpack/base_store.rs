@@ -44,11 +44,19 @@ pub fn store(root: &Path, file: &BaselineFile, bytes: &[u8]) -> io::Result<()> {
 }
 
 /// Cache text files from the just-committed baseline and remove stale entries.
+///
+/// An entry whose sha1 a baseline text file references is kept even when the
+/// file on disk differs from it: the update may have written merged or kept
+/// local content, while the base was cached separately. Only entries the new
+/// baseline no longer references are removed.
 pub fn sync(root: &Path, files: &[BaselineFile]) -> io::Result<()> {
   let dir = base_dir(root);
   fs::create_dir_all(&dir)?;
   let mut referenced = std::collections::BTreeSet::new();
   for file in files {
+    if is_text_path(&file.path, &[]) && base_path(root, &file.sha1).exists() {
+      referenced.insert(file.sha1.clone());
+    }
     let source = root.join(&file.path);
     let bytes = match fs::read(&source) {
       Ok(bytes) if is_text_path(&file.path, &bytes) => bytes,
@@ -119,6 +127,36 @@ mod tests {
     )
     .unwrap();
     assert_eq!(load(&root, &sha1).unwrap(), Some(text.to_vec()));
+    assert!(!base_path(&root, "old").exists());
+    let _ = fs::remove_dir_all(root);
+  }
+
+  /// A cached base the new baseline references is kept even when the file on
+  /// disk differs from it (merged or kept local); only unreferenced entries
+  /// are pruned.
+  #[test]
+  fn sync_keeps_a_referenced_entry_the_disk_no_longer_matches() {
+    let root = std::env::temp_dir().join(format!("ustbl-base-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(root.join("config")).unwrap();
+    fs::create_dir_all(base_dir(&root)).unwrap();
+    // The new baseline's text: stored ahead of sync, as `apply` does.
+    let remote = b"a=2\r\n";
+    let remote_sha1 = hex::encode(Sha1::digest(remote));
+    fs::write(base_path(&root, &remote_sha1), remote).unwrap();
+    // The merged file on disk differs from both.
+    fs::write(root.join("config/a.properties"), b"a=3\r\n").unwrap();
+    // An entry nothing references anymore.
+    fs::write(base_path(&root, "old"), b"old").unwrap();
+    sync(
+      &root,
+      &[BaselineFile {
+        path: "config/a.properties".into(),
+        sha1: remote_sha1.clone(),
+        size: remote.len() as u64,
+      }],
+    )
+    .unwrap();
+    assert_eq!(load(&root, &remote_sha1).unwrap(), Some(remote.to_vec()));
     assert!(!base_path(&root, "old").exists());
     let _ = fs::remove_dir_all(root);
   }

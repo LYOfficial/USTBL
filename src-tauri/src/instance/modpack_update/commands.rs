@@ -8,7 +8,8 @@ use super::diff::{resolve, Conflict, ConflictChoice, FileChange};
 use super::merge::merge_with_choices;
 use super::notice::{read_update_notice, write_update_notice, UpdateNotice};
 use super::plan::{
-  compare, count_local_changes, finish, local_changes, requires_reinstall, LocalChange,
+  compare, count_local_changes, finish, invalidate_scan_cache, local_changes, requires_reinstall,
+  LocalChange,
 };
 use super::plan_cache::{self, PlanCache};
 use super::remote::ComponentPack;
@@ -453,7 +454,9 @@ async fn unlink_origin(app: &AppHandle, instance_id: &str, target: &Target) -> U
     instance.origin = None;
     instance.modpack_version = None;
   })
-  .await
+  .await?;
+  invalidate_scan_cache(&target.root);
+  Ok(())
 }
 
 /// Detach the instance from its modpack: identity and baseline go, the game
@@ -873,6 +876,33 @@ fn remote_if_equivalent(path: &str, merged: Vec<u8>, remote: &[u8]) -> Vec<u8> {
   }
 }
 
+/// Describe how each conflict was answered, for the apply log: the whole
+/// file, single blocks (`path#index`), or the default keep-local.
+pub(super) fn describe_conflict_resolutions(
+  diff: &super::diff::Diff,
+  choices: &BTreeMap<String, ConflictChoice>,
+) -> Vec<String> {
+  let mut described = Vec::new();
+  for conflict in &diff.conflicts {
+    if conflict.hunks.is_empty() {
+      let choice = choices.get(&conflict.path).copied().unwrap_or_default();
+      described.push(format!("{}:file={choice:?}", conflict.path));
+    } else {
+      let selected: Vec<String> = (0..conflict.hunks.len())
+        .map(|index| {
+          let choice = choices
+            .get(&format!("{}#{index}", conflict.path))
+            .copied()
+            .unwrap_or_default();
+          format!("#{index}={choice:?}")
+        })
+        .collect();
+      described.push(format!("{}:hunks[{}]", conflict.path, selected.join(",")));
+    }
+  }
+  described
+}
+
 pub(super) fn selected_hunk_contents(
   prepared: &super::plan::Prepared,
   choices: &mut BTreeMap<String, ConflictChoice>,
@@ -958,6 +988,19 @@ pub async fn apply_modpack_update(
   plan_hash: String,
   choices: BTreeMap<String, ConflictChoice>,
 ) -> USTBLResult<UpdateOutcome> {
+  // What the player answered, before anything is checked: a Stale answer
+  // below must not take the record of the choices with it. Paths, hunk
+  // indexes and sides only; never file contents.
+  {
+    let received: Vec<String> = choices
+      .iter()
+      .map(|(key, choice)| format!("{key}={choice:?}"))
+      .collect();
+    log::info!(
+      "modpack update apply: instance={instance_id} plan_hash={plan_hash} choices=[{}]",
+      received.join(","),
+    );
+  }
   let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   ensure_not_running(&app, &instance_id)?;
   let baseline = load_baseline(&target).await?;
@@ -992,11 +1035,19 @@ pub async fn apply_modpack_update(
   };
   let remote_contents =
     materialize_text_candidates(&app, &target, &remote, &compared.diff.conflicts).await?;
+  // The new text bytes fetched for the merge; `apply` caches them so a file
+  // that ends up differing from the new version (merged, or kept local) still
+  // has a base to diff against. Text files only; `store` re-validates.
+  let base_texts = remote_contents.clone();
   let prepared = finish(compared, &target.root, &remote, &remote_contents)?;
   if prepared.plan_hash != plan_hash {
     // The cached plan the player looked at describes another state; drop it
     // so a retry re-plans instead of serving it again.
     plan_cache::clear_plan_cache(&target.root);
+    log::info!(
+      "modpack update apply stale: instance={instance_id} expected plan_hash={} got plan_hash={plan_hash}",
+      prepared.plan_hash,
+    );
     return Err(InstanceError::ModpackUpdateStale.into());
   }
 
@@ -1010,6 +1061,11 @@ pub async fn apply_modpack_update(
   let version_id = remote.version_id.clone();
   let mut apply_choices = choices.clone();
   let merged_contents = selected_hunk_contents(&prepared, &mut apply_choices)?;
+  // How every conflict was settled. Paths, hunk indexes and sides only.
+  log::info!(
+    "modpack update apply resolutions: instance={instance_id} plan_hash={plan_hash} resolutions=[{}]",
+    describe_conflict_resolutions(&prepared.diff, &apply_choices).join(","),
+  );
   let result = apply(
     &env,
     UpdateRequest {
@@ -1022,6 +1078,7 @@ pub async fn apply_modpack_update(
       components,
       restore_components,
       merged_contents,
+      base_texts,
     },
   )
   .await;
@@ -1151,6 +1208,88 @@ mod tests {
     assert!(!fast_forward(1, 0, false));
     assert!(!fast_forward(0, 1, false));
     assert!(!fast_forward(0, 0, true));
+  }
+
+  /// The JSON the update dialog sends for "use the new version on the first
+  /// conflict block of config/fadeless.json" must land in the choices map
+  /// exactly as `path#index -> TakeRemote`.
+  #[test]
+  fn the_dialogs_block_choice_deserializes_as_a_hunk_key() {
+    let choices: BTreeMap<String, ConflictChoice> = serde_json::from_str(
+      r#"{"config/fadeless.json#0":"takeRemote","config/other.json":"keepLocal"}"#,
+    )
+    .unwrap();
+    assert_eq!(
+      choices.get("config/fadeless.json#0"),
+      Some(&ConflictChoice::TakeRemote)
+    );
+    assert_eq!(
+      choices.get("config/other.json"),
+      Some(&ConflictChoice::KeepLocal)
+    );
+    // A whole-file key never matches a hunk key and vice versa.
+    assert!(!choices.contains_key("config/fadeless.json"));
+    assert!(!choices.contains_key("config/other.json#0"));
+    // Round trip: the keys come back exactly as the dialog built them.
+    let bytes = serde_json::to_vec(&choices).unwrap();
+    let back: BTreeMap<String, ConflictChoice> = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(back, choices);
+  }
+
+  #[test]
+  fn conflict_resolutions_describe_every_conflict_without_contents() {
+    use crate::instance::modpack_update::diff::{ConflictKind, FileKey};
+    let key = |tag: &str| FileKey {
+      sha1: tag.into(),
+      size: tag.len() as u64,
+    };
+    let hunk = |start: usize| crate::instance::modpack_update::merge::MergeConflict {
+      base_start: start,
+      base_end: start + 1,
+      base: vec!["b".into()],
+      local: vec!["l".into()],
+      remote: vec!["r".into()],
+    };
+    let diff = super::super::diff::Diff {
+      conflicts: vec![
+        super::super::diff::Conflict {
+          path: "config/a.json".into(),
+          kind: ConflictKind::ModifiedLocallyChangedRemotely,
+          baseline: Some(key("a1")),
+          local: Some(key("al")),
+          remote: Some(key("a2")),
+          hunks: vec![hunk(0), hunk(4)],
+        },
+        super::super::diff::Conflict {
+          path: "mods/b.jar".into(),
+          kind: ConflictKind::ModifiedLocallyChangedRemotely,
+          baseline: Some(key("b1")),
+          local: Some(key("bl")),
+          remote: Some(key("b2")),
+          hunks: Vec::new(),
+        },
+      ],
+      ..Default::default()
+    };
+    let mut choices = BTreeMap::new();
+    choices.insert("config/a.json#0".to_string(), ConflictChoice::TakeRemote);
+    choices.insert("mods/b.jar".to_string(), ConflictChoice::TakeRemote);
+
+    assert_eq!(
+      describe_conflict_resolutions(&diff, &choices),
+      vec![
+        "config/a.json:hunks[#0=TakeRemote,#1=KeepLocal]".to_string(),
+        "mods/b.jar:file=TakeRemote".to_string(),
+      ]
+    );
+    // Unanswered conflicts are reported as the keep-local default.
+    assert_eq!(
+      describe_conflict_resolutions(&diff, &BTreeMap::new()),
+      vec![
+        "config/a.json:hunks[#0=KeepLocal,#1=KeepLocal]".to_string(),
+        "mods/b.jar:file=KeepLocal".to_string(),
+      ]
+    );
   }
 
   #[test]

@@ -1,9 +1,10 @@
 //! Publishing an instance to the campus modpack platform.
 
+use super::cancel::{apply_cancel, cancel_remote, CancelOutcome};
 use super::components::plan_components;
-use super::job::{is_running, PublishJob};
-use super::manifest::{plan_files, LocalFile};
-use super::pack::{build_pack, verify_pack};
+use super::job::{ensure_not_running, is_running, start_monitor, CancellingToken, PublishJob};
+use super::manifest::{partition_publishable_paths, plan_files, LocalFile};
+use super::pack::{build_pack, mark_verified, verify_pack};
 use super::record::{
   jobs_dir, paths, JobRecord, Phase, RecordedFile, RecordedObject, RecordedPack, RecordedUpload,
   RECORD_SCHEMA,
@@ -17,9 +18,7 @@ use crate::instance::helpers::modpack::baseline::{
   ModpackBaseline,
 };
 use crate::instance::helpers::modpack::multimc::profile::safe_relative;
-use crate::instance::helpers::modpack::multimc::snapshot::{
-  is_component_instance, ComponentSnapshot,
-};
+use crate::instance::helpers::modpack::multimc::snapshot::load_required_snapshot;
 use crate::instance::models::misc::{
   Instance, InstanceError, InstanceOrigin, InstanceSubdirType, OriginPlatform,
 };
@@ -27,6 +26,7 @@ use crate::instance::modpack_update::commands::store_instance;
 use crate::instance::modpack_update::diff::FileKey;
 use crate::instance::modpack_update::sources::{loader_slug, CAMPUS_API};
 use crate::utils::web::build_part_upload_client;
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -37,6 +37,8 @@ use tauri::{AppHandle, Emitter, Manager};
 
 /// Hashes sent per request when asking which the platform lacks.
 const MISSING_BATCH: usize = 5000;
+/// Hash a few files at once without making a large instance saturate the disk.
+const HASH_CONCURRENCY: usize = 4;
 /// Part concurrency used on resume, when the record (§9.1) carries none and
 /// there is no fresh `POST /versions` response to read it from (§14.1).
 pub(super) const DEFAULT_PART_CONCURRENCY: usize = 3;
@@ -254,6 +256,19 @@ pub(super) fn instance_of(app: &AppHandle, instance_id: &str) -> USTBLResult<Ins
   )
 }
 
+/// The publish dialog's gate on open: a component instance whose snapshot is
+/// missing or from an older importer fails with `ModpackExportProfileMissing`.
+/// Cheap on purpose (no hashing), so it is not part of the instance summary.
+#[tauri::command]
+pub async fn check_campus_modpack_publishable(
+  app: AppHandle,
+  instance_id: String,
+) -> USTBLResult<()> {
+  let instance = instance_of(&app, &instance_id)?;
+  load_required_snapshot(&instance.version_path).await?;
+  Ok(())
+}
+
 #[tauri::command]
 pub async fn list_campus_modpack_projects(app: AppHandle) -> USTBLResult<Vec<CampusProject>> {
   let client = app.state::<reqwest::Client>();
@@ -283,18 +298,43 @@ pub async fn delete_campus_modpack_project(app: AppHandle, project: String) -> U
   Ok(())
 }
 
-fn hash_selection(root: &Path, selected: &[String]) -> USTBLResult<Vec<LocalFile>> {
-  selected
-    .iter()
-    .map(|path| {
-      safe_relative(path)?;
-      let (sha1, size) = hash_file(&root.join(path))?;
-      Ok(LocalFile {
-        path: path.clone(),
-        key: FileKey { sha1, size },
-      })
-    })
-    .collect()
+/// Keep the result in selection order, but report each file as soon as it finishes.
+async fn hash_selection<F>(
+  root: &Path,
+  selected: &[String],
+  mut on_file: F,
+) -> USTBLResult<Vec<LocalFile>>
+where
+  F: FnMut(usize),
+{
+  let mut pending =
+    futures::stream::iter(selected.iter().cloned().enumerate().map(|(index, path)| {
+      let root = root.to_path_buf();
+      async move {
+        let file = tokio::task::spawn_blocking(move || {
+          safe_relative(&path)?;
+          let (sha1, size) = hash_file(&root.join(&path))?;
+          Ok::<LocalFile, USTBLError>(LocalFile {
+            path,
+            key: FileKey { sha1, size },
+          })
+        })
+        .await
+        .map_err(|e| USTBLError(e.to_string()))??;
+        Ok::<(usize, LocalFile), USTBLError>((index, file))
+      }
+    }))
+    .buffer_unordered(HASH_CONCURRENCY);
+  let mut indexed = Vec::with_capacity(selected.len());
+  let mut completed = 0;
+  while let Some(result) = pending.next().await {
+    let (index, file) = result?;
+    indexed.push((index, file));
+    completed += 1;
+    on_file(completed);
+  }
+  indexed.sort_unstable_by_key(|(index, _)| *index);
+  Ok(indexed.into_iter().map(|(_, file)| file).collect())
 }
 
 /// Paths the line's current release already lists, so the publish dialog can
@@ -495,22 +535,26 @@ async fn prepare(
     loader_slug(instance.mod_loader.loader_type).ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let job_paths = paths(dir, job_id)?;
 
-  report(app, instance_id, Stage::Hashing, 0, files.len());
-  let selected = files.clone();
-  let hash_root = root.clone();
-  let hashed = tokio::task::spawn_blocking(move || hash_selection(&hash_root, &selected))
-    .await
-    .map_err(|e| USTBLError(e.to_string()))??;
-  report(app, instance_id, Stage::Hashing, files.len(), files.len());
+  // A component instance without a usable snapshot cannot be published; fail
+  // before hashing every selected file (the publish dialog checks this on open
+  // with `check_campus_modpack_publishable`, this guard is the backstop).
+  let snapshot = load_required_snapshot(&root).await?;
+
+  let (files, skipped) = partition_publishable_paths(files, &instance.name);
+  let total = files.len();
+  report(app, instance_id, Stage::Hashing, 0, total);
+  let hashed = hash_selection(&root, &files, |done| {
+    report(app, instance_id, Stage::Hashing, done, total);
+  })
+  .await?;
+  report(app, instance_id, Stage::Hashing, total, total);
   let mut plan = plan_files(hashed, &instance.name);
+  plan.skipped.extend(skipped);
+  plan.skipped.sort();
   if plan.files.is_empty() {
     return Err(USTBLError("没有可发布的文件".into()));
   }
-  if is_component_instance(&root) {
-    let snapshot = ComponentSnapshot::load(&root)
-      .await
-      .map_err(|_| InstanceError::ModpackExportProfileMissing)?
-      .ok_or(InstanceError::ModpackExportProfileMissing)?;
+  if let Some(snapshot) = snapshot {
     let libraries_dir =
       get_instance_subdir_paths(app, &instance, &[&InstanceSubdirType::Libraries])
         .ok_or(InstanceError::InstanceNotFoundByID)?
@@ -559,17 +603,25 @@ async fn prepare(
     report(app, instance_id, Stage::Packing, 0, 1);
     fs::create_dir_all(dir)?;
     let (objects, target) = (needed.clone(), job_paths.pack.clone());
-    let built = tokio::task::spawn_blocking(move || build_pack(&objects, &target))
+    tokio::task::spawn_blocking(move || build_pack(&objects, &target))
       .await
       .map_err(|e| USTBLError(e.to_string()))??;
     // §13.2: the self-check runs before anything is sent to the platform, so
     // a bad local pack never opens a version or an upload session that would
     // then need to be torn down again (no `POST /versions` has happened yet
-    // at this point, so there is nothing on the platform to clean up).
-    let (check_path, check_sha1) = (job_paths.pack.clone(), built.sha1.clone());
-    tokio::task::spawn_blocking(move || verify_pack(&check_path, &check_sha1))
+    // at this point, so there is nothing on the platform to clean up). The
+    // pack is new, so its sha1 is whatever this read finds.
+    let check_path = job_paths.pack.clone();
+    let built = tokio::task::spawn_blocking(move || verify_pack(&check_path, None))
       .await
       .map_err(|e| USTBLError(e.to_string()))??;
+    // This process just verified these bytes; the upload's ensure_pack can
+    // skip reading the pack back while the file is untouched.
+    if let Ok(meta) = tokio::fs::metadata(&job_paths.pack).await {
+      if let Ok(modified) = meta.modified() {
+        mark_verified(&job_paths.pack, meta.len(), modified);
+      }
+    }
     report(app, instance_id, Stage::Packing, 1, 1);
     Some(RecordedPack {
       sha1: built.sha1,
@@ -628,6 +680,30 @@ async fn prepare(
     .or(project.as_deref())
     .unwrap_or_default()
     .to_string();
+  // The task card shows the project's display name, not the generated slug.
+  let project_name = match &new_project {
+    Some(new) => Some(new.name.clone()),
+    None => {
+      let mut name = None;
+      if let Some(project) = &project {
+        if let Ok(response) = app
+          .state::<reqwest::Client>()
+          .get(format!("{CAMPUS_API}/projects/{project}"))
+          .send()
+          .await
+        {
+          if response.status().is_success() {
+            name = response
+              .json::<Value>()
+              .await
+              .ok()
+              .and_then(|body| body["name"].as_str().map(str::to_string));
+          }
+        }
+      }
+      Some(name.unwrap_or_else(|| slug.clone()))
+    }
+  };
 
   let record = JobRecord {
     schema: RECORD_SCHEMA,
@@ -638,6 +714,7 @@ async fn prepare(
     instance_id: instance_id.to_string(),
     instance_name: instance.name.clone(),
     project_slug: slug,
+    project_name,
     version_id,
     version_number,
     files: plan
@@ -729,6 +806,12 @@ pub async fn resume_campus_modpack_publish(
   job_id: String,
 ) -> USTBLResult<PublishStarted> {
   ensure_manager(&app)?;
+  // Held from before the record is read until the task group is running:
+  // a cancel cleanup that is still on the wire (or a discard in flight)
+  // must never interleave with this start. Once the group runs, `ACTIVE`
+  // takes over the duplicate protection and the token may go.
+  let _cancelling = CancellingToken::take(&job_id)
+    .ok_or_else(|| USTBLError("取消处理尚未完成，请稍后再试".into()))?;
   let record = JobRecord::load(&jobs_dir(), &job_id)?;
   let uploader = build_part_upload_client(&app);
   let group = PublishJob {
@@ -745,50 +828,31 @@ pub async fn resume_campus_modpack_publish(
 }
 
 /// Give an unfinished publish up: the version is dropped on the platform and
-/// the local leftovers are removed.
+/// the local leftovers are removed — but only once the platform confirms the
+/// version is gone. The decision is the shared one in `cancel.rs`, the same
+/// the task card's cancel makes (§3.2): a version the platform still owns
+/// keeps its record and gets its watch back instead of being abandoned.
 #[tauri::command]
 pub async fn discard_campus_modpack_publish(app: AppHandle, job_id: String) -> USTBLResult<()> {
   ensure_manager(&app)?;
-  if is_running(&job_id) {
-    return Err(USTBLError("任务正在进行，请先在任务列表中取消".into()));
-  }
+  ensure_not_running(&job_id)?;
+  // Held from before the remote request until the action — and the watch
+  // it may start — is fully done: a second discard, a resume, or the
+  // guard's own cleanup can never slip in while this one is on the wire
+  // and race the record or the restarted task.
+  let _cancelling = CancellingToken::take(&job_id)
+    .ok_or_else(|| USTBLError("取消处理尚未完成，请稍后再试".into()))?;
   let dir = jobs_dir();
-  let record = JobRecord::load(&dir, &job_id)?;
-  let response = authed_json(
-    &app,
-    reqwest::Method::DELETE,
-    &format!("/versions/{}", record.version_id),
-    None,
-  )
-  .await?;
-  if response.status() == reqwest::StatusCode::CONFLICT {
-    let state = authed_json(
-      &app,
-      reqwest::Method::GET,
-      &format!("/versions/{}/status", record.version_id),
-      None,
-    )
-    .await?;
-    if state.status().is_success() && state.json::<Value>().await?["status"] == "published" {
-      // Already out: the card comes back for the adoption, then the record
-      // is dropped by the platform stage itself.
-      PublishJob {
-        app: app.clone(),
-        uploader: build_part_upload_client(&app),
-        record,
-        // Only platform processing is watched here, never a part upload.
-        concurrency: None,
-      }
-      .start()?;
-      return Ok(());
-    }
+  let version_id = JobRecord::load(&dir, &job_id)?.version_id;
+  let remote = cancel_remote(&app, version_id).await;
+  // The shared action, identical to the one the task card's cancel runs:
+  // the record it applies to is re-read from disk now that the remote
+  // answer is in, and the watch — when the platform turns out to own the
+  // version — only ever starts from the freshly saved one.
+  match apply_cancel(&dir, &job_id, remote, |record| start_monitor(&app, record)) {
+    CancelOutcome::Removed | CancelOutcome::Watching => Ok(()),
+    CancelOutcome::Kept(reason) | CancelOutcome::RecordKept(reason) => Err(reason),
   }
-  // Already gone counts as dropped; a version being processed cannot be.
-  if !response.status().is_success() && response.status() != reqwest::StatusCode::NOT_FOUND {
-    return Err(failure(response).await);
-  }
-  JobRecord::remove(&dir, &job_id);
-  Ok(())
 }
 
 /// Fast-forward: after publishing, the instance holds exactly what the new
@@ -894,10 +958,8 @@ async fn try_adopt(
   let root = instance.version_path.clone();
   let expected: Vec<LocalFile> = files.to_vec();
   let paths: Vec<String> = expected.iter().map(|file| file.path.clone()).collect();
-  let rescanned = tokio::task::spawn_blocking(move || hash_selection(&root, &paths))
-    .await
-    .map_err(|e| USTBLError(e.to_string()))?;
-  if !rescanned.is_ok_and(|now| now == expected) {
+  let rescanned = hash_selection(&root, &paths, |_| {}).await?;
+  if rescanned != expected {
     return Ok(Adoption::LocalChanged);
   }
 
@@ -952,19 +1014,41 @@ mod tests {
     root
   }
 
-  #[test]
-  fn selection_is_hashed_and_cannot_escape_the_instance() {
+  #[tokio::test]
+  async fn selection_is_hashed_and_cannot_escape_the_instance() {
     let root = instance_dir(&[("config/a.toml", "hello")]);
 
-    let hashed = hash_selection(&root, &["config/a.toml".to_string()]).unwrap();
+    let hashed = hash_selection(&root, &["config/a.toml".to_string()], |_| {})
+      .await
+      .unwrap();
     assert_eq!(hashed[0].key.size, 5);
     assert_eq!(
       hashed[0].key.sha1,
       "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
     );
 
-    assert!(hash_selection(&root, &["../outside".to_string()]).is_err());
-    assert!(hash_selection(&root, &["missing.txt".to_string()]).is_err());
+    assert!(hash_selection(&root, &["../outside".to_string()], |_| {})
+      .await
+      .is_err());
+    assert!(hash_selection(&root, &["missing.txt".to_string()], |_| {})
+      .await
+      .is_err());
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn hashing_reports_progress_and_preserves_selection_order() {
+    let root = instance_dir(&[("config/a.toml", "a"), ("config/b.toml", "bb")]);
+    let selected = vec!["config/b.toml".to_string(), "config/a.toml".to_string()];
+    let mut progress = Vec::new();
+
+    let hashed = hash_selection(&root, &selected, |done| progress.push(done))
+      .await
+      .unwrap();
+
+    assert_eq!(progress, [1, 2]);
+    let paths: Vec<_> = hashed.into_iter().map(|file| file.path).collect();
+    assert_eq!(paths, selected);
     let _ = fs::remove_dir_all(root);
   }
 
