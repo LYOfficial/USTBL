@@ -1,11 +1,12 @@
 //! Comparing an instance with the version it is being updated to.
 
 use super::decide::{
-  decide, Action, Base, DecisionConflict, DecisionInput, Local, NextBaseline, Policy,
+  decide, disabled_outcome, Action, Base, DecisionConflict, DecisionInput, Local, NextBaseline,
+  Policy,
 };
 use super::diff::{
-  collect_local_states, ChangeKind, Conflict, ConflictChoice, ConflictKind, Diff, FileChange,
-  FileKey, LocalState, Operation, DISABLED_SUFFIX,
+  collect_local_states, scan_path, ChangeKind, Conflict, ConflictChoice, ConflictKind, Diff,
+  FileChange, FileKey, LocalState, Operation, DISABLED_SUFFIX,
 };
 use super::local_scan::{collect_states_cached, record_states, LocalScanCache};
 use super::merge::{merge_text, text_conflicts, TextMergeError};
@@ -48,7 +49,8 @@ pub struct Prepared {
   pub conflict_sources: BTreeMap<String, (Vec<u8>, Vec<u8>, Vec<u8>)>,
   /// The baseline entries the update records when it commits.
   pub next_baseline: Vec<BaselineFile>,
-  /// The variant each written path ends up at (`true` = `.disabled`).
+  /// The variant each `Add`/`Update` change's written path ends up at
+  /// (`true` = `.disabled`). Conflict paths carry theirs on the conflict.
   pub variants: BTreeMap<String, bool>,
   /// Delete-rule directories pruned after a deletion, by deleted path.
   pub prune_dirs: BTreeMap<String, Vec<String>>,
@@ -60,7 +62,8 @@ pub struct Compared {
   pub diff: Diff,
   /// The baseline entries the update records when it commits.
   pub next_baseline: Vec<BaselineFile>,
-  /// The variant each written path ends up at (`true` = `.disabled`).
+  /// The variant each `Add`/`Update` change's written path ends up at
+  /// (`true` = `.disabled`). Conflict paths carry theirs on the conflict.
   pub variants: BTreeMap<String, bool>,
   /// Paths with both variants on disk that the remote or the baseline
   /// involves. Planning refuses these outright.
@@ -309,9 +312,9 @@ pub async fn prepare_with_contents(
 }
 
 /// The files inside a delete `dir` rule's directory that the decision has to
-/// see: every regular file below it, as logical paths (the `.disabled`
-/// suffix folds back to the enabled name).
-fn enumerate_under(root: &Path, dir: &str, found: &mut BTreeSet<String>) -> USTBLResult<()> {
+/// see: every regular file below it, as (disk spelling, logical path) pairs.
+/// The logical path folds the `.disabled` suffix back to the enabled name.
+fn enumerate_under(root: &Path, dir: &str, found: &mut BTreeMap<String, String>) -> USTBLResult<()> {
   let base = root.join(dir);
   if !base.is_dir() {
     return Ok(());
@@ -330,12 +333,11 @@ fn enumerate_under(root: &Path, dir: &str, found: &mut BTreeSet<String>) -> USTB
       if file_type.is_dir() {
         stack.push(entry.path());
       } else if file_type.is_file() {
-        found.insert(
-          relative
-            .strip_suffix(DISABLED_SUFFIX)
-            .unwrap_or(&relative)
-            .to_string(),
-        );
+        let logical = relative
+          .strip_suffix(DISABLED_SUFFIX)
+          .unwrap_or(&relative)
+          .to_string();
+        found.insert(relative, logical);
       }
       // Anything else (symlinks, sockets) is not a managed file.
     }
@@ -343,9 +345,27 @@ fn enumerate_under(root: &Path, dir: &str, found: &mut BTreeSet<String>) -> USTB
   Ok(())
 }
 
+/// The path a case-insensitive file system finds for `logical`: the baseline
+/// or manifest spelling when one folds to it (§3), the disk's own otherwise.
+fn canonical_path(
+  logical: &str,
+  baseline: &BTreeMap<String, String>,
+  remote: &RemoteModpack,
+) -> String {
+  if let Some(path) = baseline.get(&logical.to_lowercase()) {
+    return path.clone();
+  }
+  match remote.file_of(logical) {
+    Some(file) => file.path.clone(),
+    None => logical.to_string(),
+  }
+}
+
 /// The candidate paths the decision runs over: the baseline, the shipped
 /// files, the `file` rules, and everything a delete `dir` rule covers.
-/// `rule_dirs` collects the delete `dir` rules for the prune map.
+/// `rule_dirs` collects the delete `dir` rules for the prune map. Disk paths
+/// that fold to a baseline entry or a shipped file keep the baseline's or the
+/// manifest's spelling, so one file never appears twice.
 fn candidate_paths(
   root: &Path,
   baseline: &BTreeMap<String, BaselineFile>,
@@ -365,17 +385,71 @@ fn candidate_paths(
   }
   // Enumerate under each delete dir rule, but only where no more specific
   // rule or shipped file shields the file.
-  let mut found = BTreeSet::new();
+  let baseline_folded: BTreeMap<String, String> = baseline
+    .keys()
+    .map(|path| (path.to_lowercase(), path.clone()))
+    .collect();
+  let mut found = BTreeMap::new();
   for rule in &delete_dirs {
     enumerate_under(root, &rule.path, &mut found)?;
   }
-  for path in found {
-    if matches!(remote.policy_of(&path), Policy::Delete) {
-      // Only this rule family may delete it; keep the exact rule for pruning.
-      paths.insert(path);
+  for (_, logical) in found {
+    if matches!(remote.policy_of(&logical), Policy::Delete) {
+      // Only this rule family may delete it; keep the canonical spelling.
+      paths.insert(canonical_path(&logical, &baseline_folded, remote));
     }
   }
   Ok((paths, delete_dirs))
+}
+
+/// Paths nothing sits at under their own spelling, paired with the disk file
+/// whose name only differs in case. The comparison reads the file under its
+/// canonical name afterwards, so one file is decided exactly once.
+fn find_folded_matches(
+  root: &Path,
+  paths: &BTreeSet<String>,
+  states: &BTreeMap<String, LocalState>,
+) -> Vec<(String, String, LocalState)> {
+  let mut matches = Vec::new();
+  for path in paths {
+    if states.get(path).is_some_and(|state| *state != LocalState::Absent) {
+      continue;
+    }
+    let name = path.rsplit_once('/').map(|(_, name)| name).unwrap_or(path);
+    let dir = match path.rsplit_once('/') {
+      Some((dir, _)) => root.join(dir),
+      None => root.to_path_buf(),
+    };
+    let Some(spelling) = std::fs::read_dir(&dir)
+      .ok()
+      .into_iter()
+      .flatten()
+      .flatten()
+      .map(|entry| entry.file_name().to_string_lossy().into_owned())
+      .find(|entry| {
+        entry.to_lowercase() == name.to_lowercase()
+          || (entry.to_lowercase() == format!("{}{}", name, DISABLED_SUFFIX).to_lowercase())
+      })
+    else {
+      continue;
+    };
+    // A `.disabled` spelling folds back to the enabled logical name;
+    // `scan_path` reports it as the disabled variant of that path.
+    let logical = spelling
+      .strip_suffix(DISABLED_SUFFIX)
+      .unwrap_or(&spelling)
+      .to_string();
+    let spelling = match path.rsplit_once('/') {
+      Some((dir, _)) => format!("{dir}/{logical}"),
+      None => logical,
+    };
+    if let Ok(state) = scan_path(root, &spelling) {
+      if state != LocalState::Absent {
+        matches.push((path.clone(), spelling, state));
+      }
+    }
+  }
+  matches
 }
 
 /// How `compare` decides one path: the baseline entry, the local state and
@@ -518,24 +592,34 @@ fn decide_path(
       DecisionConflict::ModifiedChangedRemotely => ConflictKind::ModifiedLocallyChangedRemotely,
     };
     let baseline_key = baseline.and_then(BaselineFile::key);
+    // The variant the path's file ends up at, however the conflict is
+    // answered: "take remote" writes the new file there, and a kept-local
+    // file sitting at the other variant is renamed (§5.2: the disabled state
+    // is decided separately from the content, a content conflict does not
+    // suspend it). `None` when the path has no disabled state to settle.
+    // A file in the way never had a recorded state to compare against, so
+    // its local variant wins; every other conflict takes the three-way.
+    let remote_disabled = ship.as_ref().map(|ship| {
+      if matches!(conflict, DecisionConflict::UnmanagedFileInTheWay) {
+        local.variant_disabled().unwrap_or_else(|| ship.disabled.unwrap_or(false))
+      } else {
+        disabled_outcome(
+          ship.disabled,
+          baseline.and_then(|entry| entry.key().map(|_| entry.disabled)),
+          local.variant_disabled(),
+        )
+      }
+    });
     diff.conflicts.push(Conflict {
       path: path.to_string(),
       kind,
       baseline: baseline_key,
       local: local_key,
       remote: ship.as_ref().map(|ship| ship.key.clone()),
+      remote_disabled,
+      local_disabled: local.variant_disabled(),
       hunks: Vec::new(),
     });
-    // A conflict answered "take remote" writes the new file at the variant
-    // the disabled three-way settled.
-    if let Some(ship) = &ship {
-      let outcome = super::decide::disabled_outcome(
-        ship.disabled,
-        baseline.and_then(|entry| entry.key().map(|_| entry.disabled)),
-        local.variant_disabled(),
-      );
-      variants.insert(path.to_string(), outcome);
-    }
   }
   match decision.next {
     NextBaseline::Unchanged => {
@@ -567,13 +651,27 @@ pub async fn compare(
     .await
     .map_err(|e| USTBLError(e.to_string()))??;
   record_states(scan_cache(), &root, &local);
-  // A local file that only differs in normalized-away noise counts as the
-  // baseline content. This folds the key before the decision sees it.
+  // The baseline's or the manifest's spelling may not be the disk's on a
+  // case-insensitive file system; a path with nothing at its own spelling
+  // falls back to the file whose name only differs in case (§3).
   let mut local = local;
+  let folded_root = root.clone();
+  let folded_paths = paths.clone();
+  let folded_states = local.clone();
+  let folded = tokio::task::spawn_blocking(move || {
+    find_folded_matches(&folded_root, &folded_paths, &folded_states)
+  })
+  .await
+  .map_err(|e| USTBLError(e.to_string()))?;
+  for (path, spelling, state) in folded {
+    record_states(scan_cache(), &root, &BTreeMap::from([(spelling, state.clone())]));
+    local.insert(path, state);
+  }
+  // A local file that only differs in normalized-away noise counts as the
+  // recorded content. This folds the key before the decision sees it, for
+  // managed entries and dormant ones carrying content alike (§5.1: ≡B means
+  // the update fires without a remanage prompt).
   for (path, entry) in &baseline_map {
-    if !entry.is_managed() {
-      continue;
-    }
     let Some(baseline_key) = entry.key() else {
       continue;
     };
@@ -623,9 +721,9 @@ pub async fn compare(
     // Both variants on disk refuses the plan when the path is in play; a
     // delete rule clears both without asking.
     if let LocalState::Both(..) = &state {
-      let involves = remote.policy_of(path) != Policy::Delete
-        && (remote.policy_of(path) == Policy::Ship
-          || entry.is_some_and(|entry| entry.is_managed()));
+      let policy = remote.policy_of(path);
+      let involves =
+        policy != Policy::Delete && (policy == Policy::Ship || entry.is_some_and(|e| e.is_managed()));
       if involves {
         both_variants.push(path.clone());
         continue;
@@ -701,20 +799,33 @@ pub fn resolve(prepared: &Prepared, choices: &BTreeMap<String, ConflictChoice>) 
     }
   }
   for conflict in &prepared.diff.conflicts {
-    if choices.get(&conflict.path).copied().unwrap_or_default() != ConflictChoice::TakeRemote {
-      continue;
+    let take_remote =
+      choices.get(&conflict.path).copied().unwrap_or_default() == ConflictChoice::TakeRemote;
+    if take_remote {
+      operations.push(Operation {
+        path: conflict.path.clone(),
+        write: conflict.remote.clone(),
+        final_disabled: conflict.remote_disabled.unwrap_or(false),
+        rename: false,
+        prune_dirs: Vec::new(),
+      });
+    } else if let (true, Some(outcome)) = (
+      conflict.remote.is_some() && conflict.local.is_some(),
+      conflict.remote_disabled,
+    ) {
+      // Keeping the local content does not keep the variant: the file still
+      // moves to the outcome the disabled three-way settled (§5.2), so the
+      // baseline entry and the disk agree. Already there, it simply stays.
+      if conflict.local_disabled != Some(outcome) {
+        operations.push(Operation {
+          path: conflict.path.clone(),
+          write: None,
+          final_disabled: outcome,
+          rename: true,
+          prune_dirs: Vec::new(),
+        });
+      }
     }
-    operations.push(Operation {
-      path: conflict.path.clone(),
-      write: conflict.remote.clone(),
-      final_disabled: prepared
-        .variants
-        .get(&conflict.path)
-        .copied()
-        .unwrap_or(false),
-      rename: false,
-      prune_dirs: Vec::new(),
-    });
   }
   operations.sort_by(|a, b| a.path.cmp(&b.path));
   operations
@@ -881,6 +992,7 @@ mod tests {
         .collect(),
       rules,
       rules_manifest: true,
+      path_index: std::sync::Arc::new(std::sync::OnceLock::new()),
     }
   }
 
@@ -1519,6 +1631,211 @@ mod tests {
     assert!(prepared.diff.conflicts.is_empty());
     assert_eq!(prepared.diff.changes.len(), 1);
     assert_eq!(prepared.diff.changes[0].kind, ChangeKind::Update);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  /// The disabled state is settled however the content conflict is answered:
+  /// keeping the local content still renames the file to the outcome variant,
+  /// and the baseline records it (§5.2).
+  async fn prepare_content_conflict(root: &Path) -> Prepared {
+    let installed = baseline(&[("mods/a.jar", "a1")]);
+    let mut remote = remote(&[("mods/a.jar", "a2")]);
+    remote.files[0].disabled = true;
+    prepare_with_contents(root, &installed, &remote, &BTreeMap::new())
+      .await
+      .unwrap()
+  }
+
+  fn content_conflict(prepared: &Prepared) -> &Conflict {
+    assert_eq!(prepared.diff.conflicts.len(), 1);
+    let conflict = &prepared.diff.conflicts[0];
+    assert_eq!(conflict.path, "mods/a.jar");
+    assert_eq!(conflict.kind, ConflictKind::ModifiedLocallyChangedRemotely);
+    assert_eq!(conflict.remote_disabled, Some(true));
+    conflict
+  }
+
+  #[tokio::test]
+  async fn a_kept_local_conflict_still_settles_the_disabled_variant() {
+    let root = instance(&[("mods/a.jar", "a1-edited")]);
+    let prepared = prepare_content_conflict(&root).await;
+    content_conflict(&prepared);
+    let entry = prepared
+      .next_baseline
+      .iter()
+      .find(|entry| entry.path == "mods/a.jar")
+      .unwrap();
+    assert!(entry.is_managed() && entry.disabled);
+
+    for choices in [
+      BTreeMap::new(),
+      BTreeMap::from([("mods/a.jar".to_string(), ConflictChoice::KeepLocal)]),
+    ] {
+      let operations = resolve(&prepared, &choices);
+      assert_eq!(operations.len(), 1);
+      assert!(operations[0].rename);
+      assert_eq!(operations[0].write, None);
+      assert!(operations[0].final_disabled);
+      // The file itself moves: the enabled name is gone, the content sits at
+      // the disabled one.
+      assert!(fs::rename(root.join("mods/a.jar"), root.join("mods/a.jar.moved")).is_ok());
+      let _ = fs::rename(root.join("mods/a.jar.moved"), root.join("mods/a.jar"));
+    }
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn a_taken_remote_conflict_writes_the_disabled_variant() {
+    let root = instance(&[("mods/a.jar", "a1-edited")]);
+    let prepared = prepare_content_conflict(&root).await;
+    content_conflict(&prepared);
+    let entry = prepared
+      .next_baseline
+      .iter()
+      .find(|entry| entry.path == "mods/a.jar")
+      .unwrap();
+    assert!(entry.is_managed() && entry.disabled);
+
+    let choices = BTreeMap::from([("mods/a.jar".to_string(), ConflictChoice::TakeRemote)]);
+    let operations = resolve(&prepared, &choices);
+    assert_eq!(operations.len(), 1);
+    assert!(!operations[0].rename);
+    assert_eq!(operations[0].write, Some(key("a2")));
+    assert!(operations[0].final_disabled);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn a_remanage_conflict_settles_the_disabled_variant_too() {
+    let root = instance(&[("mods/a.jar.disabled", "mine")]);
+    let mut installed = baseline(&[]);
+    installed.files = vec![BaselineFile::dormant("mods/a.jar", Some(key("a1")), true)];
+    let mut remote = remote(&[("mods/a.jar", "a2")]);
+    remote.files[0].disabled = false;
+    let prepared = prepare_with_contents(&root, &installed, &remote, &BTreeMap::new())
+      .await
+      .unwrap();
+
+    assert_eq!(prepared.diff.conflicts.len(), 1);
+    let conflict = &prepared.diff.conflicts[0];
+    assert_eq!(conflict.kind, ConflictKind::Remanage);
+    // The player kept the recorded state, so the remote's enabled one wins.
+    assert_eq!(conflict.remote_disabled, Some(false));
+    let entry = prepared
+      .next_baseline
+      .iter()
+      .find(|entry| entry.path == "mods/a.jar")
+      .unwrap();
+    assert!(entry.is_managed() && !entry.disabled);
+
+    let operations = resolve(&prepared, &BTreeMap::new());
+    assert_eq!(operations.len(), 1);
+    assert!(operations[0].rename);
+    assert!(!operations[0].final_disabled);
+    let taken = resolve(
+      &prepared,
+      &BTreeMap::from([("mods/a.jar".to_string(), ConflictChoice::TakeRemote)]),
+    );
+    assert_eq!(taken.len(), 1);
+    assert_eq!(taken[0].write, Some(key("a2")));
+    assert!(!taken[0].final_disabled);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn a_file_in_the_way_keeps_its_variant_and_records_the_remotes_opinion() {
+    // a.jar sits on disk but the modpack never recorded it; the new version
+    // ships it, disabled. Never recorded means the local variant wins for the
+    // file itself, while the baseline records the remote's opinion (§5.2).
+    let root = instance(&[("mods/a.jar", "mine"), ("mods/b.jar", "b1")]);
+    let installed = baseline(&[("mods/b.jar", "b1")]);
+    let mut remote = remote(&[("mods/a.jar", "a2"), ("mods/b.jar", "b1")]);
+    remote.files[0].disabled = true;
+    let prepared = prepare_with_contents(&root, &installed, &remote, &BTreeMap::new())
+      .await
+      .unwrap();
+
+    assert_eq!(prepared.diff.conflicts.len(), 1);
+    let conflict = &prepared.diff.conflicts[0];
+    assert_eq!(conflict.path, "mods/a.jar");
+    assert_eq!(conflict.kind, ConflictKind::UnmanagedFileInTheWay);
+    assert_eq!(conflict.remote_disabled, Some(false));
+    assert_eq!(conflict.local_disabled, Some(false));
+    let entry = prepared
+      .next_baseline
+      .iter()
+      .find(|entry| entry.path == "mods/a.jar")
+      .unwrap();
+    assert!(entry.is_managed() && entry.disabled);
+
+    // The local file already sits at the outcome: keeping it is a plain keep.
+    assert!(resolve(&prepared, &BTreeMap::new()).is_empty());
+    // Taking the remote writes the new file there too.
+    let taken = resolve(
+      &prepared,
+      &BTreeMap::from([("mods/a.jar".to_string(), ConflictChoice::TakeRemote)]),
+    );
+    assert_eq!(taken.len(), 1);
+    assert_eq!(taken[0].write, Some(key("a2")));
+    assert!(!taken[0].final_disabled);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn an_enumerated_path_casefold_matching_the_manifest_keeps_its_spelling() {
+    // The installed pack recorded `config/foo.toml`; the disk has it as
+    // `config/Foo.toml`. The new version does not ship the file anymore but
+    // deletes everything under `config`: the enumeration must find the file
+    // once, under the manifest's spelling, and never delete it twice.
+    let root = instance(&[("config/Foo.toml", "c1"), ("config/other.toml", "o1")]);
+    let installed = baseline(&[("config/foo.toml", "c1")]);
+    let mut remote = remote(&[]);
+    remote.rules = vec![rule("config", RuleKind::Dir, RuleState::Delete)];
+    let prepared = prepare_with_contents(&root, &installed, &remote, &BTreeMap::new())
+      .await
+      .unwrap();
+
+    let changes: BTreeMap<_, _> = prepared
+      .diff
+      .changes
+      .iter()
+      .map(|change| (change.path.as_str(), change.kind))
+      .collect();
+    assert_eq!(changes["config/foo.toml"], ChangeKind::Delete);
+    assert_eq!(changes["config/other.toml"], ChangeKind::Delete);
+    assert!(!changes.contains_key("config/Foo.toml"));
+    assert!(prepared.diff.conflicts.is_empty());
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn a_dormant_file_differing_only_in_line_endings_updates_without_asking() {
+    let root = instance(&[("config/a.properties", "a=1\r\n")]);
+    let mut installed = baseline(&[]);
+    installed.files = vec![BaselineFile::dormant(
+      "config/a.properties",
+      Some(key("a=1\n")),
+      false,
+    )];
+    store_base(&root, &installed, "a=1\n");
+    let remote = remote(&[("config/a.properties", "a=2\n")]);
+
+    let prepared = prepare_with_contents(&root, &installed, &remote, &BTreeMap::new())
+      .await
+      .unwrap();
+
+    // ≡B after normalization: the file updates to the new content instead of
+    // asking to be managed again (§5.1).
+    assert!(prepared.diff.conflicts.is_empty());
+    assert_eq!(prepared.diff.changes.len(), 1);
+    assert_eq!(prepared.diff.changes[0].path, "config/a.properties");
+    assert_eq!(prepared.diff.changes[0].kind, ChangeKind::Update);
+    let entry = prepared
+      .next_baseline
+      .iter()
+      .find(|entry| entry.path == "config/a.properties")
+      .unwrap();
+    assert!(entry.is_managed());
     let _ = fs::remove_dir_all(root);
   }
 }

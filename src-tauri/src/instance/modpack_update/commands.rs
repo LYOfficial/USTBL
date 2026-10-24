@@ -767,8 +767,17 @@ fn is_fresh(origin: &InstanceOrigin) -> bool {
   origin.version_id.is_empty()
 }
 
-fn fast_forward(changes: usize, conflicts: usize, loader_change: bool) -> bool {
-  changes == 0 && conflicts == 0 && !loader_change
+/// A plan fast-forwards when nothing but the baseline moves. A `Retire`
+/// change only rewrites the entry (the file itself stays), so it does not
+/// count; everything else, a conflict or a loader change does.
+fn fast_forward<'a>(
+  mut changes: impl Iterator<Item = &'a super::diff::FileChange>,
+  conflicts: usize,
+  loader_change: bool,
+) -> bool {
+  !changes.any(|change| change.kind != super::diff::ChangeKind::Retire)
+    && conflicts == 0
+    && !loader_change
 }
 
 /// The plan the dialog shows and the cache stores. A plan that needs a
@@ -780,7 +789,11 @@ fn plan_of(origin: &InstanceOrigin, prepared: PlannedRun) -> UpdatePlan {
     to_label: prepared.label.clone(),
     fast_forward: !prepared.reinstall_required
       && fast_forward(
-        prepared.diff.changes.len() + prepared.diff.auto_merged.len(),
+        prepared
+          .diff
+          .changes
+          .iter()
+          .chain(&prepared.diff.auto_merged),
         prepared.diff.conflicts.len(),
         prepared.loader_change.is_some(),
       ),
@@ -1228,10 +1241,21 @@ mod tests {
 
   #[test]
   fn only_a_plan_with_nothing_to_do_fast_forwards() {
-    assert!(fast_forward(0, 0, false));
-    assert!(!fast_forward(1, 0, false));
-    assert!(!fast_forward(0, 1, false));
-    assert!(!fast_forward(0, 0, true));
+    use super::super::diff::{ChangeKind, FileChange};
+    let change = |kind| FileChange {
+      path: "mods/a.jar".into(),
+      kind,
+      remote: None,
+      local_size: None,
+    };
+    let none: &[FileChange] = &[];
+    assert!(fast_forward(none.iter(), 0, false));
+    assert!(!fast_forward([change(ChangeKind::Update)].iter(), 0, false));
+    assert!(!fast_forward(none.iter(), 1, false));
+    assert!(!fast_forward(none.iter(), 0, true));
+    // A plan that only retires entries has no file action: it fast-forwards,
+    // and the retirements still write the baseline when applied.
+    assert!(fast_forward([change(ChangeKind::Retire)].iter(), 0, false));
   }
 
   /// The JSON the update dialog sends for "use the new version on the first
@@ -1282,6 +1306,8 @@ mod tests {
           baseline: Some(key("a1")),
           local: Some(key("al")),
           remote: Some(key("a2")),
+          remote_disabled: None,
+          local_disabled: Some(false),
           hunks: vec![hunk(0), hunk(4)],
         },
         super::super::diff::Conflict {
@@ -1290,6 +1316,8 @@ mod tests {
           baseline: Some(key("b1")),
           local: Some(key("bl")),
           remote: Some(key("b2")),
+          remote_disabled: None,
+          local_disabled: Some(false),
           hunks: Vec::new(),
         },
       ],
@@ -1346,6 +1374,7 @@ mod tests {
         files: Vec::new(),
         rules: Vec::new(),
         rules_manifest: false,
+        path_index: std::sync::Arc::new(std::sync::OnceLock::new()),
       },
     };
     let plan = plan_of(&origin, run);

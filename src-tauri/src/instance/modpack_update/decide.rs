@@ -133,9 +133,7 @@ pub enum DecisionConflict {
   /// A file the modpack never recorded sits where the new version wants one.
   UnmanagedFileInTheWay,
   /// A dormant file is managed again while the local content is neither the
-  /// recorded nor the shipped one. Only a `/3` remote with a dormant local
-  /// produces it; the compiler never sees one on this branch's own paths.
-  #[allow(dead_code)]
+  /// recorded nor the shipped one.
   Remanage,
   /// Edited here, but the new version no longer ships it.
   ModifiedRemovedRemotely,
@@ -181,36 +179,13 @@ fn dormant(path: &str, key: Option<FileKey>, disabled: bool) -> NextBaseline {
 /// The disabled state the file ends up with, by §5.2. Only consulted for
 /// shipped files. `base_disabled` is the recorded value of a managed entry or
 /// a dormant one with content; `local_disabled` the variant on disk, if any.
-/// A conflict leaves the local file alone, so its variant survives.
+/// A conflict is settled at the variant this computes too: keeping the local
+/// content still moves the file here when it sits at the other one.
 pub fn disabled_outcome(
   remote: Option<bool>,
   base_disabled: Option<bool>,
   local_disabled: Option<bool>,
 ) -> bool {
-  disabled_outcome_inner(remote, base_disabled, local_disabled, false)
-}
-
-/// The same three-way, with the conflict case spelled out: when the player is
-/// asked, the file on disk is not renamed before they answer.
-pub fn disabled_outcome_conflicted(
-  remote: Option<bool>,
-  base_disabled: Option<bool>,
-  local_disabled: Option<bool>,
-) -> bool {
-  disabled_outcome_inner(remote, base_disabled, local_disabled, true)
-}
-
-fn disabled_outcome_inner(
-  remote: Option<bool>,
-  base_disabled: Option<bool>,
-  local_disabled: Option<bool>,
-  conflicted: bool,
-) -> bool {
-  if conflicted {
-    if let Some(local) = local_disabled {
-      return local;
-    }
-  }
   match remote {
     Some(remote) => match base_disabled {
       Some(base) => match local_disabled {
@@ -227,19 +202,6 @@ fn disabled_outcome_inner(
 /// an opinion, the surviving local value otherwise.
 pub fn disabled_record(remote: Option<bool>, local_disabled: Option<bool>) -> bool {
   remote.or(local_disabled).unwrap_or(false)
-}
-
-/// The baseline's disabled value while the player is asked: a conflict keeps
-/// the local file, so the entry records the local variant when one exists.
-pub fn disabled_record_conflicted(
-  remote: Option<bool>,
-  base_disabled: Option<bool>,
-  local_disabled: Option<bool>,
-) -> bool {
-  match local_disabled {
-    Some(local) => local,
-    None => disabled_record(remote, base_disabled),
-  }
 }
 
 /// The key and variant of the local file. `Both` reads as the enabled one:
@@ -283,12 +245,7 @@ fn decide_ship_unmanaged(path: &str, ship: &ShipInput, input: &DecisionInput) ->
   };
   let outcome = disabled_outcome(ship.disabled, base_disabled, local_disabled);
   let record = disabled_record(ship.disabled, local_disabled);
-  // A conflict keeps the local file where it sits; the player answers.
-  let conflicted_outcome =
-    disabled_outcome_conflicted(ship.disabled, base_disabled, local_disabled);
-  let conflicted_record = disabled_record_conflicted(ship.disabled, base_disabled, local_disabled);
   let next = || managed(path, &ship.key, record);
-  let conflicted_next = || managed(path, &ship.key, conflicted_record);
   let write_or_rename = |key: &FileKey| {
     if local_disabled == Some(outcome) {
       Action::Nothing
@@ -328,19 +285,14 @@ fn decide_ship_unmanaged(path: &str, ship: &ShipInput, input: &DecisionInput) ->
       Base::Dormant { key: Some(_), .. } => Decision {
         action: Action::Nothing,
         conflict: Some(DecisionConflict::Remanage),
-        next: conflicted_next(),
+        next: next(),
       },
+      // A file in the way never had a recorded state, so its variant wins;
+      // the remote's disabled opinion only lands in the baseline record.
       _ => Decision {
-        action: if Some(conflicted_outcome) == local_disabled {
-          Action::Nothing
-        } else {
-          Action::Rename {
-            key: ship.key.clone(),
-            variant: Variant::of_disabled(conflicted_outcome),
-          }
-        },
+        action: Action::Nothing,
         conflict: Some(DecisionConflict::UnmanagedFileInTheWay),
-        next: conflicted_next(),
+        next: next(),
       },
     },
   }
@@ -718,7 +670,7 @@ mod tests {
           decision(
             Action::Nothing,
             Some(DecisionConflict::UnmanagedFileInTheWay),
-            managed_entry(R, variant)
+            managed_entry(R, false)
           ),
           "variant={variant}"
         );
@@ -1425,10 +1377,7 @@ mod tests {
         };
         let outcome = disabled_outcome(ship.disabled, base_disabled, local_disabled);
         let record = disabled_record(ship.disabled, local_disabled);
-        let conflicted_record =
-          disabled_record_conflicted(ship.disabled, base_disabled, local_disabled);
         let next = entry(&ship.key, record);
-        let conflicted_next = entry(&ship.key, conflicted_record);
         match &input.base {
           Base::None | Base::Dormant { key: None, .. } => match &local_key {
             None => decision(write_remote_key(&ship.key, outcome), None, next),
@@ -1440,7 +1389,7 @@ mod tests {
             Some(_) => decision(
               Action::Nothing,
               Some(DecisionConflict::UnmanagedFileInTheWay),
-              conflicted_next,
+              next,
             ),
           },
           Base::Dormant {
@@ -1461,7 +1410,7 @@ mod tests {
               Some(_) => decision(
                 Action::Nothing,
                 Some(DecisionConflict::Remanage),
-                conflicted_next,
+                next,
               ),
             }
           }

@@ -13,9 +13,9 @@ use crate::instance::helpers::modpack::multimc::profile::safe_relative;
 use crate::instance::models::misc::InstanceError;
 use crate::tasks::download::DownloadParam;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 pub fn safe_relative_path(path: &str) -> USTBLResult<PathBuf> {
   let path = PathBuf::from(path);
@@ -135,6 +135,35 @@ pub struct ComponentPack {
   pub files: Vec<RemoteFile>,
 }
 
+/// Case-folded lookups over the file and rule lists. Built once per remote
+/// and shared by its clones, so deciding a pack's worth of paths is linear in
+/// the lists, not quadratic. `dir` rules are matched by prefix and stay a
+/// linear scan.
+#[derive(Debug, Default)]
+pub struct PathIndex {
+  /// Case-folded path → index into `files`.
+  files: HashMap<String, usize>,
+  /// Case-folded path → index into `rules`, `file` rules only.
+  file_rules: HashMap<String, usize>,
+}
+
+impl PathIndex {
+  fn build(files: &[RemoteFile], rules: &[RemoteRule]) -> Self {
+    let files = files
+      .iter()
+      .enumerate()
+      .map(|(index, file)| (file.path.to_lowercase(), index))
+      .collect();
+    let file_rules = rules
+      .iter()
+      .enumerate()
+      .filter(|(_, rule)| rule.kind == RuleKind::File)
+      .map(|(index, rule)| (rule.path.to_lowercase(), index))
+      .collect();
+    Self { files, file_rules }
+  }
+}
+
 #[derive(Debug, Clone)]
 pub struct RemoteModpack {
   pub version_id: String,
@@ -154,6 +183,9 @@ pub struct RemoteModpack {
   /// The manifest declared the `/3` format, so rules and the file attributes
   /// (`disabled`, `once`) are authoritative. Archives never have them.
   pub rules_manifest: bool,
+  /// Case-folded lookup over `files` and the `file` rules, built on first
+  /// use and shared by every clone. Filled only by [`RemoteModpack::index`].
+  pub(crate) path_index: Arc<OnceLock<PathIndex>>,
 }
 
 // ---- stored form (the remote cache) -------------------------------------------
@@ -271,6 +303,7 @@ impl RemoteModpack {
       files,
       rules: stored.rules,
       rules_manifest: stored.rules_manifest,
+      path_index: Arc::new(OnceLock::new()),
     }
   }
 }
@@ -327,6 +360,7 @@ impl RemoteModpack {
       if rule.path.ends_with('/')
         || lowered == UPDATE_DIR
         || lowered.starts_with(&format!("{UPDATE_DIR}/"))
+        || lowered.ends_with(super::diff::DISABLED_SUFFIX)
         || lowered == "patches"
         || lowered.starts_with("patches/")
         || lowered == "libraries"
@@ -341,50 +375,58 @@ impl RemoteModpack {
     Ok(())
   }
 
+  /// The case-folded lookup over the file list and the `file` rules, built
+  /// the first time anyone asks. The index matches the lists it was built
+  /// from: a remote's `files`/`rules` are final once a plan runs against
+  /// them, and test fixtures must ask before mutating.
+  pub fn index(&self) -> &PathIndex {
+    self
+      .path_index
+      .get_or_init(|| PathIndex::build(&self.files, &self.rules))
+  }
+
+  /// The shipped file whose path folds to `path`, in the manifest's own
+  /// spelling. Path comparisons fold case everywhere (《方案》§3).
+  pub fn file_of(&self, path: &str) -> Option<&RemoteFile> {
+    self.index().files.get(&path.to_lowercase()).map(|i| &self.files[*i])
+  }
+
   /// The remote's side of a shipped path, for the decision function.
   pub fn ship_of(&self, path: &str) -> Option<ShipInput> {
-    self
-      .files
-      .iter()
-      .find(|file| file.path == path)
-      .map(|file| {
-        ShipInput {
-          key: file.key.clone(),
-          // Only a `/3` manifest's attributes are authoritative; other remotes
-          // never disable and never ship once-only files.
-          disabled: self.rules_manifest.then_some(file.disabled),
-          once: self.rules_manifest && file.once,
-        }
-      })
+    self.file_of(path).map(|file| ShipInput {
+      key: file.key.clone(),
+      // Only a `/3` manifest's attributes are authoritative; other remotes
+      // never disable and never ship once-only files.
+      disabled: self.rules_manifest.then_some(file.disabled),
+      once: self.rules_manifest && file.once,
+    })
   }
 
   /// The policy of one path: a shipped file wins, then a `file` rule, then
-  /// the deepest `dir` rule; everything else is unmentioned. Rule matching
-  /// folds case, like the file systems the packs land on.
+  /// the deepest `dir` rule; everything else is unmentioned. All matching
+  /// folds case, like the file systems the packs land on (《方案》§3).
   pub fn policy_of(&self, path: &str) -> Policy {
-    if self.files.iter().any(|file| file.path == path) {
+    let index = self.index();
+    let folded = path.to_lowercase();
+    if index.files.contains_key(&folded) {
       return Policy::Ship;
     }
-    let folded = path.to_lowercase();
+    if let Some(rule) = index.file_rules.get(&folded).map(|i| &self.rules[*i]) {
+      return match rule.state {
+        RuleState::Ignore => Policy::Ignore,
+        RuleState::Delete => Policy::Delete,
+      };
+    }
     let mut deepest: Option<(usize, &RemoteRule)> = None;
     for rule in &self.rules {
-      let rule_folded = rule.path.to_lowercase();
-      let covered = match rule.kind {
-        RuleKind::File => folded == rule_folded,
-        RuleKind::Dir => folded
-          .strip_prefix(&rule_folded)
-          .is_some_and(|rest| rest.starts_with('/')),
-      };
-      if !covered {
+      if rule.kind != RuleKind::Dir {
         continue;
       }
-      if rule.kind == RuleKind::File {
-        return match rule.state {
-          RuleState::Ignore => Policy::Ignore,
-          RuleState::Delete => Policy::Delete,
-        };
-      }
-      if deepest.is_none_or(|(depth, _)| rule_folded.len() > depth) {
+      let rule_folded = rule.path.to_lowercase();
+      let covered = folded
+        .strip_prefix(&rule_folded)
+        .is_some_and(|rest| rest.starts_with('/'));
+      if covered && deepest.is_none_or(|(depth, _)| rule_folded.len() > depth) {
         deepest = Some((rule_folded.len(), rule));
       }
     }
@@ -455,6 +497,7 @@ mod tests {
         .collect(),
       rules: Vec::new(),
       rules_manifest: false,
+      path_index: Arc::new(OnceLock::new()),
     }
   }
 
@@ -518,6 +561,9 @@ mod tests {
         RuleState::Delete,
       ),
       rule("libraries", RuleKind::Dir, RuleState::Delete),
+      // A rule path never names a variant; the suffix belongs to the engine.
+      rule("config/a.toml.disabled", RuleKind::File, RuleState::Delete),
+      rule("config/cache.DISABLED", RuleKind::Dir, RuleState::Ignore),
       // A file rule may not cover a shipped file.
       rule("mods/A.jar", RuleKind::File, RuleState::Delete),
     ] {
@@ -578,14 +624,30 @@ mod tests {
       rule("config/deep/x.toml", RuleKind::File, RuleState::Ignore),
     ];
     assert_eq!(pack.policy_of("mods/a.jar"), Policy::Ship);
-    // Files win over everything, rules fold case.
-    assert_eq!(pack.policy_of("MODS/A.JAR"), Policy::Unmentioned);
+    // Files win over everything, and every lookup folds case (§3).
+    assert_eq!(pack.policy_of("MODS/A.JAR"), Policy::Ship);
     assert_eq!(pack.policy_of("config/other.toml"), Policy::Ignore);
     assert_eq!(pack.policy_of("Config/Deep/y.toml"), Policy::Delete);
+    assert_eq!(pack.policy_of("config/deep/X.toml"), Policy::Ignore);
     assert_eq!(pack.policy_of("config/deep/x.toml"), Policy::Ignore);
     // A dir rule does not cover its namesake file.
     assert_eq!(pack.policy_of("config"), Policy::Unmentioned);
     assert_eq!(pack.policy_of("mods/b.jar"), Policy::Unmentioned);
+  }
+
+  #[test]
+  fn ship_and_file_lookups_fold_case_but_keep_the_manifest_spelling() {
+    let mut pack = pack(&["Mods/A.JAR"]);
+    pack.rules_manifest = true;
+    pack.files[0].disabled = true;
+    let file = pack.file_of("mods/a.jar").unwrap();
+    assert_eq!(file.path, "Mods/A.JAR");
+    let ship = pack.ship_of("mods/a.jar").unwrap();
+    assert_eq!(ship.disabled, Some(true));
+    assert_eq!(ship.key, pack.files[0].key);
+    // Not a shipped file: nothing.
+    assert!(pack.file_of("mods/b.jar").is_none());
+    assert!(pack.ship_of("mods/b.jar").is_none());
   }
 
   /// Sessions here are only compared, never asked for anything.

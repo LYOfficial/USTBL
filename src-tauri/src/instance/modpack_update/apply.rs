@@ -1113,6 +1113,7 @@ mod tests {
         files,
         rules: Vec::new(),
         rules_manifest: false,
+        path_index: Arc::new(OnceLock::new()),
       },
       origin: origin("1"),
       previous_loader: loader("0.15.0"),

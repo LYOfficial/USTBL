@@ -371,6 +371,7 @@ pub fn campus_remote(
     files,
     rules,
     rules_manifest: true,
+    path_index: Arc::new(std::sync::OnceLock::new()),
   })
 }
 
@@ -588,6 +589,7 @@ pub async fn remote_from_archive(
     files: merge_files(downloads, overrides),
     rules: Vec::new(),
     rules_manifest: false,
+    path_index: Arc::new(std::sync::OnceLock::new()),
   })
 }
 
@@ -1385,6 +1387,7 @@ mod tests {
       ],
       rules: Vec::new(),
       rules_manifest: false,
+      path_index: Arc::new(std::sync::OnceLock::new()),
     }
   }
 

@@ -7,8 +7,8 @@
 //! is listed, and the local file stays unless the caller explicitly chooses the
 //! remote one.
 
-use crate::instance::helpers::modpack::baseline::hash_file;
 use super::merge::MergeConflict;
+use crate::instance::helpers::modpack::baseline::hash_file;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
@@ -108,6 +108,16 @@ pub struct Conflict {
   pub baseline: Option<FileKey>,
   pub local: Option<FileKey>,
   pub remote: Option<FileKey>,
+  /// The variant the path's file ends up at: a take-remote answer writes the
+  /// remote file there; a kept-local file sitting at the other variant is
+  /// renamed. `None` leaves the variant alone (a path the remote no longer
+  /// ships has no disabled state to settle).
+  #[serde(default)]
+  pub remote_disabled: Option<bool>,
+  /// The variant the local file sits at, when one exists. Together with
+  /// `remote_disabled` it tells a keep-local answer whether the file moves.
+  #[serde(default)]
+  pub local_disabled: Option<bool>,
   pub hunks: Vec<MergeConflict>,
 }
 
@@ -160,6 +170,8 @@ pub fn ship_managed(path: &str, b: &FileKey, r: &FileKey, local_key: Option<&Fil
     baseline: Some(b.clone()),
     local: local_key.cloned(),
     remote: Some(r.clone()),
+    remote_disabled: None,
+    local_disabled: local_key.is_some().then_some(false),
     hunks: Vec::new(),
   };
   let write = |kind, remote: &FileKey| FileChange {
@@ -208,6 +220,8 @@ pub fn three_way(
       baseline: b.cloned(),
       local: local_key.clone(),
       remote: r.cloned(),
+      remote_disabled: None,
+    local_disabled: local_key.is_some().then_some(false),
       hunks: Vec::new(),
     };
     let write = |kind, remote: &FileKey| FileChange {
