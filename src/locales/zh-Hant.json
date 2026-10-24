@@ -2624,6 +2624,12 @@
           "title": "載入校園整合包失敗"
         }
       },
+      "deleteCampusModpackProject": {
+        "success": "已刪除校內整合包",
+        "error": {
+          "title": "刪除校內整合包失敗"
+        }
+      },
       "createCampusModpackProject": {
         "success": "專案已建立",
         "error": {
@@ -2636,7 +2642,11 @@
           "title": "發佈失敗",
           "description": {
             "MODPACK_PUBLISH_STALE": "發佈期間該線路已被其他人更新，請重新載入後再試",
-            "MODPACK_UPDATE_UNSUPPORTED": "此實例沒有受支援的模組載入器，無法發佈"
+            "MODPACK_UPDATE_UNSUPPORTED": "此實例沒有受支援的模組載入器，無法發佈",
+            "MODPACK_UPLOAD_RESTARTED": "上傳會話已在雲盤重新開始，請重新發佈",
+            "MODPACK_UPLOAD_CLOUD_UNAVAILABLE": "雲盤暫時不可用，請稍後重試",
+            "MODPACK_UPLOAD_VERIFY_FAILED": "上傳內容與本機不符，請重新發佈",
+            "MODPACK_UPLOAD_SESSION_GONE": "上傳會話已過期，請重新發佈"
           }
         }
       },
@@ -3259,7 +3269,12 @@
       "openOriginal": "查看",
       "noVersion": "該專案沒有適用於 {{gameVersion}}（{{loader}}）的整合包版本",
       "downloadStarted": "已開始下載 {{version}}",
-      "downloadDescription": "下載完成後會自動進入整合包安裝流程。"
+      "downloadDescription": "下載完成後會自動進入整合包安裝流程。",
+      "delete": "刪除整合包",
+      "deleteDialog": {
+        "title": "刪除校內整合包",
+        "content": "確定從校內平台刪除「{{name}}」嗎？它的所有版本線和歷史版本都會被刪除，無法復原。已安裝的實例保留本機檔案，但無法再檢查更新。"
+      }
     },
     "ledger": {
       "title": "我的整合包實例",

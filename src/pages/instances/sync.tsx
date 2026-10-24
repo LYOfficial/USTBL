@@ -29,6 +29,8 @@ import {
 } from "@/models/campus-modpack";
 import { InstanceSummary } from "@/models/instance/misc";
 import { TaskTypeEnums } from "@/models/task";
+import { VustbAccount, isVustbAdmin } from "@/models/vustb";
+import { AccountService } from "@/services/account";
 import { CampusModpackService } from "@/services/campus-modpack";
 import { campusProjectRefs, findInstancesOfLine } from "@/utils/modpack-ledger";
 import { registerPendingModpackOrigin } from "@/utils/modpack-origin";
@@ -65,11 +67,20 @@ const CampusPlatformSection: React.FC<CampusPlatformSectionProps> = ({
 }) => {
   const { t } = useTranslation();
   const toast = useToast();
-  const { requireVustbAccount } = useSharedModals();
+  const { requireVustbAccount, openGenericConfirmDialog } = useSharedModals();
   const { handleScheduleProgressiveTaskGroup } = useTaskContext();
   const { config } = useLauncherConfig();
   const primaryColor = config.appearance.theme.primaryColor;
   const installModal = useDisclosure();
+
+  const [vustbAccount, setVustbAccount] = useState<VustbAccount | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  useEffect(() => {
+    AccountService.retrieveVustbAccount().then((response) => {
+      if (response.status === "success") setVustbAccount(response.data);
+    });
+  }, []);
+  const isAdmin = isVustbAdmin(vustbAccount);
 
   const [selected, setSelected] = useState<CampusSelection | null>(null);
   const [externalProject, setExternalProject] =
@@ -271,6 +282,53 @@ const CampusPlatformSection: React.FC<CampusPlatformSectionProps> = ({
     </HStack>
   );
 
+  const handleDeleteProject = useCallback(
+    async (project: CampusModpackProject) => {
+      setDeletingId(project.id);
+      try {
+        const response = await CampusModpackService.deleteCampusModpackProject(
+          project.slug
+        );
+        toast({
+          title: response.message,
+          description: response.status === "error" ? response.details : "",
+          status: response.status,
+        });
+        if (response.status === "success") onRefresh();
+      } finally {
+        setDeletingId(null);
+      }
+    },
+    [onRefresh, toast]
+  );
+
+  const deleteButton = (project: CampusModpackProject) =>
+    isAdmin && (
+      <CommonIconButton
+        icon="delete"
+        label={t("InstanceSyncPage.platform.delete")}
+        withTooltip
+        colorScheme="red"
+        size="xs"
+        h={21}
+        isLoading={deletingId === project.id}
+        isDisabled={deletingId !== null}
+        onClick={() =>
+          openGenericConfirmDialog({
+            title: t("InstanceSyncPage.platform.deleteDialog.title"),
+            body: t("InstanceSyncPage.platform.deleteDialog.content", {
+              name: project.name,
+            }),
+            btnOK: t("General.delete"),
+            isAlert: true,
+            onOKCallback: () => {
+              void handleDeleteProject(project);
+            },
+          })
+        }
+      />
+    );
+
   const installedOfExternal = (rec: CampusModpackRecommendation) =>
     rec.platform === "modrinth" || rec.platform === "curseforge"
       ? findInstancesOfLine(instances, {
@@ -409,6 +467,7 @@ const CampusPlatformSection: React.FC<CampusPlatformSectionProps> = ({
                 key={project.id}
                 title={project.name}
                 description={project.summary || undefined}
+                headExtra={deleteButton(project)}
                 items={project.lines.map((line) => ({
                   title: describeLine(line),
                   children: installButton(project, line),

@@ -2624,6 +2624,12 @@
           "title": "キャンパスModパックの読み込みに失敗しました"
         }
       },
+      "deleteCampusModpackProject": {
+        "success": "キャンパスModパックを削除しました",
+        "error": {
+          "title": "キャンパスModパックの削除に失敗しました"
+        }
+      },
       "createCampusModpackProject": {
         "success": "プロジェクトを作成しました",
         "error": {
@@ -2636,7 +2642,11 @@
           "title": "公開に失敗しました",
           "description": {
             "MODPACK_PUBLISH_STALE": "公開中に他のユーザーがこのラインを更新しました。再読み込みしてからやり直してください",
-            "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスには対応するModローダーがないため公開できません"
+            "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスには対応するModローダーがないため公開できません",
+            "MODPACK_UPLOAD_RESTARTED": "アップロードセッションがクラウドストレージ側で再開されました。もう一度公開してください",
+            "MODPACK_UPLOAD_CLOUD_UNAVAILABLE": "クラウドストレージが一時的に利用できません。しばらくしてから再試行してください",
+            "MODPACK_UPLOAD_VERIFY_FAILED": "アップロードした内容がローカルのファイルと一致しません。もう一度公開してください",
+            "MODPACK_UPLOAD_SESSION_GONE": "アップロードセッションの有効期限が切れました。もう一度公開してください"
           }
         }
       },
@@ -3259,7 +3269,12 @@
       "openOriginal": "表示",
       "noVersion": "このプロジェクトには {{gameVersion}}（{{loader}}）向けのモッドパックバージョンがありません",
       "downloadStarted": "{{version}} のダウンロードを開始しました",
-      "downloadDescription": "ダウンロード完了後、モッドパックのインストールが自動で始まります。"
+      "downloadDescription": "ダウンロード完了後、モッドパックのインストールが自動で始まります。",
+      "delete": "Modパックを削除",
+      "deleteDialog": {
+        "title": "キャンパスModパックを削除",
+        "content": "キャンパスプラットフォームから「{{name}}」を削除しますか？すべてのバージョンラインと過去のバージョンが削除され、元に戻せません。インストール済みのインスタンスはローカルファイルを保持しますが、更新を確認できなくなります。"
+      }
     },
     "ledger": {
       "title": "モッドパックのインスタンス",

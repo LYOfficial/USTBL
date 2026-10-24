@@ -37,6 +37,23 @@ pub struct BaselineLoader {
   pub version: String,
 }
 
+/// The loader version as the loader version lists spell it.
+///
+/// Instances detected from some version JSONs carry NeoForge versions as
+/// `neoforge-26.1.2.87`, while the lists (and therefore installation) use
+/// `26.1.2.87`. Publishing stores this form, so installs and update checks
+/// compare like with like. Other loaders are returned unchanged.
+pub fn canonical_loader_version(loader_type: ModLoaderType, version: &str) -> String {
+  let version = version.trim();
+  match loader_type {
+    ModLoaderType::NeoForge => version
+      .strip_prefix("neoforge-")
+      .unwrap_or(version)
+      .to_string(),
+    _ => version.to_string(),
+  }
+}
+
 /// A file managed by the modpack. `path` is relative to the instance directory
 /// and always uses `/`.
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
@@ -284,6 +301,22 @@ mod tests {
     assert_ne!(
       base,
       compute_content_hash(&loader("0.16.0"), None, &resized)
+    );
+  }
+
+  #[test]
+  fn canonical_loader_version_drops_only_the_neoforge_prefix() {
+    assert_eq!(
+      canonical_loader_version(ModLoaderType::NeoForge, "neoforge-26.1.2.87"),
+      "26.1.2.87"
+    );
+    assert_eq!(
+      canonical_loader_version(ModLoaderType::NeoForge, "21.10.0-beta"),
+      "21.10.0-beta"
+    );
+    assert_eq!(
+      canonical_loader_version(ModLoaderType::Fabric, "neoforge-0.16.0"),
+      "neoforge-0.16.0"
     );
   }
 

@@ -2624,6 +2624,12 @@
           "title": "Failed to load campus modpacks"
         }
       },
+      "deleteCampusModpackProject": {
+        "success": "Deleted the campus modpack",
+        "error": {
+          "title": "Failed to delete the campus modpack"
+        }
+      },
       "createCampusModpackProject": {
         "success": "Project created",
         "error": {
@@ -2636,7 +2642,11 @@
           "title": "Publish failed",
           "description": {
             "MODPACK_PUBLISH_STALE": "This line was updated by someone else while you were publishing; reload and try again",
-            "MODPACK_UPDATE_UNSUPPORTED": "This instance has no supported mod loader and cannot be published"
+            "MODPACK_UPDATE_UNSUPPORTED": "This instance has no supported mod loader and cannot be published",
+            "MODPACK_UPLOAD_RESTARTED": "The upload session restarted on the cloud drive; please publish again",
+            "MODPACK_UPLOAD_CLOUD_UNAVAILABLE": "The cloud drive is temporarily unavailable; please try again later",
+            "MODPACK_UPLOAD_VERIFY_FAILED": "The uploaded content does not match the local file; please publish again",
+            "MODPACK_UPLOAD_SESSION_GONE": "The upload session has expired; please publish again"
           }
         }
       },
@@ -3259,7 +3269,12 @@
       "openOriginal": "View",
       "noVersion": "This project has no modpack version for {{gameVersion}} ({{loader}})",
       "downloadStarted": "Started downloading {{version}}",
-      "downloadDescription": "The modpack installation starts once the download finishes."
+      "downloadDescription": "The modpack installation starts once the download finishes.",
+      "delete": "Delete modpack",
+      "deleteDialog": {
+        "title": "Delete campus modpack",
+        "content": "Delete \"{{name}}\" from the campus platform? All of its lines and versions are removed and cannot be restored. Installed instances keep their local files but can no longer check for updates."
+      }
     },
     "ledger": {
       "title": "My modpack instances",

@@ -2624,6 +2624,12 @@
           "title": "加载校园整合包失败"
         }
       },
+      "deleteCampusModpackProject": {
+        "success": "已删除校内整合包",
+        "error": {
+          "title": "删除校内整合包失败"
+        }
+      },
       "createCampusModpackProject": {
         "success": "项目已创建",
         "error": {
@@ -2636,7 +2642,11 @@
           "title": "发布失败",
           "description": {
             "MODPACK_PUBLISH_STALE": "发布期间该线路已被其他人更新，请重新加载后再试",
-            "MODPACK_UPDATE_UNSUPPORTED": "该实例没有受支持的模组加载器，无法发布"
+            "MODPACK_UPDATE_UNSUPPORTED": "该实例没有受支持的模组加载器，无法发布",
+            "MODPACK_UPLOAD_RESTARTED": "上传会话已在云盘重新开始，请重新发布",
+            "MODPACK_UPLOAD_CLOUD_UNAVAILABLE": "云盘暂时不可用，请稍后重试",
+            "MODPACK_UPLOAD_VERIFY_FAILED": "上传内容与本地不符，请重新发布",
+            "MODPACK_UPLOAD_SESSION_GONE": "上传会话已过期，请重新发布"
           }
         }
       },
@@ -3259,7 +3269,12 @@
       "openOriginal": "查看",
       "noVersion": "该项目没有适用于 {{gameVersion}}（{{loader}}）的整合包版本",
       "downloadStarted": "已开始下载 {{version}}",
-      "downloadDescription": "下载完成后会自动进入整合包安装流程。"
+      "downloadDescription": "下载完成后会自动进入整合包安装流程。",
+      "delete": "删除整合包",
+      "deleteDialog": {
+        "title": "删除校内整合包",
+        "content": "确定从校内平台删除「{{name}}」吗？它的所有版本线和历史版本都会被删除，无法恢复。已安装的实例保留本地文件，但不能再检查更新。"
+      }
     },
     "ledger": {
       "title": "我的整合包实例",

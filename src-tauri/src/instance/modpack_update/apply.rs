@@ -1202,7 +1202,6 @@ mod tests {
     async fn locate(
       &self,
       _: i64,
-      _: crate::instance::modpack_update::packs::LocateMode,
       sha1s: &[String],
     ) -> Result<
       crate::instance::modpack_update::packs::Located,
@@ -1224,13 +1223,11 @@ mod tests {
       Ok(Located {
         packs: vec![PackLocation {
           id: 1,
-          sha1: "0".repeat(40),
           url: "https://cloud.example/p".into(),
           method: "GET".into(),
           headers: Default::default(),
         }],
         entries: sha1s.iter().map(|sha1| (sha1.clone(), entry)).collect(),
-        full_size: None,
       })
     }
     async fn read_range(
@@ -1244,13 +1241,6 @@ mod tests {
       fs::write(dest, &self.0).unwrap();
       Ok(())
     }
-    async fn download(
-      &self,
-      _: &crate::instance::modpack_update::packs::PackLocation,
-      _: &Path,
-    ) -> Result<(), crate::instance::modpack_update::packs::TransportError> {
-      unreachable!()
-    }
   }
 
   #[tokio::test]
@@ -1260,11 +1250,7 @@ mod tests {
       root: root.0.clone(),
       ..Default::default()
     };
-    let session = PackSession::new(
-      std::sync::Arc::new(OneFilePack(b"from-pack".to_vec())),
-      3,
-      root.0.join("work"),
-    );
+    let session = PackSession::new(std::sync::Arc::new(OneFilePack(b"from-pack".to_vec())), 3);
     let file = RemoteFile {
       path: "config/p.toml".into(),
       key: sha1_of(b"from-pack"),

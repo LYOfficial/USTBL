@@ -2624,6 +2624,12 @@
           "title": "Échec du chargement des modpacks du campus"
         }
       },
+      "deleteCampusModpackProject": {
+        "success": "Modpack du campus supprimé",
+        "error": {
+          "title": "Échec de la suppression du modpack du campus"
+        }
+      },
       "createCampusModpackProject": {
         "success": "Projet créé",
         "error": {
@@ -2636,7 +2642,11 @@
           "title": "Échec de la publication",
           "description": {
             "MODPACK_PUBLISH_STALE": "Cette ligne a été mise à jour par quelqu'un d'autre pendant la publication ; rechargez et réessayez",
-            "MODPACK_UPDATE_UNSUPPORTED": "Cette instance n'a pas de chargeur de mods pris en charge et ne peut pas être publiée"
+            "MODPACK_UPDATE_UNSUPPORTED": "Cette instance n'a pas de chargeur de mods pris en charge et ne peut pas être publiée",
+            "MODPACK_UPLOAD_RESTARTED": "La session de téléversement a redémarré sur le cloud ; veuillez republier",
+            "MODPACK_UPLOAD_CLOUD_UNAVAILABLE": "Le stockage cloud est temporairement indisponible ; veuillez réessayer plus tard",
+            "MODPACK_UPLOAD_VERIFY_FAILED": "Le contenu téléversé ne correspond pas au fichier local ; veuillez republier",
+            "MODPACK_UPLOAD_SESSION_GONE": "La session de téléversement a expiré ; veuillez republier"
           }
         }
       },
@@ -3259,7 +3269,12 @@
       "openOriginal": "Voir",
       "noVersion": "Ce projet n'a pas de version de pack pour {{gameVersion}} ({{loader}})",
       "downloadStarted": "Téléchargement de {{version}} lancé",
-      "downloadDescription": "L'installation du pack démarre à la fin du téléchargement."
+      "downloadDescription": "L'installation du pack démarre à la fin du téléchargement.",
+      "delete": "Supprimer le modpack",
+      "deleteDialog": {
+        "title": "Supprimer le modpack du campus",
+        "content": "Supprimer « {{name}} » de la plateforme du campus ? Toutes ses lignes et versions seront supprimées définitivement. Les instances installées gardent leurs fichiers locaux mais ne pourront plus vérifier les mises à jour."
+      }
     },
     "ledger": {
       "title": "Mes instances de packs",

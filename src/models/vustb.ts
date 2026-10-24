@@ -42,6 +42,12 @@ const MANAGER_GROUPS = new Set([
 export const isVustbManager = (account: VustbAccount | null): boolean =>
   !!account && MANAGER_GROUPS.has(account.userGroup);
 
+// Groups allowed to delete a whole campus modpack.
+const ADMIN_GROUPS = new Set(["super_admin", "admin"]);
+
+export const isVustbAdmin = (account: VustbAccount | null): boolean =>
+  !!account && ADMIN_GROUPS.has(account.userGroup);
+
 export interface VustbCheckinResult {
   message: string;
   experienceGained: number;

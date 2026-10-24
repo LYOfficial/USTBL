@@ -3,7 +3,7 @@
 use super::components::plan_components;
 use super::job::{is_running, PublishJob};
 use super::manifest::{plan_files, LocalFile};
-use super::pack::build_pack;
+use super::pack::{build_pack, verify_pack};
 use super::record::{
   jobs_dir, paths, JobRecord, Phase, RecordedFile, RecordedObject, RecordedPack, RecordedUpload,
   RECORD_SCHEMA,
@@ -13,7 +13,8 @@ use crate::account::models::AccountInfo;
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::misc::{get_instance_game_config, get_instance_subdir_paths};
 use crate::instance::helpers::modpack::baseline::{
-  components_of_mmc_pack, hash_file, BaselineFile, BaselineLoader, ModpackBaseline,
+  canonical_loader_version, components_of_mmc_pack, hash_file, BaselineFile, BaselineLoader,
+  ModpackBaseline,
 };
 use crate::instance::helpers::modpack::multimc::profile::safe_relative;
 use crate::instance::helpers::modpack::multimc::snapshot::{
@@ -25,7 +26,7 @@ use crate::instance::models::misc::{
 use crate::instance::modpack_update::commands::store_instance;
 use crate::instance::modpack_update::diff::FileKey;
 use crate::instance::modpack_update::sources::{loader_slug, CAMPUS_API};
-use crate::utils::web::build_ustbl_upload_client;
+use crate::utils::web::build_part_upload_client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -36,6 +37,9 @@ use tauri::{AppHandle, Emitter, Manager};
 
 /// Hashes sent per request when asking which the platform lacks.
 const MISSING_BATCH: usize = 5000;
+/// Part concurrency used on resume, when the record (§9.1) carries none and
+/// there is no fresh `POST /versions` response to read it from (§14.1).
+pub(super) const DEFAULT_PART_CONCURRENCY: usize = 3;
 
 /// The UI hides publishing from other accounts, but the role is checked here too;
 /// the platform authenticates the bearer token again.
@@ -54,6 +58,22 @@ fn ensure_manager(app: &AppHandle) -> USTBLResult<()> {
     Ok(())
   } else {
     Err(USTBLError("当前像素北科账号没有整合包管理权限".to_string()))
+  }
+}
+
+/// Deleting a whole modpack is for administrators; the platform checks again.
+fn ensure_admin(app: &AppHandle) -> USTBLResult<()> {
+  let binding = app.state::<Mutex<AccountInfo>>();
+  let account_state = binding.lock()?;
+  let user_group = account_state
+    .vustb_account
+    .as_ref()
+    .map(|account| account.user_group.as_str())
+    .ok_or_else(|| USTBLError("请先登录像素北科账号".to_string()))?;
+  if matches!(user_group, "super_admin" | "admin") {
+    Ok(())
+  } else {
+    Err(USTBLError("只有管理员可以删除校内整合包".to_string()))
   }
 }
 
@@ -169,16 +189,13 @@ fn report(app: &AppHandle, instance_id: &str, stage: Stage, done: usize, total: 
 }
 
 /// The server explains refusals in `detail`; pass that on instead of a bare
-/// status code. Conflicts also carry a machine readable `code`.
-pub(super) async fn failure_code(response: reqwest::Response) -> (Option<String>, USTBLError) {
+/// status code. Conflicts also carry a machine readable `code`, and some
+/// (such as `UPLOAD_RESTARTED`) carry further fields next to `code`/`message`.
+pub(super) async fn failure_detail(response: reqwest::Response) -> (Option<Value>, USTBLError) {
   let status = response.status();
   let body = response.json::<Value>().await.ok();
-  let detail = body.as_ref().and_then(|body| body.get("detail"));
-  let code = detail
-    .and_then(|detail| detail.get("code"))
-    .and_then(Value::as_str)
-    .map(str::to_string);
-  let message = match detail {
+  let detail = body.and_then(|body| body.get("detail").cloned());
+  let message = match &detail {
     Some(Value::String(text)) => Some(text.clone()),
     Some(other) => other
       .get("message")
@@ -187,9 +204,19 @@ pub(super) async fn failure_code(response: reqwest::Response) -> (Option<String>
     None => None,
   };
   (
-    code,
+    detail,
     USTBLError(message.unwrap_or_else(|| format!("HTTP {status}"))),
   )
+}
+
+pub(super) async fn failure_code(response: reqwest::Response) -> (Option<String>, USTBLError) {
+  let (detail, error) = failure_detail(response).await;
+  let code = detail
+    .as_ref()
+    .and_then(|detail| detail.get("code"))
+    .and_then(Value::as_str)
+    .map(str::to_string);
+  (code, error)
 }
 
 pub(super) async fn failure(response: reqwest::Response) -> USTBLError {
@@ -232,6 +259,25 @@ pub async fn list_campus_modpack_projects(app: AppHandle) -> USTBLResult<Vec<Cam
     return Err(failure(response).await);
   }
   Ok(response.json().await?)
+}
+
+/// Remove a campus modpack with every line and version from the platform.
+/// Local instances keep their files; their next update check reports the line
+/// as gone.
+#[tauri::command]
+pub async fn delete_campus_modpack_project(app: AppHandle, project: String) -> USTBLResult<()> {
+  ensure_admin(&app)?;
+  let response = authed_json(
+    &app,
+    reqwest::Method::DELETE,
+    &format!("/projects/{}", urlencoding::encode(&project)),
+    None,
+  )
+  .await?;
+  if !response.status().is_success() {
+    return Err(failure(response).await);
+  }
+  Ok(())
 }
 
 fn hash_selection(root: &Path, selected: &[String]) -> USTBLResult<Vec<LocalFile>> {
@@ -379,22 +425,28 @@ pub async fn publish_campus_modpack(
     files,
   )
   .await;
-  let record = match prepared {
-    Ok(record) => record,
+  let (record, concurrency) = match prepared {
+    Ok(result) => result,
     Err(error) => {
       JobRecord::remove(&dir, &job_id);
       return Err(error);
     }
   };
 
-  // Big uploads outlast the shared client's read timeout.
-  let uploader = build_ustbl_upload_client(&app, true);
+  // A client of its own, with none of the launcher's auth or redirect
+  // behavior, since it talks straight to the cloud drive's signed URLs.
+  let uploader = build_part_upload_client(&app);
   let version_id = record.version_id;
   // From here on the upload runs in the background, on the task list.
   let started = PublishJob {
     app: app.clone(),
     uploader,
     record,
+    // §14.1: a fresh publish's first upload round uses `POST /versions`'s
+    // own concurrency; `upload_pack` takes it for that round and falls
+    // back to `GET /uploads/{id}`'s value on every later one, same as a
+    // resumed job does from its very first round.
+    concurrency: Some(concurrency),
   }
   .start();
   match started {
@@ -433,7 +485,7 @@ async fn prepare(
   version_number: String,
   changelog: String,
   files: Vec<String>,
-) -> USTBLResult<JobRecord> {
+) -> USTBLResult<(JobRecord, usize)> {
   let instance = instance_of(app, instance_id)?;
   let root = instance.version_path.clone();
   let loader_type =
@@ -507,6 +559,14 @@ async fn prepare(
     let built = tokio::task::spawn_blocking(move || build_pack(&objects, &target))
       .await
       .map_err(|e| USTBLError(e.to_string()))??;
+    // §13.2: the self-check runs before anything is sent to the platform, so
+    // a bad local pack never opens a version or an upload session that would
+    // then need to be torn down again (no `POST /versions` has happened yet
+    // at this point, so there is nothing on the platform to clean up).
+    let (check_path, check_sha1) = (job_paths.pack.clone(), built.sha1.clone());
+    tokio::task::spawn_blocking(move || verify_pack(&check_path, &check_sha1))
+      .await
+      .map_err(|e| USTBLError(e.to_string()))??;
     report(app, instance_id, Stage::Packing, 1, 1);
     Some(RecordedPack {
       sha1: built.sha1,
@@ -523,7 +583,10 @@ async fn prepare(
       "new_project": new_project.as_ref().map(|new| json!({ "name": new.name, "summary": new.summary })),
       "game_version": instance.version,
       "loader_type": loader_type,
-      "loader_version": instance.mod_loader.version,
+      "loader_version": canonical_loader_version(
+        instance.mod_loader.loader_type,
+        &instance.mod_loader.version
+      ),
       "version_number": version_number,
       "changelog": changelog,
       "parent_version_id": parent_version_id,
@@ -547,10 +610,16 @@ async fn prepare(
   let upload = body["upload"].as_object().and_then(|upload| {
     Some(RecordedUpload {
       id: upload.get("id")?.as_str()?.to_string(),
-      chunk_size: upload.get("chunk_size")?.as_u64()?,
-      chunk_count: u32::try_from(upload.get("chunk_count")?.as_u64()?).ok()?,
+      part_size: upload.get("part_size")?.as_u64()?,
+      part_count: u32::try_from(upload.get("part_count")?.as_u64()?).ok()?,
+      generation: u32::try_from(upload.get("generation")?.as_u64()?).ok()?,
     })
   });
+  // §14.1: the server's call, fresh for this run; not part of the persisted
+  // record (§9.1), so a resumed job falls back to the suggested default.
+  let concurrency = body["upload"]["concurrency"]
+    .as_u64()
+    .map_or(DEFAULT_PART_CONCURRENCY, |n| n as usize);
   let slug = body["project_slug"]
     .as_str()
     .or(project.as_deref())
@@ -603,7 +672,7 @@ async fn prepare(
     .await;
     return Err(error);
   }
-  Ok(record)
+  Ok((record, concurrency))
 }
 
 /// A pack was promised but the platform opened no session for it.
@@ -654,11 +723,15 @@ pub async fn resume_campus_modpack_publish(
 ) -> USTBLResult<PublishStarted> {
   ensure_manager(&app)?;
   let record = JobRecord::load(&jobs_dir(), &job_id)?;
-  let uploader = build_ustbl_upload_client(&app, true);
+  let uploader = build_part_upload_client(&app);
   let group = PublishJob {
     app,
     uploader,
     record,
+    // §9.1: the record never carries a concurrency; `upload_pack`
+    // reconciles and takes `GET /uploads/{id}`'s value for every round of
+    // a resumed job instead.
+    concurrency: None,
   }
   .start()?;
   Ok(PublishStarted { group, job_id })
@@ -692,8 +765,10 @@ pub async fn discard_campus_modpack_publish(app: AppHandle, job_id: String) -> U
     if state.status().is_success() && state.json::<Value>().await?["status"] == "published" {
       PublishJob {
         app: app.clone(),
-        uploader: build_ustbl_upload_client(&app, true),
+        uploader: build_part_upload_client(&app),
         record,
+        // Only platform processing is watched here, never a part upload.
+        concurrency: None,
       }
       .monitor_in_background();
       return Ok(());
@@ -796,7 +871,7 @@ async fn try_adopt(
     &origin,
     BaselineLoader {
       loader_type,
-      version: instance.mod_loader.version.clone(),
+      version: canonical_loader_version(loader_type, &instance.mod_loader.version),
     },
     expected
       .into_iter()

@@ -6,25 +6,23 @@
 //! start over after a failure or a restart is in the [`JobRecord`].
 
 use super::commands::{
-  adopt_published, authed_json, failure, failure_code, instance_of, PublishOutcome,
+  adopt_published, authed_json, failure, failure_code, failure_detail, instance_of, PublishOutcome,
 };
 use super::manifest::{LocalFile, PackObject};
-use super::pack::build_pack;
+use super::pack::{build_pack, verify_pack};
 use super::record::{jobs_dir, paths, JobRecord, Phase, RecordedUpload};
 use super::transfer::{report, SentBytes};
-use crate::account::helpers::vustb;
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::models::misc::InstanceError;
 use crate::instance::modpack_update::diff::FileKey;
-use crate::instance::modpack_update::sources::CAMPUS_API;
 use crate::tasks::monitor::TaskMonitor;
 use crate::tasks::upload::upload_handle;
 use crate::tasks::PTaskHandle;
 use futures::stream::{FuturesUnordered, StreamExt};
+use md5::{Digest, Md5};
 use serde::Serialize;
-use serde_json::Value;
-use sha1::{Digest, Sha1};
-use std::collections::{HashSet, VecDeque};
+use serde_json::{json, Value};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, SeekFrom};
 use std::path::Path;
 use std::pin::Pin;
@@ -37,10 +35,14 @@ use tokio::time::{interval, sleep, MissedTickBehavior};
 use tokio_util::bytes::Bytes;
 
 const FINISHED_EVENT: &str = "modpack-publish:finished";
-/// Chunks in flight at once. Fixed: the platform takes them in parallel and the
-/// cloud behind it is not the limit chunks of this size run into.
-const CHUNK_CONCURRENCY: usize = 3;
-const CHUNK_ATTEMPTS: u32 = 4;
+const PART_ATTEMPTS: u32 = 4;
+/// Consecutive attempts answered with a server error before the part uploader
+/// gives up and probes the upload session for a silent restart (§9.3).
+const PROBE_AFTER_FAILURES: u32 = 3;
+/// Consecutive clock-skew re-signs tolerated for the same part before one is
+/// counted as an ordinary failed attempt instead: re-signing must not be
+/// able to loop forever without ever waiting.
+const SKEW_RESIGN_LIMIT: u32 = 3;
 /// Bytes handed to the HTTP stack at a time, so progress moves smoothly.
 const SLICE: usize = 64 * 1024;
 /// Matches the reporting interval of the task list, which shows speed per tick.
@@ -50,6 +52,14 @@ const POLL: Duration = Duration::from_secs(2);
 /// processing the pack before the job gives up (it stays resumable).
 const POLL_MISSES: u32 = 30;
 const COMMIT_ATTEMPTS: u32 = 3;
+/// A batch of signatures is only used within this long after `signed_at`
+/// (§13.2, §14.1: 10 minutes of the 900 s skew allowance, with margin).
+const SIGNATURE_LIFETIME: Duration = Duration::from_secs(10 * 60);
+/// Parts signed by one request (§9.1/§14.1: `MAX_SIGN_PARTS` on the server).
+const SIGN_BATCH: usize = 8;
+/// Generation restarts tolerated within one upload before it is reported as
+/// stuck instead of retried again (§9.1, §9.3).
+const MAX_RESTARTS: u32 = 10;
 
 type Handle = Arc<RwLock<PTaskHandle>>;
 
@@ -66,8 +76,10 @@ pub(crate) fn resume_monitors(app: &AppHandle) {
     if record.phase == Phase::Processing {
       PublishJob {
         app: app.clone(),
-        uploader: crate::utils::web::build_ustbl_upload_client(app, true),
+        uploader: crate::utils::web::build_part_upload_client(app),
         record,
+        // Only platform processing is watched here, never a part upload.
+        concurrency: None,
       }
       .monitor_in_background();
     }
@@ -188,18 +200,89 @@ fn complete(handle: &Handle) {
   handle.mark_completed();
 }
 
-fn chunk_length(total: u64, chunk_size: u64, count: u32, n: u32) -> u64 {
-  if n + 1 == count {
-    total - chunk_size * (count as u64 - 1)
+/// Length of part `n` (1-based, as the server numbers them): every part is
+/// `part_size` long except the last, which takes whatever remains.
+fn part_length(total: u64, part_size: u64, count: u32, n: u32) -> u64 {
+  if n == count {
+    total - part_size * (count as u64 - 1)
   } else {
-    chunk_size
+    part_size
   }
+}
+
+/// `GET /uploads/{id}`'s own generation, plus what its `parts` map means
+/// against `expected_generation` (§9.1): the part numbers already reported
+/// there when the server is still on the generation the launcher expected,
+/// or an empty set when it has already moved to a different one (nothing of
+/// the old generation counts towards the new one, and the launcher must
+/// adopt the server's generation before signing or reporting anything
+/// else).
+fn received_parts(body: &Value, expected_generation: u32) -> (u32, HashSet<u32>) {
+  let server_generation = body["generation"]
+    .as_u64()
+    .unwrap_or(expected_generation as u64) as u32;
+  if server_generation != expected_generation {
+    return (server_generation, HashSet::new());
+  }
+  let parts = body["parts"]
+    .as_object()
+    .into_iter()
+    .flatten()
+    .filter_map(|(n, _etag)| n.parse::<u32>().ok())
+    .collect();
+  (server_generation, parts)
+}
+
+/// The generation to restart under, from a 409 `UPLOAD_RESTARTED` response's
+/// `detail` object (§13.2). `None` when `detail` is not that conflict at all,
+/// so the caller still has the original error to report. The server's own
+/// `generation` field is used when present; `current + 1` is a reasonable
+/// stand-in otherwise, since that conflict only ever fires from a newer one.
+fn restart_generation(detail: Option<&Value>, current: u32) -> Option<u32> {
+  let detail = detail?;
+  if detail.get("code").and_then(Value::as_str) != Some("UPLOAD_RESTARTED") {
+    return None;
+  }
+  Some(
+    detail
+      .get("generation")
+      .and_then(Value::as_u64)
+      .map(|generation| generation as u32)
+      .unwrap_or(current + 1),
+  )
 }
 
 fn retriable(status: reqwest::StatusCode) -> bool {
   status.is_server_error()
     || status == reqwest::StatusCode::TOO_MANY_REQUESTS
     || status == reqwest::StatusCode::REQUEST_TIMEOUT
+}
+
+/// The longest `<Code>` kept by [`cloud_error_code`], in characters.
+const CLOUD_ERROR_CODE_LIMIT: usize = 64;
+
+/// The S3-compatible cloud answers errors with XML, not JSON:
+/// `<Error><Code>...</Code>...</Error>`. Only the code is worth keeping
+/// around (§13.4: the rest of the body must never end up in an error shown
+/// to the user or written to the log, since it may carry request details),
+/// and even that is capped at [`CLOUD_ERROR_CODE_LIMIT`] characters in case
+/// the cloud ever answers with something unexpectedly long. `None` when the
+/// body does not look like that at all.
+fn cloud_error_code(body: &str) -> Option<&str> {
+  let start = body.find("<Code>")? + "<Code>".len();
+  let end = body[start..].find("</Code>")? + start;
+  let code = &body[start..end];
+  match code.char_indices().nth(CLOUD_ERROR_CODE_LIMIT) {
+    Some((cut, _)) => Some(&code[..cut]),
+    None => Some(code),
+  }
+}
+
+/// Signed cloud PUTs expire 900 s after `x-amz-date`, well past a part's
+/// expected transfer time; this tells that apart from an ordinary server
+/// error (§3, §13.2).
+fn is_signature_expired(body: &str) -> bool {
+  cloud_error_code(body) == Some("RequestTimeTooSkewed")
 }
 
 /// When the last slice of a request body was taken by the HTTP stack.
@@ -231,18 +314,30 @@ fn counting_body(
   reqwest::Body::wrap_stream(stream)
 }
 
-async fn read_chunk(pack: &Path, offset: u64, length: u64) -> USTBLResult<Bytes> {
+/// Reads one part off the local pack and hashes it on the way in, so the MD5
+/// used for the ETag self-check never requires a second pass over the bytes
+/// (§13.2).
+async fn read_part(pack: &Path, offset: u64, length: u64) -> USTBLResult<(Bytes, [u8; 16])> {
   let mut file = tokio::fs::File::open(pack).await?;
   file.seek(SeekFrom::Start(offset)).await?;
   let mut buffer = vec![0u8; length as usize];
   file.read_exact(&mut buffer).await?;
-  Ok(Bytes::from(buffer))
+  let digest: [u8; 16] = Md5::digest(&buffer).into();
+  Ok((Bytes::from(buffer), digest))
 }
 
 pub(super) struct PublishJob {
   pub app: AppHandle,
   pub uploader: reqwest::Client,
   pub record: JobRecord,
+  /// How many parts to PUT at once (§13.2, §14.1). `Some` only right after
+  /// `POST /versions`, whose response carries the value a fresh upload
+  /// should use for its first round; `None` on resume (the record itself
+  /// never carries it), so every round instead takes whatever
+  /// `GET /uploads/{id}` suggests during reconciliation — which is also
+  /// what a restart mid-`upload_pack` falls back to once the first round
+  /// is behind it.
+  pub concurrency: Option<usize>,
 }
 
 impl PublishJob {
@@ -460,6 +555,7 @@ impl PublishJob {
       app: self.app.clone(),
       uploader: self.uploader.clone(),
       record: self.record.clone(),
+      concurrency: self.concurrency,
     }
   }
 
@@ -503,6 +599,9 @@ impl PublishJob {
       if status.is_success() {
         return Ok(());
       }
+      if status == reqwest::StatusCode::GONE {
+        return Err(InstanceError::ModpackUploadSessionGone.into());
+      }
       let (code, error) = failure_code(response).await;
       if code.as_deref() == Some("PARENT_MISMATCH") {
         return Err(InstanceError::ModpackPublishStale.into());
@@ -516,7 +615,11 @@ impl PublishJob {
   }
 
   /// The pack is built again from the recorded sources when it is gone, and has
-  /// to come out as the pack the platform was promised.
+  /// to come out as the pack the platform was promised. Either way the result
+  /// passes the same self-check the upload itself relies on (§13.2): on a
+  /// rebuild, because the delta pack never touched disk before; when it is
+  /// already there, because a previous run may have been interrupted mid
+  /// write.
   async fn ensure_pack(&self) -> USTBLResult<std::path::PathBuf> {
     let pack = self
       .record
@@ -524,77 +627,108 @@ impl PublishJob {
       .clone()
       .ok_or_else(|| USTBLError("这个版本没有增量包".into()))?;
     let path = paths(&jobs_dir(), &self.record.id)?.pack;
-    if tokio::fs::metadata(&path)
+    let exists = tokio::fs::metadata(&path)
       .await
-      .is_ok_and(|meta| meta.len() == pack.size)
-    {
-      return Ok(path);
+      .is_ok_and(|meta| meta.len() == pack.size);
+    if !exists {
+      let objects: Vec<PackObject> = self.record.objects.iter().map(PackObject::from).collect();
+      let target = path.clone();
+      let built = tokio::task::spawn_blocking(move || build_pack(&objects, &target))
+        .await
+        .map_err(|e| USTBLError(e.to_string()))??;
+      if built.sha1 != pack.sha1 || built.size != pack.size {
+        let _ = tokio::fs::remove_file(&path).await;
+        return Err(USTBLError(
+          "实例中的文件在上次发布后发生了变化，无法继续，请放弃这个任务后重新发布".into(),
+        ));
+      }
     }
-    let objects: Vec<PackObject> = self.record.objects.iter().map(PackObject::from).collect();
-    let target = path.clone();
-    let built = tokio::task::spawn_blocking(move || build_pack(&objects, &target))
+    let (check_path, check_sha1) = (path.clone(), pack.sha1.clone());
+    tokio::task::spawn_blocking(move || verify_pack(&check_path, &check_sha1))
       .await
       .map_err(|e| USTBLError(e.to_string()))??;
-    if built.sha1 != pack.sha1 || built.size != pack.size {
-      let _ = tokio::fs::remove_file(&path).await;
-      return Err(USTBLError(
-        "实例中的文件在上次发布后发生了变化，无法继续，请放弃这个任务后重新发布".into(),
-      ));
-    }
     Ok(path)
   }
 
-  async fn upload_pack(&self, handle: &Handle, group: &str) -> USTBLResult<()> {
-    let upload: RecordedUpload = self
-      .record
-      .upload
-      .clone()
-      .ok_or_else(|| USTBLError("这个版本没有上传会话".into()))?;
+  async fn upload_pack(&mut self, handle: &Handle, group: &str) -> USTBLResult<()> {
     let total = self.record.pack.as_ref().map_or(0, |pack| pack.size);
     let path = self.ensure_pack().await?;
 
-    let received = self.received_chunks(&upload).await?;
-    let stored: u64 = received
-      .iter()
-      .map(|n| chunk_length(total, upload.chunk_size, upload.chunk_count, *n))
-      .sum();
-    let mut queue: VecDeque<u32> = (0..upload.chunk_count)
-      .filter(|n| !received.contains(n))
-      .collect();
-
     handle.write().unwrap().mark_started();
-    let sent = SentBytes::new(total, stored);
-    let monitor = self.app.state::<Pin<Box<TaskMonitor>>>();
-    let mut running = FuturesUnordered::new();
     let mut tick = interval(TICK);
     tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
+    // Reconciliation (§9.1) may find the server already on a newer
+    // generation (a probe from this or an earlier run) or hand back a
+    // restart while parts are in flight; keep going until every part of the
+    // *current* generation is reported. A session that keeps restarting
+    // instead of making progress is reported as such rather than retried
+    // forever.
+    let mut restarts = 0u32;
     loop {
-      // A paused group starts no new chunk.
-      if !monitor.is_group_stopped(group) {
-        while running.len() < CHUNK_CONCURRENCY {
-          let Some(n) = queue.pop_front() else { break };
-          let length = chunk_length(total, upload.chunk_size, upload.chunk_count, n);
-          running.push(self.send_chunk(&upload, &path, n, length, &sent));
-        }
+      let upload = self
+        .record
+        .upload
+        .clone()
+        .ok_or_else(|| USTBLError("这个版本没有上传会话".into()))?;
+      let (generation, received, reconciled_concurrency) = self.reconcile(&upload).await?;
+      // The server's generation is adopted and saved *before* anything
+      // signs or reports under it (§9.1, §9.3): otherwise a stale local
+      // generation would keep being used for every signature and report
+      // this round, even though the server has already moved on.
+      if generation != upload.generation {
+        self.record_generation(generation)?;
       }
-      if running.is_empty() && queue.is_empty() {
-        break;
-      }
-      tokio::select! {
-        finished = running.next(), if !running.is_empty() => {
-          if let Some(result) = finished {
-            result?;
+      let upload = self.record.upload.clone().unwrap_or(upload);
+      // §14.1: a brand new publish uploads its first round at the
+      // concurrency `POST /versions` returned; `self.concurrency` is taken
+      // (set to `None`) right after that round, so every later round —
+      // including a resumed job, which never had a `POST /versions`
+      // response to take it from in the first place — uses whatever
+      // `GET /uploads/{id}` suggests instead.
+      let concurrency = self.concurrency.take().unwrap_or(reconciled_concurrency);
+      match self
+        .upload_parts(
+          handle,
+          group,
+          &upload,
+          received,
+          concurrency,
+          &path,
+          total,
+          &mut tick,
+        )
+        .await?
+      {
+        UploadRoundOutcome::Done => return Ok(()),
+        UploadRoundOutcome::Restarted(generation) => {
+          restarts += 1;
+          if restarts > MAX_RESTARTS {
+            return Err(InstanceError::ModpackUploadRestarted.into());
           }
+          self.record_generation(generation)?;
         }
-        _ = tick.tick() => report(handle, sent.done()),
       }
     }
-    complete(handle);
-    Ok(())
   }
 
-  async fn received_chunks(&self, upload: &RecordedUpload) -> USTBLResult<HashSet<u32>> {
+  /// Persists a new generation to the job's own record (§9.1), so every
+  /// save from here on — including a crash right after this point —
+  /// carries it, and a resumed run never signs or reports under a
+  /// generation the server has already moved past.
+  fn record_generation(&mut self, generation: u32) -> USTBLResult<()> {
+    if let Some(upload) = &mut self.record.upload {
+      upload.generation = generation;
+    }
+    self.record.save(&jobs_dir())
+  }
+
+  /// `GET /uploads/{id}` against the current generation (§9.1): the
+  /// server's own generation (which the launcher must adopt before signing
+  /// or reporting anything else), what is already reported there, and the
+  /// concurrency to upload with, falling back to the suggested default when
+  /// a pre-4c server omits it.
+  async fn reconcile(&self, upload: &RecordedUpload) -> USTBLResult<(u32, HashSet<u32>, usize)> {
     let response = authed_json(
       &self.app,
       reqwest::Method::GET,
@@ -604,106 +738,615 @@ impl PublishJob {
     .await?;
     let status = response.status();
     if status == reqwest::StatusCode::NOT_FOUND || status == reqwest::StatusCode::GONE {
-      return Err(USTBLError(
-        "平台上的上传会话已过期，请放弃这个任务后重新发布".into(),
-      ));
+      return Err(InstanceError::ModpackUploadSessionGone.into());
     }
     if !status.is_success() {
       return Err(failure(response).await);
     }
     let body: Value = response.json().await?;
-    Ok(
-      body["received"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|n| n.as_u64().map(|n| n as u32))
-        .collect(),
-    )
+    let (generation, received) = received_parts(&body, upload.generation);
+    let concurrency = body["concurrency"]
+      .as_u64()
+      .map_or(super::commands::DEFAULT_PART_CONCURRENCY, |n| n as usize);
+    Ok((generation, received, concurrency))
   }
 
-  async fn send_chunk(
+  /// Uploads whatever `received` is missing from `upload.part_count`. Returns
+  /// once every part of `upload.generation` is reported, or once the server
+  /// restarted the session under a new generation (§9.1, §13.2).
+  async fn upload_parts(
+    &self,
+    handle: &Handle,
+    group: &str,
+    upload: &RecordedUpload,
+    received: HashSet<u32>,
+    concurrency: usize,
+    path: &Path,
+    total: u64,
+    tick: &mut tokio::time::Interval,
+  ) -> USTBLResult<UploadRoundOutcome> {
+    let stored: u64 = received
+      .iter()
+      .map(|n| part_length(total, upload.part_size, upload.part_count, *n))
+      .sum();
+    let mut queue: VecDeque<u32> = (1..=upload.part_count)
+      .filter(|n| !received.contains(n))
+      .collect();
+
+    let sent = SentBytes::new(total, stored);
+    let monitor = self.app.state::<Pin<Box<TaskMonitor>>>();
+    let signatures = SignatureCache::new(queue.iter().copied());
+    let concurrency = concurrency.max(1);
+    let mut running = FuturesUnordered::new();
+
+    loop {
+      // A paused group starts no new part.
+      if !monitor.is_group_stopped(group) {
+        while running.len() < concurrency {
+          let Some(n) = queue.pop_front() else { break };
+          let length = part_length(total, upload.part_size, upload.part_count, n);
+          running.push(self.send_part(upload, path, n, length, &sent, &signatures));
+        }
+      }
+      if running.is_empty() && queue.is_empty() {
+        break;
+      }
+      tokio::select! {
+        finished = running.next(), if !running.is_empty() => {
+          match finished {
+            Some(Ok(PartOutcome::Reported(n))) => signatures.reported(n),
+            Some(Ok(PartOutcome::Restarted(generation))) => {
+              return Ok(UploadRoundOutcome::Restarted(generation));
+            }
+            Some(Err(error)) => return Err(error),
+            None => {}
+          }
+        }
+        _ = tick.tick() => report(handle, sent.done()),
+      }
+    }
+    complete(handle);
+    Ok(UploadRoundOutcome::Done)
+  }
+
+  /// Signs (if needed), PUTs to the cloud and reports one part, retrying on
+  /// transient trouble and probing the session after repeated 500s (§9.3,
+  /// §13.2). `Ok(PartOutcome::Restarted)` means the whole upload must start
+  /// over from part 1 under a new generation; the caller does not retry this
+  /// part itself in that case.
+  async fn send_part(
     &self,
     upload: &RecordedUpload,
     pack: &Path,
     n: u32,
     length: u64,
     sent: &Arc<SentBytes>,
-  ) -> USTBLResult<()> {
+    signatures: &SignatureCache,
+  ) -> USTBLResult<PartOutcome> {
     let prepared = Instant::now();
-    let data = read_chunk(pack, n as u64 * upload.chunk_size, length).await?;
-    let digest = hex::encode(Sha1::digest(&data));
+    let (data, digest) = read_part(pack, (n - 1) as u64 * upload.part_size, length).await?;
+    let md5_hex = hex::encode(digest);
     let prepare_time = prepared.elapsed();
-    let url = format!("{CAMPUS_API}/uploads/{}/chunks/{n}", upload.id);
 
     let mut last = USTBLError("上传失败".into());
-    for attempt in 0..CHUNK_ATTEMPTS {
-      if attempt > 0 {
-        sleep(Duration::from_secs(1 << (attempt - 1))).await;
+    let mut server_error_streak = 0u32;
+    // Re-signing on a clock-skew rejection does not count as a failed
+    // attempt (§9.3), but it must still be bounded: past this many
+    // consecutive re-signs for the same part it is treated as an ordinary
+    // failure instead of retried without end.
+    let mut skew_resigns = 0u32;
+    let mut etag_resent = false;
+    let mut attempt = 0u32;
+    loop {
+      if attempt >= PART_ATTEMPTS {
+        return Err(last);
       }
+      if attempt > 0 {
+        // §13.2: 2, 4, 8 s between retries for 5xx/429/408.
+        sleep(Duration::from_secs(1 << attempt.min(3))).await;
+      }
+      attempt += 1;
+
+      let signed = match signatures.get_or_sign(&self.app, upload, n).await {
+        Ok(signed) => signed,
+        Err(error) => match SignStep::from_sign_error(error) {
+          SignStep::Restarted(generation) => return Ok(PartOutcome::Restarted(generation)),
+          SignStep::Fail(error) => return Err(error),
+          SignStep::Retry(error) => {
+            last = error;
+            continue;
+          }
+        },
+      };
+
       let counted = Arc::new(AtomicU64::new(0));
       let handed_over: HandedOver = Arc::new(Mutex::new(None));
       let started = Instant::now();
-      let response = vustb::send_authenticated_with(&self.app, &self.uploader, |client, token| {
-        client
-          .put(&url)
-          .bearer_auth(token)
-          .header("Content-Type", "application/octet-stream")
-          .header("Content-Length", length)
-          .header("X-Chunk-SHA1", &digest)
-          .body(counting_body(
-            data.clone(),
-            sent.clone(),
-            counted.clone(),
-            handed_over.clone(),
-          ))
-      })
-      .await;
+      let mut request = self.uploader.request(signed.method.clone(), &signed.url);
+      for (name, value) in &signed.headers {
+        request = request.header(name, value);
+      }
+      let response = request
+        .header("Content-Length", length)
+        .body(counting_body(
+          data.clone(),
+          sent.clone(),
+          counted.clone(),
+          handed_over.clone(),
+        ))
+        .send()
+        .await;
       let sent_now = counted.load(Ordering::Relaxed);
-      // Where the time of a chunk goes: reading and hashing it, getting the
-      // body into the connection, and waiting for the platform's answer.
       let body_time = handed_over
         .lock()
         .unwrap()
         .map(|done| done.duration_since(started).as_secs_f64());
+
+      let response = match response {
+        Ok(response) => response,
+        Err(error) => {
+          sent.take_back(sent_now);
+          // §13.4: never log a URL carrying a cloud signature.
+          let error = error.without_url();
+          log::warn!(
+            "Part {n}/{} (attempt {attempt}): request failed: {error}",
+            upload.part_count
+          );
+          last = USTBLError(error.to_string());
+          continue;
+        }
+      };
+      let status = response.status();
       log::info!(
-        "Chunk {n}/{} (attempt {}): prepared in {:.2}s, body handed over after {}, answered after {:.2}s ({})",
-        upload.chunk_count,
-        attempt + 1,
+        "Part {n}/{} (attempt {attempt}): prepared in {:.2}s, body handed over after {}, answered after {:.2}s ({status})",
+        upload.part_count,
         prepare_time.as_secs_f64(),
         body_time.map_or("never".to_string(), |time| format!("{time:.2}s")),
         started.elapsed().as_secs_f64(),
-        match &response {
-          Ok(response) => format!("{:?} {}", response.version(), response.status()),
-          Err(error) => format!("error: {}", error.0),
-        }
       );
-      match response {
-        Ok(response) if response.status().is_success() => {
-          // Whatever the stream did not count (it is read once per request).
-          if sent_now < length {
-            sent.add(length - sent_now);
-          } else {
-            sent.take_back(sent_now - length);
+
+      if status.is_success() {
+        if sent_now < length {
+          sent.add(length - sent_now);
+        } else {
+          sent.take_back(sent_now - length);
+        }
+        let cloud_etag = response
+          .headers()
+          .get(reqwest::header::ETAG)
+          .and_then(|value| value.to_str().ok())
+          .unwrap_or_default()
+          .trim_matches('"')
+          .to_ascii_lowercase();
+        if cloud_etag != md5_hex {
+          // Self-check (§13.2): what the cloud says it stored does not match
+          // what was sent. Exactly one resend before giving the job up
+          // outright, independent of the part's own attempt budget.
+          if !etag_resent {
+            etag_resent = true;
+            signatures.discard(n);
+            last = USTBLError("云盘回报的 ETag 与本地 MD5 不一致，正在重传".into());
+            continue;
           }
-          return Ok(());
+          return Err(InstanceError::ModpackUploadVerifyFailed.into());
         }
-        Ok(response) if retriable(response.status()) => {
-          sent.take_back(sent_now);
-          last = failure(response).await;
-        }
-        Ok(response) => {
-          sent.take_back(sent_now);
-          return Err(failure(response).await);
-        }
-        Err(error) => {
-          sent.take_back(sent_now);
-          last = error;
-        }
+        return self.report_part(upload, n, &md5_hex, length).await.map(
+          |restarted| match restarted {
+            Some(generation) => PartOutcome::Restarted(generation),
+            None => PartOutcome::Reported(n),
+          },
+        );
       }
+
+      sent.take_back(sent_now);
+      let body = response.text().await.unwrap_or_default();
+      if status == reqwest::StatusCode::FORBIDDEN
+        && is_signature_expired(&body)
+        && skew_resigns < SKEW_RESIGN_LIMIT
+      {
+        // §13.2/§9.3: re-signing on an expired signature is not a failed
+        // attempt, up to a bounded number of times.
+        skew_resigns += 1;
+        signatures.discard(n);
+        attempt -= 1;
+        continue;
+      }
+      if retriable(status) {
+        signatures.discard(n);
+        server_error_streak = if status.is_server_error() {
+          server_error_streak + 1
+        } else {
+          0
+        };
+        // A plain cloud error keeps its own message for a while, but once the
+        // attempts run out it is reported as the typed, user-facing code
+        // instead of a bare status (§13.4).
+        last = InstanceError::ModpackUploadCloudUnavailable.into();
+        if server_error_streak >= PROBE_AFTER_FAILURES {
+          match self.probe(upload).await? {
+            Some(generation) => return Ok(PartOutcome::Restarted(generation)),
+            None => server_error_streak = 0,
+          }
+        }
+        continue;
+      }
+      // §13.4: the cloud's own error code only, never the raw body (which
+      // may carry request details) in a message the user can see.
+      let code = cloud_error_code(&body).unwrap_or("UNKNOWN");
+      return Err(USTBLError(format!("HTTP {status}: {code}")));
     }
-    Err(last)
   }
+
+  /// `PUT /uploads/{id}/parts/{n}`; `Ok(Some(generation))` means the server
+  /// rejected the report because it is already on a newer generation
+  /// (§13.2: 409 `UPLOAD_RESTARTED`).
+  async fn report_part(
+    &self,
+    upload: &RecordedUpload,
+    n: u32,
+    md5_hex: &str,
+    length: u64,
+  ) -> USTBLResult<Option<u32>> {
+    let response = authed_json(
+      &self.app,
+      reqwest::Method::PUT,
+      &format!("/uploads/{}/parts/{n}", upload.id),
+      Some(json!({
+        "generation": upload.generation,
+        "etag": md5_hex,
+        "size": length,
+      })),
+    )
+    .await?;
+    if response.status().is_success() {
+      return Ok(None);
+    }
+    if response.status() == reqwest::StatusCode::CONFLICT {
+      let (detail, error) = failure_detail(response).await;
+      return match restart_generation(detail.as_ref(), upload.generation) {
+        Some(generation) => Ok(Some(generation)),
+        None => Err(error),
+      };
+    }
+    if response.status() == reqwest::StatusCode::GONE {
+      return Err(InstanceError::ModpackUploadSessionGone.into());
+    }
+    Err(failure(response).await)
+  }
+
+  /// `POST /uploads/{id}/probe` (§9.3): tells a session the cloud silently
+  /// expired from ordinary cloud trouble, after repeated plain 500s on one
+  /// part. `Ok(Some(generation))` means the server already restarted the
+  /// session; `Ok(None)` means the cloud is just acting up and normal
+  /// retries should continue (either the probe itself succeeded without a
+  /// restart, or the 503 backoff schedule ran out).
+  ///
+  /// The backoff on a 503 (§9.3, §14.1: 1, 2, 5, 10 minutes, the larger of
+  /// that and `Retry-After`) happens here, in a loop of its own: it must not
+  /// consume [`PART_ATTEMPTS`], since it is the cloud as a whole acting up
+  /// rather than one failed attempt at one part. Only `log::warn!`, not a
+  /// user-visible task message, marks the wait (the task list has no
+  /// non-terminal "still trying" state to show one in); once the schedule is
+  /// exhausted the caller reports the typed, user-facing
+  /// `ModpackUploadCloudUnavailable` instead of waiting forever.
+  async fn probe(&self, upload: &RecordedUpload) -> USTBLResult<Option<u32>> {
+    const BACKOFF: [Duration; 4] = [
+      Duration::from_secs(60),
+      Duration::from_secs(2 * 60),
+      Duration::from_secs(5 * 60),
+      Duration::from_secs(10 * 60),
+    ];
+    let mut backoff = BACKOFF.iter();
+    loop {
+      let response = authed_json(
+        &self.app,
+        reqwest::Method::POST,
+        &format!("/uploads/{}/probe", upload.id),
+        Some(json!({ "generation": upload.generation })),
+      )
+      .await?;
+      if response.status().is_success() {
+        let body: Value = response.json().await?;
+        if body["result"] == "restarted" {
+          let generation = body["generation"].as_u64().unwrap_or(0) as u32;
+          return Ok(Some(generation));
+        }
+        return Ok(None);
+      }
+      if response.status() != reqwest::StatusCode::SERVICE_UNAVAILABLE {
+        return Err(failure(response).await);
+      }
+      let retry_after = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_secs);
+      let Some(&scheduled) = backoff.next() else {
+        return Ok(None);
+      };
+      let wait = retry_after.map_or(scheduled, |retry_after| retry_after.max(scheduled));
+      log::warn!(
+        "Upload {} probe found the cloud drive unavailable; waiting {:.0}s before trying again",
+        upload.id,
+        wait.as_secs_f64()
+      );
+      sleep(wait).await;
+    }
+  }
+}
+
+enum UploadRoundOutcome {
+  Done,
+  Restarted(u32),
+}
+
+enum PartOutcome {
+  Reported(u32),
+  Restarted(u32),
+}
+
+/// Signing can fail for an ordinary, transient reason (`Retry` — spent
+/// against the part's `PART_ATTEMPTS` budget the same way a failed PUT
+/// would), because the session already restarted under a newer generation
+/// (`Restarted` — a 409 `UPLOAD_RESTARTED` on `/parts/sign` is handled
+/// exactly like one on reporting, §13.2), or because signing can never
+/// succeed against this session (`Fatal` — 410, or a 409 that is not
+/// `UPLOAD_RESTARTED`; the launcher must stop rather than spend attempts
+/// retrying).
+#[derive(Debug)]
+enum SignError {
+  Restarted(u32),
+  Fatal(USTBLError),
+  Retry(USTBLError),
+}
+
+impl From<USTBLError> for SignError {
+  fn from(error: USTBLError) -> Self {
+    SignError::Retry(error)
+  }
+}
+
+impl From<reqwest::Error> for SignError {
+  fn from(error: reqwest::Error) -> Self {
+    SignError::Retry(error.into())
+  }
+}
+
+/// What `send_part` should do next after a signing failure, decided
+/// purely from the [`SignError`] itself. Split out so the classification
+/// rules — restart, fail outright, spend an attempt and retry — can be
+/// tested without driving the whole part loop.
+#[derive(Debug, PartialEq, Eq)]
+enum SignStep {
+  Restarted(u32),
+  Fail(USTBLError),
+  Retry(USTBLError),
+}
+
+impl SignStep {
+  fn from_sign_error(error: SignError) -> Self {
+    match error {
+      SignError::Restarted(generation) => SignStep::Restarted(generation),
+      SignError::Fatal(error) => SignStep::Fail(error),
+      SignError::Retry(error) => SignStep::Retry(error),
+    }
+  }
+}
+
+/// One signed cloud request plus when it was signed, so the cache can tell an
+/// expired signature apart from one still inside its 10-minute window
+/// (§13.2, §14.1) without trusting the server's own `signed_at`/`expires_at`
+/// (clock skew between launcher and server would otherwise leak in).
+#[derive(Clone)]
+struct SignedPart {
+  method: reqwest::Method,
+  url: String,
+  headers: HashMap<String, String>,
+  received_at: Instant,
+}
+
+/// Picks ascending part numbers out of `remaining` that lack a fresh
+/// signature according to `fresh`, starting from `n`, up to [`SIGN_BATCH`].
+/// `remaining.range(n..)` already reaches the last part still outstanding
+/// whenever `n` is close enough to it; nothing before `n` is ever included,
+/// since those parts are either already reported or already being worked
+/// on by another request. Always returns at least `[n]`.
+fn select_sign_batch(
+  remaining: &std::collections::BTreeSet<u32>,
+  n: u32,
+  fresh: impl Fn(u32) -> bool,
+) -> Vec<u32> {
+  let wanted: Vec<u32> = remaining
+    .range(n..)
+    .copied()
+    .filter(|&m| !fresh(m))
+    .take(SIGN_BATCH)
+    .collect();
+  if wanted.is_empty() {
+    vec![n]
+  } else {
+    wanted
+  }
+}
+
+/// Signatures for parts not yet sent, fetched up to [`SIGN_BATCH`] at a time
+/// and shared by every part in flight so a prefetch for one part can be used
+/// by another (§13.2).
+///
+/// Only one `/parts/sign` request is ever in flight at a time: a
+/// `tokio::sync::Mutex` serializes the actual signing call, and every caller
+/// re-checks the cache after acquiring it, so a request that arrives while
+/// another is already signing just picks up its result instead of issuing
+/// its own. `remaining` is the set of part numbers this round still needs a
+/// report for; the batch is chosen from there so it naturally skips parts
+/// already reported (removed via [`Self::reported`]) and can always reach
+/// the last part still outstanding.
+struct SignatureCache {
+  parts: Mutex<HashMap<u32, SignedPart>>,
+  remaining: Mutex<std::collections::BTreeSet<u32>>,
+  sign_lock: tokio::sync::Mutex<()>,
+}
+
+impl SignatureCache {
+  /// `parts` is the initial queue (§9.1's reconciled missing parts) this
+  /// round will try to report; every one of them starts out "remaining"
+  /// until [`Self::reported`] removes it.
+  fn new(parts: impl Iterator<Item = u32>) -> Self {
+    Self {
+      parts: Mutex::new(HashMap::new()),
+      remaining: Mutex::new(parts.collect()),
+      sign_lock: tokio::sync::Mutex::new(()),
+    }
+  }
+
+  fn discard(&self, n: u32) {
+    self.parts.lock().unwrap().remove(&n);
+  }
+
+  /// A part that is done needs no more signature and must not be picked for
+  /// a future batch.
+  fn reported(&self, n: u32) {
+    self.parts.lock().unwrap().remove(&n);
+    self.remaining.lock().unwrap().remove(&n);
+  }
+
+  fn fresh(&self, n: u32) -> bool {
+    self
+      .parts
+      .lock()
+      .unwrap()
+      .get(&n)
+      .is_some_and(|signed| signed.received_at.elapsed() < SIGNATURE_LIFETIME)
+  }
+
+  async fn get_or_sign(
+    &self,
+    app: &AppHandle,
+    upload: &RecordedUpload,
+    n: u32,
+  ) -> Result<SignedPart, SignError> {
+    self
+      .get_or_sign_via(n, |wanted| sign_request(app, upload, wanted))
+      .await
+  }
+
+  /// Looks up a fresh signature for `n`, signing a batch starting at it if
+  /// there is none, with `request` standing in for the actual
+  /// `/parts/sign` call — production uses [`sign_request`]; tests can
+  /// supply something else, so this coordination (fresh check, take
+  /// `sign_lock`, re-check, batch-select, insert) is exercised the same way
+  /// in both.
+  async fn get_or_sign_via<F, Fut>(&self, n: u32, request: F) -> Result<SignedPart, SignError>
+  where
+    F: FnOnce(Vec<u32>) -> Fut,
+    Fut: std::future::Future<Output = Result<HashMap<u32, SignedPart>, SignError>>,
+  {
+    if self.fresh(n) {
+      return Ok(self.parts.lock().unwrap().get(&n).cloned().unwrap());
+    }
+    // Only one signing request runs at a time; everyone else just waits on
+    // this lock and re-checks the cache once they get it, rather than
+    // issuing a redundant request of their own for the same or an
+    // overlapping batch.
+    let _guard = self.sign_lock.lock().await;
+    if !self.fresh(n) {
+      let wanted = {
+        let remaining = self.remaining.lock().unwrap();
+        select_sign_batch(&remaining, n, |m| self.fresh(m))
+      };
+      let signed = request(wanted).await?;
+      self.parts.lock().unwrap().extend(signed);
+    }
+    self
+      .parts
+      .lock()
+      .unwrap()
+      .get(&n)
+      .cloned()
+      .ok_or_else(|| SignError::Retry(USTBLError("平台没有为这一片签名".into())))
+  }
+}
+
+/// `POST /uploads/{id}/parts/sign` for exactly `wanted`, turned into the
+/// signatures the cache stores. This is where the HTTP-level outcome is
+/// classified into the three [`SignError`] kinds: a 409
+/// `UPLOAD_RESTARTED` restarts the round under the server's generation;
+/// a 410, or a 409 that is not `UPLOAD_RESTARTED`, means the session
+/// cannot be signed against and fails outright; anything else — network
+/// trouble, a platform 5xx/429/408, a body that does not parse — is
+/// ordinary transient trouble and is retried against the part's attempt
+/// budget (§13.2).
+async fn sign_request(
+  app: &AppHandle,
+  upload: &RecordedUpload,
+  wanted: Vec<u32>,
+) -> Result<HashMap<u32, SignedPart>, SignError> {
+  let response = authed_json(
+    app,
+    reqwest::Method::POST,
+    &format!("/uploads/{}/parts/sign", upload.id),
+    Some(json!({ "generation": upload.generation, "parts": wanted })),
+  )
+  .await?;
+  let status = response.status();
+  if status == reqwest::StatusCode::CONFLICT {
+    // A 409 on signing means the same thing a 409 on reporting does — the
+    // session is already on a newer generation — and is handled the same
+    // way: stop in-flight parts, reconcile, and restart from scratch under
+    // it (§13.2). A 409 that is not that code is not transient either:
+    // the session's own identity no longer lines up with what the
+    // launcher has, and retrying will not change that.
+    let (detail, error) = failure_detail(response).await;
+    return match restart_generation(detail.as_ref(), upload.generation) {
+      Some(generation) => Err(SignError::Restarted(generation)),
+      None => Err(SignError::Fatal(error)),
+    };
+  }
+  if status == reqwest::StatusCode::GONE {
+    return Err(SignError::Fatal(
+      InstanceError::ModpackUploadSessionGone.into(),
+    ));
+  }
+  if !status.is_success() {
+    return Err(SignError::Retry(failure(response).await));
+  }
+  let received_at = Instant::now();
+  let body: Value = response.json().await?;
+  let requests = body["requests"]
+    .as_object()
+    .ok_or_else(|| SignError::Retry(USTBLError("平台返回了无法识别的签名".into())))?;
+  let mut signed = HashMap::new();
+  for (key, value) in requests {
+    let Ok(part_n) = key.parse::<u32>() else {
+      continue;
+    };
+    let method = value["method"]
+      .as_str()
+      .and_then(|m| m.parse().ok())
+      .unwrap_or(reqwest::Method::PUT);
+    let url = value["url"].as_str().unwrap_or_default().to_string();
+    if !url.starts_with("https://") {
+      // §13.2: the upload client only ever accepts https URLs.
+      continue;
+    }
+    let headers = value["headers"]
+      .as_object()
+      .into_iter()
+      .flatten()
+      .filter_map(|(name, value)| Some((name.clone(), value.as_str()?.to_string())))
+      .collect();
+    signed.insert(
+      part_n,
+      SignedPart {
+        method,
+        url,
+        headers,
+        received_at,
+      },
+    );
+  }
+  Ok(signed)
 }
 
 async fn monitor_platform(job: PublishJob) {
@@ -762,6 +1405,26 @@ async fn monitor_platform(job: PublishJob) {
         .as_str()
         .filter(|text| !text.is_empty())
         .unwrap_or("平台处理增量包失败")
+        .to_string();
+      let mut record = job.record.clone();
+      record.phase = Phase::Failed;
+      record.error = Some(message.clone());
+      let _ = record.save(&jobs_dir());
+      emit_finished(&job.app, &record, None, Some(message));
+      return;
+    }
+    // §8.4: the platform can revert the version to `uploading` during the
+    // complete phase when its own probe finds the cloud upload session
+    // gone (3 consecutive 500s) — the pack has to be sent again under a new
+    // generation. Polling stops here and the task becomes resumable, same
+    // as any other `Failed` task; resuming re-enters `upload_pack`, whose
+    // reconciliation adopts the server's new generation before anything
+    // signs or reports under it (§9.1).
+    if status == "uploading" {
+      let message = state["error"]
+        .as_str()
+        .filter(|text| !text.is_empty())
+        .unwrap_or("云盘上传会话已失效，需要重新上传")
         .to_string();
       let mut record = job.record.clone();
       record.phase = Phase::Failed;
@@ -844,12 +1507,12 @@ mod tests {
   use super::*;
 
   #[test]
-  fn chunks_cover_the_pack_with_a_shorter_last_one() {
-    // 20 bytes in chunks of 8: 8 + 8 + 4.
-    let lengths: Vec<u64> = (0..3).map(|n| chunk_length(20, 8, 3, n)).collect();
+  fn parts_cover_the_pack_with_a_shorter_last_one() {
+    // 20 bytes in parts of 8: 8 + 8 + 4.
+    let lengths: Vec<u64> = (1..=3).map(|n| part_length(20, 8, 3, n)).collect();
     assert_eq!(lengths, [8, 8, 4]);
-    assert_eq!(chunk_length(8, 8, 1, 0), 8);
-    assert_eq!(chunk_length(5, 8, 1, 0), 5);
+    assert_eq!(part_length(8, 8, 1, 1), 8);
+    assert_eq!(part_length(5, 8, 1, 1), 5);
   }
 
   #[test]
@@ -868,5 +1531,220 @@ mod tests {
     assert!(ActiveToken::take("job-x").is_none());
     drop(token);
     assert!(!is_running("job-x"));
+  }
+
+  #[test]
+  fn reconciliation_picks_up_only_the_current_generations_parts() {
+    let body = json!({
+      "status": "uploading",
+      "generation": 3,
+      "parts": { "1": "a".repeat(32), "3": "b".repeat(32) },
+    });
+    let (generation, received) = received_parts(&body, 3);
+    assert_eq!(generation, 3);
+    let mut received: Vec<u32> = received.into_iter().collect();
+    received.sort_unstable();
+    assert_eq!(received, [1, 3]);
+  }
+
+  #[test]
+  fn reconciliation_against_a_newer_generation_restarts_from_scratch() {
+    // The server moved on behind the launcher's back (e.g. a previous run's
+    // probe restarted it); nothing already reported under the stale
+    // generation counts towards the new one, and the server's own
+    // generation is handed back so the caller can adopt it instead of
+    // signing or reporting under the stale one.
+    let body = json!({
+      "status": "uploading",
+      "generation": 4,
+      "parts": { "1": "a".repeat(32) },
+    });
+    let (generation, received) = received_parts(&body, 3);
+    assert_eq!(generation, 4);
+    assert!(received.is_empty());
+  }
+
+  #[test]
+  fn a_signed_url_rejected_for_clock_skew_is_told_apart_from_other_cloud_errors() {
+    assert!(is_signature_expired(
+      "<Error><Code>RequestTimeTooSkewed</Code></Error>"
+    ));
+    assert!(!is_signature_expired(
+      "<Error><Code>InternalError</Code></Error>"
+    ));
+    assert!(!is_signature_expired(""));
+  }
+
+  /// §13.4: only the `<Code>` is ever worth keeping from a cloud error
+  /// body; the rest (which may carry request details) must not leak into a
+  /// logged or user-facing message.
+  #[test]
+  fn only_the_cloud_error_code_is_pulled_out_of_the_xml_body() {
+    assert_eq!(
+      cloud_error_code(
+        "<?xml version=\"1.0\"?><Error><Code>InternalError</Code>\
+         <Message>oops, request-id abc123</Message></Error>"
+      ),
+      Some("InternalError")
+    );
+    assert_eq!(cloud_error_code("not xml at all"), None);
+    assert_eq!(cloud_error_code(""), None);
+  }
+
+  /// A `<Code>` longer than [`CLOUD_ERROR_CODE_LIMIT`] is cut down to it,
+  /// on a character boundary rather than a byte one.
+  #[test]
+  fn an_overlong_cloud_error_code_is_cut_to_the_limit_on_a_char_boundary() {
+    let long_code = "错".repeat(CLOUD_ERROR_CODE_LIMIT + 10);
+    let body = format!("<Error><Code>{long_code}</Code></Error>");
+    let code = cloud_error_code(&body).unwrap();
+    assert_eq!(code.chars().count(), CLOUD_ERROR_CODE_LIMIT);
+    assert_eq!(code, "错".repeat(CLOUD_ERROR_CODE_LIMIT));
+
+    let short_code = "InternalError";
+    let body = format!("<Error><Code>{short_code}</Code></Error>");
+    assert_eq!(cloud_error_code(&body), Some(short_code));
+  }
+
+  #[test]
+  fn a_409_without_the_restart_code_is_left_for_the_caller_to_report() {
+    let other = json!({ "code": "SOME_OTHER_CONFLICT", "message": "nope" });
+    assert_eq!(restart_generation(Some(&other), 3), None);
+    assert_eq!(restart_generation(None, 3), None);
+  }
+
+  #[test]
+  fn a_409_upload_restarted_resumes_at_the_servers_generation_or_the_next_one() {
+    let with_generation = json!({ "code": "UPLOAD_RESTARTED", "generation": 7 });
+    assert_eq!(restart_generation(Some(&with_generation), 3), Some(7));
+
+    // The server is expected to always include `generation`, but a fallback
+    // keeps the launcher moving forward even if it someday does not.
+    let without_generation = json!({ "code": "UPLOAD_RESTARTED" });
+    assert_eq!(restart_generation(Some(&without_generation), 3), Some(4));
+  }
+
+  /// §13.2: concurrent requests for different parts must not each issue
+  /// their own `/parts/sign` call — the second one has to wait on
+  /// `sign_lock`, then find the first one's batch already covers it. Goes
+  /// through [`SignatureCache::get_or_sign_via`], the exact coordination
+  /// `get_or_sign` itself runs in production, with a fake `request` in
+  /// place of the real HTTP call.
+  #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+  async fn concurrent_requests_for_different_parts_share_a_single_sign_call() {
+    let cache = Arc::new(SignatureCache::new(1..=4));
+    let calls = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    // Held while the one `request` call that should ever run is in
+    // progress, simulating a signing request slow enough that a second,
+    // concurrent request for a different part would start its own if it
+    // were not actually blocked on `sign_lock` instead. `Notify` rather
+    // than a timer keeps the test deterministic.
+    let release = Arc::new(tokio::sync::Notify::new());
+
+    let sign = |n: u32,
+                calls: Arc<std::sync::atomic::AtomicU32>,
+                release: Arc<tokio::sync::Notify>,
+                cache: Arc<SignatureCache>| {
+      tokio::spawn(async move {
+        cache
+          .get_or_sign_via(n, |wanted| async move {
+            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            release.notified().await;
+            let received_at = Instant::now();
+            Ok(
+              wanted
+                .into_iter()
+                .map(|part_n| {
+                  (
+                    part_n,
+                    SignedPart {
+                      method: reqwest::Method::PUT,
+                      url: "https://example.test/".into(),
+                      headers: HashMap::new(),
+                      received_at,
+                    },
+                  )
+                })
+                .collect(),
+            )
+          })
+          .await
+      })
+    };
+
+    // Part 1 is spawned first and its `request` call is awaited to have
+    // actually started before part 2 is spawned, so part 1 deterministically
+    // wins `sign_lock`. Its batch — ascending from 1 — necessarily covers
+    // part 2 too (there is nothing else in `remaining` after it), so part
+    // 2's request can only ever complete by finding part 1's batch
+    // already covers it, never by starting a batch of its own.
+    let task_a = sign(1, calls.clone(), release.clone(), cache.clone());
+    while calls.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+      tokio::task::yield_now().await;
+    }
+    let task_b = sign(2, calls.clone(), release.clone(), cache.clone());
+    // Give part 2's request a chance to reach (and block on) `sign_lock`
+    // before letting part 1's request finish; if it did not block there it
+    // would instead race ahead and start a `request` call of its own.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    release.notify_waiters();
+    let (a, b) = tokio::time::timeout(Duration::from_secs(2), async {
+      tokio::join!(task_a, task_b)
+    })
+    .await
+    .expect("a concurrent request for a different part was not blocked on sign_lock");
+    assert_eq!(a.unwrap().unwrap().url, "https://example.test/");
+    assert_eq!(b.unwrap().unwrap().url, "https://example.test/");
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    // Both parts ended up signed by that one call.
+    assert!(cache.fresh(1));
+    assert!(cache.fresh(2));
+  }
+
+  /// The outcome of a signing request decides what `send_part` does next:
+  /// a restart restarts the round, a 410 or non-restart 409 fails
+  /// outright, everything else spends an attempt and is retried.
+  #[test]
+  fn a_sign_failure_is_classified_into_restart_fail_or_retry() {
+    let restarted = SignStep::from_sign_error(SignError::Restarted(7));
+    assert_eq!(restarted, SignStep::Restarted(7));
+
+    let fatal = SignStep::from_sign_error(SignError::Fatal(
+      InstanceError::ModpackUploadSessionGone.into(),
+    ));
+    assert_eq!(
+      fatal,
+      SignStep::Fail(InstanceError::ModpackUploadSessionGone.into())
+    );
+
+    let retry = SignStep::from_sign_error(SignError::Retry(USTBLError("platform 500".into())));
+    assert_eq!(retry, SignStep::Retry(USTBLError("platform 500".into())));
+  }
+
+  #[test]
+  fn the_batch_never_looks_behind_n() {
+    let remaining: std::collections::BTreeSet<u32> = (1..=20).collect();
+    // Starting near the end, the batch reaches the actual last part (20)
+    // because it is within SIGN_BATCH of n; starting near the front, it
+    // must not reach backward to find it.
+    let near_end = select_sign_batch(&remaining, 15, |_| false);
+    assert_eq!(near_end, vec![15, 16, 17, 18, 19, 20]);
+
+    let near_start = select_sign_batch(&remaining, 1, |_| false);
+    assert_eq!(near_start.len(), SIGN_BATCH);
+    assert!(!near_start.contains(&20));
+  }
+
+  #[test]
+  fn a_batch_never_includes_a_part_already_reported() {
+    let mut remaining: std::collections::BTreeSet<u32> = (1..=5).collect();
+    // Parts 2 and 4 are done and removed from `remaining`, as `reported`
+    // would do; they must not reappear in a later batch for part 1.
+    remaining.remove(&2);
+    remaining.remove(&4);
+    let batch = select_sign_batch(&remaining, 1, |_| false);
+    assert!(!batch.contains(&2));
+    assert!(!batch.contains(&4));
+    assert_eq!(batch, vec![1, 3, 5]);
   }
 }

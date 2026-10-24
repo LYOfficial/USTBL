@@ -1,15 +1,14 @@
 //! Reading files out of the packs the campus platform stores.
 //!
-//! A version's files live in packs on the cloud drive: immutable delta packs,
-//! one per publication, and one full pack for the newest version of a line. The
-//! platform only says where a pack is (`locate`); this module reads what an
-//! update needs with HTTP Range requests, or downloads the whole full pack when
-//! that is cheaper than the pieces.
+//! A version's files live in immutable packs on the cloud drive, one per
+//! publication. The platform only says where a pack is (`locate`); this module
+//! reads each file an install or update needs out of those packs with HTTP
+//! Range requests. There is no full pack: a fresh install reads every file the
+//! same way an update does.
 
-use super::sources::{download_param, CAMPUS_API};
+use super::sources::CAMPUS_API;
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::models::misc::InstanceError;
-use crate::tasks::download::{DownloadParam, DownloadTransferOptions};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -21,13 +20,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
 use tokio::io::AsyncWriteExt;
-use url::Url;
 
 pub const STORED: u16 = 0;
 pub const DEFLATED: u16 = 8;
 
-const CODE_PACK_UNAVAILABLE: &str = "MODPACK_UPDATE_PACK_UNAVAILABLE";
-const CODE_TOO_MANY_PACKS: &str = "TOO_MANY_PACKS";
 const CODE_NOT_LATEST: &str = "NOT_LATEST";
 /// Transient failures (network, 5xx) are retried this many times in total.
 const ATTEMPTS: usize = 3;
@@ -39,7 +35,6 @@ const RELOCATIONS: usize = 2;
 #[derive(Debug, Clone, Deserialize)]
 pub struct PackLocation {
   pub id: i64,
-  pub sha1: String,
   pub url: String,
   pub method: String,
   #[serde(default)]
@@ -60,27 +55,9 @@ pub struct EntryLocation {
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Located {
   pub packs: Vec<PackLocation>,
-  /// File sha1 to its place in one of `packs` (update mode only).
+  /// File sha1 to its place in one of `packs`.
   #[serde(default)]
   pub entries: HashMap<String, EntryLocation>,
-  /// Size of the full pack of the version, when it has one.
-  #[serde(default)]
-  pub full_size: Option<u64>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LocateMode {
-  Install,
-  Update,
-}
-
-impl LocateMode {
-  fn as_str(self) -> &'static str {
-    match self {
-      LocateMode::Install => "install",
-      LocateMode::Update => "update",
-    }
-  }
 }
 
 #[derive(Debug)]
@@ -117,12 +94,7 @@ fn failed(error: impl std::error::Error) -> TransportError {
 
 #[async_trait]
 pub trait PackTransport: Send + Sync {
-  async fn locate(
-    &self,
-    version_id: i64,
-    mode: LocateMode,
-    sha1s: &[String],
-  ) -> Result<Located, TransportError>;
+  async fn locate(&self, version_id: i64, sha1s: &[String]) -> Result<Located, TransportError>;
   /// Write `length` bytes of the pack, starting at `start`, to `dest`.
   async fn read_range(
     &self,
@@ -131,23 +103,13 @@ pub trait PackTransport: Send + Sync {
     length: u64,
     dest: &Path,
   ) -> Result<(), TransportError>;
-  /// Download the whole pack to `dest`, checking its sha1.
-  async fn download(&self, pack: &PackLocation, dest: &Path) -> Result<(), TransportError>;
-}
-
-enum Mode {
-  /// `prepare` has not run yet.
-  Idle,
-  /// Read single entries out of delta packs.
-  Delta(Arc<Located>),
-  /// Everything comes out of one downloaded full pack.
-  Full(PathBuf),
 }
 
 struct State {
-  mode: Mode,
+  /// `None` until `prepare` has run.
+  located: Option<Arc<Located>>,
   wanted: Vec<String>,
-  /// Bumped whenever `mode` is replaced, so concurrent fetches that hit an
+  /// Bumped whenever `located` is replaced, so concurrent fetches that hit an
   /// expired signature locate once between them.
   generation: u64,
 }
@@ -156,8 +118,6 @@ struct State {
 pub struct PackSession {
   transport: Arc<dyn PackTransport>,
   version_id: i64,
-  /// Where a downloaded full pack is kept.
-  work_dir: PathBuf,
   state: tokio::sync::Mutex<State>,
 }
 
@@ -169,91 +129,38 @@ impl fmt::Debug for PackSession {
   }
 }
 
-fn is_unavailable(code: &str) -> bool {
-  code == CODE_PACK_UNAVAILABLE || code == CODE_TOO_MANY_PACKS
-}
-
 impl PackSession {
-  pub fn new(transport: Arc<dyn PackTransport>, version_id: i64, work_dir: PathBuf) -> Arc<Self> {
+  pub fn new(transport: Arc<dyn PackTransport>, version_id: i64) -> Arc<Self> {
     Arc::new(Self {
       transport,
       version_id,
-      work_dir,
       state: tokio::sync::Mutex::new(State {
-        mode: Mode::Idle,
+        located: None,
         wanted: Vec::new(),
         generation: 0,
       }),
     })
   }
 
-  /// Work out how to get `sha1s`: the delta packs that hold them, or the full
-  /// pack when the pieces would cost more than it does.
+  /// Ask the platform which packs hold `sha1s`. A pack the platform cannot
+  /// hand out (gone, or too many of them) is reported as unavailable.
   pub async fn prepare(&self, sha1s: &[String]) -> USTBLResult<()> {
     let mut wanted = sha1s.to_vec();
     wanted.sort();
     wanted.dedup();
     let mut state = self.state.lock().await;
-    state.mode = self.plan(&wanted).await?;
+    state.located = Some(self.plan(&wanted).await?);
     state.wanted = wanted;
     state.generation += 1;
     Ok(())
   }
 
-  async fn plan(&self, wanted: &[String]) -> USTBLResult<Mode> {
+  async fn plan(&self, wanted: &[String]) -> USTBLResult<Arc<Located>> {
     if wanted.is_empty() {
-      return Ok(Mode::Delta(Arc::new(Located::default())));
+      return Ok(Arc::new(Located::default()));
     }
-    match self
-      .transport
-      .locate(self.version_id, LocateMode::Update, wanted)
-      .await
-    {
-      Ok(located) => {
-        let needed: u64 = located
-          .entries
-          .values()
-          .map(|entry| entry.compressed_size)
-          .sum();
-        match located.full_size {
-          Some(full) if needed > full => match self.full_pack().await {
-            Ok(mode) => Ok(mode),
-            // Only the newest version has a full pack; the pieces still work.
-            Err(TransportError::Conflict(_)) => Ok(Mode::Delta(Arc::new(located))),
-            Err(error) => Err(error.into()),
-          },
-          _ => Ok(Mode::Delta(Arc::new(located))),
-        }
-      }
-      Err(TransportError::Conflict(code)) if is_unavailable(&code) => {
-        // The deltas are gone; only the newest version has a full pack to use
-        // instead. Whatever stops that too is the same problem to the player.
-        match self.full_pack().await {
-          Ok(mode) => Ok(mode),
-          Err(TransportError::Conflict(_)) => {
-            Err(InstanceError::ModpackUpdatePackUnavailable.into())
-          }
-          Err(error) => Err(error.into()),
-        }
-      }
-      Err(error) => Err(error.into()),
-    }
-  }
-
-  async fn full_pack(&self) -> Result<Mode, TransportError> {
-    let located = self
-      .transport
-      .locate(self.version_id, LocateMode::Install, &[])
-      .await?;
-    let pack = located
-      .packs
-      .into_iter()
-      .next()
-      .ok_or_else(|| TransportError::Conflict(CODE_PACK_UNAVAILABLE.into()))?;
-    fs::create_dir_all(&self.work_dir).map_err(failed)?;
-    let dest = self.work_dir.join(format!("full-{}.zip", pack.sha1));
-    self.transport.download(&pack, &dest).await?;
-    Ok(Mode::Full(dest))
+    let located = self.transport.locate(self.version_id, wanted).await?;
+    Ok(Arc::new(located))
   }
 
   /// Put the file with this sha1 at `dest`. Callers verify the result.
@@ -262,20 +169,9 @@ impl PackSession {
     loop {
       let (located, generation) = {
         let state = self.state.lock().await;
-        match &state.mode {
-          Mode::Idle => return Err(InstanceError::ModpackUpdateRemoteInvalid.into()),
-          Mode::Full(archive) => {
-            let (archive, entry, dest) = (
-              archive.clone(),
-              format!("objects/{sha1}"),
-              dest.to_path_buf(),
-            );
-            drop(state);
-            return tokio::task::spawn_blocking(move || extract_entry(&archive, &entry, &dest))
-              .await
-              .map_err(|e| USTBLError(e.to_string()))?;
-          }
-          Mode::Delta(located) => (located.clone(), state.generation),
+        match &state.located {
+          None => return Err(InstanceError::ModpackUpdateRemoteInvalid.into()),
+          Some(located) => (located.clone(), state.generation),
         }
       };
       let entry = located
@@ -322,7 +218,7 @@ impl PackSession {
       return Ok(());
     }
     let wanted = state.wanted.clone();
-    state.mode = self.plan(&wanted).await?;
+    state.located = Some(self.plan(&wanted).await?);
     state.generation += 1;
     Ok(())
   }
@@ -383,17 +279,6 @@ fn decode_entry(raw: &Path, entry: &EntryLocation, dest: &Path) -> USTBLResult<(
   verified
 }
 
-fn extract_entry(archive: &Path, entry: &str, dest: &Path) -> USTBLResult<()> {
-  let mut zip = zip::ZipArchive::new(File::open(archive)?)?;
-  let mut source = zip.by_name(entry)?;
-  if let Some(parent) = dest.parent() {
-    fs::create_dir_all(parent)?;
-  }
-  let mut out = File::create(dest)?;
-  std::io::copy(&mut source, &mut out)?;
-  Ok(())
-}
-
 // ---- the real transport -------------------------------------------------------
 
 pub struct AppTransport {
@@ -430,15 +315,12 @@ fn signed_request(
 
 #[async_trait]
 impl PackTransport for AppTransport {
-  async fn locate(
-    &self,
-    version_id: i64,
-    mode: LocateMode,
-    sha1s: &[String],
-  ) -> Result<Located, TransportError> {
+  async fn locate(&self, version_id: i64, sha1s: &[String]) -> Result<Located, TransportError> {
     let client = self.app.state::<reqwest::Client>();
     let url = format!("{CAMPUS_API}/versions/{version_id}/locate");
-    let body = serde_json::json!({ "mode": mode.as_str(), "sha1s": sha1s });
+    // Servers from before v3 reject a request without `mode`; they answer the
+    // "update" shape, which is the only one used. Newer ones ignore the field.
+    let body = serde_json::json!({ "mode": "update", "sha1s": sha1s });
     let mut attempt = 0;
     loop {
       attempt += 1;
@@ -529,22 +411,6 @@ impl PackTransport for AppTransport {
       }
     }
   }
-
-  async fn download(&self, pack: &PackLocation, dest: &Path) -> Result<(), TransportError> {
-    if !pack.url.starts_with("https://") || !pack.method.eq_ignore_ascii_case("GET") {
-      return Err(invalid());
-    }
-    let src = Url::parse(&pack.url).map_err(|_| invalid())?;
-    let param = DownloadParam {
-      src,
-      dest: dest.to_path_buf(),
-      filename: None,
-      sha1: Some(pack.sha1.to_lowercase()),
-      custom_headers: Some(pack.headers.clone()),
-      transfer_options: DownloadTransferOptions::resumable(Vec::new(), 5),
-    };
-    download_param(&self.app, param).await.map_err(Into::into)
-  }
 }
 
 #[cfg(test)]
@@ -572,7 +438,6 @@ mod tests {
   fn location(id: i64) -> PackLocation {
     PackLocation {
       id,
-      sha1: "f".repeat(40),
       url: "https://cloud.example/p".into(),
       method: "GET".into(),
       headers: HashMap::new(),
@@ -629,46 +494,53 @@ mod tests {
     let _ = fs::remove_file(source);
   }
 
-  /// A platform holding one delta pack, with a signature that can be made to
+  /// A platform holding packs of files, with a signature that can be made to
   /// run out.
   struct Fake {
-    pack: Vec<u8>,
+    packs: HashMap<i64, Vec<u8>>,
     entries: HashMap<String, EntryLocation>,
-    full_size: Option<u64>,
-    full: Option<Vec<u8>>,
     calls: Mutex<Vec<String>>,
     /// Number of range reads that answer "expired" before one succeeds.
     expire: Mutex<usize>,
-    unavailable: bool,
+    /// Code the platform refuses `locate` with.
+    refuse: Option<&'static str>,
   }
 
   impl Fake {
+    /// One pack (id 7) holding all `files`.
     fn new(files: &[(&str, &[u8])]) -> Self {
-      let mut pack = Vec::new();
+      Self::chain(&[(7, files)])
+    }
+
+    /// One pack per `(id, files)`, as a first pack followed by delta packs.
+    fn chain(packs: &[(i64, &[(&str, &[u8])])]) -> Self {
+      let mut bytes = HashMap::new();
       let mut entries = HashMap::new();
-      for (name, data) in files {
-        let compressed = deflate(data);
-        entries.insert(
-          name.to_string(),
-          EntryLocation {
-            pack: 7,
-            data_offset: pack.len() as u64,
-            compress_type: DEFLATED,
-            compressed_size: compressed.len() as u64,
-            size: data.len() as u64,
-            crc32: crc(data),
-          },
-        );
-        pack.extend(compressed);
+      for (id, files) in packs {
+        let mut pack = Vec::new();
+        for (name, data) in *files {
+          let compressed = deflate(data);
+          entries.insert(
+            name.to_string(),
+            EntryLocation {
+              pack: *id,
+              data_offset: pack.len() as u64,
+              compress_type: DEFLATED,
+              compressed_size: compressed.len() as u64,
+              size: data.len() as u64,
+              crc32: crc(data),
+            },
+          );
+          pack.extend(compressed);
+        }
+        bytes.insert(*id, pack);
       }
       Self {
-        pack,
+        packs: bytes,
         entries,
-        full_size: None,
-        full: None,
         calls: Mutex::default(),
         expire: Mutex::new(0),
-        unavailable: false,
+        refuse: None,
       }
     }
 
@@ -679,43 +551,27 @@ mod tests {
 
   #[async_trait]
   impl PackTransport for Fake {
-    async fn locate(
-      &self,
-      _version_id: i64,
-      mode: LocateMode,
-      sha1s: &[String],
-    ) -> Result<Located, TransportError> {
-      self
-        .calls
-        .lock()
-        .unwrap()
-        .push(format!("locate:{}", mode.as_str()));
-      match mode {
-        LocateMode::Update if self.unavailable => {
-          Err(TransportError::Conflict(CODE_PACK_UNAVAILABLE.into()))
-        }
-        LocateMode::Update => Ok(Located {
-          packs: vec![location(7)],
-          entries: sha1s
-            .iter()
-            .map(|sha1| (sha1.clone(), self.entries[sha1]))
-            .collect(),
-          full_size: self.full_size,
-        }),
-        LocateMode::Install => match &self.full {
-          Some(_) => Ok(Located {
-            packs: vec![location(9)],
-            entries: HashMap::new(),
-            full_size: self.full_size,
-          }),
-          None => Err(TransportError::Conflict(CODE_NOT_LATEST.into())),
-        },
+    async fn locate(&self, _version_id: i64, sha1s: &[String]) -> Result<Located, TransportError> {
+      self.calls.lock().unwrap().push("locate".into());
+      if let Some(code) = self.refuse {
+        return Err(TransportError::Conflict(code.into()));
       }
+      let entries: HashMap<String, EntryLocation> = sha1s
+        .iter()
+        .map(|sha1| (sha1.clone(), self.entries[sha1]))
+        .collect();
+      let mut ids: Vec<i64> = entries.values().map(|entry| entry.pack).collect();
+      ids.sort();
+      ids.dedup();
+      Ok(Located {
+        packs: ids.into_iter().map(location).collect(),
+        entries,
+      })
     }
 
     async fn read_range(
       &self,
-      _pack: &PackLocation,
+      pack: &PackLocation,
       start: u64,
       length: u64,
       dest: &Path,
@@ -724,7 +580,7 @@ mod tests {
         .calls
         .lock()
         .unwrap()
-        .push(format!("range:{start}+{length}"));
+        .push(format!("range:{}:{start}+{length}", pack.id));
       {
         let mut expire = self.expire.lock().unwrap();
         if *expire > 0 {
@@ -734,35 +590,15 @@ mod tests {
       }
       let (start, length) = (start as usize, length as usize);
       fs::create_dir_all(dest.parent().unwrap()).unwrap();
-      fs::write(dest, &self.pack[start..start + length]).unwrap();
+      fs::write(dest, &self.packs[&pack.id][start..start + length]).unwrap();
       Ok(())
     }
-
-    async fn download(&self, _pack: &PackLocation, dest: &Path) -> Result<(), TransportError> {
-      self.calls.lock().unwrap().push("download".into());
-      fs::write(dest, self.full.as_ref().unwrap()).unwrap();
-      Ok(())
-    }
-  }
-
-  fn zip_of(files: &[(&str, &[u8])]) -> Vec<u8> {
-    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-    for (name, data) in files {
-      zip
-        .start_file(
-          format!("objects/{name}"),
-          zip::write::SimpleFileOptions::default(),
-        )
-        .unwrap();
-      zip.write_all(data).unwrap();
-    }
-    zip.finish().unwrap().into_inner()
   }
 
   fn session(fake: Fake) -> (Arc<PackSession>, Arc<Fake>, PathBuf) {
     let fake = Arc::new(fake);
     let work = temp("work");
-    (PackSession::new(fake.clone(), 3, work.clone()), fake, work)
+    (PackSession::new(fake.clone(), 3), fake, work)
   }
 
   #[tokio::test]
@@ -802,57 +638,76 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn the_full_pack_is_used_when_the_pieces_cost_more() {
-    let mut fake = Fake::new(&[("aa", b"alpha alpha alpha"), ("bb", b"beta")]);
-    let needed: u64 = fake.entries.values().map(|e| e.compressed_size).sum();
-    fake.full_size = Some(needed - 1);
-    fake.full = Some(zip_of(&[("aa", b"alpha alpha alpha"), ("bb", b"beta")]));
+  async fn a_fresh_install_reads_every_file_from_the_pack_that_holds_it() {
+    // The first pack and two delta packs; nothing else exists to fall back on.
+    let fake = Fake::chain(&[
+      (1, &[("aa", b"alpha alpha alpha"), ("bb", b"beta")]),
+      (4, &[("cc", b"gamma gamma")]),
+      (9, &[("dd", b"delta")]),
+    ]);
     let (session, fake, work) = session(fake);
-    session.prepare(&["aa".into(), "bb".into()]).await.unwrap();
+    let all: Vec<String> = ["dd", "bb", "aa", "cc"].map(String::from).into();
+    session.prepare(&all).await.unwrap();
 
-    let dest = work.join("out/a");
-    session.fetch("aa", &dest).await.unwrap();
-    assert_eq!(fs::read(&dest).unwrap(), b"alpha alpha alpha");
-    assert!(fake.calls().contains(&"download".to_string()));
-    assert!(!fake.calls().iter().any(|c| c.starts_with("range")));
+    let expected: [(&str, &[u8]); 4] = [
+      ("aa", b"alpha alpha alpha"),
+      ("bb", b"beta"),
+      ("cc", b"gamma gamma"),
+      ("dd", b"delta"),
+    ];
+    for (sha1, data) in expected {
+      let dest = work.join(format!("out/{sha1}"));
+      session.fetch(sha1, &dest).await.unwrap();
+      assert_eq!(fs::read(&dest).unwrap(), data);
+    }
+
+    let calls = fake.calls();
+    assert_eq!(calls.iter().filter(|c| *c == "locate").count(), 1);
+    let ranges: Vec<&String> = calls.iter().filter(|c| c.starts_with("range")).collect();
+    assert_eq!(ranges.len(), 4);
+    for pack in [1, 4, 9] {
+      let prefix = format!("range:{pack}:");
+      let expected = if pack == 1 { 2 } else { 1 };
+      assert_eq!(
+        ranges.iter().filter(|c| c.starts_with(&prefix)).count(),
+        expected
+      );
+    }
     let _ = fs::remove_dir_all(work);
   }
 
   #[tokio::test]
-  async fn pieces_are_kept_when_the_full_pack_is_not_available() {
-    // Not the newest version: no full pack, so the pieces are all there is.
-    let mut fake = Fake::new(&[("aa", b"alpha alpha alpha")]);
-    fake.full_size = Some(1);
-    let (session, fake, work) = session(fake);
-    session.prepare(&["aa".into()]).await.unwrap();
-    let dest = work.join("a");
-    session.fetch("aa", &dest).await.unwrap();
-    assert_eq!(fs::read(&dest).unwrap(), b"alpha alpha alpha");
-    assert!(!fake.calls().contains(&"download".to_string()));
-    let _ = fs::remove_dir_all(work);
+  async fn unavailable_packs_are_reported_without_another_attempt() {
+    for code in ["MODPACK_UPDATE_PACK_UNAVAILABLE", "TOO_MANY_PACKS"] {
+      let mut fake = Fake::new(&[("aa", b"alpha")]);
+      fake.refuse = Some(code);
+      let (session, fake, _work) = session(fake);
+      let error = session.prepare(&["aa".into()]).await.unwrap_err();
+      assert_eq!(
+        error,
+        USTBLError::from(InstanceError::ModpackUpdatePackUnavailable)
+      );
+      // Exactly one locate: nothing else is asked for in its place.
+      assert_eq!(fake.calls(), vec!["locate".to_string()]);
+      // And the session stays unusable rather than half prepared.
+      assert!(session.fetch("aa", Path::new("unused")).await.is_err());
+    }
   }
 
   #[tokio::test]
-  async fn missing_delta_packs_fall_back_to_the_full_pack_or_report_it() {
+  async fn a_version_that_is_no_longer_the_latest_is_stale() {
     let mut fake = Fake::new(&[("aa", b"alpha")]);
-    fake.unavailable = true;
-    fake.full = Some(zip_of(&[("aa", b"alpha")]));
-    let (session, _fake, work) = session(fake);
-    session.prepare(&["aa".into()]).await.unwrap();
-    let dest = work.join("a");
-    session.fetch("aa", &dest).await.unwrap();
-    assert_eq!(fs::read(&dest).unwrap(), b"alpha");
-
-    let mut fake = Fake::new(&[("aa", b"alpha")]);
-    fake.unavailable = true;
-    let (session, _fake, work2) = self::session(fake);
+    fake.refuse = Some("NOT_LATEST");
+    let (session, _fake, _work) = session(fake);
     let error = session.prepare(&["aa".into()]).await.unwrap_err();
-    assert_eq!(
-      error,
-      USTBLError::from(InstanceError::ModpackUpdatePackUnavailable)
-    );
-    let _ = fs::remove_dir_all(work);
-    let _ = fs::remove_dir_all(work2);
+    assert_eq!(error, USTBLError::from(InstanceError::ModpackUpdateStale));
+  }
+
+  #[tokio::test]
+  async fn nothing_is_located_when_no_file_is_wanted() {
+    let (session, fake, _work) = session(Fake::new(&[("aa", b"x")]));
+    session.prepare(&[]).await.unwrap();
+    assert!(fake.calls().is_empty());
   }
 
   #[tokio::test]

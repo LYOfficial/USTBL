@@ -346,6 +346,10 @@ pub enum InstanceError {
   ModpackUpdateNotIsolated,
   ModpackUpdateBaselineMissing,
   ModpackUpdatePackUnavailable,
+  ModpackUploadRestarted,
+  ModpackUploadCloudUnavailable,
+  ModpackUploadVerifyFailed,
+  ModpackUploadSessionGone,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize, Default)]
