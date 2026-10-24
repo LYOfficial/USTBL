@@ -2664,7 +2664,8 @@
             "MODPACK_UPDATE_RUNNING": "游戏正在运行，请先关闭游戏再更新整合包",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的组件链，无法就地更新，请重新安装",
             "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线",
-            "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试"
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试",
+            "MODPACK_UPDATE_MERGE_INVALID": "按块选择后配置文件的格式无效，请调整选择后重试"
           }
         }
       },
@@ -2697,7 +2698,8 @@
             "MODPACK_UPDATE_RUNNING": "游戏正在运行，请先关闭游戏再更新整合包",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的组件链，无法就地更新，请重新安装",
             "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线",
-            "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试"
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试",
+            "MODPACK_UPDATE_MERGE_INVALID": "按块选择后配置文件的格式无效，请调整选择后重试"
           }
         }
       },
@@ -2710,6 +2712,15 @@
         "success": "已更新跟随设置",
         "error": {
           "title": "更新跟随设置失败"
+        }
+      },
+      "unlinkModpackOrigin": {
+        "success": "已解除跟随",
+        "error": {
+          "title": "解除跟随失败",
+          "description": {
+            "MODPACK_UPDATE_UNLINK_PENDING": "上次更新尚未完成，请先恢复或回滚后再解除跟随"
+          }
         }
       },
       "applyModpackUpdate": {
@@ -2726,7 +2737,8 @@
             "MODPACK_UPDATE_RUNNING": "游戏正在运行，请先关闭游戏再更新整合包",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的组件链，无法就地更新，请重新安装",
             "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线",
-            "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试"
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试",
+            "MODPACK_UPDATE_MERGE_INVALID": "按块选择后配置文件的格式无效，请调整选择后重试"
           }
         }
       },
@@ -3217,12 +3229,20 @@
     "toast": {
       "loaderPending": "模组加载器需要重新安装，请在下载页查看进度"
     },
+    "unlink": {
+      "button": "解除跟随",
+      "confirmTitle": "解除跟随整合包",
+      "confirmBody": "解除后不再检查该整合包的更新，也不会删除任何游戏文件。之后可以重新安装或重新发布来再次关联。",
+      "success": "已解除跟随"
+    },
     "reason": {
+      "MODPACK_UPDATE_UNLINK_PENDING": "上次更新尚未完成，请先恢复或回滚后再解除跟随",
       "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线",
       "MODPACK_UPDATE_UNSUPPORTED": "该实例缺少可用的安装记录或未开启版本隔离",
       "MODPACK_UPDATE_NOT_ISOLATED": "该实例没有开启版本隔离，无法安全对比更新。请在实例设置中开启后重试",
       "MODPACK_UPDATE_BASELINE_MISSING": "该实例缺少整合包的安装记录或记录已损坏，无法对比更新",
-      "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试"
+      "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试",
+      "MODPACK_UPDATE_MERGE_INVALID": "按块选择后配置文件的格式无效，请调整选择后重试"
     },
     "rollback": {
       "hint": "可以撤销上一次整合包更新，把文件和加载器恢复成更新前的样子。",
@@ -3299,7 +3319,8 @@
         "campus": "校内"
       },
       "installed": "已安装",
-      "installedHint": "本地已有 {{count}} 个对应实例，点击查看"
+      "installedHint": "本地已有 {{count}} 个对应实例，点击查看",
+      "unlinkedToast": "整合包已被删除，实例 {{name}} 已解除跟随"
     }
   }
 }

@@ -100,4 +100,15 @@ export class ModpackUpdateService {
   ): Promise<InvokeResponse<null>> {
     return await invoke("set_modpack_follow", { instanceId, follow });
   }
+
+  /**
+   * Detach the instance from its modpack: identity and baseline go, the game
+   * files stay. Refused while an update transaction is unfinished.
+   */
+  @responseHandler("instance")
+  static async unlinkModpackOrigin(
+    instanceId: string
+  ): Promise<InvokeResponse<null>> {
+    return await invoke("unlink_modpack_origin", { instanceId });
+  }
 }

@@ -19,6 +19,7 @@ use crate::resource::models::{
 };
 use crate::tasks::download::{DownloadParam, DownloadTransferOptions};
 use serde::Deserialize;
+use serde_json::Value;
 use sha1::{Digest, Sha1};
 use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File};
@@ -506,6 +507,96 @@ async fn campus_get<T: serde::de::DeserializeOwned>(
     return Ok(None);
   }
   Ok(Some(response.error_for_status()?.json().await?))
+}
+
+/// The `detail` of the platform's answer to a project that no longer exists.
+/// Only a 404 with exactly this text counts as deleted: the same status from a
+/// reverse proxy, or any other 404 the platform itself returns, must not.
+pub const PROJECT_GONE_DETAIL: &str = "整合包不存在";
+
+/// Whether the answer to `GET /projects/{ref}` says the project was deleted.
+/// The body is only examined on a 404.
+pub fn is_project_gone_detail(status: u16, detail: Option<&Value>) -> bool {
+  status == 404 && detail == Some(&Value::String(PROJECT_GONE_DETAIL.into()))
+}
+
+/// Whether a project reference is worth asking about. Both the install flow
+/// and publish adoption store the slug; the platform's `get_project` accepts a
+/// slug or a numeric id alike, so any non-empty ref may be queried. The
+/// strictness of the deletion check comes from the exact 404 detail, not from
+/// the ref's shape.
+pub fn campus_project_queryable(project_ref: &str) -> bool {
+  !project_ref.is_empty()
+}
+
+/// Ask the platform whether a campus project was deleted. `None` when the
+/// answer is anything but a confirmed deletion, including every error.
+pub async fn campus_project_gone(app: &AppHandle, project_ref: &str) -> Option<bool> {
+  if !campus_project_queryable(project_ref) {
+    return None;
+  }
+  let client = app.state::<reqwest::Client>();
+  let response = client
+    .get(format!("{CAMPUS_API}/projects/{project_ref}"))
+    .send()
+    .await
+    .ok()?;
+  let status = response.status().as_u16();
+  if status != 404 {
+    return if response.status().is_success() { Some(false) } else { None };
+  }
+  let detail = response.json::<Value>().await.ok()?.get("detail").cloned();
+  Some(is_project_gone_detail(status, detail.as_ref()))
+}
+
+#[cfg(test)]
+mod project_gone_tests {
+  use super::*;
+
+  #[test]
+  fn only_the_exact_404_detail_confirms_deletion() {
+    let gone = Value::String(PROJECT_GONE_DETAIL.into());
+    let line_gone = Value::String("该版本线尚未发布".into());
+    let not_found = Value::String("Not Found".into());
+    assert!(is_project_gone_detail(404, Some(&gone)));
+    // Any other 404 (reverse proxy, "该版本线尚未发布") is not a deletion.
+    assert!(!is_project_gone_detail(404, Some(&line_gone)));
+    assert!(!is_project_gone_detail(404, Some(&not_found)));
+    assert!(!is_project_gone_detail(404, None));
+    assert!(!is_project_gone_detail(404, Some(&Value::Null)));
+    // No other status counts, not even with the exact detail.
+    assert!(!is_project_gone_detail(500, Some(&gone)));
+    assert!(!is_project_gone_detail(200, Some(&gone)));
+  }
+
+  #[test]
+  fn any_non_empty_project_ref_is_queried() {
+    // Install and publish both store the slug; the platform also accepts ids.
+    assert!(campus_project_queryable("gtnh"));
+    assert!(campus_project_queryable("24"));
+    assert!(!campus_project_queryable(""));
+  }
+}
+
+pub async fn campus_base_remote(
+  app: &AppHandle,
+  origin: &InstanceOrigin,
+  root: &Path,
+  name: &str,
+) -> USTBLResult<RemoteModpack> {
+  let id: i64 = origin
+    .version_id
+    .parse()
+    .map_err(|_| InstanceError::ModpackUpdateRemoteInvalid)?;
+  let version = campus_get::<CampusVersion>(app, &format!("/versions/{id}"))
+    .await?
+    .ok_or(InstanceError::ModpackUpdatePackUnavailable)?;
+  let latest = LatestVersion {
+    version_id: origin.version_id.clone(),
+    label: version.version_number.clone(),
+    payload: Payload::Campus(Box::new(version)),
+  };
+  resolve_remote(app, origin, root, name, &latest).await
 }
 
 /// The newest version of the followed line, or `None` when there is nothing

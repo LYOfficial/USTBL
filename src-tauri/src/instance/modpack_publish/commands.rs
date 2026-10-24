@@ -816,19 +816,39 @@ pub(super) async fn adopt_published(
 }
 
 fn may_follow(
-  instance: &Instance,
+  origin: Option<&InstanceOrigin>,
   project: &str,
+  game_version: &str,
   loader_type: crate::instance::models::misc::ModLoaderType,
 ) -> bool {
-  match &instance.origin {
+  match origin {
     None => true,
     Some(origin) => {
       origin.platform == OriginPlatform::Campus
         && origin.project_id == project
-        && origin.game_version == instance.version
+        && origin.game_version == game_version
         && origin.loader_type == loader_type
     }
   }
+}
+
+/// Where publishing leaves the instance's identity, given what followed before
+/// and whether the platform confirmed the previous project is gone. This is the
+/// whole decision of [`try_adopt`] that does not touch the disk.
+fn adopt_action(
+  origin: Option<&InstanceOrigin>,
+  project: &str,
+  game_version: &str,
+  loader_type: crate::instance::models::misc::ModLoaderType,
+  previous_project_gone: bool,
+) -> Adoption {
+  if !may_follow(origin, project, game_version, loader_type) {
+    let stale_campus = matches!(origin, Some(o) if o.platform == OriginPlatform::Campus);
+    if !(stale_campus && previous_project_gone) {
+      return Adoption::KeptOther;
+    }
+  }
+  Adoption::Followed
 }
 
 async fn try_adopt(
@@ -841,7 +861,20 @@ async fn try_adopt(
   mmc_pack: Option<&Value>,
 ) -> USTBLResult<Adoption> {
   let loader_type = instance.mod_loader.loader_type;
-  if !may_follow(instance, project, loader_type) {
+  let origin = instance.origin.as_ref();
+  // Only ask the platform when the instance follows another campus project;
+  // any answer but a confirmed deletion keeps the identity.
+  let gone = match origin {
+    Some(o)
+      if o.platform == OriginPlatform::Campus
+        && !may_follow(origin, project, &instance.version, loader_type) =>
+    {
+      crate::instance::modpack_update::sources::campus_project_gone(app, &o.project_id).await
+        == Some(true)
+    }
+    _ => false,
+  };
+  if adopt_action(origin, project, &instance.version, loader_type, gone) == Adoption::KeptOther {
     return Ok(Adoption::KeptOther);
   }
   if !get_instance_game_config(app, instance).version_isolation {
@@ -926,41 +959,72 @@ mod tests {
     let _ = fs::remove_dir_all(root);
   }
 
-  fn followed(platform: OriginPlatform, project: &str, version: &str) -> Instance {
-    Instance {
-      version: "1.7.10".into(),
-      origin: Some(InstanceOrigin {
-        platform,
-        project_id: project.into(),
-        version_id: "1".into(),
-        game_version: version.into(),
-        loader_type: crate::instance::models::misc::ModLoaderType::LegacyForge,
-        follow: true,
-      }),
-      ..Default::default()
+  fn followed(platform: OriginPlatform, project: &str, version: &str) -> InstanceOrigin {
+    InstanceOrigin {
+      platform,
+      project_id: project.into(),
+      version_id: "1".into(),
+      game_version: version.into(),
+      loader_type: crate::instance::models::misc::ModLoaderType::LegacyForge,
+      follow: true,
     }
   }
 
   #[test]
   fn only_an_unidentified_or_same_line_instance_adopts_the_release() {
     use crate::instance::models::misc::ModLoaderType::{Fabric, LegacyForge};
-    assert!(may_follow(&Instance::default(), "gtnh", LegacyForge));
+    assert!(may_follow(None, "gtnh", "1.7.10", LegacyForge));
 
     let same = followed(OriginPlatform::Campus, "gtnh", "1.7.10");
-    assert!(may_follow(&same, "gtnh", LegacyForge));
-    assert!(!may_follow(&same, "other", LegacyForge));
-    assert!(!may_follow(&same, "gtnh", Fabric));
+    assert!(may_follow(Some(&same), "gtnh", "1.7.10", LegacyForge));
+    assert!(!may_follow(Some(&same), "other", "1.7.10", LegacyForge));
+    assert!(!may_follow(Some(&same), "gtnh", "1.7.10", Fabric));
     assert!(!may_follow(
-      &followed(OriginPlatform::Campus, "gtnh", "1.12.2"),
+      Some(&followed(OriginPlatform::Campus, "gtnh", "1.12.2")),
       "gtnh",
+      "1.7.10",
       LegacyForge
     ));
     // A pack that follows Modrinth keeps doing so.
     assert!(!may_follow(
-      &followed(OriginPlatform::Modrinth, "gtnh", "1.7.10"),
+      Some(&followed(OriginPlatform::Modrinth, "gtnh", "1.7.10")),
       "gtnh",
+      "1.7.10",
       LegacyForge
     ));
+  }
+
+  #[test]
+  fn a_deleted_previous_project_lets_the_publish_take_over() {
+    use crate::instance::models::misc::ModLoaderType::LegacyForge;
+    let stale = followed(OriginPlatform::Campus, "old", "1.7.10");
+    // Previous campus project is gone: the instance joins the new one.
+    assert_eq!(
+      adopt_action(Some(&stale), "gtnh", "1.7.10", LegacyForge, true),
+      Adoption::Followed
+    );
+    // Previous campus project is still there or unknown: identity stays.
+    assert_eq!(
+      adopt_action(Some(&stale), "gtnh", "1.7.10", LegacyForge, false),
+      Adoption::KeptOther
+    );
+    // A modrinth identity is never taken over, gone or not.
+    let external = followed(OriginPlatform::Modrinth, "old", "1.7.10");
+    assert_eq!(
+      adopt_action(Some(&external), "gtnh", "1.7.10", LegacyForge, true),
+      Adoption::KeptOther
+    );
+    // Same project, no question asked.
+    let same = followed(OriginPlatform::Campus, "gtnh", "1.7.10");
+    assert_eq!(
+      adopt_action(Some(&same), "gtnh", "1.7.10", LegacyForge, false),
+      Adoption::Followed
+    );
+    // No identity at all adopts too.
+    assert_eq!(
+      adopt_action(None, "gtnh", "1.7.10", LegacyForge, false),
+      Adoption::Followed
+    );
   }
 
   #[test]

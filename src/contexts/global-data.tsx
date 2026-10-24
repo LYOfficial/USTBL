@@ -6,6 +6,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { useTranslation } from "react-i18next";
 import { useLauncherConfig } from "@/contexts/config";
 import { useToast } from "@/contexts/toast";
 import {
@@ -62,6 +63,7 @@ const GlobalDataDispatchContext = createContext<
 export const GlobalDataContextProvider: React.FC<{
   children: React.ReactNode;
 }> = ({ children }) => {
+  const { t } = useTranslation();
   const { config } = useLauncherConfig();
   const toast = useToast();
 
@@ -77,6 +79,8 @@ export const GlobalDataContextProvider: React.FC<{
     Record<string, ModpackUpdateCheck>
   >({});
   const startupChecked = useRef(false);
+  // An auto-unlink is announced once per instance, not on every later check.
+  const unlinkNotified = useRef(new Set<string>());
 
   const checkModpackUpdate = useCallback(
     async (instanceId: string, scanLocal = false) => {
@@ -94,9 +98,19 @@ export const GlobalDataContextProvider: React.FC<{
               canRollBack: false,
             };
       setModpackChecks((current) => ({ ...current, [instanceId]: check }));
+      if (check.unlinked && !unlinkNotified.current.has(instanceId)) {
+        unlinkNotified.current.add(instanceId);
+        const name = instanceList?.find((i) => i.id === instanceId)?.name;
+        toast({
+          title: t("InstanceSyncPage.ledger.unlinkedToast", {
+            name: name ?? instanceId,
+          }),
+          status: "info",
+        });
+      }
       return check;
     },
-    []
+    [instanceList, toast, t]
   );
 
   // Once per launch, look for updates of every followed instance. One at a

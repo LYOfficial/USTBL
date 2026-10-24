@@ -1,25 +1,29 @@
 //! Tauri commands for following a modpack: check, plan, apply, recover.
 
 use super::apply::{
-  apply, can_roll_back_last, materialize_remote_file, prepare_packs, recover, roll_back_last,
-  Progress, Recovery, UpdateEnv, UpdateRequest,
+  apply, can_roll_back_last, ensure_unlink_safe, materialize_remote_file, prepare_packs,
+  recover_checked, roll_back_last_checked, Progress, Recovery, UpdateEnv, UpdateRequest,
 };
+use super::sources::campus_project_gone;
 use super::diff::{resolve, Conflict, ConflictChoice, FileChange};
 use super::plan::{
   count_local_changes, local_changes, prepare, prepare_with_contents, requires_reinstall,
   LocalChange,
 };
-use super::merge::three_way_with_choices;
+use super::merge::merge_with_choices;
 use super::remote::ComponentPack;
 use super::restore::restore_component_profile;
 use super::sources::{download_param, latest_version, resolve_remote, LatestVersion};
 use crate::error::USTBLResult;
 use crate::instance::commands::switch_mod_loader;
 use crate::instance::helpers::misc::{get_instance_game_config, refresh_and_update_instances};
-use crate::instance::helpers::modpack::baseline::{BaselineLoader, ModpackBaseline};
+use crate::instance::helpers::modpack::baseline::{
+  BaselineLoader, ModpackBaseline, BASELINE_FILE_NAME,
+};
 use crate::instance::helpers::modpack::text;
 use crate::instance::models::misc::{
   Instance, InstanceError, InstanceOrigin, ModLoader, ModLoaderStatus, ModLoaderType,
+  OriginPlatform,
 };
 use crate::launch::models::LaunchingState;
 use crate::resource::models::ModLoaderResourceInfo;
@@ -27,6 +31,7 @@ use crate::tasks::download::DownloadParam;
 use async_trait::async_trait;
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -72,6 +77,9 @@ pub struct UpdateCheck {
   pub can_roll_back: bool,
   /// How many managed files differ from the install; set by the local scan.
   pub local_changes: Option<usize>,
+  /// The platform confirmed the followed project is gone, so this check
+  /// detached the instance from it. Only set on the check that unlinked.
+  pub unlinked: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -198,6 +206,9 @@ struct AppEnv {
 
 #[async_trait]
 impl UpdateEnv for AppEnv {
+  fn ensure_not_running(&self) -> USTBLResult<()> {
+    ensure_not_running(&self.app, &self.instance_id)
+  }
   async fn fetch(&self, param: DownloadParam) -> USTBLResult<()> {
     download_param(&self.app, param).await
   }
@@ -289,6 +300,7 @@ fn check_of(status: CheckStatus, target: &Target) -> UpdateCheck {
     reason: None,
     can_roll_back: can_roll_back_last(&target.root),
     local_changes: None,
+    unlinked: false,
   }
 }
 
@@ -308,6 +320,7 @@ pub async fn check_modpack_update(
       reason: None,
       can_roll_back: false,
       local_changes: None,
+      unlinked: false,
     });
   };
   if !target.origin.follow {
@@ -355,11 +368,61 @@ pub async fn check_modpack_update(
       }
       Ok(check)
     }
-    Err(err) => Ok(UpdateCheck {
-      reason: Some(err.0),
-      ..check_of(CheckStatus::Unknown, &target)
-    }),
+    Err(err) => {
+      // A line the platform no longer lists may mean the whole project was
+      // deleted. Confirm before detaching: any other failure keeps the
+      // identity and stays `Unknown`.
+      if err.0 == InstanceError::ModpackUpdateLineGone.to_string()
+        && target.origin.platform == OriginPlatform::Campus
+        && campus_project_gone(&app, &target.origin.project_id).await == Some(true)
+      {
+        return match unlink_origin(&app, &instance_id, &target).await {
+          Ok(()) => {
+            // The ledger groups rows by the origin in the instance list, so it
+            // has to hear about the lost identity right away.
+            refresh_and_update_instances(&app, false).await;
+            Ok(UpdateCheck {
+              unlinked: true,
+              ..check_of(CheckStatus::NotFollowing, &target)
+            })
+          }
+          Err(error) => Ok(UpdateCheck {
+            reason: Some(error.0),
+            ..check_of(CheckStatus::Unknown, &target)
+          }),
+        };
+      }
+      Ok(UpdateCheck {
+        reason: Some(err.0),
+        ..check_of(CheckStatus::Unknown, &target)
+      })
+    }
   }
+}
+
+/// Drop the identity and baseline; the game files and isolation stay.
+async fn unlink_origin(
+  app: &AppHandle,
+  instance_id: &str,
+  target: &Target,
+) -> USTBLResult<()> {
+  ensure_unlink_safe(&target.root)?;
+  fs::remove_file(target.root.join(BASELINE_FILE_NAME)).ok();
+  store_instance(app, instance_id, |instance| {
+    instance.origin = None;
+    instance.modpack_version = None;
+  })
+  .await
+}
+
+/// Detach the instance from its modpack: identity and baseline go, the game
+/// files stay. Refused while an update transaction is unfinished.
+#[tauri::command]
+pub async fn unlink_modpack_origin(app: AppHandle, instance_id: String) -> USTBLResult<()> {
+  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  unlink_origin(&app, &instance_id, &target).await?;
+  refresh_and_update_instances(&app, false).await;
+  Ok(())
 }
 
 /// Take back the previous update. Returns whether there was one to take back.
@@ -368,9 +431,12 @@ pub async fn rollback_modpack_update(app: AppHandle, instance_id: String) -> UST
   let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   ensure_not_running(&app, &instance_id)?;
   let root = target.root.clone();
-  let done = tokio::task::spawn_blocking(move || roll_back_last(&root))
-    .await
-    .map_err(|e| crate::error::USTBLError(e.to_string()))??;
+  let check_app = app.clone();
+  let done = tokio::task::spawn_blocking(move || {
+    roll_back_last_checked(&root, || ensure_not_running(&check_app, &instance_id))
+  })
+  .await
+  .map_err(|e| crate::error::USTBLError(e.to_string()))??;
   if done {
     refresh_and_update_instances(&app, false).await;
   }
@@ -428,7 +494,7 @@ pub async fn prepare_modpack_update(
   let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   ensure_not_running(&app, &instance_id)?;
   let baseline = load_baseline(&target).await?;
-  recover(&target.root)?;
+  recover_checked(&target.root, || ensure_not_running(&app, &instance_id))?;
   let latest = latest_version(&app, &target.origin)
     .await?
     .ok_or(InstanceError::ModpackUpdateStale)?;
@@ -473,6 +539,7 @@ async fn plan_for(
     });
   }
   let first = prepare(&target.root, baseline, &remote).await?;
+  recover_base_copies(app, target, baseline, &first.diff.conflicts).await;
   let remote_contents = materialize_text_candidates(app, target, &remote, &first.diff.conflicts).await?;
   let prepared = prepare_with_contents(&target.root, baseline, &remote, &remote_contents).await?;
   let loader_change = (remote.loader != baseline.loader).then(|| LoaderChange {
@@ -497,10 +564,82 @@ async fn plan_for(
   })
 }
 
+/// Fetch the installed version's copy of conflicting text files whose cached
+/// base is missing, so the conflict can be resolved block by block. Campus
+/// packs only; best effort, a failure leaves whole-file choices.
+async fn recover_base_copies(
+  app: &AppHandle,
+  target: &Target,
+  baseline: &ModpackBaseline,
+  conflicts: &[Conflict],
+) {
+  use crate::instance::helpers::modpack::base_store;
+  use crate::instance::models::misc::OriginPlatform;
+  if target.origin.platform != OriginPlatform::Campus || is_fresh(&target.origin) {
+    return;
+  }
+  let wanted: Vec<_> = baseline
+    .files
+    .iter()
+    .filter(|file| {
+      text::is_text_path(&file.path, &[])
+        && conflicts.iter().any(|c| c.path == file.path)
+        && base_store::load(&target.root, &file.sha1).ok().flatten().is_none()
+    })
+    .collect();
+  if wanted.is_empty() {
+    return;
+  }
+  let attempt = async {
+    let remote = super::sources::campus_base_remote(
+      app,
+      &target.origin,
+      &target.root,
+      &target.instance.name,
+    )
+    .await?;
+    let env = AppEnv {
+      app: app.clone(),
+      instance_id: target.instance.id.clone(),
+      label: remote.label.clone(),
+      loader: remote.loader.clone(),
+      loader_install_pending: AtomicBool::new(false),
+    };
+    let preview = target
+      .root
+      .join(super::remote::UPDATE_DIR)
+      .join(format!("base-recovery-{}", uuid::Uuid::new_v4()));
+    let files: Vec<_> = remote
+      .files
+      .iter()
+      .filter(|f| wanted.iter().any(|b| b.path == f.path && b.sha1 == f.key.sha1))
+      .collect();
+    let result = async {
+      prepare_packs(&files).await?;
+      for file in files {
+        let dest = preview.join(&file.path);
+        materialize_remote_file(&env, dest.clone(), file).await?;
+        let bytes = tokio::fs::read(dest).await?;
+        if let Some(base) = wanted.iter().find(|b| b.path == file.path) {
+          base_store::store(&target.root, base, &bytes)?;
+        }
+      }
+      Ok::<_, crate::error::USTBLError>(())
+    }
+    .await;
+    let _ = tokio::fs::remove_dir_all(preview).await;
+    result
+  }
+  .await;
+  if let Err(error) = attempt {
+    log::warn!("cannot recover modpack text baseline: {error:?}");
+  }
+}
+
 fn selected_hunk_contents(
   prepared: &super::plan::Prepared,
   choices: &mut BTreeMap<String, ConflictChoice>,
-) -> BTreeMap<String, Vec<u8>> {
+) -> USTBLResult<BTreeMap<String, Vec<u8>>> {
   let mut result = prepared.merged_contents.clone();
   for (path, (base, local, remote)) in &prepared.conflict_sources {
     let hunk_count = prepared
@@ -514,16 +653,15 @@ fn selected_hunk_contents(
       .take(hunk_count)
       .filter(|index| choices.get(&format!("{path}#{index}")) == Some(&ConflictChoice::TakeRemote))
       .collect();
-    if selected.is_empty() {
+    if hunk_count == 0 {
       continue;
     }
     choices.insert(path.clone(), ConflictChoice::TakeRemote);
-    let lines = |bytes: &[u8]| String::from_utf8_lossy(bytes).replace("\r\n", "\n").replace('\r', "\n").lines().map(str::to_owned).collect::<Vec<_>>();
-    let merged = three_way_with_choices(&lines(base), &lines(local), &lines(remote), &selected);
-    let ending = if local.windows(2).any(|pair| pair == b"\r\n") { "\r\n" } else { "\n" };
-    result.insert(path.clone(), format!("{}{}", merged.join(ending), ending).into_bytes());
+    let merged = merge_with_choices(path, base, local, remote, &selected)
+      .map_err(|_| InstanceError::ModpackUpdateMergeInvalid)?;
+    result.insert(path.clone(), merged);
   }
-  result
+  Ok(result)
 }
 
 async fn materialize_text_candidates(
@@ -586,7 +724,7 @@ pub async fn apply_modpack_update(
   let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   ensure_not_running(&app, &instance_id)?;
   let baseline = load_baseline(&target).await?;
-  recover(&target.root)?;
+  recover_checked(&target.root, || ensure_not_running(&app, &instance_id))?;
   let latest = latest_version(&app, &target.origin)
     .await?
     .ok_or(InstanceError::ModpackUpdateStale)?;
@@ -610,6 +748,7 @@ pub async fn apply_modpack_update(
     baseline.component_refs()
   };
   let first = prepare(&target.root, &baseline, &remote).await?;
+  recover_base_copies(&app, &target, &baseline, &first.diff.conflicts).await;
   let remote_contents = materialize_text_candidates(&app, &target, &remote, &first.diff.conflicts).await?;
   let prepared = prepare_with_contents(&target.root, &baseline, &remote, &remote_contents).await?;
   if prepared.plan_hash != plan_hash {
@@ -625,7 +764,7 @@ pub async fn apply_modpack_update(
   };
   let version_id = remote.version_id.clone();
   let mut apply_choices = choices.clone();
-  let merged_contents = selected_hunk_contents(&prepared, &mut apply_choices);
+  let merged_contents = selected_hunk_contents(&prepared, &mut apply_choices)?;
   let result = apply(
     &env,
     UpdateRequest {
@@ -683,9 +822,12 @@ pub async fn install_campus_modpack(
 pub async fn recover_modpack_update(app: AppHandle, instance_id: String) -> USTBLResult<bool> {
   let instance = current_instance(&app, &instance_id)?;
   let root = instance.version_path.clone();
-  let outcome = tokio::task::spawn_blocking(move || recover(&root))
-    .await
-    .map_err(|e| crate::error::USTBLError(e.to_string()))??;
+  let check_app = app.clone();
+  let outcome = tokio::task::spawn_blocking(move || {
+    recover_checked(&root, || ensure_not_running(&check_app, &instance_id))
+  })
+  .await
+  .map_err(|e| crate::error::USTBLError(e.to_string()))??;
   if outcome == Recovery::RolledBack {
     refresh_and_update_instances(&app, false).await;
   }

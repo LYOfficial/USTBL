@@ -40,6 +40,21 @@ pub struct ModpackDownload {
   pub size: Option<u64>,
 }
 
+/// Drop downloads whose destination an override already fills. Overrides are
+/// extracted before the download group runs, so a download of the same path
+/// would otherwise replace the override afterwards.
+pub fn retain_non_overridden_downloads(
+  downloads: &mut Vec<ModpackDownload>,
+  root: &Path,
+  overrides: &[String],
+) {
+  downloads.retain(|download| {
+    !overrides
+      .iter()
+      .any(|relative| download.param.dest == root.join(relative))
+  });
+}
+
 pub(crate) type ManifestBox = Box<dyn ModpackManifest + Send + Sync>;
 type Parser = Box<dyn Fn(&File) -> USTBLResult<ManifestBox> + Send + Sync>;
 
@@ -214,6 +229,26 @@ mod tests {
   use super::*;
   use std::io::Write;
   use zip::write::SimpleFileOptions;
+
+  #[test]
+  fn override_destinations_are_never_scheduled_for_download() {
+    let root = std::path::PathBuf::from("instance");
+    let make = |relative: &str| ModpackDownload {
+      param: DownloadParam {
+        src: url::Url::parse("https://example.test/file").unwrap(),
+        dest: root.join(relative),
+        sha1: None,
+        filename: None,
+        custom_headers: None,
+        transfer_options: Default::default(),
+      },
+      size: None,
+    };
+    let mut downloads = vec![make("config/a.cfg"), make("mods/b.jar")];
+    retain_non_overridden_downloads(&mut downloads, &root, &["config/a.cfg".into()]);
+    assert_eq!(downloads.len(), 1);
+    assert_eq!(downloads[0].param.dest, root.join("mods/b.jar"));
+  }
 
   const MRPACK_INDEX: &str =
     r#"{"versionId":"1","name":"test","files":[],"dependencies":{"minecraft":"1.20.1"}}"#;

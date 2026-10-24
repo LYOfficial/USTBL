@@ -112,6 +112,11 @@ pub struct Progress {
 /// Everything the update needs from the outside world.
 #[async_trait]
 pub trait UpdateEnv: Send + Sync {
+  /// Refuse when the game is starting or running. Called after the update
+  /// guard is held, so a launch cannot slip in after the check.
+  fn ensure_not_running(&self) -> USTBLResult<()> {
+    Ok(())
+  }
   /// Download `param.src` to `param.dest`. The engine verifies the result itself.
   async fn fetch(&self, param: DownloadParam) -> USTBLResult<()>;
   /// Switch the instance to another loader version. Runs after the journal is
@@ -159,6 +164,15 @@ fn active_updates() -> &'static Mutex<HashSet<PathBuf>> {
 pub struct UpdateGuard(PathBuf);
 
 impl UpdateGuard {
+  /// Run `action` only while no update holds `root`; the registry stays locked
+  /// for the duration, so no update can start in between.
+  pub fn while_idle<T>(root: &Path, action: impl FnOnce() -> T) -> USTBLResult<T> {
+    let active = active_updates().lock()?;
+    if active.contains(root) {
+      return Err(InstanceError::ModpackUpdateBusy.into());
+    }
+    Ok(action())
+  }
   pub fn acquire(root: &Path) -> USTBLResult<Self> {
     let mut active = active_updates().lock()?;
     if !active.insert(root.to_path_buf()) {
@@ -298,7 +312,16 @@ pub fn can_roll_back_last(root: &Path) -> bool {
 /// player changed since then are overwritten, so callers confirm first. The
 /// backup is spent afterwards; returns whether there was one.
 pub fn roll_back_last(root: &Path) -> USTBLResult<bool> {
+  roll_back_last_checked(root, || Ok(()))
+}
+
+/// [`roll_back_last`], running `check` once the update guard is held.
+pub fn roll_back_last_checked(
+  root: &Path,
+  check: impl FnOnce() -> USTBLResult<()>,
+) -> USTBLResult<bool> {
   let _guard = UpdateGuard::acquire(root)?;
+  check()?;
   recover_locked(root)?;
   let backup = last_backup_dir(root);
   let journal: Journal = match fs::read(backup.join(LAST_JOURNAL_NAME)) {
@@ -311,9 +334,29 @@ pub fn roll_back_last(root: &Path) -> USTBLResult<bool> {
   Ok(true)
 }
 
+/// Refuse unlinking while an update is mid-flight: the journal means the
+/// instance is between two versions and has to be recovered or rolled back
+/// first. The guard keeps an update from starting after the check.
+pub fn ensure_unlink_safe(root: &Path) -> USTBLResult<()> {
+  let _guard = UpdateGuard::acquire(root)?;
+  if journal_path(root).exists() {
+    return Err(InstanceError::ModpackUpdateUnlinkPending.into());
+  }
+  Ok(())
+}
+
 /// Finish or undo whatever an interrupted update left behind.
 pub fn recover(root: &Path) -> USTBLResult<Recovery> {
+  recover_checked(root, || Ok(()))
+}
+
+/// [`recover`], running `check` once the update guard is held.
+pub fn recover_checked(
+  root: &Path,
+  check: impl FnOnce() -> USTBLResult<()>,
+) -> USTBLResult<Recovery> {
   let _guard = UpdateGuard::acquire(root)?;
+  check()?;
   recover_locked(root)
 }
 
@@ -444,6 +487,7 @@ fn save_meta_backup(root: &Path, names: &[String]) -> io::Result<(Vec<String>, V
 pub async fn apply(env: &dyn UpdateEnv, request: UpdateRequest) -> USTBLResult<()> {
   let root = request.root.clone();
   let _guard = UpdateGuard::acquire(&root)?;
+  env.ensure_not_running()?;
   recover_locked(&root)?;
   request.remote.validate(&request.instance_name)?;
 
@@ -1141,6 +1185,20 @@ mod tests {
     assert!(!journal_path(&root.0).exists());
   }
 
+  #[test]
+  fn unlink_is_refused_while_an_update_is_mid_flight() {
+    let root = setup();
+    // No journal: unlinking is safe.
+    assert!(ensure_unlink_safe(&root.0).is_ok());
+    // A leftover journal means the instance sits between two versions.
+    interrupted(&root, JournalState::Committing);
+    let error = ensure_unlink_safe(&root.0).unwrap_err();
+    assert_eq!(error.0, InstanceError::ModpackUpdateUnlinkPending.to_string());
+    // Once recovered, unlinking is safe again.
+    assert_eq!(recover(&root.0).unwrap(), Recovery::RolledBack);
+    assert!(ensure_unlink_safe(&root.0).is_ok());
+  }
+
   #[tokio::test]
   async fn only_one_update_runs_per_instance() {
     let root = setup();
@@ -1149,12 +1207,15 @@ mod tests {
       ..Default::default()
     };
     let _held = UpdateGuard::acquire(&root.0).unwrap();
+    assert!(UpdateGuard::while_idle(&root.0, || panic!("launch entered during update")).is_err());
 
     let error = apply(&env, request(&root, vec![], vec![], "0.15.0"))
       .await
       .unwrap_err();
 
     assert_eq!(error.0, InstanceError::ModpackUpdateBusy.to_string());
+    drop(_held);
+    assert_eq!(UpdateGuard::while_idle(&root.0, || 42).unwrap(), 42);
   }
 
   #[tokio::test]

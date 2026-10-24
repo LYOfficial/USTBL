@@ -624,6 +624,27 @@ mod tests {
   }
 
   #[tokio::test]
+  async fn baseline_copy_is_recovered_through_locate_and_range() {
+    use crate::instance::helpers::modpack::{base_store, baseline::BaselineFile};
+    use sha1::{Digest, Sha1};
+    let bytes = b"key=installed\n";
+    let sha1 = hex::encode(Sha1::digest(bytes));
+    let (session, fake, work) = session(Fake::new(&[(&sha1, bytes)]));
+    session.prepare(&[sha1.clone()]).await.unwrap();
+    let fetched = work.join("recovery/a.properties");
+    session.fetch(&sha1, &fetched).await.unwrap();
+    let file = BaselineFile {
+      path: "config/a.properties".into(),
+      sha1: sha1.clone(),
+      size: bytes.len() as u64,
+    };
+    base_store::store(&work, &file, &fs::read(fetched).unwrap()).unwrap();
+    assert_eq!(base_store::load(&work, &sha1).unwrap().unwrap(), bytes);
+    assert!(fake.calls().iter().any(|call| call.starts_with("range")));
+    let _ = fs::remove_dir_all(work);
+  }
+
+  #[tokio::test]
   async fn a_signature_that_keeps_expiring_gives_up() {
     let mut fake = Fake::new(&[("aa", b"data")]);
     *fake.expire.get_mut().unwrap() = 10;

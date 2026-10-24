@@ -24,6 +24,25 @@ pub fn load(root: &Path, sha1: &str) -> io::Result<Option<Vec<u8>>> {
   }
 }
 
+pub fn store(root: &Path, file: &BaselineFile, bytes: &[u8]) -> io::Result<()> {
+  if hex::encode(Sha1::digest(bytes)) != file.sha1
+    || bytes.len() as u64 != file.size
+    || !is_text_path(&file.path, bytes)
+  {
+    return Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      "invalid text baseline",
+    ));
+  }
+  fs::create_dir_all(base_dir(root))?;
+  let target = base_path(root, &file.sha1);
+  let temporary = target.with_extension(uuid::Uuid::new_v4().to_string());
+  fs::write(&temporary, bytes)?;
+  let result = fs::rename(&temporary, &target);
+  let _ = fs::remove_file(temporary);
+  result
+}
+
 /// Cache text files from the just-committed baseline and remove stale entries.
 pub fn sync(root: &Path, files: &[BaselineFile]) -> io::Result<()> {
   let dir = base_dir(root);
@@ -64,6 +83,22 @@ pub fn sync(root: &Path, files: &[BaselineFile]) -> io::Result<()> {
 mod tests {
   use super::*;
   use crate::instance::helpers::modpack::baseline::BaselineFile;
+
+  #[test]
+  fn recovered_base_is_verified_before_caching() {
+    let root = std::env::temp_dir().join(format!("ustbl-recovered-{}", uuid::Uuid::new_v4()));
+    let bytes = b"a=1\n";
+    let file = BaselineFile {
+      path: "config/a.properties".into(),
+      sha1: hex::encode(Sha1::digest(bytes)),
+      size: bytes.len() as u64,
+    };
+    assert!(store(&root, &file, b"wrong").is_err());
+    assert!(load(&root, &file.sha1).unwrap().is_none());
+    store(&root, &file, bytes).unwrap();
+    assert_eq!(load(&root, &file.sha1).unwrap().unwrap(), bytes);
+    let _ = fs::remove_dir_all(root);
+  }
 
   #[test]
   fn sync_stores_only_matching_text_files_and_prunes_old_entries() {

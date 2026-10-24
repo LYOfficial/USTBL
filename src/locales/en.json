@@ -2664,7 +2664,8 @@
             "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "This version changes the modpack's component chain and cannot be applied in place; install it again",
             "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack",
-            "MODPACK_UPDATE_PACK_UNAVAILABLE": "The files of this version are temporarily unavailable on the platform. Try again later"
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "The files of this version are temporarily unavailable on the platform. Try again later",
+            "MODPACK_UPDATE_MERGE_INVALID": "The selected blocks produce an invalid configuration. Adjust your choices and try again"
           }
         }
       },
@@ -2697,7 +2698,8 @@
             "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "This version changes the modpack's component chain and cannot be applied in place; install it again",
             "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack",
-            "MODPACK_UPDATE_PACK_UNAVAILABLE": "The files of this version are temporarily unavailable on the platform. Try again later"
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "The files of this version are temporarily unavailable on the platform. Try again later",
+            "MODPACK_UPDATE_MERGE_INVALID": "The selected blocks produce an invalid configuration. Adjust your choices and try again"
           }
         }
       },
@@ -2710,6 +2712,15 @@
         "success": "Follow setting updated",
         "error": {
           "title": "Failed to update the follow setting"
+        }
+      },
+      "unlinkModpackOrigin": {
+        "success": "Unfollowed",
+        "error": {
+          "title": "Failed to unfollow",
+          "description": {
+            "MODPACK_UPDATE_UNLINK_PENDING": "The last update is not finished. Recover or roll it back before unfollowing"
+          }
         }
       },
       "applyModpackUpdate": {
@@ -2726,7 +2737,8 @@
             "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "This version changes the modpack's component chain and cannot be applied in place; install it again",
             "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack",
-            "MODPACK_UPDATE_PACK_UNAVAILABLE": "The files of this version are temporarily unavailable on the platform. Try again later"
+            "MODPACK_UPDATE_PACK_UNAVAILABLE": "The files of this version are temporarily unavailable on the platform. Try again later",
+            "MODPACK_UPDATE_MERGE_INVALID": "The selected blocks produce an invalid configuration. Adjust your choices and try again"
           }
         }
       },
@@ -3217,12 +3229,20 @@
     "toast": {
       "loaderPending": "The mod loader needs to be installed again. See the downloads page"
     },
+    "unlink": {
+      "button": "Unfollow",
+      "confirmTitle": "Unfollow modpack",
+      "confirmBody": "The launcher will no longer check this modpack for updates, and no game files are deleted. You can reinstall or republish it to link again.",
+      "success": "Unfollowed"
+    },
     "reason": {
+      "MODPACK_UPDATE_UNLINK_PENDING": "The last update is not finished. Recover or roll it back before unfollowing",
       "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack",
       "MODPACK_UPDATE_UNSUPPORTED": "This instance has no usable install record or version isolation is off",
       "MODPACK_UPDATE_NOT_ISOLATED": "Version isolation is off for this instance, so it cannot be compared safely. Turn it on in the instance settings and retry",
       "MODPACK_UPDATE_BASELINE_MISSING": "This instance has no install record for the modpack, or the record is damaged, so it cannot be compared",
-      "MODPACK_UPDATE_PACK_UNAVAILABLE": "The files of this version are temporarily unavailable on the platform. Try again later"
+      "MODPACK_UPDATE_PACK_UNAVAILABLE": "The files of this version are temporarily unavailable on the platform. Try again later",
+      "MODPACK_UPDATE_MERGE_INVALID": "The selected blocks produce an invalid configuration. Adjust your choices and try again"
     },
     "rollback": {
       "hint": "You can undo the last modpack update and restore files and loader as they were before it.",
@@ -3299,7 +3319,8 @@
         "campus": "Campus"
       },
       "installed": "Installed",
-      "installedHint": "{{count}} matching instance(s) on this device, click to view"
+      "installedHint": "{{count}} matching instance(s) on this device, click to view",
+      "unlinkedToast": "The modpack was deleted, instance {{name}} is no longer followed"
     }
   }
 }
