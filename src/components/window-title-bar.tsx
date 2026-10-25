@@ -1,5 +1,4 @@
 import {
-  Box,
   Button,
   Checkbox,
   Divider,
@@ -56,8 +55,7 @@ const WindowTitleBar = () => {
   const [rememberCloseChoice, setRememberCloseChoice] = useState(false);
   const primaryColor = config.appearance.theme.primaryColor;
   const isSimplified = config.appearance.theme.headNavStyle === "simplified";
-  // Unfinished publishes count too: they survive a restart as plain records,
-  // without any task group on the list (10-23 addition).
+  // 重启后保留的未完成发布也需要显示任务入口。
   const isDownloadIndicatorShown =
     tasks.length > 0 || unfinishedPublishes.length > 0;
   const unselectTabColor = useColorModeValue("gray.600", "gray.400");
@@ -251,10 +249,17 @@ const WindowTitleBar = () => {
           colorScheme={primaryColor}
           index={selectedIndex}
           onChange={onTabChange}
-          flex={1}
+          flex="0 1 auto"
           minW={0}
+          overflowX="auto"
+          className="no-scrollbar"
         >
-          <TabList h="100%" alignItems="center" borderBottom="none">
+          <TabList
+            h="100%"
+            w="max-content"
+            alignItems="center"
+            borderBottom="none"
+          >
             {navList.map((item, index) => (
               <Tooltip
                 key={item.path}
@@ -264,13 +269,17 @@ const WindowTitleBar = () => {
               >
                 <Tab
                   h="30px"
+                  px={2}
+                  flexShrink={0}
                   fontWeight={selectedIndex === index ? "600" : "normal"}
                   color={selectedIndex === index ? "inherit" : unselectTabColor}
                 >
-                  <HStack spacing={2} id={`head-navbar-tab-${item.label}`}>
-                    <Icon as={item.icon} />
+                  <HStack spacing={1.5} id={`head-navbar-tab-${item.label}`}>
+                    <Icon as={item.icon} flexShrink={0} />
                     {(!isSimplified || selectedIndex === index) && (
-                      <Text>{t(`HeadNavBar.navList.${item.label}`)}</Text>
+                      <Text whiteSpace="nowrap">
+                        {t(`HeadNavBar.navList.${item.label}`)}
+                      </Text>
                     )}
                   </HStack>
                 </Tab>
@@ -279,22 +288,20 @@ const WindowTitleBar = () => {
           </TabList>
         </Tabs>
 
-        {isDownloadIndicatorShown && (
-          <HStack spacing={2} h="100%" px={1.5} flexShrink={0}>
-            <Divider
-              orientation="vertical"
-              h="18px"
-              borderColor="var(--chakra-colors-chakra-placeholder-color)"
-            />
-            <DownloadIndicator />
-          </HStack>
-        )}
-
-        <HStack h="100%" minW="24px" flexShrink={0}>
-          <Box w="100%" h="100%" />
+        <HStack spacing={2} h="100%" w="46px" ml="auto" flexShrink={0}>
+          {isDownloadIndicatorShown && (
+            <>
+              <Divider
+                orientation="vertical"
+                h="18px"
+                borderColor="var(--chakra-colors-chakra-placeholder-color)"
+              />
+              <DownloadIndicator />
+            </>
+          )}
         </HStack>
 
-        <HStack spacing={0.5}>
+        <HStack spacing={0.5} flexShrink={0}>
           <IconButton
             aria-label="minimize"
             size="sm"

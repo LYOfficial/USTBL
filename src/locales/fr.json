@@ -462,6 +462,13 @@
         "withVerIso": "Attention : cette instance utilise l'isolation de version, la suppression entraînera la perte des sauvegardes et autres données. Veuillez migrer les données si nécessaire.",
         "woVerIso": "Attention : si l'isolation de version a déjà été activée, les sauvegardes non migrées seront également supprimées."
       }
+    },
+    "progress": {
+      "title": "Suppression de l’instance",
+      "scanning": "Comptage des fichiers à supprimer…",
+      "deleting": "Suppression des fichiers, veuillez patienter…",
+      "finalizing": "Nettoyage des dossiers et mise à jour de la liste des instances…",
+      "count": "{{deleted}} / {{total}} fichiers supprimés"
     }
   },
   "DeleteModAlertDialog": {

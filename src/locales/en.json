@@ -462,6 +462,13 @@
         "withVerIso": "Please note that since version isolation is enabled for this instance, deleting it will also remove saves and other associated files. If you wish to retain this data, please migrate it first.",
         "woVerIso": "Please note that if version isolation was previously enabled for this instance, any un-migrated saves and other files will also be deleted."
       }
+    },
+    "progress": {
+      "title": "Deleting instance",
+      "scanning": "Counting files to delete…",
+      "deleting": "Deleting files, please wait…",
+      "finalizing": "Cleaning up folders and updating the instance list…",
+      "count": "{{deleted}} / {{total}} files deleted"
     }
   },
   "DeleteModAlertDialog": {

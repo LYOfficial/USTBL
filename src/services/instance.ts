@@ -1,10 +1,11 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { InstanceSubdirType } from "@/enums/instance";
 import { GameConfig, GameDirectory } from "@/models/config";
 import {
   ExportModpackOptions,
   GameServerInfo,
+  InstanceDeletionProgress,
   InstanceSummary,
   LocalModInfo,
   ModpackFileList,
@@ -168,10 +169,14 @@ export class InstanceService {
    */
   @responseHandler("instance")
   static async deleteInstance(
-    instanceId: string
+    instanceId: string,
+    onProgress?: (progress: InstanceDeletionProgress) => void
   ): Promise<InvokeResponse<void>> {
+    const onProgressChannel = new Channel<InstanceDeletionProgress>();
+    onProgressChannel.onmessage = (progress) => onProgress?.(progress);
     return await invoke("delete_instance", {
       instanceId,
+      onProgress: onProgressChannel,
     });
   }
 

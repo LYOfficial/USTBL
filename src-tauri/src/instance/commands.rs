@@ -2,6 +2,7 @@ use super::helpers::loader::fabric::remove_fabric_api_mods;
 use crate::error::USTBLResult;
 use crate::instance::constants::TRANSLATION_CACHE_EXPIRY_HOURS;
 use crate::instance::helpers::client_json::{replace_native_libraries, McClientInfo};
+use crate::instance::helpers::deletion::{delete_instance_files, InstanceDeletionProgress};
 use crate::instance::helpers::game_version::{build_game_version_cmp_fn, compare_game_versions};
 use crate::instance::helpers::loader::common::{execute_processors, install_mod_loader};
 use crate::instance::helpers::loader::forge::InstallProfile;
@@ -12,11 +13,11 @@ use crate::instance::helpers::misc::{
   get_instance_game_config, get_instance_subdir_path_by_id, get_instance_subdir_paths,
   refresh_and_update_instances, unify_instance_name,
 };
+use crate::instance::helpers::modpack::base_store;
 use crate::instance::helpers::modpack::baseline::{
   components_of_mmc_pack, hash_existing_files, hash_file, BaselineFile, BaselineLoader,
   ModpackBaseline,
 };
-use crate::instance::helpers::modpack::base_store;
 use crate::instance::helpers::modpack::export::{
   build_component_export, collect_modrinth_files, create_modpack_zip, generate_modrinth_manifest,
   generate_multimc_instance_cfg, generate_multimc_manifest, list_files, validate_export_options,
@@ -239,42 +240,46 @@ pub fn retrieve_instance_subdir_path(
 }
 
 #[tauri::command]
-pub fn delete_instance(app: AppHandle, instance_id: String) -> USTBLResult<()> {
-  let instance_binding = app.state::<Mutex<HashMap<String, Instance>>>();
-  let instance_state = instance_binding.lock().unwrap();
+pub async fn delete_instance(
+  app: AppHandle,
+  instance_id: String,
+  on_progress: tauri::ipc::Channel<InstanceDeletionProgress>,
+) -> USTBLResult<()> {
+  let version_path = {
+    let binding = app.state::<Mutex<HashMap<String, Instance>>>();
+    let instances = binding.lock()?;
+    instances
+      .get(&instance_id)
+      .ok_or(InstanceError::InstanceNotFoundByID)?
+      .version_path
+      .clone()
+  };
 
-  let config_binding = app.state::<Mutex<LauncherConfig>>();
-  let mut config_state = config_binding.lock()?;
+  tauri::async_runtime::spawn_blocking(move || -> USTBLResult<()> {
+    delete_instance_files(&version_path, |progress| {
+      let _ = on_progress.send(progress);
+    })?;
+    crate::instance::modpack_update::plan::invalidate_scan_cache(&version_path);
 
-  let instance = instance_state
-    .get(&instance_id)
-    .ok_or(InstanceError::InstanceNotFoundByID)?;
-
-  let version_path = &instance.version_path;
-  let path = Path::new(version_path);
-
-  if path.exists() {
-    fs::remove_dir_all(path)?;
-  }
-  // not update state here. if send success to frontend, it will call retrieve_instance_list and update state there.
-  crate::instance::modpack_update::plan::invalidate_scan_cache(path);
-
-  if config_state.states.shared.selected_instance_id == instance_id {
-    config_state.partial_update(
-      &app,
-      "states.shared.selected_instance_id",
-      &serde_json::to_string(
-        &instance_state
-          .keys()
-          .next()
-          .cloned()
-          .unwrap_or_else(|| "".to_string()),
-      )
-      .unwrap_or_default(),
-    )?;
-    config_state.save()?;
-  }
-  Ok(())
+    let next_instance_id = {
+      let binding = app.state::<Mutex<HashMap<String, Instance>>>();
+      let mut instances = binding.lock()?;
+      instances.remove(&instance_id);
+      instances.keys().next().cloned().unwrap_or_default()
+    };
+    let binding = app.state::<Mutex<LauncherConfig>>();
+    let mut config = binding.lock()?;
+    if config.states.shared.selected_instance_id == instance_id {
+      config.partial_update(
+        &app,
+        "states.shared.selected_instance_id",
+        &serde_json::to_string(&next_instance_id)?,
+      )?;
+      config.save()?;
+    }
+    Ok(())
+  })
+  .await?
 }
 
 #[tauri::command]

@@ -1,6 +1,12 @@
 import { ExportModpackFormat, ModLoaderType } from "@/enums/instance";
 import { OtherResourceSource } from "@/enums/resource";
 
+export interface InstanceDeletionProgress {
+  stage: "scanning" | "deleting" | "finalizing";
+  totalFiles: number;
+  deletedFiles: number;
+}
+
 export enum ModLoaderStatus {
   NotDownloaded = "NotDownloaded",
   Downloading = "Downloading",
