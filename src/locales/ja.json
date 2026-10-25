@@ -780,6 +780,12 @@
       "windows": "エクスプローラー"
     }
   },
+  "FirstLaunchJava25": {
+    "autoInstall": {
+      "title": "Java 25 を自動インストール",
+      "description": "初回起動を検出し、Java 25 ランタイムを自動でダウンロードしています"
+    }
+  },
   "GameAdvancedSettingsPage": {
     "title": "高度起動設定",
     "topWarning": "本設定は上級者向けに設計されていますので、以下の項目を変更すると、ゲームの起動不能やデータの破損を引き起こす可能性があります。オプションの機能を完全に理解している場合のみ変更してください。",
@@ -1492,7 +1498,8 @@
       "selectSuitableJRE": "JRE 自動判別中",
       "validateGameFiles": "ゲーム及び依存ファイルの整合性確認中",
       "validateSelectedPlayer": "アカウント認証確認中",
-      "launchGame": "ゲーム起動中"
+      "launchGame": "ゲーム起動中",
+      "selectedJava": "選択された Java：{{name}}"
     },
     "toast": {
       "noSelectedPlayer": "キャラクターを追加して選択してください"

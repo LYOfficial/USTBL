@@ -6,6 +6,22 @@ use crate::launcher_config::models::{GameJava, JavaInfo};
 use std::cmp::Ordering;
 use tauri::AppHandle;
 
+/// Modpacks that must run on Java 25 regardless of the Minecraft version they
+/// ship with. GTNH and the Mechanomania (航空学) pack are matched by instance
+/// name and origin project id (case-insensitive), so the rule applies to
+/// campus, Modrinth and CurseForge installs alike.
+pub fn instance_requires_java_25(instance: &Instance) -> bool {
+  const KEYWORDS: &[&str] = &["gtnh", "gt new horizons", "mechanomania", "航空"];
+
+  let mut haystack = instance.name.to_lowercase();
+  if let Some(origin) = &instance.origin {
+    haystack.push(' ');
+    haystack.push_str(&origin.project_id.to_lowercase());
+  }
+
+  KEYWORDS.iter().any(|&keyword| haystack.contains(keyword))
+}
+
 /// Component profiles declare a set, not a minimum. Java 18 is not implicitly
 /// compatible with a profile accepting [17, 21], and explicit user choices must
 /// be checked too. Keep this pure so selection is deterministic and testable.
@@ -50,6 +66,12 @@ pub async fn select_java_runtime(
   }
 
   let mut min_version_req = get_minimum_java_version_by_game(app, instance).await;
+
+  // GTNH and the Mechanomania (航空学) pack must run on Java 25 regardless of
+  // the Minecraft version they ship with.
+  if instance_requires_java_25(instance) {
+    min_version_req = min_version_req.max(25);
+  }
 
   if client_json_req > min_version_req {
     min_version_req = client_json_req;
@@ -104,6 +126,38 @@ async fn get_minimum_java_version_by_game(app: &AppHandle, instance: &Instance) 
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::instance::models::misc::{InstanceOrigin, ModLoaderType, OriginPlatform};
+
+  fn instance_with(name: &str, origin_project_id: Option<&str>) -> Instance {
+    Instance {
+      name: name.to_string(),
+      origin: origin_project_id.map(|id| InstanceOrigin {
+        platform: OriginPlatform::Modrinth,
+        project_id: id.to_string(),
+        version_id: String::new(),
+        game_version: String::new(),
+        loader_type: ModLoaderType::Forge,
+        follow: true,
+      }),
+      ..Default::default()
+    }
+  }
+
+  #[test]
+  fn gtnh_and_mechanomania_instances_require_java_25() {
+    assert!(instance_requires_java_25(&instance_with("GT New Horizons", None)));
+    assert!(instance_requires_java_25(&instance_with("北科整合包", Some("gtnh"))));
+    assert!(instance_requires_java_25(&instance_with("Mechanomania 航空学", None)));
+    assert!(instance_requires_java_25(&instance_with("custom", Some("mechanomania"))));
+    assert!(instance_requires_java_25(&instance_with("航空学整合包", None)));
+  }
+
+  #[test]
+  fn ordinary_instances_do_not_require_java_25() {
+    assert!(!instance_requires_java_25(&instance_with("Vanilla 1.21.4", None)));
+    assert!(!instance_requires_java_25(&instance_with("Fabric", Some("fabric-api"))));
+  }
+
   fn runtime(major: i32) -> JavaInfo {
     JavaInfo {
       major_version: major,

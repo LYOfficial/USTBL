@@ -35,6 +35,7 @@ import { PlayerType } from "@/enums/account";
 import { LaunchServiceError } from "@/enums/service-error";
 import { InstanceSummary } from "@/models/instance/misc";
 import { ResponseError } from "@/models/response";
+import { JavaInfo } from "@/models/system-info";
 import { AccountService } from "@/services/account";
 import { LaunchService } from "@/services/launch";
 
@@ -64,6 +65,7 @@ const LaunchProcessModal: React.FC<LaunchProcessModal> = ({
   const [errorPaused, setErrorPaused] = useState<boolean>(false);
   const [errorDesc, setErrorDesc] = useState<string>("");
   const [activeStep, setActiveStep] = useState<number>(0);
+  const [selectedJava, setSelectedJava] = useState<JavaInfo>();
   const previousStep = useRef<number>(-1);
 
   useEffect(() => {
@@ -89,7 +91,10 @@ const LaunchProcessModal: React.FC<LaunchProcessModal> = ({
       {
         label: "selectSuitableJRE",
         function: () => LaunchService.selectSuitableJRE(instanceId),
-        isOK: (data: any) => true,
+        isOK: (data: JavaInfo) => {
+          setSelectedJava(data);
+          return true;
+        },
         onResCallback: (data: any) => {},
         onErrCallback: (error: ResponseError) => {
           if (error.raw_error === LaunchServiceError.NoSuitableJava) {
@@ -347,6 +352,13 @@ const LaunchProcessModal: React.FC<LaunchProcessModal> = ({
                   {errorPaused && errorDesc && index === activeStep && (
                     <StepDescription color="red.600">
                       {errorDesc}
+                    </StepDescription>
+                  )}
+                  {index === 0 && selectedJava && (
+                    <StepDescription>
+                      {t("LaunchProcessModal.step.selectedJava", {
+                        name: selectedJava.name,
+                      })}
                     </StepDescription>
                   )}
                 </Box>

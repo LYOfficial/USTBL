@@ -13,7 +13,9 @@ use crate::launch::helpers::command_generator::{
 use crate::launch::helpers::file_validator::{
   extract_native_libraries, get_invalid_assets, get_invalid_library_files, prepare_legacy_assets,
 };
-use crate::launch::helpers::jre_selector::{select_component_java, select_java_runtime};
+use crate::launch::helpers::jre_selector::{
+  instance_requires_java_25, select_component_java, select_java_runtime,
+};
 use crate::launch::helpers::log_parser::parse_crash_report_path_from_log;
 use crate::launch::helpers::misc::get_separator;
 use crate::launch::helpers::process_monitor::{
@@ -53,7 +55,7 @@ pub async fn select_suitable_jre(
   instances_state: State<'_, Mutex<HashMap<String, Instance>>>,
   javas_state: State<'_, Mutex<Vec<JavaInfo>>>,
   launching_queue_state: State<'_, Mutex<Vec<LaunchingState>>>,
-) -> USTBLResult<()> {
+) -> USTBLResult<JavaInfo> {
   let instance = instances_state
     .lock()?
     .get(&instance_id)
@@ -78,11 +80,14 @@ pub async fn select_suitable_jre(
     .as_ref()
     .filter(|p| !p.compatible_java_majors.is_empty())
   {
-    select_component_java(
-      &game_config.game_java,
-      &javas,
-      &profile.compatible_java_majors,
-    )?
+    // GTNH and the Mechanomania (航空学) pack must run on Java 25, overriding
+    // whatever compatible majors the component profile declares.
+    let accepted = if instance_requires_java_25(&instance) {
+      vec![25]
+    } else {
+      profile.compatible_java_majors.clone()
+    };
+    select_component_java(&game_config.game_java, &javas, &accepted)?
   } else {
     select_java_runtime(
       &app,
@@ -98,6 +103,8 @@ pub async fn select_suitable_jre(
   };
 
   let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+  // Return the selected runtime so the launch UI can show which Java was picked.
+  let selected_java_for_result = selected_java.clone();
   let mut launching = launching_queue_state.lock()?;
   // Checked under the update registry lock, so an update cannot start between
   // this check and the queue entry it guards.
@@ -113,7 +120,7 @@ pub async fn select_suitable_jre(
     })
   })?;
 
-  Ok(())
+  Ok(selected_java_for_result)
 }
 
 // Step 2: extract native libraries, validate game and dependency files, and prepare legacy game assets (if needed).

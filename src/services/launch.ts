@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { LaunchingState } from "@/models/launch";
 import { InvokeResponse } from "@/models/response";
+import { JavaInfo } from "@/models/system-info";
 import { responseHandler } from "@/utils/response";
 
 /**
@@ -12,12 +13,12 @@ export class LaunchService {
    * Launching Step 1: select suitable Java runtime environment for the specified instance.
    * At this step, pass the ID of the instance to be launched (which may not be the same as the selected instance ID), and no further input is required afterwards.
    * @param {string} instanceId - The ID of the instance.
-   * @returns {Promise<InvokeResponse<void>>}
+   * @returns {Promise<InvokeResponse<JavaInfo>>} The selected Java runtime.
    */
   @responseHandler("launch")
   static async selectSuitableJRE(
     instanceId: string
-  ): Promise<InvokeResponse<void>> {
+  ): Promise<InvokeResponse<JavaInfo>> {
     return await invoke("select_suitable_jre", { instanceId });
   }
 

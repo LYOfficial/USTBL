@@ -780,6 +780,12 @@
       "windows": "Explorateur de fichiers"
     }
   },
+  "FirstLaunchJava25": {
+    "autoInstall": {
+      "title": "Installation de Java 25",
+      "description": "Premier lancement détecté, téléchargement automatique de l'environnement Java 25"
+    }
+  },
   "GameAdvancedSettingsPage": {
     "title": "Paramètres avancés du jeu",
     "topWarning": "Les paramètres avancés sont réservés aux utilisateurs expérimentés. Modifier ces options peut empêcher le jeu de démarrer. Ne modifiez pas ces options à moins de bien comprendre leur signification !",
@@ -1492,7 +1498,8 @@
       "selectSuitableJRE": "Sélectionner un environnement Java approprié",
       "validateGameFiles": "Vérifier l'intégrité des fichiers du jeu et des dépendances",
       "validateSelectedPlayer": "Vérifier l'état du compte",
-      "launchGame": "En attente du lancement du jeu"
+      "launchGame": "En attente du lancement du jeu",
+      "selectedJava": "Java sélectionné : {{name}}"
     },
     "toast": {
       "noSelectedPlayer": "Veuillez d'abord ajouter et sélectionner un joueur"

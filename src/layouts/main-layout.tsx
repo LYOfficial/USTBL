@@ -17,6 +17,7 @@ import UnavailableExePathAlertDialog from "@/components/modals/unavailable-exe-p
 import WelcomeAndTermsModal from "@/components/modals/welcome-and-terms-modal";
 import WindowTitleBar from "@/components/window-title-bar";
 import { useLauncherConfig } from "@/contexts/config";
+import { useFirstLaunchJava25 } from "@/hooks/first-launch-java";
 import { isDev } from "@/utils/env";
 
 // Whether we're running inside a Tauri webview
@@ -35,6 +36,10 @@ const MainLayout = ({ children }: MainLayoutProps) => {
   const { config, update } = useLauncherConfig();
   const { colorMode } = useColorMode();
   const isDarkenBg = colorMode === "dark";
+
+  // First launch: make sure the Java 25 runtime the GTNH / Mechanomania packs
+  // need is installed before the user ever tries to launch one of them.
+  useFirstLaunchJava25(!isStandAlone);
 
   const [bgImgSrc, setBgImgSrc] = useState<string>("");
   const isCheckedRunCount = useRef(false);
