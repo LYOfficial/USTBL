@@ -46,10 +46,10 @@
     "@tauri-apps/plugin-process": "^2.3.0",
     "@tauri-apps/plugin-window-state": "^2.3.0",
     "i18next": "^24.0.0",
-    "lodash": "^4.17.23",
+    "lodash": "^4.18.0",
     "masonic": "^4.0.1",
     "micromatch": "^4.0.8",
-    "next": "15.5.12",
+    "next": "15.5.28",
     "react": "^18",
     "react-dom": "^18",
     "react-i18next": "^15.1.1",
@@ -63,7 +63,7 @@
     "three": "^0.156.1"
   },
   "devDependencies": {
-    "@next/bundle-analyzer": "^15.1.2",
+    "@next/bundle-analyzer": "15.5.28",
     "@tauri-apps/cli": "2.11.5",
     "@trivago/prettier-plugin-sort-imports": "^4.3.0",
     "@types/lodash": "^4.17.15",
@@ -75,7 +75,7 @@
     "@types/string-similarity": "^4.0.2",
     "chalk": "^4.1.2",
     "eslint": "^8",
-    "eslint-config-next": "15.0.3",
+    "eslint-config-next": "15.5.28",
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-prettier": "^5.2.1",
     "eslint-plugin-unused-imports": "^4.1.4",
@@ -85,11 +85,15 @@
     "typescript": "^5"
   },
   "overrides": {
-    "mdast-util-gfm-autolink-literal": "2.0.0"
+    "mdast-util-gfm-autolink-literal": "2.0.0",
+    "sharp": "^0.35.5",
+    "postcss": "^8.5.23"
   },
   "pnpm": {
     "overrides": {
-      "mdast-util-gfm-autolink-literal": "2.0.0"
+      "mdast-util-gfm-autolink-literal": "2.0.0",
+      "sharp": "^0.35.5",
+      "postcss": "^8.5.23"
     }
   }
 }

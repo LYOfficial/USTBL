@@ -1422,29 +1422,6 @@
       "launch": "遊玩此伺服器"
     }
   },
-  "IntelligenceSettingsPage": {
-    "title": "USTBL 智慧",
-    "description": "將 AI 模型整合到你的啟動器與 Minecraft 遊玩體驗中。",
-    "mcpServer": {
-      "title": "MCP 服務",
-      "headExtra": "需要重新啟動",
-      "settings": {
-        "enabled": {
-          "title": "啟動器 MCP 服務",
-          "description": "啟用本機 MCP 服務，以連線外部 Agent 應用並自動化控制啟動器。"
-        },
-        "docs": {
-          "title": "使用指南",
-          "description": "了解如何將啟動器連線到外部 Agent 應用（例如 Claude、Cherry Studio 等）。",
-          "url": "https://docs.ustb.world/"
-        },
-        "port": {
-          "title": "連接埠",
-          "description": "啟動器 MCP 服務使用的固定本機連接埠。"
-        }
-      }
-    }
-  },
   "JavaSettingsPage": {
     "javaList": {
       "title": "Java 管理",
@@ -2852,7 +2829,6 @@
       "general": "一般",
       "appearance": "外觀",
       "download": "下載資源",
-      "intelligence": "智慧",
       "help": "文件與幫助",
       "about": "關於",
       "dev-test": "開發 - 測試頁",

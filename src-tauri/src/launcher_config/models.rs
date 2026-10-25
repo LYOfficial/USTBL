@@ -279,16 +279,6 @@ structstruck::strike! {
         pub auto_purge_launcher_logs: bool,
       }
     },
-    pub intelligence: struct Intelligence {
-      pub mcp_server: struct {
-        pub launcher: struct LauncherMcpServerConfig{
-          #[default = true]
-          pub enabled: bool,
-          #[default = 18970]
-          pub port: u16,
-        },
-      }
-    },
     pub global_game_config: GameConfig,
     pub local_game_directories: Vec<GameDirectory>,
     // Changed from Vec<String> to Vec<(String, bool)> with default enabled=true
@@ -462,4 +452,32 @@ where
   }
 
   Ok(arr.iter().filter_map(parse_item).collect())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn legacy_service_config_is_discarded_without_resetting_preferences() {
+    let mut stored = serde_json::to_value(LauncherConfig::default()).unwrap();
+    stored["general"]["general"]["language"] = serde_json::json!("en");
+    stored["download"]["transmission"]["concurrentCount"] = serde_json::json!(17);
+    stored["localGameDirectories"] = serde_json::json!([
+      { "name": "My games", "dir": "custom-games" }
+    ]);
+    stored["intelligence"] = serde_json::json!({
+      "mcpServer": { "launcher": { "enabled": true, "port": 18970 } }
+    });
+
+    let mut config: LauncherConfig = serde_json::from_value(stored).unwrap();
+    let saved = serde_json::to_value(&config).unwrap();
+    assert_eq!(saved["general"]["general"]["language"], "en");
+    assert_eq!(saved["download"]["transmission"]["concurrentCount"], 17);
+    assert_eq!(saved["localGameDirectories"][0]["dir"], "custom-games");
+    assert!(saved.get("intelligence").is_none());
+    assert!(config
+      .update("intelligence.mcp_server.launcher.enabled", "true")
+      .is_err());
+  }
 }

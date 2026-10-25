@@ -1422,29 +1422,6 @@
       "launch": "Jouer sur ce serveur"
     }
   },
-  "IntelligenceSettingsPage": {
-    "title": "Intelligence USTBL",
-    "description": "Intégrez des modèles d'IA à votre lanceur et à votre expérience de jeu Minecraft.",
-    "mcpServer": {
-      "title": "Service MCP",
-      "headExtra": "Redémarrage requis",
-      "settings": {
-        "enabled": {
-          "title": "Service MCP du lanceur",
-          "description": "Activez le service MCP local pour connecter des applications d'agent externes et automatiser le contrôle du lanceur."
-        },
-        "docs": {
-          "title": "Guide d'utilisation",
-          "description": "Découvrez comment connecter le lanceur à des applications d'agent externes (comme Claude, Cherry Studio, etc.).",
-          "url": "https://docs.ustb.world/"
-        },
-        "port": {
-          "title": "Port",
-          "description": "Port local fixe utilisé par le service MCP du lanceur."
-        }
-      }
-    }
-  },
   "JavaSettingsPage": {
     "javaList": {
       "title": "Gestion Java",
@@ -2852,7 +2829,6 @@
       "general": "Général",
       "appearance": "Apparence",
       "download": "Téléchargement",
-      "intelligence": "IA",
       "help": "Aide & Doc",
       "about": "À propos",
       "dev-test": "Développement - Page de test",

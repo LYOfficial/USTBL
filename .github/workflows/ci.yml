@@ -56,6 +56,24 @@ jobs:
       - name: Build frontend
         run: npm run build
 
+  SecurityPatches:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install GLib test dependencies
+        run: sudo apt-get update && sudo apt-get install -y libglib2.0-dev pkg-config
+
+      - name: Test GLib string iteration with optimizations
+        run: cargo test --manifest-path src-tauri/libs/glib/Cargo.toml --release --lib variant_iter::tests
+
+      - name: Test PHF generation with the patched random generator
+        run: cargo test --manifest-path src-tauri/libs/phf_generator/Cargo.toml --test security
+
   Rust:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: windows-latest

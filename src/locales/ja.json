@@ -1422,29 +1422,6 @@
       "launch": "このサーバーをプレイ"
     }
   },
-  "IntelligenceSettingsPage": {
-    "title": "USTBL AI",
-    "description": "AI モデルをランチャーと Minecraft の体験に統合します。",
-    "mcpServer": {
-      "title": "MCP サービス",
-      "headExtra": "再起動が必要",
-      "settings": {
-        "enabled": {
-          "title": "ランチャー MCP サービス",
-          "description": "外部エージェントアプリと接続してランチャー操作を自動化するため、ローカル MCP サービスを有効化します。"
-        },
-        "docs": {
-          "title": "ユーザーガイド",
-          "description": "ランチャーを外部エージェントアプリ（Claude、Cherry Studio など）に接続する方法を確認します。",
-          "url": "https://docs.ustb.world/"
-        },
-        "port": {
-          "title": "ポート",
-          "description": "ランチャー MCP サービスで使用する固定ローカルポートです。"
-        }
-      }
-    }
-  },
   "JavaSettingsPage": {
     "javaList": {
       "title": "Java 管理",
@@ -2852,7 +2829,6 @@
       "general": "一般設定",
       "appearance": "表示",
       "download": "ダウンロード",
-      "intelligence": "AI",
       "help": "マニュアルとヘルプ",
       "about": "バージョン情報",
       "dev-test": "開発・テストページ",

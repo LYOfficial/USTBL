@@ -3,7 +3,6 @@ mod account;
 mod discover;
 mod error;
 mod instance;
-mod intelligence;
 mod launch;
 mod launcher_config;
 mod partial;
@@ -295,7 +294,6 @@ pub async fn run() -> i32 {
       let os = launcher_config.basic_info.platform.clone();
       let exe_sha256 = launcher_config.basic_info.exe_sha256.clone();
       let auto_purge_launcher_logs = launcher_config.general.advanced.auto_purge_launcher_logs;
-      let launcher_mcp_config = launcher_config.intelligence.mcp_server.launcher.clone();
       app.manage(Mutex::new(launcher_config));
       app.manage(tokio::sync::Mutex::new(
         accelerator::ResourceAccelerationService::default(),
@@ -458,11 +456,6 @@ pub async fn run() -> i32 {
         if let Err(e) = app.deep_link().register_all() {
           log::warn!("Failed to register deep links: {e}");
         }
-      }
-
-      // Start the launcher MCP server if enabled
-      if launcher_mcp_config.enabled {
-        intelligence::mcp_server::launcher::run(app.handle().clone(), &launcher_mcp_config);
       }
 
       Ok(())
