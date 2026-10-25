@@ -9,8 +9,10 @@ use once_cell::sync::Lazy;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::time::timeout;
-use trust_dns_resolver::TokioAsyncResolver;
-use trust_dns_resolver::config::*;
+use hickory_resolver::config::{ResolverConfig, GOOGLE};
+use hickory_resolver::net::runtime::TokioRuntimeProvider;
+use hickory_resolver::proto::rr::RData;
+use hickory_resolver::Resolver;
 
 use crate::error::McError;
 use crate::models::*;
@@ -236,8 +238,12 @@ impl McClient {
     }
 
     async fn lookup_srv(&self, host: &str) -> Result<(String, u16), McError> {
-        let resolver =
-            TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
+        let resolver = Resolver::builder_with_config(
+            ResolverConfig::udp_and_tcp(&GOOGLE),
+            TokioRuntimeProvider::default(),
+        )
+        .build()
+        .map_err(|e| McError::DnsError(format!("Failed to create resolver: {}", e)))?;
 
         let srv_name = format!("_minecraft._tcp.{}", host);
 
@@ -248,12 +254,17 @@ impl McClient {
 
         // Get the first SRV record with the highest priority (lowest number)
         let srv = response
+            .answers()
             .iter()
-            .min_by_key(|r| r.priority())
+            .filter_map(|record| match &record.data {
+                RData::SRV(srv) => Some(srv),
+                _ => None,
+            })
+            .min_by_key(|r| r.priority)
             .ok_or_else(|| McError::DnsError("No SRV records found".to_string()))?;
 
-        let target = srv.target().to_utf8();
-        let port = srv.port();
+        let target = srv.target.to_utf8();
+        let port = srv.port;
 
         // Remove trailing dot from target if present
         let target = target.trim_end_matches('.');

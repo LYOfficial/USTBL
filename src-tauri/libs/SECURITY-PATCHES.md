@@ -16,8 +16,9 @@
 
 - 来源：<https://crates.io/crates/mc-server-status/1.0.0>，MIT 许可证。
 - 原始 `.crate` SHA-256：`852b74807c953dbdc84cda9f3a2399ec7ca441bdb4750f6d9efb60ffb2b0cdb8`。
-- 源码和公开 API 保持一致；依赖 `trust-dns-resolver 0.23.2` 改为其后继项目 `hickory-resolver 0.24.4`，继续使用原来的 crate 别名。
+- 公开 API 保持一致；依赖 `trust-dns-resolver 0.23.2` 改为其后继项目 `hickory-resolver 0.26.3`，并适配新的异步解析器构建接口，保留原来的 Google DNS 服务器配置。
 - 新的依赖链使用 idna 1.x，移除 [GHSA-h97m-ww89-6jmq](https://github.com/advisories/GHSA-h97m-ww89-6jmq) 涉及的 idna 0.4。
+- 同时避开旧版 Hickory 的 [DNSSEC 校验错误处理问题](https://github.com/advisories/GHSA-5j98-2g5x-46v6) 和 [DNS 编码 CPU 耗尽问题](https://github.com/advisories/GHSA-q2qq-hmj6-3wpp)。
 - 移除未随本地副本提供的示例目标；保留源码、README 和许可证。
 - 待上游发布包含该修复的版本后，删除本地补丁并更新锁文件。
 

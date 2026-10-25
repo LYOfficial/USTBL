@@ -72,6 +72,5 @@ version = "2.0.17"
 version = "1.48.0"
 features = ["full"]
 
-[dependencies.trust-dns-resolver]
-package = "hickory-resolver"
-version = "0.24.4"
+[dependencies.hickory-resolver]
+version = "0.26.3"
