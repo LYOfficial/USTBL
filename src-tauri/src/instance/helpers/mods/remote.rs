@@ -4,16 +4,19 @@
 //! For `n` uncached mods the lookup takes three kinds of requests instead of
 //! three per mod: `POST /version_files` (SHA-1 to project), `GET /projects?ids=`
 //! (project to slug and type) and the batched MCIM translation. Requests go
-//! through the same source order as every other Modrinth call.
+//! through the same source order as every other Modrinth call. The first two are
+//! split into small batches that run in parallel (see `MAX_CONCURRENT_BATCHES`),
+//! because the mirror is slow per connection and large replies take long.
 //!
 //! What gets remembered follows what was actually learned:
 //! - a hash or project the first source lacks is asked again from the next
 //!   source (MCIM only knows what it has cached); one that the last source
 //!   answered without is a definite "not on Modrinth" and is cached like any
 //!   other result;
-//! - a failed request leaves the affected mods without an entry, so they are
-//!   asked again next time. There is no per-mod fallback after a batch fails, to
-//!   keep a bad connection from multiplying into hundreds of requests;
+//! - a failed request leaves the mods of that batch without an entry, so they are
+//!   asked again next time; other batches are unaffected. There is no per-mod
+//!   fallback after a batch fails, to keep a bad connection from multiplying into
+//!   hundreds of requests;
 //! - a mod whose translation request failed is shown with what is known but not
 //!   cached.
 //!
@@ -34,6 +37,7 @@ use crate::resource::helpers::curseforge::fetch_mods_curseforge;
 use crate::resource::helpers::curseforge::fetch_remote_resources_by_fingerprints_curseforge;
 use crate::resource::helpers::curseforge::misc::{resource_type_of_class_id, CurseForgeMod};
 use crate::resource::helpers::hashing::curseforge_fingerprint_file_async;
+use crate::resource::helpers::mcim::MCIM_MAX_CONCURRENT_API_REQUESTS;
 use crate::resource::helpers::misc::local_translated_name;
 use crate::resource::helpers::modrinth::misc::{
   fetch_project_ids_by_hashes_modrinth, fetch_projects_modrinth, ModrinthProjectBrief,
@@ -50,6 +54,13 @@ use tauri::AppHandle;
 
 /// Mods hashed at the same time. Hashing is disk-bound, so a handful is plenty.
 const MAX_CONCURRENT_HASHES: usize = 4;
+
+/// Lookup batches in flight at the same time. Follows
+/// `MCIM_MAX_CONCURRENT_API_REQUESTS`, the launcher's own budget for mirror API
+/// requests: a batch beyond it would only queue for a permit. Official sources
+/// take no permit, but are held to the same bound so a large mod list does not
+/// open dozens of connections.
+const MAX_CONCURRENT_BATCHES: usize = MCIM_MAX_CONCURRENT_API_REQUESTS;
 
 #[derive(Debug, Clone)]
 pub struct RemoteModResolution {
@@ -96,6 +107,10 @@ fn not_on_modrinth() -> RemoteModResolution {
   }
 }
 
+fn batches_of(values: &[String], size: usize) -> Vec<Vec<String>> {
+  values.chunks(size).map(<[String]>::to_vec).collect()
+}
+
 /// Resolve `hashes` to names and descriptions. Hashes that could not be looked up
 /// because a request failed are absent from the result.
 pub async fn resolve_remote_mod_infos<L: RemoteModLookup>(
@@ -105,12 +120,23 @@ pub async fn resolve_remote_mod_infos<L: RemoteModLookup>(
   let hashes = unique(hashes.iter().map(|hash| hash.to_lowercase()));
   let mut resolved = HashMap::new();
 
-  // Batches run one after another so a large list stays within the mirror's
-  // concurrency budget.
+  // Each batch has its own source fallback and its own failure; a failed batch
+  // leaves only its own hashes unanswered. `buffered` keeps at most
+  // MAX_CONCURRENT_BATCHES in flight and yields in batch order, not completion
+  // order, so the merge below does not depend on which batch finished first.
+  // Batches are owned: a closure over borrowed slices makes the future fail
+  // `tokio::spawn`'s Send check ("FnOnce is not general enough").
   let mut hash_projects: Vec<(String, String)> = Vec::new();
-  for chunk in hashes.chunks(VERSION_FILES_BATCH_SIZE) {
-    let outcome = lookup.project_ids_by_hash(chunk).await;
-    for hash in chunk {
+  let batches: Vec<_> = futures::stream::iter(batches_of(&hashes, VERSION_FILES_BATCH_SIZE))
+    .map(|chunk| async move {
+      let outcome = lookup.project_ids_by_hash(&chunk).await;
+      (chunk, outcome)
+    })
+    .buffered(MAX_CONCURRENT_BATCHES)
+    .collect()
+    .await;
+  for (chunk, outcome) in batches {
+    for hash in &chunk {
       if let Some(project_id) = outcome.found.get(hash) {
         hash_projects.push((hash.clone(), project_id.clone()));
       } else if outcome.not_found.contains(hash) {
@@ -122,9 +148,16 @@ pub async fn resolve_remote_mod_infos<L: RemoteModLookup>(
   let project_ids = unique(hash_projects.iter().map(|(_, id)| id.clone()));
   let mut projects: HashMap<String, ModrinthProjectBrief> = HashMap::new();
   let mut failed_projects: HashSet<String> = HashSet::new();
-  for chunk in project_ids.chunks(PROJECTS_BATCH_SIZE) {
-    let outcome = lookup.projects(chunk).await;
-    for id in chunk {
+  let batches: Vec<_> = futures::stream::iter(batches_of(&project_ids, PROJECTS_BATCH_SIZE))
+    .map(|chunk| async move {
+      let outcome = lookup.projects(&chunk).await;
+      (chunk, outcome)
+    })
+    .buffered(MAX_CONCURRENT_BATCHES)
+    .collect()
+    .await;
+  for (chunk, outcome) in batches {
+    for id in &chunk {
       if let Some(project) = outcome.found.get(id) {
         projects.insert(id.clone(), project.clone());
       } else if !outcome.not_found.contains(id) {
@@ -467,6 +500,7 @@ pub fn apply_cached_infos(app: &AppHandle, mods: &mut [LocalModInfo]) -> Vec<Pat
 #[cfg(test)]
 mod tests {
   use super::*;
+  use std::sync::atomic::{AtomicUsize, Ordering};
   use std::sync::Mutex;
 
   #[derive(Default)]
@@ -475,9 +509,38 @@ mod tests {
     projects: HashMap<String, ModrinthProjectBrief>,
     translations: HashMap<String, String>,
     fail_hashes: bool,
+    /// A version batch containing any of these hashes fails.
+    fail_hash_batches_with: HashSet<String>,
     fail_projects: HashSet<String>,
     fail_translation: bool,
     calls: Mutex<Vec<(&'static str, usize)>>,
+    versions_in_flight: InFlight,
+    projects_in_flight: InFlight,
+  }
+
+  /// Counts the requests of one kind that are in flight at the same time.
+  #[derive(Default)]
+  struct InFlight {
+    now: AtomicUsize,
+    peak: AtomicUsize,
+  }
+
+  impl InFlight {
+    /// Stay in flight for a few polls, so batches that are allowed to overlap do.
+    /// The earlier a request started, the longer it stays, so overlapping batches
+    /// finish in reverse order.
+    async fn occupy_a_slot(&self) {
+      let now = self.now.fetch_add(1, Ordering::SeqCst) + 1;
+      self.peak.fetch_max(now, Ordering::SeqCst);
+      for _ in 0..(10usize.saturating_sub(2 * now)) {
+        tokio::task::yield_now().await;
+      }
+      self.now.fetch_sub(1, Ordering::SeqCst);
+    }
+
+    fn peak(&self) -> usize {
+      self.peak.load(Ordering::SeqCst)
+    }
   }
 
   fn project(id: &str, slug: &str) -> ModrinthProjectBrief {
@@ -491,8 +554,13 @@ mod tests {
   impl RemoteModLookup for FakeLookup {
     async fn project_ids_by_hash(&self, hashes: &[String]) -> LookupOutcome<String, String> {
       self.calls.lock().unwrap().push(("versions", hashes.len()));
+      self.versions_in_flight.occupy_a_slot().await;
       let mut outcome = LookupOutcome::default();
-      if self.fail_hashes {
+      if self.fail_hashes
+        || hashes
+          .iter()
+          .any(|hash| self.fail_hash_batches_with.contains(hash))
+      {
         return outcome;
       }
       for hash in hashes {
@@ -510,6 +578,7 @@ mod tests {
 
     async fn projects(&self, ids: &[String]) -> LookupOutcome<String, ModrinthProjectBrief> {
       self.calls.lock().unwrap().push(("projects", ids.len()));
+      self.projects_in_flight.occupy_a_slot().await;
       let mut outcome = LookupOutcome::default();
       if ids.iter().any(|id| self.fail_projects.contains(id)) {
         return outcome;
@@ -863,5 +932,115 @@ mod tests {
         ("versions", 1)
       ]
     );
+  }
+
+  /// `count` hashes `hash0..`, each belonging to its own project `project0..`.
+  fn one_project_per_hash(count: usize) -> (FakeLookup, Vec<String>) {
+    let mut fake = FakeLookup::default();
+    for n in 0..count {
+      fake
+        .projects_of_hash
+        .insert(format!("hash{n}"), format!("project{n}"));
+      fake.projects.insert(
+        format!("project{n}"),
+        project(&format!("project{n}"), "sodium"),
+      );
+    }
+    let all = (0..count).map(|n| format!("hash{n}")).collect();
+    (fake, all)
+  }
+
+  #[tokio::test]
+  async fn large_project_lists_are_split_into_batches() {
+    let count = PROJECTS_BATCH_SIZE * 2 + 1;
+    let (fake, all) = one_project_per_hash(count);
+    let result = resolve_remote_mod_infos(&fake, &all).await;
+
+    assert_eq!(result.len(), count);
+    let calls = fake.calls.lock().unwrap();
+    let mut project_batches: Vec<usize> = calls
+      .iter()
+      .filter(|(kind, _)| *kind == "projects")
+      .map(|(_, size)| *size)
+      .collect();
+    project_batches.sort_unstable();
+    assert_eq!(
+      project_batches,
+      vec![1, PROJECTS_BATCH_SIZE, PROJECTS_BATCH_SIZE]
+    );
+  }
+
+  #[tokio::test]
+  async fn version_batches_run_in_parallel_within_the_limit() {
+    let fake = FakeLookup::default();
+    let many: Vec<String> = (0..VERSION_FILES_BATCH_SIZE * 12)
+      .map(|n| format!("hash{n}"))
+      .collect();
+    resolve_remote_mod_infos(&fake, &many).await;
+
+    assert_eq!(fake.calls.lock().unwrap().len(), 12);
+    assert!(fake.versions_in_flight.peak() > 1);
+    assert!(fake.versions_in_flight.peak() <= MAX_CONCURRENT_BATCHES);
+  }
+
+  #[tokio::test]
+  async fn project_batches_run_in_parallel_within_the_limit() {
+    let (fake, all) = one_project_per_hash(PROJECTS_BATCH_SIZE * 12);
+    // The version batches are counted apart from the project batches, so only
+    // the overlap of the project requests is asserted here.
+    let result = resolve_remote_mod_infos(&fake, &all).await;
+
+    assert_eq!(result.len(), all.len());
+    let project_calls = fake
+      .calls
+      .lock()
+      .unwrap()
+      .iter()
+      .filter(|(kind, _)| *kind == "projects")
+      .count();
+    assert_eq!(project_calls, 12);
+    assert!(fake.projects_in_flight.peak() > 1);
+    assert!(fake.projects_in_flight.peak() <= MAX_CONCURRENT_BATCHES);
+  }
+
+  #[tokio::test]
+  async fn a_failed_version_batch_only_affects_its_own_hashes() {
+    let count = VERSION_FILES_BATCH_SIZE * 2 + 1;
+    let mut fake = FakeLookup::default();
+    let all: Vec<String> = (0..count).map(|n| format!("hash{n}")).collect();
+    // hash130 is in the second batch.
+    fake.fail_hash_batches_with.insert("hash130".into());
+    let result = resolve_remote_mod_infos(&fake, &all).await;
+
+    for (n, hash) in all.iter().enumerate() {
+      let in_failed_batch = (VERSION_FILES_BATCH_SIZE..VERSION_FILES_BATCH_SIZE * 2).contains(&n);
+      assert_eq!(result.contains_key(hash), !in_failed_batch, "{hash}");
+    }
+    // The failed batch is not retried per mod or in smaller pieces.
+    assert_eq!(fake.calls.lock().unwrap().len(), 3);
+  }
+
+  #[tokio::test]
+  async fn results_do_not_depend_on_which_batch_finishes_first() {
+    let count = PROJECTS_BATCH_SIZE * 6;
+    let (mut fake, all) = one_project_per_hash(count);
+    // Give every other project a distinct slug so a mix-up between batches shows.
+    for n in (0..count).step_by(2) {
+      fake.projects.insert(
+        format!("project{n}"),
+        project(&format!("project{n}"), "lithium"),
+      );
+    }
+    let result = resolve_remote_mod_infos(&fake, &all).await;
+
+    assert_eq!(result.len(), count);
+    for n in 0..count {
+      let expected = (n % 2 == 1).then(|| "钠".to_string());
+      assert_eq!(
+        result[&format!("hash{n}")].entry.translated_name,
+        expected,
+        "hash{n}"
+      );
+    }
   }
 }
