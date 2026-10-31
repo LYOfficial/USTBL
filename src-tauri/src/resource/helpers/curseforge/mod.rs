@@ -9,9 +9,11 @@ pub mod misc;
 
 use crate::error::USTBLResult;
 use crate::launcher_config::models::LauncherConfig;
-use crate::resource::helpers::batch_lookup::lookup_across_sources;
+use crate::resource::helpers::batch_lookup::{lookup_across_sources, LookupOutcome};
 use crate::resource::helpers::hashing::curseforge_fingerprint_file_async;
-use crate::resource::helpers::mcim::{get_content_source_priority_list, ContentSource};
+use crate::resource::helpers::mcim::{
+  curseforge_api_base, get_content_source_priority_list, ContentSource,
+};
 use crate::resource::helpers::misc::{
   apply_local_resource_enhancements, apply_other_resource_enhancements, version_pack_sort,
 };
@@ -423,6 +425,73 @@ pub async fn fetch_remote_resources_by_fingerprints_curseforge(
   Ok(found)
 }
 
+/// Mods per `POST /mods` request.
+pub const MODS_BATCH_SIZE: usize = 200;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CurseForgeModsBody {
+  mod_ids: Vec<u64>,
+  filter_pc_only: bool,
+}
+
+/// `mod id -> mod` from a `POST /mods` reply. Unknown ids are absent from the reply.
+fn mods_by_id(reply: CurseForgeDataRes<Vec<CurseForgeMod>>) -> HashMap<u64, CurseForgeMod> {
+  reply
+    .data
+    .into_iter()
+    .map(|project| (project.id, project))
+    .collect()
+}
+
+/// Projects for many mod ids, one `POST /mods` per [`MODS_BATCH_SIZE`]. Like
+/// the fingerprint lookup, an id the first source lacks is asked again from the
+/// next source, and it is reported as not found only when the last source
+/// answered without it. Ids no source could answer for are in neither field of
+/// the outcome.
+pub async fn fetch_mods_curseforge(
+  app: &AppHandle,
+  mod_ids: &[u64],
+) -> LookupOutcome<u64, CurseForgeMod> {
+  let sources: Vec<ContentSource> = content_source_priority(app)
+    .into_iter()
+    .filter(|source| *source != ContentSource::Official || has_official_api_key())
+    .collect();
+  let client = app.state::<reqwest::Client>();
+  let mut outcome = LookupOutcome::default();
+
+  for chunk in mod_ids.chunks(MODS_BATCH_SIZE) {
+    outcome.extend(
+      lookup_across_sources(&sources, chunk, |source, asked: Vec<u64>| {
+        let client = &client;
+        async move {
+          let url = format!("{}/mods", curseforge_api_base(source));
+          let body = CurseForgeModsBody {
+            mod_ids: asked,
+            filter_pc_only: false,
+          };
+          match make_curseforge_request::<CurseForgeDataRes<Vec<CurseForgeMod>>, CurseForgeModsBody>(
+            client,
+            &url,
+            source,
+            OtherResourceRequestType::Post(&body),
+          )
+          .await
+          {
+            Ok(reply) => Some(mods_by_id(reply)),
+            Err(error) => {
+              log::warn!("CurseForge {} via {:?} failed: {:?}", url, source, error);
+              None
+            }
+          }
+        }
+      })
+      .await,
+    );
+  }
+  outcome
+}
+
 /// CurseForge identifies local files by a MurmurHash2 fingerprint of their
 /// contents with whitespace bytes removed, so the same jar can be resolved on a
 /// machine where the file was copied by another launcher.
@@ -462,6 +531,33 @@ pub async fn translate_description_curseforge(
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn mods_reply_is_indexed_by_id_and_keeps_slug_and_class() {
+    // Shape of a live `POST /mods` reply; ids CurseForge does not know are left out.
+    let reply: CurseForgeDataRes<Vec<CurseForgeMod>> = serde_json::from_str(
+      r#"{"data":[{"id":238222,"slug":"jei","name":"JEI","classId":6},
+        {"id":306612,"slug":"fabric-api","classId":6}]}"#,
+    )
+    .unwrap();
+    let indexed = mods_by_id(reply);
+    assert_eq!(indexed.len(), 2);
+    assert_eq!(indexed[&238222].slug, "jei");
+    assert_eq!(indexed[&306612].class_id, Some(6));
+    assert!(!indexed.contains_key(&99999999));
+  }
+
+  #[test]
+  fn mods_request_body_uses_the_documented_keys() {
+    let body = CurseForgeModsBody {
+      mod_ids: vec![1, 2],
+      filter_pc_only: false,
+    };
+    assert_eq!(
+      serde_json::to_string(&body).unwrap(),
+      r#"{"modIds":[1,2],"filterPcOnly":false}"#
+    );
+  }
 
   fn matches_from(json: &str) -> (Vec<CurseForgeFingerprintMatch>, Vec<u32>) {
     let reply: CurseForgeFingerprintRes = serde_json::from_str(json).unwrap();
