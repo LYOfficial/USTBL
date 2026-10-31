@@ -156,6 +156,18 @@ pub(crate) async fn complete_install(
   }
 }
 
+/// Read the config at `at` from disk, apply `change` and save it. Call while
+/// holding LOADER_LIFECYCLE, so the read cannot go stale before the save.
+pub(crate) async fn edit_config(
+  at: &Instance,
+  change: impl FnOnce(&mut Instance),
+) -> USTBLResult<Instance> {
+  let mut instance = at.load_json_cfg().await?;
+  change(&mut instance);
+  instance.save_json_cfg().await?;
+  Ok(instance)
+}
+
 /// Mark a failed library download from the file on disk, not from the snapshot
 /// the caller holds. Call while holding LOADER_LIFECYCLE.
 pub(crate) async fn fail_download(claimed: &Instance, optifine: bool) -> USTBLResult<()> {
@@ -497,6 +509,78 @@ mod tests {
     }
   }
 
+  /// A scan reads the file, tells the test it holds that copy, waits for the
+  /// go-ahead, then saves the whole instance.
+  async fn scan_cycle(
+    fixture: &Fixture,
+    read: tokio::sync::oneshot::Sender<()>,
+    go: tokio::sync::oneshot::Receiver<()>,
+  ) {
+    let mut scanned = fixture.0.load_json_cfg().await.unwrap();
+    read.send(()).unwrap();
+    go.await.unwrap();
+    scanned.description = "scanned".into();
+    scanned.save_json_cfg().await.unwrap();
+  }
+
+  async fn store_cycle(fixture: &Fixture) {
+    edit_config(&fixture.0, |instance| {
+      instance.modpack_version = Some("1.0".into());
+    })
+    .await
+    .unwrap();
+  }
+
+  #[tokio::test]
+  async fn stored_changes_are_not_overwritten_by_a_concurrent_scan() {
+    use tokio::sync::oneshot;
+
+    // Without the lock the order is fixed as: scan reads, store reads and
+    // saves, scan saves. The scan's stale copy wins and the change is lost.
+    let fixture = Fixture::new(ModLoaderStatus::Installed, false).await;
+    let (read_tx, read_rx) = oneshot::channel();
+    let (go_tx, go_rx) = oneshot::channel();
+    let scan = scan_cycle(&fixture, read_tx, go_rx);
+    tokio::pin!(scan);
+    tokio::select! {
+      biased;
+      _ = &mut scan => unreachable!("the scan waits for the go-ahead"),
+      _ = read_rx => {}
+    }
+    store_cycle(&fixture).await;
+    go_tx.send(()).unwrap();
+    scan.await;
+    assert_eq!(
+      fixture.0.load_json_cfg().await.unwrap().modpack_version,
+      None
+    );
+
+    // With the lock the store is queued behind the scan while the scan holds
+    // its stale copy, so it reads only after the scan has saved.
+    let fixture = Fixture::new(ModLoaderStatus::Installed, false).await;
+    let lifecycle = LoaderLifecycle::new();
+    let (read_tx, read_rx) = oneshot::channel();
+    let (go_tx, go_rx) = oneshot::channel();
+    let scan = lifecycle.run(scan_cycle(&fixture, read_tx, go_rx));
+    let store = lifecycle.run(store_cycle(&fixture));
+    tokio::pin!(scan, store);
+    tokio::select! {
+      biased;
+      _ = &mut scan => unreachable!("the scan waits for the go-ahead"),
+      _ = read_rx => {}
+    }
+    // One poll puts the store in the queue for the lock; it must not get past it.
+    tokio::select! {
+      biased;
+      _ = &mut store => unreachable!("the scan still holds the lock"),
+      _ = std::future::ready(()) => {}
+    }
+    go_tx.send(()).unwrap();
+    tokio::join!(scan, store);
+    let saved = fixture.0.load_json_cfg().await.unwrap();
+    assert_eq!(saved.modpack_version.as_deref(), Some("1.0"));
+    assert_eq!(saved.description, "scanned");
+  }
   #[tokio::test]
   async fn completion_does_not_recreate_a_deleted_instance() {
     let fixture = Fixture::new(ModLoaderStatus::Downloading, false).await;
