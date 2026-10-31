@@ -1,7 +1,10 @@
+pub mod batch_lookup;
 pub mod curseforge;
+pub mod hashing;
 pub mod loader_meta;
 pub mod mcim;
 pub mod misc;
 pub mod mod_db;
 pub mod modrinth;
+pub mod translation;
 pub mod version_manifest;

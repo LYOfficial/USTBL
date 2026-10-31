@@ -50,6 +50,7 @@ import { InstanceService } from "@/services/instance";
 import { ResourceService } from "@/services/resource";
 import { UtilsService } from "@/services/utils";
 import { parseModLoaderVersion } from "@/utils/instance";
+import { mergeLocalModUpdates } from "@/utils/local-mod-updates";
 import { base64ImgSrc } from "@/utils/string";
 
 const InstanceModsPage = () => {
@@ -142,6 +143,14 @@ const InstanceModsPage = () => {
   useEffect(() => {
     getLocalModListWrapper();
   }, [getLocalModListWrapper]);
+
+  useEffect(() => {
+    // Names and descriptions arrive after the list itself.
+    return InstanceService.onLocalModUpdates((payload) => {
+      if (payload.instanceId !== summary?.id) return;
+      setLocalMods((mods) => mergeLocalModUpdates(mods, payload.mods));
+    });
+  }, [summary?.id]);
 
   useEffect(() => {
     const unlisten = ResourceService.onResourceRefresh(

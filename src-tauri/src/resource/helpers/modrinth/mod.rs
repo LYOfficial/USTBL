@@ -1,22 +1,23 @@
 pub mod misc;
 
 use crate::error::USTBLResult;
-use crate::resource::helpers::misc::apply_other_resource_enhancements;
+use crate::resource::helpers::hashing::sha1_file_async;
+use crate::resource::helpers::misc::{
+  apply_local_resource_enhancements, apply_other_resource_enhancements,
+};
 use crate::resource::helpers::mod_db::handle_search_query;
+use crate::resource::helpers::translation::apply_cached_translations;
 use crate::resource::models::{
   OtherResourceApiEndpoint, OtherResourceFileInfo, OtherResourceInfo, OtherResourceRequestType,
   OtherResourceSearchQuery, OtherResourceSearchRes, OtherResourceSource, OtherResourceVersionPack,
   OtherResourceVersionPackQuery, ResourceError,
 };
 use crate::tasks::download::DownloadParam;
-use hex;
 use misc::{
   make_modrinth_request_with_fallbacks, map_modrinth_file_to_version_pack, ModrinthProject,
   ModrinthSearchRes, ModrinthVersionPack,
 };
-use sha1::{Digest, Sha1};
 use std::collections::HashMap;
-use std::fs;
 use std::path::PathBuf;
 use tauri::AppHandle;
 use url::Url;
@@ -67,10 +68,13 @@ pub async fn fetch_resource_list_by_name_modrinth(
   )
   .await?;
 
+  // Descriptions are translated in a second step (`translate_resource_descriptions`),
+  // so the list is returned as soon as the search itself is done.
   let mut search_result: OtherResourceSearchRes = results.into();
   for resource_info in &mut search_result.list {
-    let _ = apply_other_resource_enhancements(app, resource_info).await;
+    apply_local_resource_enhancements(app, resource_info);
   }
+  apply_cached_translations(&mut search_result.list);
 
   Ok(search_result)
 }
@@ -123,13 +127,17 @@ pub async fn fetch_remote_resource_by_local_modrinth(
   app: &AppHandle,
   file_path: &str,
 ) -> USTBLResult<OtherResourceFileInfo> {
-  let file_content = fs::read(file_path).map_err(|_| ResourceError::ParseError)?;
+  let hash_string = sha1_file_async(PathBuf::from(file_path))
+    .await
+    .map_err(|_| ResourceError::ParseError)?;
+  fetch_remote_resource_by_hash_modrinth(app, &hash_string).await
+}
 
-  let mut hasher = Sha1::new();
-  hasher.update(&file_content);
-  let hash = hasher.finalize();
-  let hash_string = hex::encode(hash);
-
+/// Look a file up on Modrinth by its SHA-1.
+pub async fn fetch_remote_resource_by_hash_modrinth(
+  app: &AppHandle,
+  hash_string: &str,
+) -> USTBLResult<OtherResourceFileInfo> {
   let mut params = HashMap::new();
   params.insert("algorithm".to_string(), "sha1".to_string());
 
@@ -137,7 +145,7 @@ pub async fn fetch_remote_resource_by_local_modrinth(
     make_modrinth_request_with_fallbacks::<ModrinthVersionPack, HashMap<String, String>>(
       app,
       OtherResourceApiEndpoint::FromLocal,
-      Some(&hash_string),
+      Some(hash_string),
       OtherResourceRequestType::GetWithParams(&params),
     )
     .await?;

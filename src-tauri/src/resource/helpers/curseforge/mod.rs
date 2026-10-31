@@ -9,25 +9,33 @@ pub mod misc;
 
 use crate::error::USTBLResult;
 use crate::launcher_config::models::LauncherConfig;
+use crate::resource::helpers::batch_lookup::{lookup_across_sources, LookupOutcome};
+use crate::resource::helpers::hashing::curseforge_fingerprint_file_async;
 use crate::resource::helpers::mcim::{
-  acquire_mcim_api_permit_for, get_content_source_priority_list, ContentSource, MCIM_BASE,
+  curseforge_api_base, get_content_source_priority_list, ContentSource,
 };
-use crate::resource::helpers::misc::{apply_other_resource_enhancements, version_pack_sort};
+use crate::resource::helpers::misc::{
+  apply_local_resource_enhancements, apply_other_resource_enhancements, version_pack_sort,
+};
 use crate::resource::helpers::mod_db::handle_search_query;
+use crate::resource::helpers::translation::{
+  apply_cached_translations, translate_resource_descriptions,
+};
 use crate::resource::models::{
   OtherResourceApiEndpoint, OtherResourceFileInfo, OtherResourceInfo, OtherResourceRequestType,
   OtherResourceSearchQuery, OtherResourceSearchRes, OtherResourceSource, OtherResourceVersionPack,
   OtherResourceVersionPackQuery, ResourceError,
 };
 use misc::{
-  class_id_of_resource_type, fetch_curseforge_json, game_versions_of, loaders_of_game_versions,
-  make_curseforge_request, mod_loader_type_of, resolve_category_id, sort_field_of,
-  CurseForgeDataRes, CurseForgeFile, CurseForgeFingerprintRes, CurseForgeListRes, CurseForgeMod,
-  CurseForgeTranslationRes, MAX_GAME_VERSION_REQUESTS, MINECRAFT_GAME_ID, PAGE_SIZE_MAX,
+  class_id_of_resource_type, fetch_curseforge_json, game_versions_of, has_official_api_key,
+  loaders_of_game_versions, make_curseforge_request, mod_loader_type_of, resolve_category_id,
+  sort_field_of, CurseForgeDataRes, CurseForgeFile, CurseForgeFingerprintMatch,
+  CurseForgeFingerprintRes, CurseForgeListRes, CurseForgeMod, MAX_GAME_VERSION_REQUESTS,
+  MINECRAFT_GAME_ID, PAGE_SIZE_MAX,
 };
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
-use std::fs;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_http::reqwest;
@@ -140,9 +148,12 @@ pub async fn fetch_resource_list_by_name_curseforge(
     page_size,
   };
 
+  // Descriptions are translated in a second step (`translate_resource_descriptions`),
+  // so the list is returned as soon as the search itself is done.
   for resource_info in &mut search_result.list {
-    let _ = apply_other_resource_enhancements(app, resource_info).await;
+    apply_local_resource_enhancements(app, resource_info);
   }
+  apply_cached_translations(&mut search_result.list);
 
   Ok(search_result)
 }
@@ -322,6 +333,165 @@ pub async fn fetch_remote_resource_by_id_curseforge(
   Ok(resource_info)
 }
 
+/// Fingerprints per `POST /fingerprints` request.
+const FINGERPRINTS_BATCH_SIZE: usize = 500;
+
+/// Match `/fingerprints` results back to the fingerprints that were asked for.
+/// Fingerprints without an exact match are absent from the result.
+fn index_exact_matches(
+  matches: Vec<CurseForgeFingerprintMatch>,
+  requested: &[u32],
+) -> HashMap<u32, CurseForgeFile> {
+  matches
+    .into_iter()
+    .filter_map(|matched| matched.file)
+    .filter_map(|file| {
+      let fingerprint = match file.file_fingerprint {
+        // A reply without the field can only be attributed when one fingerprint was sent.
+        0 if requested.len() == 1 => requested[0],
+        0 => return None,
+        fingerprint => fingerprint,
+      };
+      requested
+        .contains(&fingerprint)
+        .then_some((fingerprint, file))
+    })
+    .collect()
+}
+
+/// Resolve many fingerprints with one `POST /fingerprints` per
+/// [`FINGERPRINTS_BATCH_SIZE`]. A fingerprint the first source lacks is asked
+/// again, in one request, from the next source; there is no per-file fallback. A
+/// fingerprint missing from the result is unknown to the last source that
+/// answered. If a fingerprint could not be settled because every request that
+/// would have done so failed, the whole lookup fails instead.
+///
+/// Misses are not retried against the same source after a pause: without an API
+/// key MCIM is the only source, and a local jar that is simply not on CurseForge
+/// is the common case, so a retry would only add latency to every lookup.
+pub async fn fetch_remote_resources_by_fingerprints_curseforge(
+  app: &AppHandle,
+  fingerprints: &[u32],
+) -> USTBLResult<HashMap<u32, OtherResourceFileInfo>> {
+  let sources: Vec<ContentSource> = content_source_priority(app)
+    .into_iter()
+    .filter(|source| *source != ContentSource::Official || has_official_api_key())
+    .collect();
+  if sources.is_empty() {
+    return Err(ResourceError::NoDownloadApi.into());
+  }
+  let client = app.state::<reqwest::Client>();
+  let mut found = HashMap::new();
+
+  for chunk in fingerprints.chunks(FINGERPRINTS_BATCH_SIZE) {
+    let outcome = lookup_across_sources(&sources, chunk, |source, asked: Vec<u32>| {
+      let client = &client;
+      async move {
+        let url =
+          misc::get_curseforge_api(source, OtherResourceApiEndpoint::FromLocal, None).ok()?;
+        let body = CurseForgeFingerprintsBody {
+          fingerprints: asked.clone(),
+        };
+        match make_curseforge_request::<CurseForgeFingerprintRes, CurseForgeFingerprintsBody>(
+          client,
+          &url,
+          source,
+          OtherResourceRequestType::Post(&body),
+        )
+        .await
+        {
+          Ok(response) => Some(index_exact_matches(response.data.exact_matches, &asked)),
+          Err(error) => {
+            log::warn!(
+              "CurseForge fingerprint lookup via {:?} failed: {:?}",
+              source,
+              error
+            );
+            None
+          }
+        }
+      }
+    })
+    .await;
+
+    if outcome.found.len() + outcome.not_found.len() < chunk.len() {
+      return Err(ResourceError::NetworkError.into());
+    }
+    for (fingerprint, file) in outcome.found {
+      found.insert(fingerprint, OtherResourceFileInfo::from(&file));
+    }
+  }
+
+  Ok(found)
+}
+
+/// Mods per `POST /mods` request.
+pub const MODS_BATCH_SIZE: usize = 200;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CurseForgeModsBody {
+  mod_ids: Vec<u64>,
+  filter_pc_only: bool,
+}
+
+/// `mod id -> mod` from a `POST /mods` reply. Unknown ids are absent from the reply.
+fn mods_by_id(reply: CurseForgeDataRes<Vec<CurseForgeMod>>) -> HashMap<u64, CurseForgeMod> {
+  reply
+    .data
+    .into_iter()
+    .map(|project| (project.id, project))
+    .collect()
+}
+
+/// Projects for many mod ids, one `POST /mods` per [`MODS_BATCH_SIZE`]. Like
+/// the fingerprint lookup, an id the first source lacks is asked again from the
+/// next source, and it is reported as not found only when the last source
+/// answered without it. Ids no source could answer for are in neither field of
+/// the outcome.
+pub async fn fetch_mods_curseforge(
+  app: &AppHandle,
+  mod_ids: &[u64],
+) -> LookupOutcome<u64, CurseForgeMod> {
+  let sources: Vec<ContentSource> = content_source_priority(app)
+    .into_iter()
+    .filter(|source| *source != ContentSource::Official || has_official_api_key())
+    .collect();
+  let client = app.state::<reqwest::Client>();
+  let mut outcome = LookupOutcome::default();
+
+  for chunk in mod_ids.chunks(MODS_BATCH_SIZE) {
+    outcome.extend(
+      lookup_across_sources(&sources, chunk, |source, asked: Vec<u64>| {
+        let client = &client;
+        async move {
+          let url = format!("{}/mods", curseforge_api_base(source));
+          let body = CurseForgeModsBody {
+            mod_ids: asked,
+            filter_pc_only: false,
+          };
+          match make_curseforge_request::<CurseForgeDataRes<Vec<CurseForgeMod>>, CurseForgeModsBody>(
+            client,
+            &url,
+            source,
+            OtherResourceRequestType::Post(&body),
+          )
+          .await
+          {
+            Ok(reply) => Some(mods_by_id(reply)),
+            Err(error) => {
+              log::warn!("CurseForge {} via {:?} failed: {:?}", url, source, error);
+              None
+            }
+          }
+        }
+      })
+      .await,
+    );
+  }
+  outcome
+}
+
 /// CurseForge identifies local files by a MurmurHash2 fingerprint of their
 /// contents with whitespace bytes removed, so the same jar can be resolved on a
 /// machine where the file was copied by another launcher.
@@ -331,87 +501,100 @@ pub async fn fetch_remote_resource_by_local_curseforge(
   app: &AppHandle,
   file_path: &str,
 ) -> USTBLResult<OtherResourceFileInfo> {
-  let content = fs::read(file_path).map_err(|_| ResourceError::FileOperationError)?;
-
-  let fingerprint = murmur2::murmur2(
-    &content
-      .iter()
-      .copied()
-      .filter(|byte| !matches!(byte, 0x09 | 0x0a | 0x0d | 0x20))
-      .collect::<Vec<u8>>(),
-    1,
-  );
-
-  let priority = content_source_priority(app);
-  let body = CurseForgeFingerprintsBody {
-    fingerprints: vec![fingerprint],
-  };
-
-  let client = app.state::<reqwest::Client>();
-  let mut last_error = None;
-
-  for source in &priority {
-    let url = misc::get_curseforge_api(*source, OtherResourceApiEndpoint::FromLocal, None)?;
-    match make_curseforge_request::<CurseForgeFingerprintRes, CurseForgeFingerprintsBody>(
-      &client,
-      &url,
-      *source,
-      OtherResourceRequestType::Post(&body),
-    )
+  let fingerprint = curseforge_fingerprint_file_async(PathBuf::from(file_path))
     .await
-    {
-      Ok(response) => {
-        let matched = response
-          .data
-          .exact_matches
-          .into_iter()
-          .find_map(|matched| matched.file)
-          .ok_or(ResourceError::ParseError)?;
-
-        return Ok(OtherResourceFileInfo::from(&matched));
-      }
-      Err(error) => {
-        log::warn!(
-          "CurseForge fingerprint lookup via {:?} failed: {:?}",
-          source,
-          error
-        );
-        last_error = Some(error);
-      }
-    }
-  }
+    .map_err(|_| ResourceError::FileOperationError)?;
 
   // A fingerprint miss is not a transport failure: the file simply is not on
   // CurseForge, so report it as a parse miss for the caller to ignore.
-  Err(last_error.unwrap_or_else(|| ResourceError::ParseError.into()))
+  fetch_remote_resources_by_fingerprints_curseforge(app, &[fingerprint])
+    .await?
+    .remove(&fingerprint)
+    .ok_or_else(|| ResourceError::ParseError.into())
 }
-
 /// Translate a CurseForge description through MCIM's translation service.
 pub async fn translate_description_curseforge(
   app: &AppHandle,
   resource_id: &str,
 ) -> USTBLResult<Option<String>> {
-  let client = app.state::<reqwest::Client>();
-  let url = format!(
-    "{}/translate/curseforge/{}",
-    MCIM_BASE,
-    urlencoding::encode(resource_id)
-  );
+  // Goes through the shared batch translator so the result is cached; failures
+  // yield Ok(None) to avoid blocking major functionality.
+  let mut translations = translate_resource_descriptions(
+    app,
+    &OtherResourceSource::CurseForge,
+    &[resource_id.to_string()],
+  )
+  .await;
+  Ok(translations.remove(resource_id))
+}
 
-  // Translation is requested once per browsed project, so it shares the mirror
-  // budget instead of fanning out freely.
-  let _permit = acquire_mcim_api_permit_for(&url).await;
+#[cfg(test)]
+mod tests {
+  use super::*;
 
-  let result = client
-    .get(&url)
-    .send()
-    .await
-    .map_err(|_| ResourceError::NetworkError)?
-    .json::<CurseForgeTranslationRes>()
-    .await
-    .map_err(|_| ResourceError::ParseError);
+  #[test]
+  fn mods_reply_is_indexed_by_id_and_keeps_slug_and_class() {
+    // Shape of a live `POST /mods` reply; ids CurseForge does not know are left out.
+    let reply: CurseForgeDataRes<Vec<CurseForgeMod>> = serde_json::from_str(
+      r#"{"data":[{"id":238222,"slug":"jei","name":"JEI","classId":6},
+        {"id":306612,"slug":"fabric-api","classId":6}]}"#,
+    )
+    .unwrap();
+    let indexed = mods_by_id(reply);
+    assert_eq!(indexed.len(), 2);
+    assert_eq!(indexed[&238222].slug, "jei");
+    assert_eq!(indexed[&306612].class_id, Some(6));
+    assert!(!indexed.contains_key(&99999999));
+  }
 
-  // Only return Ok(None) when translation fails, to avoid blocking major
-  // functionality.
-  Ok(result.ok().map(|response| response.translated))
+  #[test]
+  fn mods_request_body_uses_the_documented_keys() {
+    let body = CurseForgeModsBody {
+      mod_ids: vec![1, 2],
+      filter_pc_only: false,
+    };
+    assert_eq!(
+      serde_json::to_string(&body).unwrap(),
+      r#"{"modIds":[1,2],"filterPcOnly":false}"#
+    );
+  }
+
+  fn matches_from(json: &str) -> (Vec<CurseForgeFingerprintMatch>, Vec<u32>) {
+    let reply: CurseForgeFingerprintRes = serde_json::from_str(json).unwrap();
+    let requested = vec![1481194740, 12345];
+    (reply.data.exact_matches, requested)
+  }
+
+  #[test]
+  fn exact_matches_are_attributed_by_file_fingerprint() {
+    // Shape of a live `POST /fingerprints` reply: one match, one unmatched fingerprint.
+    let (matches, requested) = matches_from(
+      r#"{"data":{"isCacheBuilt":true,
+        "exactMatches":[{"id":238222,"file":{"id":9382240,"modId":238222,"fileName":"jei.jar",
+          "fileFingerprint":1481194740,"hashes":[{"value":"aa","algo":1}]},"latestFiles":[]}],
+        "exactFingerprints":[1481194740],"unmatchedFingerprints":[12345]}}"#,
+    );
+    let indexed = index_exact_matches(matches, &requested);
+    assert_eq!(indexed.len(), 1);
+    assert_eq!(indexed[&1481194740].id, 9382240);
+    assert!(!indexed.contains_key(&12345));
+  }
+
+  #[test]
+  fn matches_for_fingerprints_nobody_asked_for_are_dropped() {
+    let (matches, _) = matches_from(
+      r#"{"data":{"exactMatches":[{"file":{"id":1,"fileFingerprint":777}},{"file":null}]}}"#,
+    );
+    assert!(index_exact_matches(matches, &[1481194740]).is_empty());
+  }
+
+  #[test]
+  fn replies_without_a_file_fingerprint_only_work_for_a_single_request() {
+    let (matches, _) = matches_from(r#"{"data":{"exactMatches":[{"file":{"id":5}}]}}"#);
+    let single = index_exact_matches(matches, &[42]);
+    assert_eq!(single[&42].id, 5);
+
+    let (matches, _) = matches_from(r#"{"data":{"exactMatches":[{"file":{"id":5}}]}}"#);
+    assert!(index_exact_matches(matches, &[42, 43]).is_empty());
+  }
 }

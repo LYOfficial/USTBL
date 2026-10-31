@@ -23,6 +23,7 @@ import {
   OptiFineResourceInfo,
 } from "@/models/resource";
 import { InvokeResponse } from "@/models/response";
+import { LocalModUpdatesPayload } from "@/utils/local-mod-updates";
 import { responseHandler } from "@/utils/response";
 
 /**
@@ -36,6 +37,22 @@ export class InstanceService {
       instanceId: string;
       playTime: number;
     }>("instance:play-time-updated", (event) => callback(event.payload));
+    return () => {
+      unlisten.then((removeListener) => removeListener());
+    };
+  }
+
+  /**
+   * Names and descriptions found after `retrieveLocalModList` has returned.
+   * @returns a function that stops listening
+   */
+  static onLocalModUpdates(
+    callback: (payload: LocalModUpdatesPayload) => void
+  ): () => void {
+    const unlisten = getCurrentWebview().listen<LocalModUpdatesPayload>(
+      "ustbl:local-mod-updates",
+      (event) => callback(event.payload)
+    );
     return () => {
       unlisten.then((removeListener) => removeListener());
     };

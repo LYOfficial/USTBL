@@ -101,6 +101,22 @@ export class ResourceService {
   }
 
   /**
+   * FETCH translated descriptions for a batch of resource ids (one MCIM request,
+   * cached in the backend). Ids without a translation are absent from the result.
+   * @returns {Promise<InvokeResponse<Record<string, string>>>}
+   */
+  @responseHandler("resource")
+  static async translateResourceDescriptions(
+    downloadSource: OtherResourceSource,
+    resourceIds: string[]
+  ): Promise<InvokeResponse<Record<string, string>>> {
+    return await invoke("translate_resource_descriptions", {
+      downloadSource,
+      resourceIds,
+    });
+  }
+
+  /**
    * FETCH the version packs for a specific resource.
    * @returns {Promise<InvokeResponse<OtherResourceVersionPack[]>>}
    */

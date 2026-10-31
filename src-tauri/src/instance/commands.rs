@@ -1,6 +1,5 @@
 use super::helpers::loader::fabric::remove_fabric_api_mods;
 use crate::error::USTBLResult;
-use crate::instance::constants::TRANSLATION_CACHE_EXPIRY_HOURS;
 use crate::instance::helpers::client_json::{replace_native_libraries, McClientInfo};
 use crate::instance::helpers::deletion::{delete_instance_files, InstanceDeletionProgress};
 use crate::instance::helpers::game_version::{build_game_version_cmp_fn, compare_game_versions};
@@ -40,9 +39,8 @@ use crate::instance::helpers::modpack::multimc::snapshot::{
 use crate::instance::helpers::mods::common::{
   compress_icon, get_mod_info_from_dir, get_mod_info_from_jar,
 };
-use crate::instance::helpers::mods::translation::{
-  add_local_mod_translations, LocalModTranslationEntry, LocalModTranslationsCache,
-};
+use crate::instance::helpers::mods::enrich::spawn_mod_info_refresh;
+use crate::instance::helpers::mods::remote::apply_cached_infos;
 use crate::instance::helpers::options_txt::get_zh_hans_lang_tag;
 use crate::instance::helpers::resourcepack::{
   load_resourcepack_from_dir, load_resourcepack_from_zip,
@@ -626,48 +624,13 @@ pub async fn retrieve_local_mod_list(
     }
   });
 
-  // Add translations for mod names and descriptions concurrently
-  let mut translation_tasks = Vec::new();
-  for mut mod_info in mod_infos {
-    let app = app.clone();
-    let permit = semaphore
-      .clone()
-      .acquire_owned()
-      .await
-      .map_err(|_| InstanceError::SemaphoreAcquireFailed)?;
-    let task = tokio::spawn(async move {
-      log::debug!("Translating mod: {}", mod_info.file_name);
-      let _ = add_local_mod_translations(&app, &mut mod_info).await;
-      drop(permit);
-      mod_info
-    });
-    translation_tasks.push(task);
-  }
-  let mut mod_infos = Vec::new();
-  for task in translation_tasks {
-    if let Ok(mod_info) = task.await {
-      mod_infos.push(mod_info);
-    }
-  }
   // sort by name (and version)
   mod_infos.sort();
-  let local_mod_translations_cache_state = app.state::<Mutex<LocalModTranslationsCache>>();
-  let mut cache = local_mod_translations_cache_state.lock()?;
-  for info in mod_infos.iter() {
-    if let Some(entry) = cache.translations.get(&info.file_name) {
-      if !entry.is_expired(TRANSLATION_CACHE_EXPIRY_HOURS) {
-        continue;
-      }
-    }
-    cache.translations.insert(
-      info.file_name.clone(),
-      LocalModTranslationEntry::new(
-        info.translated_name.clone(),
-        info.translated_description.clone(),
-      ),
-    );
-  }
-  cache.save()?;
+
+  // Names and descriptions that need the network are completed in the
+  // background; the frontend is told by an event (see `mods::enrich`).
+  let pending = apply_cached_infos(&app, &mut mod_infos);
+  spawn_mod_info_refresh(&app, &instance_id, pending);
 
   Ok(mod_infos)
 }

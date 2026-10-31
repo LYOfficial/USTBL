@@ -289,6 +289,10 @@ pub struct CurseForgeFile {
   pub hashes: Vec<CurseForgeHash>,
   #[serde(default)]
   pub dependencies: Vec<CurseForgeDependency>,
+  /// MurmurHash2 fingerprint of the file; ties a `/fingerprints` match back to
+  /// the fingerprint that was asked for.
+  #[serde(default)]
+  pub file_fingerprint: u32,
 }
 
 #[derive(Deserialize, Debug)]
@@ -326,12 +330,6 @@ pub struct CurseForgeFingerprintMatch {
   pub file: Option<CurseForgeFile>,
 }
 
-#[derive(Deserialize, Debug)]
-pub struct CurseForgeTranslationRes {
-  #[serde(default)]
-  pub translated: String,
-}
-
 /// Attach CurseForge credentials, but only for the official host: the API key is
 /// a user secret and must not be handed to a third-party mirror.
 pub fn authenticated(
@@ -367,7 +365,6 @@ pub fn get_curseforge_api(
     }
     OtherResourceApiEndpoint::Categories => format!("{}/categories", api_base),
     // Modrinth-style endpoints have no CurseForge counterpart.
-    OtherResourceApiEndpoint::TranslateDesc => Err(ResourceError::NoDownloadApi)?,
   };
 
   Ok(url)
@@ -704,6 +701,7 @@ mod tests {
       ],
       hashes: vec![],
       dependencies: vec![],
+      file_fingerprint: 0,
     };
 
     assert_eq!(game_versions_of(&file), vec!["1.20.1".to_string()]);
