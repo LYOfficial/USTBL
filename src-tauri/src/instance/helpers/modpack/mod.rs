@@ -1,6 +1,7 @@
 pub mod base_store;
 pub mod baseline;
 pub mod curseforge;
+pub mod curseforge_cache;
 pub mod export;
 pub mod misc;
 pub mod modrinth;

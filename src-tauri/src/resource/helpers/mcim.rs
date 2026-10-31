@@ -135,15 +135,14 @@ pub async fn acquire_mcim_api_permit_for(url: &str) -> Option<SemaphorePermit<'s
   MCIM_API_CONCURRENCY.acquire().await.ok()
 }
 
-/// Acquire a download slot for a file transfer from `url`.
+/// The download budget, for [`crate::tasks::download`] to hold while a request
+/// is in flight against a mirror host.
 ///
-/// Hold the permit for the whole transfer: an open mirror connection is exactly
-/// what the budget is meant to limit.
-pub async fn acquire_mcim_download_permit_for(url: &str) -> Option<SemaphorePermit<'static>> {
-  if !is_mcim_url(url) {
-    return None;
-  }
-  MCIM_DOWNLOAD_CONCURRENCY.acquire().await.ok()
+/// The mirror normally answers a file request with a redirect to the real CDN,
+/// so the downloader holds a slot only until it has that answer. It keeps the
+/// slot for as long as the mirror itself serves the body.
+pub fn mcim_download_semaphore() -> &'static Semaphore {
+  &MCIM_DOWNLOAD_CONCURRENCY
 }
 
 fn with_host(url: &Url, host: &str) -> Option<Url> {

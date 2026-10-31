@@ -67,6 +67,23 @@ pub fn build_campus_client(app: &AppHandle) -> Client {
     .unwrap_or_else(|_| campus_builder(ClientBuilder::new()).build().unwrap())
 }
 
+/// Same as [`build_ustbl_client`] (proxy included), but redirects are returned
+/// to the caller instead of followed. The downloader uses it to see the mirror's
+/// redirect and release the mirror slot before the transfer starts.
+pub struct NoRedirectClient(pub Client);
+
+fn no_redirect_builder(builder: ClientBuilder) -> ClientBuilder {
+  shared_builder(builder).redirect(tauri_plugin_http::reqwest::redirect::Policy::none())
+}
+
+pub fn build_no_redirect_client(app: &AppHandle) -> NoRedirectClient {
+  NoRedirectClient(
+    no_redirect_builder(build_client(app, true, Some(Duration::from_secs(30))))
+      .build()
+      .unwrap_or_else(|_| no_redirect_builder(ClientBuilder::new()).build().unwrap()),
+  )
+}
+
 fn build_client(app: &AppHandle, use_proxy: bool, read_timeout: Option<Duration>) -> ClientBuilder {
   let mut builder = ClientBuilder::new()
     .no_gzip()
