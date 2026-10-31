@@ -27,6 +27,7 @@ import {
   installingCheck,
   isInstallingInstance,
   shouldCheckInstance,
+  shouldPrimeCampusListing,
 } from "@/utils/installing-instance";
 
 interface GlobalDataContextType {
@@ -202,9 +203,16 @@ export const GlobalDataContextProvider: React.FC<{
     if (!instanceList || startupChecked.current) return;
     startupChecked.current = true;
     (async () => {
-      for (const instance of instanceList) {
-        if (shouldCheckInstance(instance))
-          await checkModpackUpdate(instance.id);
+      // Campus instances share one project listing instead of a request each.
+      const primed = shouldPrimeCampusListing(instanceList);
+      if (primed) await ModpackUpdateService.primeCampusListing();
+      try {
+        for (const instance of instanceList) {
+          if (shouldCheckInstance(instance))
+            await checkModpackUpdate(instance.id);
+        }
+      } finally {
+        if (primed) await ModpackUpdateService.clearCampusListing();
       }
       setStartupChecksDone(true);
     })();

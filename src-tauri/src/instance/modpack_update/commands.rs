@@ -1370,6 +1370,20 @@ pub async fn check_modpack_update(
   check_unless_installing(&target, check_installed_modpack(&app, &target, scan_local)).await
 }
 
+/// Fetch the campus project listing once, so the startup check of every
+/// followed campus instance is answered from it instead of one request each.
+/// Never fails: without a listing the checks ask per project as before.
+#[tauri::command]
+pub async fn prime_campus_listing(app: AppHandle) {
+  super::sources::prime_campus_listing(&app).await;
+}
+
+/// Drop the listing primed for the startup check, so later checks are fresh.
+#[tauri::command]
+pub fn clear_campus_listing() {
+  super::sources::campus_listing().clear();
+}
+
 async fn check_installed_modpack(
   app: &AppHandle,
   target: &Target,

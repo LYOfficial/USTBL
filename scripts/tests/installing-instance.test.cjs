@@ -185,6 +185,80 @@ test("global context skips pending startup calls and checks the successful insta
   );
 });
 
+test("the campus listing is only worth fetching for two or more checked campus instances", () => {
+  const paused = {
+    ...instance("paused"),
+    origin: { platform: "campus", follow: false },
+  };
+  const modrinth = {
+    ...instance("modrinth"),
+    origin: { platform: "modrinth", follow: true },
+  };
+  const prime = helpers.shouldPrimeCampusListing;
+  assert.equal(prime([]), false);
+  assert.equal(prime([instance("a")]), false);
+  assert.equal(prime([instance("a"), instance("b")]), true);
+  assert.equal(prime([instance("a"), instance("b", true)]), false);
+  assert.equal(prime([instance("a"), paused, modrinth]), false);
+  assert.equal(prime([instance("a"), instance("b"), modrinth]), true);
+});
+
+test("startup check primes the campus listing before the checks and clears it after", async () => {
+  const states = [];
+  const effects = [];
+  const events = [];
+  const instances = [instance("a"), instance("b")];
+  const react = {
+    createContext: () => ({ Provider: "provider" }),
+    createElement: (_component, props, ...children) => ({ ...props, children }),
+    useCallback: (fn) => fn,
+    useRef: (current) => ({ current }),
+    useState: (initial) => {
+      const index = states.length;
+      const value = index === 2 ? instances : initial;
+      states.push(value);
+      return [value, () => {}];
+    },
+    useEffect: (fn) => effects.push(fn),
+  };
+  const provider = load("src/contexts/global-data.tsx", (name) => {
+    if (name === "react") return { ...react, default: react };
+    if (name === "react-i18next")
+      return { useTranslation: () => ({ t: (key) => key }) };
+    if (name === "@/contexts/config")
+      return {
+        useLauncherConfig: () => ({ config: { states: { shared: {} } } }),
+      };
+    if (name === "@/contexts/toast") return { useToast: () => () => {} };
+    if (name === "@/hooks/get-state")
+      return {
+        useGetState: () => () => {},
+        usePromisedGetState: () => [() => {}, false],
+      };
+    if (name === "@/utils/installing-instance") return helpers;
+    if (name === "@/services/modpack-update")
+      return {
+        ModpackUpdateService: {
+          primeCampusListing: async () => events.push("prime"),
+          clearCampusListing: async () => events.push("clear"),
+          checkModpackUpdate: async (id) => {
+            events.push(id);
+            return { status: "success", data: { status: "upToDate" } };
+          },
+        },
+      };
+    if (name === "@/services/campus-modpack")
+      return { CampusModpackService: { onInstallFinished: () => () => {} } };
+    return {};
+  });
+  provider.GlobalDataContextProvider({ children: null });
+  effects
+    .filter((fn) => /startupChecked/.test(fn.toString()))
+    .forEach((fn) => fn());
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(events, ["prime", "a", "b", "clear"]);
+});
+
 test("views wire pending flags to ledger, both card styles, details and navigation", () => {
   const source = (file) =>
     fs.readFileSync(path.join(__dirname, "../../src", file), "utf8");

@@ -26,7 +26,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 use url::Url;
 
@@ -141,6 +142,10 @@ pub struct CampusLine {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CampusProject {
+  #[serde(default)]
+  pub id: i64,
+  #[serde(default)]
+  pub slug: String,
   pub lines: Vec<CampusLine>,
 }
 
@@ -873,9 +878,20 @@ pub async fn campus_project_gone(app: &AppHandle, project_ref: &str) -> Option<b
   Some(is_project_gone_detail(status, detail.as_ref()))
 }
 
-/// Fetch the project listing for the light check. A 404 whose detail is the
+/// Fetch the project listing for the light check, from the primed listing of
+/// the startup check when it holds the project. A 404 whose detail is the
 /// deletion proof returns `None`; any other 404 is the line being gone.
 pub async fn campus_project_for_light_check(
+  app: &AppHandle,
+  project_ref: &str,
+) -> USTBLResult<Option<CampusProject>> {
+  resolve_light_check_project(campus_listing(), project_ref, || {
+    campus_project_single(app, project_ref)
+  })
+  .await
+}
+
+async fn campus_project_single(
   app: &AppHandle,
   project_ref: &str,
 ) -> USTBLResult<Option<CampusProject>> {
@@ -893,6 +909,315 @@ pub async fn campus_project_for_light_check(
     return Err(InstanceError::ModpackUpdateLineGone.into());
   }
   Ok(Some(response.error_for_status()?.json().await?))
+}
+
+// ---- batched light check -------------------------------------------------------
+
+/// How long a primed listing may answer light checks. The startup check of
+/// all followed instances finishes well within this; a stale listing never
+/// outlives it even if nobody clears it.
+const LISTING_TTL: Duration = Duration::from_secs(60);
+
+/// The project listing (`GET /projects`) fetched once for a batch of light
+/// checks, so each followed campus instance does not ask the platform again.
+#[derive(Default)]
+pub struct CampusListing {
+  slot: Mutex<Option<(Instant, Arc<Vec<CampusProject>>)>>,
+}
+
+impl CampusListing {
+  pub fn store(&self, projects: Vec<CampusProject>) {
+    if let Ok(mut slot) = self.slot.lock() {
+      *slot = Some((Instant::now(), Arc::new(projects)));
+    }
+  }
+
+  pub fn clear(&self) {
+    if let Ok(mut slot) = self.slot.lock() {
+      *slot = None;
+    }
+  }
+
+  fn current(&self) -> Option<Arc<Vec<CampusProject>>> {
+    let slot = self.slot.lock().ok()?;
+    let (stored, projects) = slot.as_ref()?;
+    (stored.elapsed() < LISTING_TTL).then(|| projects.clone())
+  }
+}
+
+/// The listing shared by the startup check.
+pub fn campus_listing() -> &'static CampusListing {
+  static LISTING: OnceLock<CampusListing> = OnceLock::new();
+  LISTING.get_or_init(CampusListing::default)
+}
+
+/// Find a project by the ref an instance stores: the slug, or the numeric id
+/// like the platform's own lookup.
+pub fn find_listed_project<'a>(
+  projects: &'a [CampusProject],
+  project_ref: &str,
+) -> Option<&'a CampusProject> {
+  if project_ref.is_empty() {
+    return None;
+  }
+  let by_id = project_ref
+    .bytes()
+    .all(|byte| byte.is_ascii_digit())
+    .then(|| project_ref.parse::<i64>().ok())
+    .flatten();
+  projects.iter().find(|project| match by_id {
+    Some(id) => project.id == id,
+    None => project.slug == project_ref,
+  })
+}
+
+/// Answer a light check from the primed listing when it holds the project.
+/// The listing hides projects without a published line, so a project missing
+/// from it is not known to be deleted: it goes to `single`, the per-project
+/// request that carries the deletion proof.
+pub async fn resolve_light_check_project<F, Fut>(
+  listing: &CampusListing,
+  project_ref: &str,
+  single: F,
+) -> USTBLResult<Option<CampusProject>>
+where
+  F: FnOnce() -> Fut,
+  Fut: std::future::Future<Output = USTBLResult<Option<CampusProject>>>,
+{
+  if let Some(projects) = listing.current() {
+    if let Some(project) = find_listed_project(&projects, project_ref) {
+      return Ok(Some(project.clone()));
+    }
+  }
+  single().await
+}
+
+/// Fetch the listing with `fetch` and keep it for the coming light checks.
+/// A failure only costs the saving: the checks fall back to one request per
+/// project. Returns whether a listing is now held.
+pub async fn prime_campus_listing_with<F, Fut>(listing: &CampusListing, fetch: F) -> bool
+where
+  F: FnOnce() -> Fut,
+  Fut: std::future::Future<Output = USTBLResult<Vec<CampusProject>>>,
+{
+  let started = Instant::now();
+  match fetch().await {
+    Ok(projects) => {
+      log::info!(
+        "campus project listing for the startup check: {} projects in {} ms",
+        projects.len(),
+        started.elapsed().as_millis()
+      );
+      listing.store(projects);
+      true
+    }
+    Err(error) => {
+      log::warn!("campus project listing failed, checking per project: {error:?}");
+      listing.clear();
+      false
+    }
+  }
+}
+
+async fn fetch_campus_listing(app: &AppHandle) -> USTBLResult<Vec<CampusProject>> {
+  let response = campus_client(app)
+    .get(format!("{CAMPUS_API}/projects"))
+    .send()
+    .await?;
+  Ok(response.error_for_status()?.json().await?)
+}
+
+/// Fetch the listing for the startup check. Never fails.
+pub async fn prime_campus_listing(app: &AppHandle) -> bool {
+  prime_campus_listing_with(campus_listing(), || fetch_campus_listing(app)).await
+}
+
+#[cfg(test)]
+mod listing_tests {
+  use super::*;
+  use std::sync::atomic::{AtomicUsize, Ordering};
+
+  fn project(id: i64, slug: &str, version: i64) -> CampusProject {
+    CampusProject {
+      id,
+      slug: slug.into(),
+      lines: vec![CampusLine {
+        id: version,
+        version_number: format!("v{version}"),
+        game_version: "1.21.1".into(),
+        loader_type: "fabric".into(),
+      }],
+    }
+  }
+
+  fn primed(projects: Vec<CampusProject>) -> CampusListing {
+    let listing = CampusListing::default();
+    listing.store(projects);
+    listing
+  }
+
+  /// A `single` request that counts its calls and answers `answer`.
+  fn counted(
+    calls: &AtomicUsize,
+    answer: Option<CampusProject>,
+  ) -> impl FnOnce() -> std::future::Ready<USTBLResult<Option<CampusProject>>> + '_ {
+    move || {
+      calls.fetch_add(1, Ordering::SeqCst);
+      std::future::ready(Ok(answer))
+    }
+  }
+
+  #[test]
+  fn listed_project_is_found_by_slug_or_numeric_id() {
+    let projects = vec![project(3, "gtnh", 30), project(24, "pixel", 40)];
+    assert_eq!(find_listed_project(&projects, "gtnh").unwrap().id, 3);
+    assert_eq!(find_listed_project(&projects, "24").unwrap().slug, "pixel");
+    assert!(find_listed_project(&projects, "missing").is_none());
+    assert!(find_listed_project(&projects, "25").is_none());
+    assert!(find_listed_project(&projects, "").is_none());
+    // Like the platform's `isdigit` + `int(ref)`, leading zeros are the same id.
+    assert_eq!(find_listed_project(&projects, "03").map(|p| p.id), Some(3));
+  }
+
+  #[tokio::test]
+  async fn every_listed_project_is_answered_without_a_request() {
+    let listing = primed(vec![project(3, "gtnh", 30), project(24, "pixel", 40)]);
+    let calls = AtomicUsize::new(0);
+    for project_ref in ["gtnh", "pixel", "3", "24"] {
+      let found = resolve_light_check_project(&listing, project_ref, counted(&calls, None))
+        .await
+        .unwrap();
+      assert!(found.is_some(), "{project_ref}");
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+  }
+
+  #[tokio::test]
+  async fn a_project_missing_from_the_listing_asks_on_its_own() {
+    let listing = primed(vec![project(3, "gtnh", 30)]);
+    let calls = AtomicUsize::new(0);
+    // Hidden from the listing (no published line yet) but still there.
+    let hidden = resolve_light_check_project(
+      &listing,
+      "draft",
+      counted(&calls, Some(project(9, "draft", 90))),
+    )
+    .await
+    .unwrap();
+    assert_eq!(hidden.unwrap().id, 9);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    // The listed one still costs nothing.
+    resolve_light_check_project(&listing, "gtnh", counted(&calls, None))
+      .await
+      .unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+  }
+
+  #[tokio::test]
+  async fn a_single_404_still_means_deleted() {
+    let listing = primed(vec![project(3, "gtnh", 30)]);
+    let calls = AtomicUsize::new(0);
+    // `None` is what the per-project request returns for the deletion proof.
+    let gone = resolve_light_check_project(&listing, "removed", counted(&calls, None))
+      .await
+      .unwrap();
+    assert!(gone.is_none());
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    // The single request's errors pass through unchanged.
+    let failed = resolve_light_check_project(&listing, "removed", || {
+      std::future::ready(Err(USTBLError("boom".into())))
+    })
+    .await;
+    assert_eq!(failed.unwrap_err().0, "boom");
+  }
+
+  #[tokio::test]
+  async fn a_failed_listing_request_falls_back_to_each_project() {
+    let listing = CampusListing::default();
+    let primed_ok = prime_campus_listing_with(&listing, || {
+      std::future::ready(Err(USTBLError("network".into())))
+    })
+    .await;
+    assert!(!primed_ok);
+    let calls = AtomicUsize::new(0);
+    for project_ref in ["gtnh", "pixel"] {
+      resolve_light_check_project(
+        &listing,
+        project_ref,
+        counted(&calls, Some(project(1, project_ref, 1))),
+      )
+      .await
+      .unwrap();
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+  }
+
+  #[tokio::test]
+  async fn a_failed_refresh_drops_the_older_listing() {
+    let listing = primed(vec![project(3, "gtnh", 30)]);
+    let refreshed = prime_campus_listing_with(&listing, || {
+      std::future::ready(Err(USTBLError("network".into())))
+    })
+    .await;
+    assert!(!refreshed);
+    let calls = AtomicUsize::new(0);
+    resolve_light_check_project(
+      &listing,
+      "gtnh",
+      counted(&calls, Some(project(3, "gtnh", 31))),
+    )
+    .await
+    .unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+  }
+
+  #[tokio::test]
+  async fn priming_stores_the_listing_and_clearing_removes_it() {
+    let listing = CampusListing::default();
+    let ok = prime_campus_listing_with(&listing, || {
+      std::future::ready(Ok(vec![project(3, "gtnh", 30)]))
+    })
+    .await;
+    assert!(ok);
+    let calls = AtomicUsize::new(0);
+    resolve_light_check_project(&listing, "gtnh", counted(&calls, None))
+      .await
+      .unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    listing.clear();
+    resolve_light_check_project(&listing, "gtnh", counted(&calls, None))
+      .await
+      .unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+  }
+
+  #[tokio::test]
+  async fn an_expired_listing_is_not_used() {
+    let listing = CampusListing::default();
+    *listing.slot.lock().unwrap() = Some((
+      Instant::now() - LISTING_TTL - Duration::from_secs(1),
+      Arc::new(vec![project(3, "gtnh", 30)]),
+    ));
+    let calls = AtomicUsize::new(0);
+    resolve_light_check_project(&listing, "gtnh", counted(&calls, None))
+      .await
+      .unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+  }
+
+  #[test]
+  fn listing_json_parses_with_extra_fields() {
+    let body = serde_json::json!([{
+      "id": 3, "slug": "gtnh", "name": "GTNH", "summary": "s",
+      "lines": [{
+        "id": 30, "project_id": 3, "game_version": "1.7.10", "loader_type": "forge",
+        "loader_version": "10.13", "version_number": "2.7.0", "published_at": null
+      }]
+    }]);
+    let parsed: Vec<CampusProject> = serde_json::from_value(body).unwrap();
+    assert_eq!(parsed[0].slug, "gtnh");
+    assert_eq!(parsed[0].lines[0].id, 30);
+  }
 }
 
 #[cfg(test)]

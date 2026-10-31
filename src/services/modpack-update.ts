@@ -27,6 +27,28 @@ export class ModpackUpdateService {
   }
 
   /**
+   * Fetch the campus project listing once, so the startup check of every
+   * followed campus instance is answered from it. Best effort: a failure only
+   * means the checks ask per project, as before.
+   */
+  static async primeCampusListing(): Promise<void> {
+    try {
+      await invoke("prime_campus_listing");
+    } catch {
+      // Falls back to one request per project.
+    }
+  }
+
+  /** Drop the listing primed for the startup check. */
+  static async clearCampusListing(): Promise<void> {
+    try {
+      await invoke("clear_campus_listing");
+    } catch {
+      // The listing expires on its own.
+    }
+  }
+
+  /**
    * Put the instance back the way it was before the last update. Resolves to
    * whether there was a backup to restore.
    */
