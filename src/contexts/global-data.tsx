@@ -19,9 +19,15 @@ import { InstanceSummary } from "@/models/instance/misc";
 import { ModpackUpdateCheck } from "@/models/modpack-update";
 import { GameClientResourceInfo } from "@/models/resource";
 import { AccountService } from "@/services/account";
+import { CampusModpackService } from "@/services/campus-modpack";
 import { InstanceService } from "@/services/instance";
 import { ModpackUpdateService } from "@/services/modpack-update";
 import { ResourceService } from "@/services/resource";
+import {
+  installingCheck,
+  isInstallingInstance,
+  shouldCheckInstance,
+} from "@/utils/installing-instance";
 
 interface GlobalDataContextType {
   selectedPlayer: Player | undefined;
@@ -126,6 +132,17 @@ export const GlobalDataContextProvider: React.FC<{
           return Number(b.starred) - Number(a.starred);
         });
         setInstanceList(sorted);
+        setModpackChecks((current) =>
+          Object.fromEntries(
+            Object.entries(current).filter(
+              ([id, check]) =>
+                check.status !== "installing" ||
+                isInstallingInstance(
+                  sorted.find((instance) => instance.id === id)
+                )
+            )
+          )
+        );
         return response.data;
       } else
         toast({
@@ -137,11 +154,17 @@ export const GlobalDataContextProvider: React.FC<{
   }, [setInstanceList, toast]);
 
   const checkModpackUpdate = useCallback(
-    async (instanceId: string, scanLocal = false) => {
-      const response = await ModpackUpdateService.checkModpackUpdate(
-        instanceId,
-        scanLocal
+    async (instanceId: string, scanLocal = false, afterInstall = false) => {
+      const instance = instanceListRef.current?.find(
+        (item) => item.id === instanceId
       );
+      const response =
+        !afterInstall && isInstallingInstance(instance)
+          ? { status: "success" as const, data: installingCheck(instance!) }
+          : await ModpackUpdateService.checkModpackUpdate(
+              instanceId,
+              scanLocal
+            );
       const check: ModpackUpdateCheck =
         response.status === "success"
           ? response.data
@@ -180,11 +203,30 @@ export const GlobalDataContextProvider: React.FC<{
     startupChecked.current = true;
     (async () => {
       for (const instance of instanceList) {
-        if (instance.origin) await checkModpackUpdate(instance.id);
+        if (shouldCheckInstance(instance))
+          await checkModpackUpdate(instance.id);
       }
       setStartupChecksDone(true);
     })();
   }, [instanceList, checkModpackUpdate]);
+
+  useEffect(
+    () =>
+      CampusModpackService.onInstallFinished((event) => {
+        if (event.error) return;
+        // The disk record has gone; bypass the old summary until its refresh lands.
+        setInstanceList((current) =>
+          current?.map((instance) =>
+            instance.id === event.instanceId
+              ? { ...instance, campusInstallPending: false }
+              : instance
+          )
+        );
+        void checkModpackUpdate(event.instanceId, false, true);
+        handleRetrieveInstanceList();
+      }),
+    [checkModpackUpdate, handleRetrieveInstanceList]
+  );
 
   useEffect(() => {
     return InstanceService.onPlayTimeUpdated(({ instanceId, playTime }) => {

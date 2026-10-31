@@ -97,6 +97,12 @@ const LaunchProcessModal: React.FC<LaunchProcessModal> = ({
         },
         onResCallback: (data: any) => {},
         onErrCallback: (error: ResponseError) => {
+          if (error.raw_error === LaunchServiceError.LaunchInstanceInstalling) {
+            toast({
+              title: error.details,
+              status: "warning",
+            });
+          }
           if (error.raw_error === LaunchServiceError.NoSuitableJava) {
             openGenericConfirmDialog({
               title: t("NoSuitableJavaDialog.title"),

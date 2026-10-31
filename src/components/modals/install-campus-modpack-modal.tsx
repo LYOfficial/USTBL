@@ -20,6 +20,7 @@ import {
   loaderTypesToIcon,
 } from "@/components/modals/create-instance-modal";
 import { useLauncherConfig } from "@/contexts/config";
+import { useGlobalData } from "@/contexts/global-data";
 import { useToast } from "@/contexts/toast";
 import { ModLoaderType } from "@/enums/instance";
 import {
@@ -62,6 +63,7 @@ const InstallCampusModpackModal: React.FC<InstallCampusModpackModalProps> = ({
   const { config } = useLauncherConfig();
   const router = useRouter();
   const toast = useToast();
+  const { getInstanceList } = useGlobalData();
   const primaryColor = config.appearance.theme.primaryColor;
   const { onClose } = modalProps;
 
@@ -183,6 +185,7 @@ const InstallCampusModpackModal: React.FC<InstallCampusModpackModalProps> = ({
           });
           return;
         }
+        getInstanceList(true);
         runCampusInstall(
           { instanceId: `${gameDirectory.name}:${name}`, label: project.name },
           toast,
@@ -201,6 +204,7 @@ const InstallCampusModpackModal: React.FC<InstallCampusModpackModalProps> = ({
       setIsLoading(false);
     }
   }, [
+    getInstanceList,
     description,
     gameDirectory,
     iconSrc,

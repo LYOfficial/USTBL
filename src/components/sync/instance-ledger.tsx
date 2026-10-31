@@ -15,11 +15,13 @@ import { useGlobalData } from "@/contexts/global-data";
 import { useSharedModals } from "@/contexts/shared-modal";
 import { ModLoaderType } from "@/enums/instance";
 import { InstanceSummary } from "@/models/instance/misc";
+import { shouldCheckInstance } from "@/utils/installing-instance";
 import {
   LedgerBadge,
   ledgerBadge,
   ledgerInstances,
   ledgerLocalChanges,
+  ledgerUpdateDisabled,
   loaderSlug,
 } from "@/utils/modpack-ledger";
 
@@ -29,6 +31,7 @@ const BADGE_COLORS: Record<LedgerBadge, string> = {
   paused: "gray",
   needsRepair: "red",
   waitingLoader: "yellow",
+  installing: "yellow",
   unknown: "gray",
   notChecked: "gray",
   unlinked: "gray",
@@ -64,7 +67,10 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
   const [checking, setChecking] = useState(false);
 
   const rows = useMemo(() => ledgerInstances(instances), [instances]);
-  const followedKey = rows.map((instance) => instance.id).join("\n");
+  const followedKey = rows
+    .filter(shouldCheckInstance)
+    .map((instance) => instance.id)
+    .join("\n");
 
   // One at a time, so a slow platform does not pile up requests. This is the
   // scan that finds local edits, which the quick startup check skips.
@@ -176,7 +182,12 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
               >
                 {t("InstanceSyncPage.ledger.action.viewChanges")}
               </Button>
-              <Button size="xs" colorScheme={primaryColor} onClick={openUpdate}>
+              <Button
+                size="xs"
+                colorScheme={primaryColor}
+                onClick={openUpdate}
+                isDisabled={ledgerUpdateDisabled(instance, check)}
+              >
                 {t("InstanceSyncPage.ledger.action.update")}
               </Button>
             </HStack>

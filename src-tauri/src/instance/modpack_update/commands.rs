@@ -61,6 +61,8 @@ pub enum CheckStatus {
   /// The loader of the instance is not installed yet (a first install or an
   /// update is still finishing it), so nothing is compared.
   WaitingLoader,
+  /// A persisted campus installation must be resumed or discarded first.
+  Installing,
   UpToDate,
   /// Up to date, but managed files were changed here. Only reported when the
   /// caller asked for the local scan.
@@ -185,6 +187,17 @@ fn save_campus_install_record(root: &Path, record: &CampusInstallRecord) -> USTB
 
 fn load_campus_install_record(root: &Path) -> Option<CampusInstallRecord> {
   serde_json::from_slice(&fs::read(campus_install_record(root)).ok()?).ok()
+}
+
+pub fn has_campus_install(root: &Path) -> bool {
+  load_campus_install_record(root).is_some()
+}
+
+pub fn pending_campus_instances(app: &AppHandle) -> HashMap<String, Instance> {
+  campus_instances_on_disk(app)
+    .into_iter()
+    .filter(|(_, instance)| has_campus_install(&instance.version_path))
+    .collect()
 }
 
 fn remove_campus_install_record(root: &Path) {
@@ -798,28 +811,36 @@ pub async fn check_modpack_update(
       unlinked: false,
     });
   };
+  check_unless_installing(&target, check_installed_modpack(&app, &target, scan_local)).await
+}
+
+async fn check_installed_modpack(
+  app: &AppHandle,
+  target: &Target,
+  scan_local: Option<bool>,
+) -> USTBLResult<UpdateCheck> {
   if !target.origin.follow {
-    return Ok(check_of(CheckStatus::Paused, &target));
+    return Ok(check_of(CheckStatus::Paused, target));
   }
-  if !get_instance_game_config(&app, &target.instance).version_isolation {
+  if !get_instance_game_config(app, &target.instance).version_isolation {
     return Ok(UpdateCheck {
       reason: Some(InstanceError::ModpackUpdateNotIsolated.to_string()),
-      ..check_of(CheckStatus::NeedsRepair, &target)
+      ..check_of(CheckStatus::NeedsRepair, target)
     });
   }
-  let baseline = match load_baseline(&target).await {
+  let baseline = match load_baseline(target).await {
     Ok(baseline) => baseline,
     Err(err) => {
       return Ok(UpdateCheck {
         reason: Some(err.0),
-        ..check_of(CheckStatus::NeedsRepair, &target)
+        ..check_of(CheckStatus::NeedsRepair, target)
       })
     }
   };
   if target.instance.mod_loader.status != ModLoaderStatus::Installed {
-    return Ok(check_of(CheckStatus::WaitingLoader, &target));
+    return Ok(check_of(CheckStatus::WaitingLoader, target));
   }
-  match light_check(&app, &target).await {
+  match light_check(app, target).await {
     // The status stays `Available`; the count rides along so the local
     // edits can be shown next to the update.
     Ok(LightCheck::Available {
@@ -833,10 +854,10 @@ pub async fn check_modpack_update(
       } else {
         None
       },
-      ..check_of(CheckStatus::Available, &target)
+      ..check_of(CheckStatus::Available, target)
     }),
     Ok(LightCheck::UpToDate) => {
-      let mut check = check_of(CheckStatus::UpToDate, &target);
+      let mut check = check_of(CheckStatus::UpToDate, target);
       if scan_local == Some(true) {
         let changed = count_local_changes(&target.root, &baseline).await?;
         check.local_changes = Some(changed);
@@ -848,32 +869,42 @@ pub async fn check_modpack_update(
     }
     Ok(LightCheck::LineGone) => Ok(UpdateCheck {
       reason: Some(InstanceError::ModpackUpdateLineGone.to_string()),
-      ..check_of(CheckStatus::Unknown, &target)
+      ..check_of(CheckStatus::Unknown, target)
     }),
     Ok(LightCheck::ProjectGone) => {
       // The project listing already confirmed the deletion, so the identity
       // is dropped on this same check.
-      match unlink_origin(&app, &instance_id, &target).await {
+      match unlink_origin(app, &target.instance.id, target).await {
         Ok(()) => {
           // The ledger groups rows by the origin in the instance list, so it
           // has to hear about the lost identity right away.
-          refresh_and_update_instances(&app, false).await;
+          refresh_and_update_instances(app, false).await;
           Ok(UpdateCheck {
             unlinked: true,
-            ..check_of(CheckStatus::NotFollowing, &target)
+            ..check_of(CheckStatus::NotFollowing, target)
           })
         }
         Err(error) => Ok(UpdateCheck {
           reason: Some(error.0),
-          ..check_of(CheckStatus::Unknown, &target)
+          ..check_of(CheckStatus::Unknown, target)
         }),
       }
     }
     Err(err) => Ok(UpdateCheck {
       reason: Some(err.0),
-      ..check_of(CheckStatus::Unknown, &target)
+      ..check_of(CheckStatus::Unknown, target)
     }),
   }
+}
+
+async fn check_unless_installing(
+  target: &Target,
+  check: impl std::future::Future<Output = USTBLResult<UpdateCheck>>,
+) -> USTBLResult<UpdateCheck> {
+  if has_campus_install(&target.root) {
+    return Ok(check_of(CheckStatus::Installing, target));
+  }
+  check.await
 }
 
 /// What a light check found: whether there is a newer version, or why that
@@ -1140,6 +1171,9 @@ pub async fn prepare_modpack_update(
 async fn prepare_inner(app: &AppHandle, instance_id: &str) -> USTBLResult<UpdatePlan> {
   let target = target(app, instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let _guard = PlanGuard::acquire(&target.root)?;
+  if has_campus_install(&target.root) {
+    return Err(InstanceError::ModpackInstallInterrupted.into());
+  }
   prepare_target(app, instance_id, &target).await
 }
 
@@ -1734,6 +1768,9 @@ pub async fn apply_modpack_update(
 ) -> USTBLResult<UpdateOutcome> {
   let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let guard = PlanGuard::acquire(&target.root)?;
+  if has_campus_install(&target.root) {
+    return Err(InstanceError::ModpackInstallInterrupted.into());
+  }
   apply_modpack_update_inner(app, instance_id, plan_hash, choices, guard).await
 }
 
@@ -2281,6 +2318,63 @@ pub async fn recover_modpack_update(app: AppHandle, instance_id: String) -> USTB
 mod tests {
   use super::*;
   use crate::instance::models::misc::InstanceError;
+
+  #[tokio::test]
+  async fn persisted_installs_skip_the_entire_update_check_including_the_platform() {
+    let root = std::env::temp_dir().join(format!("ustbl-check-install-{}", uuid::Uuid::new_v4()));
+    let target = Target {
+      instance: Instance {
+        version_path: root.clone(),
+        ..Default::default()
+      },
+      origin: InstanceOrigin {
+        platform: OriginPlatform::Campus,
+        project_id: "test".into(),
+        version_id: String::new(),
+        game_version: "1.21".into(),
+        loader_type: ModLoaderType::Unknown,
+        follow: true,
+      },
+      root: root.clone(),
+    };
+    for phase in ["pending", "waitingClient", "installing", "failed"] {
+      save_campus_install_record(
+        &root,
+        &CampusInstallRecord {
+          instance_id: "test:pending".into(),
+          instance_name: "pending".into(),
+          label: "test".into(),
+          phase: phase.into(),
+          error: None,
+          group: None,
+          progress: None,
+          client_group: None,
+        },
+      )
+      .unwrap();
+      let called = std::cell::Cell::new(false);
+      let check = check_unless_installing(&target, async {
+        called.set(true);
+        panic!("baseline, platform and comparison must not be called");
+      })
+      .await
+      .unwrap();
+      assert_eq!(check.status, CheckStatus::Installing);
+      assert_eq!(serde_json::to_value(check).unwrap()["status"], "installing");
+      assert!(!called.get());
+    }
+    remove_campus_install_record(&root);
+    let called = std::cell::Cell::new(false);
+    let check = check_unless_installing(&target, async {
+      called.set(true);
+      Ok(check_of(CheckStatus::WaitingLoader, &target))
+    })
+    .await
+    .unwrap();
+    assert!(called.get());
+    assert_eq!(check.status, CheckStatus::WaitingLoader);
+    fs::remove_dir_all(root).unwrap();
+  }
 
   #[test]
   fn install_group_cleanup_matches_the_instance_not_the_human_label() {

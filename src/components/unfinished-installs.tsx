@@ -2,6 +2,7 @@ import { Button, HStack, Text, VStack } from "@chakra-ui/react";
 import { useCallback, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { OptionItemGroup } from "@/components/common/option-item";
+import { useGlobalData } from "@/contexts/global-data";
 import { useTaskContext } from "@/contexts/task";
 import { useToast } from "@/contexts/toast";
 import { InvokeResponse } from "@/models/response";
@@ -16,6 +17,7 @@ import { formatByteSize } from "@/utils/string";
 export const UnfinishedInstalls: React.FC = () => {
   const { t } = useTranslation();
   const toast = useToast();
+  const { getInstanceList } = useGlobalData();
   const { unfinishedInstalls, refreshUnfinishedInstalls } = useTaskContext();
   const [busy, setBusy] = useState<string | null>(null);
   const running = useRef(false);
@@ -62,9 +64,10 @@ export const UnfinishedInstalls: React.FC = () => {
         running.current = false;
         setBusy(null);
         refreshUnfinishedInstalls();
+        getInstanceList(true);
       }
     },
-    [refreshUnfinishedInstalls, t, toast, unfinishedInstalls]
+    [refreshUnfinishedInstalls, getInstanceList, t, toast, unfinishedInstalls]
   );
 
   const visible = visibleCampusInstalls(unfinishedInstalls);

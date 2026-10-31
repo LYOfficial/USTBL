@@ -9,6 +9,7 @@ use strum_macros::Display;
 #[derive(Debug, Display)]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum LaunchError {
+  LaunchInstanceInstalling,
   ModLoaderNotInstalled,
   NoSuitableJava,
   SelectedJavaUnavailable,

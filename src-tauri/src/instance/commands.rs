@@ -94,7 +94,10 @@ pub async fn retrieve_instance_list(app: AppHandle) -> USTBLResult<Vec<InstanceS
   let mut summary_list = Vec::new();
 
   let instance_binding = app.state::<Mutex<HashMap<String, Instance>>>();
-  let instances = instance_binding.lock().unwrap().clone();
+  let mut instances = instance_binding.lock().unwrap().clone();
+  for (id, instance) in crate::instance::modpack_update::commands::pending_campus_instances(&app) {
+    instances.entry(id).or_insert(instance);
+  }
   for (id, instance) in instances.iter() {
     // same as get_game_config(), but mannually here
     let is_version_isolated =

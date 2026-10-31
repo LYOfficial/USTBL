@@ -22,6 +22,7 @@ import {
 import { CommonIconButton } from "@/components/common/common-icon-button";
 import NavMenu from "@/components/common/nav-menu";
 import { Section } from "@/components/common/section";
+import { InstanceLaunchButton } from "@/components/instance-launch-button";
 import { useLauncherConfig } from "@/contexts/config";
 import {
   InstanceContextProvider,
@@ -32,6 +33,7 @@ import { useToast } from "@/contexts/toast";
 import { VustbAccount, isVustbManager } from "@/models/vustb";
 import { AccountService } from "@/services/account";
 import { InstanceService } from "@/services/instance";
+import { isInstallingInstance } from "@/utils/installing-instance";
 
 const InstanceDetailsLayout: React.FC<{ children: React.ReactNode }> = ({
   children,
@@ -215,7 +217,17 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
               h={21}
             />
           ))}
-          <Button
+          {isInstallingInstance(summary) && (
+            <Button
+              size="xs"
+              variant="outline"
+              onClick={() => router.push("/downloads")}
+            >
+              {t("InstanceDetailsLayout.button.viewInstall")}
+            </Button>
+          )}
+          <InstanceLaunchButton
+            instance={summary}
             leftIcon={<LuPlay />}
             size="xs"
             ml={1}
@@ -225,7 +237,7 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
             }}
           >
             {t("InstanceDetailsLayout.button.launch")}
-          </Button>
+          </InstanceLaunchButton>
         </HStack>
       }
       maxTitleLines={1}

@@ -29,6 +29,7 @@ import {
 import { CommonIconButton } from "@/components/common/common-icon-button";
 import { Section } from "@/components/common/section";
 import SegmentedControl from "@/components/common/segmented";
+import { InstanceLaunchButton } from "@/components/instance-launch-button";
 import InstancesView from "@/components/instances-view";
 import { useLauncherConfig } from "@/contexts/config";
 import { useGlobalData } from "@/contexts/global-data";
@@ -177,7 +178,8 @@ const InstanceListPage = () => {
           >
             {t("AllInstancesPage.button.installCampusModpack")}
           </Button>
-          <Button
+          <InstanceLaunchButton
+            instance={selectedInstance}
             leftIcon={<LuPlay />}
             size="xs"
             colorScheme={primaryColor}
@@ -191,7 +193,7 @@ const InstanceListPage = () => {
             }}
           >
             {t("AllInstancesPage.button.launch")}
-          </Button>
+          </InstanceLaunchButton>
         </HStack>
       }
     >

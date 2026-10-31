@@ -258,6 +258,7 @@
     }
   },
   "AllInstancesPage": {
+    "installing": "インストール中",
     "button": {
       "addAndImport": "追加/インポート",
       "installCampusModpack": "USTB整合パックをインストール",
@@ -1319,7 +1320,8 @@
       "settings": "設定"
     },
     "button": {
-      "launch": "インスタンスを起動"
+      "launch": "インスタンスを起動",
+      "viewInstall": "インストールを表示"
     }
   },
   "InstanceIconSelector": {
@@ -2244,6 +2246,7 @@
           "title": "適切な Java ランタイムの選択に失敗",
           "description": {
             "INSTANCE_NOT_FOUND_BY_ID": "インスタンス ID が存在しません",
+            "LAUNCH_INSTANCE_INSTALLING": "このインスタンスは学内パックのインストールが未完了のため起動できません。「ダウンロードとアップロードのタスク」でインストールを完了してください。",
             "NO_SUITABLE_JAVA": "選択可能な適切な Java ランタイムがありません",
             "SELECTED_JAVA_UNAVAILABLE": "手動で選択した Java ランタイムが削除されたか利用できません"
           }
@@ -3379,6 +3382,7 @@
         "paused": "一時停止中",
         "needsRepair": "要修復",
         "waitingLoader": "ローダー待ち",
+        "installing": "インストール待ち",
         "unknown": "確認に失敗",
         "notChecked": "未確認",
         "unlinked": "フォロー解除済み"

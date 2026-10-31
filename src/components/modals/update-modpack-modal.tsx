@@ -254,6 +254,16 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
         setChoices({});
       }
       setConfirmingRollback(false);
+      // A campus installation belongs to the task page, never the update planner.
+      if (
+        getInstanceList()?.find((instance) => instance.id === instanceId)
+          ?.campusInstallPending
+      ) {
+        setCheck(await checkModpackUpdate(instanceId));
+        setCheckPhase("checked");
+        setPlanPhase("idle");
+        return;
+      }
       // An interrupted update is rolled back before anything is compared.
       const recovered =
         await ModpackUpdateService.recoverModpackUpdate(instanceId);
@@ -524,6 +534,8 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
         );
       case "waitingLoader":
         return <Text>{t("UpdateModpackModal.status.waitingLoader")}</Text>;
+      case "installing":
+        return <Text>{t("InstanceSyncPage.ledger.badge.installing")}</Text>;
       case "paused":
         return <Text>{t("UpdateModpackModal.status.paused")}</Text>;
       case "notFollowing":

@@ -1,6 +1,5 @@
 import {
   Box,
-  Button,
   Card,
   Center,
   HStack,
@@ -22,6 +21,7 @@ import { useTranslation } from "react-i18next";
 import { LuArrowLeftRight, LuPlus, LuSettings } from "react-icons/lu";
 import { CommonIconButton } from "@/components/common/common-icon-button";
 import { CompactButtonGroup } from "@/components/common/compact-button-group";
+import { InstanceLaunchButton } from "@/components/instance-launch-button";
 import InstancesView from "@/components/instances-view";
 import PlayerAvatar from "@/components/player-avatar";
 import PlayersView from "@/components/players-view";
@@ -191,7 +191,8 @@ const LaunchPage = () => {
       </Card>
 
       <Box position="relative">
-        <Button
+        <InstanceLaunchButton
+          instance={selectedInstance}
           id="main-launch-button"
           colorScheme="blackAlpha"
           className={styles["launch-button"]}
@@ -213,7 +214,7 @@ const LaunchPage = () => {
                 : t("LaunchPage.Text.noSelectedGame")}
             </Text>
           </VStack>
-        </Button>
+        </InstanceLaunchButton>
 
         <Box position="absolute" top={1} right={1}>
           <CompactButtonGroup

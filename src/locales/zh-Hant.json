@@ -258,6 +258,7 @@
     }
   },
   "AllInstancesPage": {
+    "installing": "安裝中",
     "button": {
       "addAndImport": "新增與匯入",
       "installCampusModpack": "安裝北科整合包",
@@ -1319,7 +1320,8 @@
       "settings": "設定"
     },
     "button": {
-      "launch": "啟動實例"
+      "launch": "啟動實例",
+      "viewInstall": "查看安裝"
     }
   },
   "InstanceIconSelector": {
@@ -2244,6 +2246,7 @@
           "title": "選擇合適的 Java 執行時失敗",
           "description": {
             "INSTANCE_NOT_FOUND_BY_ID": "實例 ID 不存在",
+            "LAUNCH_INSTANCE_INSTALLING": "此實例的校內安裝尚未完成，暫時無法啟動。請先前往下載與上傳任務完成安裝。",
             "NO_SUITABLE_JAVA": "沒有合適的 Java 執行時可供選擇",
             "SELECTED_JAVA_UNAVAILABLE": "手動選擇的 Java 執行時已移除或不可用"
           }
@@ -3379,6 +3382,7 @@
         "paused": "已暫停",
         "needsRepair": "需修復",
         "waitingLoader": "等待載入器",
+        "installing": "等待安裝",
         "unknown": "檢查失敗",
         "notChecked": "未檢查",
         "unlinked": "已解除跟隨"

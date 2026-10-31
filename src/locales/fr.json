@@ -258,6 +258,7 @@
     }
   },
   "AllInstancesPage": {
+    "installing": "Installation en cours",
     "button": {
       "addAndImport": "Ajouter et importer",
       "installCampusModpack": "Installer le modpack USTB",
@@ -1319,7 +1320,8 @@
       "settings": "Paramètres"
     },
     "button": {
-      "launch": "Lancer l'instance"
+      "launch": "Lancer l'instance",
+      "viewInstall": "Voir l'installation"
     }
   },
   "InstanceIconSelector": {
@@ -2244,6 +2246,7 @@
           "title": "Échec de la sélection d'un environnement Java approprié",
           "description": {
             "INSTANCE_NOT_FOUND_BY_ID": "ID d'instance introuvable",
+            "LAUNCH_INSTANCE_INSTALLING": "L’installation du pack du campus est inachevée pour cette instance. Terminez-la dans les tâches de téléchargement et d’envoi avant de lancer le jeu.",
             "NO_SUITABLE_JAVA": "Aucun environnement Java approprié disponible",
             "SELECTED_JAVA_UNAVAILABLE": "Le runtime Java sélectionné manuellement a été supprimé ou n'est pas disponible"
           }
@@ -3379,6 +3382,7 @@
         "paused": "En pause",
         "needsRepair": "À réparer",
         "waitingLoader": "En attente du chargeur",
+        "installing": "En attente d'installation",
         "unknown": "Échec de la vérification",
         "notChecked": "Non vérifié",
         "unlinked": "Suivi annulé"

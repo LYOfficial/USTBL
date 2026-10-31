@@ -93,6 +93,7 @@ export enum ResourceServiceError {
 }
 
 export enum LaunchServiceError {
+  LaunchInstanceInstalling = "LAUNCH_INSTANCE_INSTALLING",
   ModLoaderNotInstalled = "MOD_LOADER_NOT_INSTALLED",
   NoSuitableJava = "NO_SUITABLE_JAVA",
   SelectedJavaUnavailable = "SELECTED_JAVA_UNAVAILABLE",

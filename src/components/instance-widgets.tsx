@@ -37,6 +37,7 @@ import {
 import { BeatLoader } from "react-spinners";
 import Empty from "@/components/common/empty";
 import { OptionItem } from "@/components/common/option-item";
+import { InstanceLaunchButton } from "@/components/instance-launch-button";
 import { useLauncherConfig } from "@/contexts/config";
 import { useInstanceSharedData } from "@/contexts/instance";
 import { useSharedModals } from "@/contexts/shared-modal";
@@ -408,7 +409,8 @@ export const InstanceLastPlayedWidget = () => {
           </HStack>
           {summary?.supportQuickPlay && (
             <HStack spacing={1.5} position="absolute" left={2} bottom={2}>
-              <Button
+              <InstanceLaunchButton
+                instance={summary}
                 size="xs"
                 variant="ghost"
                 colorScheme={primaryColor}
@@ -426,7 +428,7 @@ export const InstanceLastPlayedWidget = () => {
                   <Icon as={LuArrowRight} />
                   <Text>{t("InstanceWidgets.lastPlayed.continuePlaying")}</Text>
                 </HStack>
-              </Button>
+              </InstanceLaunchButton>
             </HStack>
           )}
         </VStack>

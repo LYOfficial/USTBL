@@ -258,6 +258,7 @@
     }
   },
   "AllInstancesPage": {
+    "installing": "Installing",
     "button": {
       "addAndImport": "Add & Import",
       "installCampusModpack": "Install USTB Modpack",
@@ -1319,7 +1320,8 @@
       "settings": "Settings"
     },
     "button": {
-      "launch": "Launch Instance"
+      "launch": "Launch Instance",
+      "viewInstall": "View Installation"
     }
   },
   "InstanceIconSelector": {
@@ -2243,6 +2245,7 @@
         "error": {
           "title": "Failed to select suitable JRE",
           "description": {
+            "LAUNCH_INSTANCE_INSTALLING": "This instance has an unfinished campus installation and cannot be launched. Complete the installation in Download & Upload Tasks first.",
             "INSTANCE_NOT_FOUND_BY_ID": "Instance ID does not exist",
             "NO_SUITABLE_JAVA": "No suitable Java version found",
             "SELECTED_JAVA_UNAVAILABLE": "The manually selected Java runtime has been removed or is unavailable"
@@ -3379,6 +3382,7 @@
         "paused": "Paused",
         "needsRepair": "Needs repair",
         "waitingLoader": "Waiting for loader",
+        "installing": "Awaiting installation",
         "unknown": "Check failed",
         "notChecked": "Not checked",
         "unlinked": "Unlinked"
