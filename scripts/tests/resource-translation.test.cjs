@@ -20,9 +20,13 @@ function load(file) {
   return module.exports;
 }
 
-const { createRequestGate, mergeTranslations, pendingTranslationIds } = load(
-  "src/utils/resource-translation.ts"
-);
+const {
+  createRequestGate,
+  mergeTranslations,
+  mergeTranslationsForSource,
+  pendingTranslationIds,
+  pendingTranslationIdsBySource,
+} = load("src/utils/resource-translation.ts");
 
 const item = (id, translatedDescription) => ({
   id,
@@ -78,4 +82,32 @@ test("a reply for an old search is not current once a new search starts", () => 
   assert.equal(list[0].translatedDescription, undefined);
   apply(second, { a: "新搜索" });
   assert.equal(list[0].translatedDescription, "新搜索");
+});
+
+test("pendingTranslationIdsBySource groups untranslated ids per source", () => {
+  const list = [
+    { id: "a", source: "Modrinth" },
+    { id: "a", source: "Modrinth" },
+    { id: "b", source: "Modrinth", translatedDescription: "已译" },
+    { id: "1", source: "CurseForge" },
+    { id: "2" },
+    { source: "CurseForge" },
+  ];
+  assert.deepEqual(pendingTranslationIdsBySource(list), {
+    Modrinth: ["a"],
+    CurseForge: ["1"],
+  });
+  assert.deepEqual(pendingTranslationIdsBySource([]), {});
+});
+
+test("mergeTranslationsForSource ignores items of other sources", () => {
+  const list = [
+    { id: "1", source: "Modrinth" },
+    { id: "1", source: "CurseForge" },
+  ];
+  const merged = mergeTranslationsForSource(list, "CurseForge", { 1: "译" });
+  assert.equal(merged[0].translatedDescription, undefined);
+  assert.equal(merged[1].translatedDescription, "译");
+  assert.equal(merged[0], list[0]);
+  assert.equal(mergeTranslationsForSource(list, "Modrinth", {}), list);
 });

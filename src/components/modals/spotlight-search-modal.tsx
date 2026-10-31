@@ -20,7 +20,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { useRouter } from "next/router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LuSearch } from "react-icons/lu";
 import stringSimilarity from "string-similarity";
@@ -38,6 +38,11 @@ import { ResourceService } from "@/services/resource";
 import { generatePlayerDesc } from "@/utils/account";
 import { generateInstanceDesc } from "@/utils/instance";
 import { translateTag } from "@/utils/resource";
+import {
+  createRequestGate,
+  mergeTranslationsForSource,
+  pendingTranslationIdsBySource,
+} from "@/utils/resource-translation";
 
 interface SearchResult {
   type: "page" | "instance" | "player" | "modrinth";
@@ -47,6 +52,7 @@ interface SearchResult {
   url?: string;
   action?: () => void;
   // Optional members for online resource search
+  id?: string;
   translatedDescription?: string;
   translatedTitle?: string;
   tags?: string[];
@@ -72,6 +78,10 @@ const SpotlightSearchModal: React.FC<Omit<ModalProps, "children">> = ({
     config.general.general.language === "zh-Hans" &&
     config.general.functionality.resourceTranslation;
   const searchAbortControllerRef = useRef<AbortController | null>(null);
+  const translationGate = useMemo(() => createRequestGate(), []);
+  // A ref keeps a change of this setting from re-running the search.
+  const showZhTransRef = useRef(showZhTrans);
+  showZhTransRef.current = showZhTrans;
 
   const [queryText, setQueryText] = useState<string>("");
   const [instantRes, setInstantRes] = useState<SearchResult[]>([]);
@@ -85,6 +95,7 @@ const SpotlightSearchModal: React.FC<Omit<ModalProps, "children">> = ({
   const convertResourceToSearchResult = useCallback(
     (resource: OtherResourceInfo): SearchResult => ({
       type: "modrinth",
+      id: resource.id,
       icon: resource.iconSrc,
       title: resource.name,
       translatedTitle: resource.translatedName,
@@ -331,6 +342,7 @@ const SpotlightSearchModal: React.FC<Omit<ModalProps, "children">> = ({
       const controller = new AbortController();
       searchAbortControllerRef.current = controller;
       setIsSearching(true);
+      const translationToken = translationGate.next();
 
       setNetworkSearchResults([]);
 
@@ -340,6 +352,26 @@ const SpotlightSearchModal: React.FC<Omit<ModalProps, "children">> = ({
             setNetworkSearchResults(results);
             setIsSearching(false);
             searchAbortControllerRef.current = null;
+
+            // Descriptions are translated after the results are on screen.
+            if (!showZhTransRef.current) return;
+            const pending = pendingTranslationIdsBySource(results);
+            Object.entries(pending).forEach(([source, ids]) => {
+              ResourceService.translateResourceDescriptions(
+                source as OtherResourceSource,
+                ids
+              ).then((translation) => {
+                if (
+                  translation.status === "success" &&
+                  !controller.signal.aborted &&
+                  translationGate.isCurrent(translationToken)
+                ) {
+                  setNetworkSearchResults((prev) =>
+                    mergeTranslationsForSource(prev, source, translation.data)
+                  );
+                }
+              });
+            });
           }
         })
         .catch((error) => {
@@ -353,10 +385,11 @@ const SpotlightSearchModal: React.FC<Omit<ModalProps, "children">> = ({
     }, 500);
 
     return () => clearTimeout(debounceTimer);
-  }, [queryText, performNetworkSearch]);
+  }, [queryText, performNetworkSearch, translationGate]);
 
   useEffect(() => {
     if (!props.isOpen) {
+      translationGate.next();
       setQueryText("");
       setNetworkSearchResults([]);
       setIsSearching(false);
@@ -365,7 +398,7 @@ const SpotlightSearchModal: React.FC<Omit<ModalProps, "children">> = ({
         searchAbortControllerRef.current = null;
       }
     }
-  }, [props.isOpen]);
+  }, [props.isOpen, translationGate]);
 
   const groupSearchResults = () => {
     const groupedMap = new Map<string, React.ReactNode[]>();
