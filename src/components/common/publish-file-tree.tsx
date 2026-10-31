@@ -72,7 +72,8 @@ const STATE_STYLE: Record<
 const CHANGE_COLOR: Record<ChangeCategory, string> = {
   modified: "orange",
   added: "green",
-  toggled: "purple",
+  enable: "purple",
+  disable: "purple",
   onceChanged: "cyan",
   deleted: "red",
 };
@@ -109,8 +110,15 @@ const PublishFileTree: React.FC<PublishFileTreeProps> = ({
   const nodes = useMemo(() => buildPublishNodes(context), [context]);
   const view = useMemo(() => viewOf(context, draft), [context, draft]);
   const marks = useMemo(
-    () => categorizeChanges(changes, context.ghosts, previous, view),
-    [changes, context.ghosts, previous, view]
+    () =>
+      categorizeChanges(
+        changes,
+        context.ghosts,
+        previous,
+        view,
+        new Map(context.files.map((file) => [keyOf(file.path), file.disabled]))
+      ),
+    [changes, context, previous, view]
   );
   const counts = useMemo(() => countCategories(marks), [marks]);
   const dirCounts = useMemo(() => dirChangeCounts(marks), [marks]);
@@ -347,7 +355,7 @@ const PublishTreeRow: React.FC<PublishTreeRowProps> = ({
         >
           {data.name}
         </Text>
-        {data.disabled ? (
+        {data.disabled && category !== "enable" && category !== "disable" ? (
           <Tag size="sm" flexShrink={0}>
             <TagLabel>{t("PublishModpackModal.tree.disabled")}</TagLabel>
           </Tag>
@@ -371,7 +379,15 @@ const PublishTreeRow: React.FC<PublishTreeRowProps> = ({
           </Tooltip>
         ) : null}
         {!isDir && category ? (
-          <Tooltip label={t(`PublishModpackModal.tree.changeHint.${category}`)}>
+          <Tooltip
+            label={t(
+              `PublishModpackModal.tree.changeHint.${
+                category === "enable" || category === "disable"
+                  ? "toggled"
+                  : category
+              }`
+            )}
+          >
             <Tag
               size="sm"
               variant="subtle"

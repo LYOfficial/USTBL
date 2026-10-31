@@ -30,7 +30,7 @@ const {
   NO_FILTER,
   buildPublishNodes,
   canRemoveFile,
-  categorizeChanges,
+  categorizeChanges: categorizeChangesRaw,
   countCategories,
   defaultPublishProject,
   dirChangeCounts,
@@ -49,6 +49,15 @@ const {
   toggleCategory,
   viewOf,
 } = load("src/utils/modpack-publish-tree.ts");
+
+const categorizeChanges = (changes, ghosts, previous, view, context) =>
+  categorizeChangesRaw(
+    changes,
+    ghosts,
+    previous,
+    view,
+    new Map((context?.files ?? []).map((file) => [file.path.toLowerCase(), file.disabled]))
+  );
 
 // Plan 《整合包发布三态与本地忽略》§3-§4 is the source of every expectation.
 // The starting state (§4 defaults) is worked out by the launcher and tested
@@ -696,7 +705,8 @@ test("every mark is by lowercased path and a missing previous file is deleted", 
   assert.deepEqual(countCategories(marks), {
     modified: 1,
     added: 1,
-    toggled: 0,
+    enable: 0,
+    disable: 0,
     onceChanged: 0,
     deleted: 1,
   });
@@ -971,8 +981,23 @@ test("a file whose enabled state differs is toggled even when the content does t
     change("mods/on.jar", "toggled"),
     change("mods/both.jar", "modified"),
   ]);
-  assert.deepEqual(summary.toggled.sort(), ["mods/both.jar", "mods/off.jar", "mods/on.jar"]);
+  assert.deepEqual(summary.enable.sort(), ["mods/on.jar"]);
+  assert.deepEqual(summary.disable.sort(), ["mods/both.jar", "mods/off.jar"]);
   assert.deepEqual(summary.modified, ["mods/both.jar"]);
+});
+
+test("summary splits enabled and disabled state changes", () => {
+  const context = ctxOf([
+    { path: "mods/on.jar", disabled: false },
+    { path: "mods/off.jar", disabled: true },
+  ]);
+  const previous = release([
+    before("mods/on.jar", { disabled: true }),
+    before("mods/off.jar", { disabled: false }),
+  ]);
+  const summary = summarizePublish(context, draftOf(), previous, []);
+  assert.deepEqual(summary.enable, ["mods/on.jar"]);
+  assert.deepEqual(summary.disable, ["mods/off.jar"]);
 });
 
 test("a locally deleted file keeps the summary visible when content is unchanged", () => {

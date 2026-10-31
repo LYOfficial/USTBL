@@ -8,19 +8,32 @@ import {
 /** Up to this many entries, the whole tree starts expanded. */
 export const OPEN_LIMIT = 5;
 
+export type ChangeFilter =
+  | Exclude<ModpackChangeClass, "toggled">
+  | "enable"
+  | "disable";
+
 /** The classes the dialog shows and counts, in header order. */
-export const CLASS_ORDER: ModpackChangeClass[] = [
+export const CLASS_ORDER: ChangeFilter[] = [
   "modified",
   "deleted",
-  "toggled",
+  "enable",
+  "disable",
   "added",
 ];
 
-const ALL_CLASSES: ModpackChangeClass[] = [
+const ALL_CLASSES: ChangeFilter[] = [
   ...CLASS_ORDER,
   "onceChanged",
   "addedExcluded",
 ];
+
+export const displayClass = (entry: ModpackChangeDetailEntry): ChangeFilter =>
+  entry.class === "toggled"
+    ? entry.disabled
+      ? "disable"
+      : "enable"
+    : entry.class;
 
 const isAdded = (entry: ModpackChangeDetailEntry): boolean =>
   entry.class === "added" || entry.class === "addedExcluded";
@@ -31,11 +44,11 @@ export const isRuleDeleted = (entry: ModpackChangeDetailEntry): boolean =>
 
 export const countByClass = (
   entries: ModpackChangeDetailEntry[]
-): Record<ModpackChangeClass, number> => {
+): Record<ChangeFilter, number> => {
   const counts = Object.fromEntries(
     ALL_CLASSES.map((name) => [name, 0])
-  ) as Record<ModpackChangeClass, number>;
-  for (const entry of entries) counts[entry.class] += 1;
+  ) as Record<ChangeFilter, number>;
+  for (const entry of entries) counts[displayClass(entry)] += 1;
   return counts;
 };
 
@@ -48,7 +61,7 @@ export const splitByGroup = (entries: ModpackChangeDetailEntry[]) => ({
   main: entries.filter(
     (entry) =>
       entry.counted &&
-      CLASS_ORDER.includes(entry.class) &&
+      CLASS_ORDER.includes(displayClass(entry)) &&
       !isRuleDeleted(entry)
   ),
   willDelete: entries.filter(isRuleDeleted),
@@ -56,9 +69,16 @@ export const splitByGroup = (entries: ModpackChangeDetailEntry[]) => ({
 
 export const filterEntries = (
   entries: ModpackChangeDetailEntry[],
-  filter: ModpackChangeClass | null
+  filter: ChangeFilter | null
 ): ModpackChangeDetailEntry[] =>
-  filter ? entries.filter((entry) => entry.class === filter) : entries;
+  filter
+    ? entries.filter((entry) =>
+        filter === "enable" || filter === "disable"
+          ? entry.class === "toggled" &&
+            (filter === "disable" ? entry.disabled : !entry.disabled)
+          : entry.class === filter
+      )
+    : entries;
 export interface ChangeTreeNode {
   /** The path as the first entry under it spells it. */
   path: string;

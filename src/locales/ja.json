@@ -3252,9 +3252,10 @@
       "change": {
         "modified": "変更",
         "added": "追加",
-        "toggled": "有効状態",
         "onceChanged": "初回インストールのみ · 変更",
-        "deleted": "削除"
+        "deleted": "削除",
+        "enable": "有効化",
+        "disable": "無効化"
       },
       "changeHint": {
         "modified": "前のバージョンと内容が異なります。",
@@ -3306,7 +3307,6 @@
       "removed": "除外 {{count}} ファイル",
       "ignored": "無視に変更 {{count}} ファイル",
       "deleted": "削除に変更 {{count}} ファイル",
-      "toggled": "有効状態の変化 {{count}} 件",
       "onceOn": "初回のみに変更 {{count}} 件",
       "onceOff": "初回のみを解除 {{count}} 件",
       "rulesAdded": "ルール追加 {{count}} 件",
@@ -3321,7 +3321,9 @@
         "rulesChanged": "無視と削除の間で状態が変わったルール。",
         "localDeleted": "公開後、これらのファイルもローカルでバックアップしてから削除されます。"
       },
-      "localDeleted": "ローカルから {{count}} 個削除"
+      "localDeleted": "ローカルから {{count}} 個削除",
+      "enable": "{{count}} 件を有効化",
+      "disable": "{{count}} 件を無効化"
     }
   },
   "InstallCampusModpackModal": {
@@ -3452,11 +3454,11 @@
     "class": {
       "modified": "変更",
       "deleted": "削除",
-      "toggled": "有効／無効",
-      "added": "新規"
+      "added": "新規",
+      "enable": "有効",
+      "disable": "無効"
     },
     "disabled": "無効",
-    "toggledTag": "有効／無効状態が変更されました",
     "noDiff": {
       "notText": "テキストでないか大きすぎるため、差分を表示できません",
       "baseMissing": "インストール時のコピーがないため、差分を表示できません",

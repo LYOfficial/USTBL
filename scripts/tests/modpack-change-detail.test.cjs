@@ -46,7 +46,7 @@ const entry = (p, cls, extra = {}) => ({
 const sample = [
   entry("config/a.toml", "modified"),
   entry("config/b.toml", "deleted"),
-  entry("mods/x.jar", "toggled", { disabled: true }),
+  entry("mods/x.jar", "toggled", { toggled: true, disabled: true }),
   entry("mods/new.jar", "added", { counted: true, size: 10 }),
   entry("config/gen.json", "added", { size: 3 }),
   entry("config/once.toml", "onceChanged", { size: 5 }),
@@ -105,7 +105,7 @@ test("the counts cover the body only", () => {
   const counts = countByClass(splitByGroup(sample).main);
   assert.deepEqual(
     CLASS_ORDER.map((name) => counts[name]),
-    [1, 1, 1, 2]
+    [1, 1, 0, 1, 2]
   );
   assert.equal(counts.onceChanged, 0);
   assert.equal(counts.addedExcluded, 0);
@@ -119,6 +119,27 @@ test("filterEntries keeps one class of the body, or everything without a filter"
     ["mods/new.jar", "mods/kept.jar"]
   );
   assert.equal(filterEntries(main, null), main);
+});
+test("toggle entries are counted and filtered by their resulting state", () => {
+  const entries = [
+    entry("mods/on.jar", "toggled", { toggled: true, disabled: false }),
+    entry("mods/off.jar", "toggled", { toggled: true, disabled: true }),
+  ];
+  assert.equal(countByClass(entries).enable, 1);
+  assert.equal(countByClass(entries).disable, 1);
+  assert.deepEqual(filterEntries(entries, "enable").map((e) => e.path), ["mods/on.jar"]);
+  assert.deepEqual(filterEntries(entries, "disable").map((e) => e.path), ["mods/off.jar"]);
+});
+
+test("modified and toggled entries stay in modified only", () => {
+  const entries = [
+    entry("mods/both.jar", "modified", { toggled: true, disabled: true }),
+  ];
+  assert.equal(countByClass(entries).modified, 1);
+  assert.equal(countByClass(entries).enable, 0);
+  assert.equal(countByClass(entries).disable, 0);
+  assert.deepEqual(filterEntries(entries, "modified"), entries);
+  assert.deepEqual(filterEntries(entries, "disable"), []);
 });
 
 test("buildChangeTree groups by directory and counts the entries below each", () => {
@@ -169,7 +190,7 @@ test("expandedDepth opens everything up to OPEN_LIMIT entries, else the first le
 });
 
 test("revealPath points at the variant on disk and is null for gone files", () => {
-  assert.equal(revealPath(entry("mods/x.jar", "toggled", { disabled: true })), "mods/x.jar.disabled");
+  assert.equal(revealPath(entry("mods/x.jar", "toggled", { toggled: true, disabled: true })), "mods/x.jar.disabled");
   assert.equal(revealPath(entry("mods/y.jar", "added")), "mods/y.jar");
   assert.equal(revealPath(entry("config/b.toml", "deleted")), null);
   assert.equal(revealPath(entry("config/once.toml", "onceChanged")), null);

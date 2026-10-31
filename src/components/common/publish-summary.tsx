@@ -11,7 +11,8 @@ const HINTED_ROWS = new Set([
   "removed",
   "ignored",
   "deleted",
-  "toggled",
+  "enable",
+  "disable",
   "onceUpdated",
   "rulesChanged",
   "localDeleted",
@@ -29,7 +30,8 @@ const ROWS: Row[] = [
   { key: "removed", colorScheme: "gray" },
   { key: "ignored", colorScheme: "gray" },
   { key: "deleted", colorScheme: "red" },
-  { key: "toggled", colorScheme: "purple" },
+  { key: "enable", colorScheme: "purple" },
+  { key: "disable", colorScheme: "purple" },
   { key: "onceOn", colorScheme: "cyan" },
   { key: "onceOff", colorScheme: "cyan" },
   { key: "rulesAdded", colorScheme: "blue" },
@@ -83,7 +85,13 @@ const PublishSummary: React.FC<PublishSummaryProps> = ({ summary }) => {
                   <>
                     {HINTED_ROWS.has(key) && (
                       <Text>
-                        {t(`PublishModpackModal.summary.hint.${key}`)}
+                        {t(
+                          `PublishModpackModal.summary.hint.${
+                            key === "enable" || key === "disable"
+                              ? "toggled"
+                              : key
+                          }`
+                        )}
                       </Text>
                     )}
                     {shown.map((name) => (

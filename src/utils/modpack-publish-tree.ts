@@ -427,12 +427,17 @@ export const buildPublishNodes = (context: PublishContext): PublishNode[] => {
 
 export type ChangeKind = "modified" | "added" | "toggled" | "onceChanged";
 /** A kind of mark; "deleted" is a file of the previous release gone from disk. */
-export type ChangeCategory = ChangeKind | "deleted";
+export type ChangeCategory =
+  | Exclude<ChangeKind, "toggled">
+  | "enable"
+  | "disable"
+  | "deleted";
 
 export const CHANGE_CATEGORIES: ChangeCategory[] = [
   "modified",
   "added",
-  "toggled",
+  "enable",
+  "disable",
   "onceChanged",
   "deleted",
 ];
@@ -475,14 +480,22 @@ export const categorizeChanges = (
   changes: PublishChange[],
   ghosts: GhostEntry[],
   previous: PreviousRelease | null,
-  view: PublishView
+  view: PublishView,
+  disabledByPath: ReadonlyMap<string, boolean>
 ): Map<string, ChangeCategory> => {
   const marks = new Map<string, ChangeCategory>();
   for (const change of changes) {
     if (change.kind === "added" && view.fileState(change.path) !== "include") {
       continue;
     }
-    marks.set(keyOf(change.path), change.kind);
+    marks.set(
+      keyOf(change.path),
+      change.kind === "toggled"
+        ? disabledByPath.get(keyOf(change.path)) === false
+          ? "enable"
+          : "disable"
+        : change.kind
+    );
   }
   if (previous) {
     const listed = new Set(previous.files.map((file) => keyOf(file.path)));
@@ -501,7 +514,8 @@ export const countCategories = (
   const counts: Record<ChangeCategory, number> = {
     modified: 0,
     added: 0,
-    toggled: 0,
+    enable: 0,
+    disable: 0,
     onceChanged: 0,
     deleted: 0,
   };
@@ -618,7 +632,8 @@ export interface PublishSummary {
   /** Listed before, now deleted. */
   deleted: string[];
   /** The enabled or disabled state differs from the previous release. */
-  toggled: string[];
+  enable: string[];
+  disable: string[];
   /** Became first-install only. */
   onceOn: string[];
   /** Stopped being first-install only. */
@@ -655,7 +670,8 @@ export const summarizePublish = (
     removed: [],
     ignored: [],
     deleted: [],
-    toggled: [],
+    enable: [],
+    disable: [],
     onceOn: [],
     onceOff: [],
     rulesAdded: [],
@@ -685,7 +701,8 @@ export const summarizePublish = (
     if (differs.has(key)) {
       (file.once ? summary.onceUpdated : summary.modified).push(file.path);
     }
-    if (file.disabled !== old.disabled) summary.toggled.push(file.path);
+    if (file.disabled !== old.disabled)
+      (file.disabled ? summary.disable : summary.enable).push(file.path);
     if (file.once && !old.once) summary.onceOn.push(file.path);
     if (!file.once && old.once) summary.onceOff.push(file.path);
   }
@@ -719,7 +736,8 @@ export const isSummaryEmpty = (summary: PublishSummary): boolean =>
   summary.removed.length === 0 &&
   summary.ignored.length === 0 &&
   summary.deleted.length === 0 &&
-  summary.toggled.length === 0 &&
+  summary.enable.length === 0 &&
+  summary.disable.length === 0 &&
   summary.onceOn.length === 0 &&
   summary.onceOff.length === 0 &&
   summary.rulesAdded.length === 0 &&

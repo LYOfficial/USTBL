@@ -3252,9 +3252,10 @@
       "change": {
         "modified": "修改",
         "added": "新增",
-        "toggled": "启用状态",
         "onceChanged": "仅首次安装·已改",
-        "deleted": "删除"
+        "deleted": "删除",
+        "enable": "启用",
+        "disable": "禁用"
       },
       "changeHint": {
         "modified": "内容和上一版不同。",
@@ -3306,7 +3307,6 @@
       "removed": "移除 {{count}} 个文件",
       "ignored": "改为忽略 {{count}} 个文件",
       "deleted": "改为删除 {{count}} 个文件",
-      "toggled": "启用状态变化 {{count}} 个",
       "onceOn": "改为仅首次安装 {{count}} 个",
       "onceOff": "不再仅首次安装 {{count}} 个",
       "rulesAdded": "新增规则 {{count}} 条",
@@ -3321,7 +3321,9 @@
         "rulesChanged": "在忽略和删除之间改了状态的规则。",
         "localDeleted": "发布后本机的这些文件也会被备份后删除。"
       },
-      "localDeleted": "本机也会删除 {{count}} 个文件"
+      "localDeleted": "本机也会删除 {{count}} 个文件",
+      "enable": "启用 {{count}} 个",
+      "disable": "禁用 {{count}} 个"
     }
   },
   "InstallCampusModpackModal": {
@@ -3452,11 +3454,11 @@
     "class": {
       "modified": "修改",
       "deleted": "删除",
-      "toggled": "启用/禁用",
-      "added": "新增"
+      "added": "新增",
+      "enable": "启用",
+      "disable": "禁用"
     },
     "disabled": "已禁用",
-    "toggledTag": "启用/禁用状态改变",
     "noDiff": {
       "notText": "非文本或文件太大，不显示差异",
       "baseMissing": "没有安装时的副本，无法显示差异",

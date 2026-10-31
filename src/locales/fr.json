@@ -3252,9 +3252,10 @@
       "change": {
         "modified": "Modifié",
         "added": "Ajouté",
-        "toggled": "État activé",
         "onceChanged": "Première installation uniquement · modifié",
-        "deleted": "Supprimé"
+        "deleted": "Supprimé",
+        "enable": "Activer",
+        "disable": "Désactiver"
       },
       "changeHint": {
         "modified": "Le contenu diffère de la version précédente.",
@@ -3306,7 +3307,6 @@
       "removed": "{{count}} fichier(s) retiré(s)",
       "ignored": "{{count}} fichier(s) passé(s) en ignoré",
       "deleted": "{{count}} fichier(s) passé(s) en supprimé",
-      "toggled": "{{count}} changement(s) d'état activé",
       "onceOn": "{{count}} passé(s) en première installation uniquement",
       "onceOff": "{{count}} qui ne sont plus en première installation uniquement",
       "rulesAdded": "{{count}} règle(s) ajoutée(s)",
@@ -3321,7 +3321,9 @@
         "rulesChanged": "Règles passées de ignorer à supprimer, ou l'inverse.",
         "localDeleted": "Ces fichiers seront aussi sauvegardés puis supprimés localement après la publication."
       },
-      "localDeleted": "{{count}} fichiers supprimés localement"
+      "localDeleted": "{{count}} fichiers supprimés localement",
+      "enable": "{{count}} activés",
+      "disable": "{{count}} désactivés"
     }
   },
   "InstallCampusModpackModal": {
@@ -3452,11 +3454,11 @@
     "class": {
       "modified": "Modifié",
       "deleted": "Supprimé",
-      "toggled": "Activé/désactivé",
-      "added": "Nouveau"
+      "added": "Nouveau",
+      "enable": "Activé",
+      "disable": "Désactivé"
     },
     "disabled": "Désactivé",
-    "toggledTag": "État activé/désactivé modifié",
     "noDiff": {
       "notText": "Fichier non textuel ou trop volumineux ; différence non affichée",
       "baseMissing": "Aucune copie de l’installation ; impossible d’afficher la différence",
