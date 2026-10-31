@@ -128,6 +128,7 @@ async fn controller_request(
   body: Option<Value>,
 ) -> USTBLResult<Value> {
   let client = reqwest::Client::builder()
+    .no_gzip()
     .no_proxy()
     .timeout(Duration::from_secs(8))
     .build()?;
@@ -252,6 +253,7 @@ impl Ipv6Service {
     let port = configuration["mixed-port"].as_u64().unwrap_or_default();
     let connected = async {
       let client = reqwest::Client::builder()
+        .no_gzip()
         .no_proxy()
         .proxy(reqwest::Proxy::all(format!("http://127.0.0.1:{port}"))?)
         .timeout(Duration::from_secs(8))

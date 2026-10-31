@@ -51,6 +51,7 @@ impl WarpDevice {
 
 pub async fn register() -> USTBLResult<WarpDevice> {
   let client = reqwest::Client::builder()
+    .no_gzip()
     .no_proxy()
     .timeout(Duration::from_secs(20))
     .build()?;

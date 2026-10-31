@@ -50,6 +50,7 @@ impl ProxyEndpoint {
 
 async fn remote_proxy_address() -> io::Result<String> {
   let client = reqwest::Client::builder()
+    .no_gzip()
     .no_proxy()
     .timeout(Duration::from_secs(10))
     .build()

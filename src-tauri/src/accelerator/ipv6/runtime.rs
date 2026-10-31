@@ -60,6 +60,7 @@ pub fn secure_directory(root: &Path) -> USTBLResult<()> {
 pub async fn install(root: &Path) -> USTBLResult<()> {
   let (name, expected) = artifact()?;
   let client = reqwest::Client::builder()
+    .no_gzip()
     .no_proxy()
     .connect_timeout(Duration::from_secs(15))
     .timeout(Duration::from_secs(60))

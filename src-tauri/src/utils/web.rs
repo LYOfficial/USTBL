@@ -40,10 +40,21 @@ pub fn build_ustbl_client(app: &AppHandle, use_proxy: bool) -> Client {
   // Range reads, which count on Content-Length and on receiving the exact
   // byte range they asked for. Only build_campus_client, made just for the
   // campus JSON API, accepts a compressed response.
-  build_client(app, use_proxy, Some(Duration::from_secs(30)))
-    .no_gzip()
+  shared_builder(build_client(app, use_proxy, Some(Duration::from_secs(30))))
     .build()
-    .unwrap_or_else(|_| Client::new())
+    .unwrap_or_else(|_| shared_builder(ClientBuilder::new()).build().unwrap())
+}
+
+fn shared_builder(builder: ClientBuilder) -> ClientBuilder {
+  builder.no_gzip()
+}
+
+/// Separate state type so campus requests cannot accidentally use the shared
+/// raw-byte client registered under `Client`.
+pub struct CampusClient(pub Client);
+
+fn campus_builder(builder: ClientBuilder) -> ClientBuilder {
+  builder.gzip(true)
 }
 
 /// Builds the client for the campus modpack API (`CAMPUS_API`), the only
@@ -51,14 +62,14 @@ pub fn build_ustbl_client(app: &AppHandle, use_proxy: bool) -> Client {
 /// megabytes of JSON over a slow link, and the platform compresses it; the
 /// shared client (downloads, pack Range reads) must keep seeing raw bytes.
 pub fn build_campus_client(app: &AppHandle) -> Client {
-  build_client(app, true, Some(Duration::from_secs(30)))
-    .gzip(true)
+  campus_builder(build_client(app, true, Some(Duration::from_secs(30))))
     .build()
-    .unwrap_or_else(|_| Client::new())
+    .unwrap_or_else(|_| campus_builder(ClientBuilder::new()).build().unwrap())
 }
 
 fn build_client(app: &AppHandle, use_proxy: bool, read_timeout: Option<Duration>) -> ClientBuilder {
   let mut builder = ClientBuilder::new()
+    .no_gzip()
     .connect_timeout(Duration::from_secs(10))
     .tcp_keepalive(Duration::from_secs(10));
   if let Some(timeout) = read_timeout {
@@ -121,7 +132,10 @@ pub fn build_part_upload_client(app: &AppHandle) -> Client {
     }
   }
 
-  builder.build().unwrap_or_else(|_| Client::new())
+  builder
+    .no_gzip()
+    .build()
+    .unwrap_or_else(|_| shared_builder(ClientBuilder::new()).build().unwrap())
 }
 
 struct USTBLRetryableStrategy;
@@ -269,6 +283,38 @@ pub async fn is_china_mainland_ip(app: &AppHandle) -> Option<bool> {
 ///
 /// A normalized URL string suitable for direct string comparison.
 /// If parsing fails, the original input string is returned unchanged.
+pub fn normalize_url(input: &str) -> String {
+  let url = match Url::parse(input) {
+    Ok(url) if !url.cannot_be_a_base() && url.host_str().is_some() => url,
+    _ => return input.to_string(),
+  };
+
+  // remove trailing slash except for root
+  let mut path = url.path().to_string();
+  if path != "/" {
+    path = path.trim_end_matches('/').to_string();
+  }
+
+  // remove default port(e.g. 80 for HTTP, 443 for HTTPS)
+  let port = match (url.port(), url.port_or_known_default()) {
+    (Some(p), Some(default)) if p == default => None,
+    (p, _) => p,
+  };
+
+  let mut normalized = match Url::parse(&format!("{}://{}", url.scheme(), url.host_str().unwrap()))
+  {
+    Ok(u) => u,
+    Err(_) => return input.to_string(),
+  };
+
+  let _ = normalized.set_port(port);
+  normalized.set_path(&path);
+  normalized.set_query(url.query());
+  normalized.set_fragment(url.fragment());
+
+  normalized.to_string()
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -313,14 +359,14 @@ mod tests {
   #[tokio::test]
   async fn the_shared_client_never_asks_for_gzip() {
     let (url, requests) = serve();
-    let shared = ClientBuilder::new().no_gzip().build().unwrap();
+    let shared = shared_builder(ClientBuilder::new()).build().unwrap();
     shared.get(&url).send().await.unwrap();
     let headers = requests.recv().unwrap();
     assert!(!headers
       .iter()
       .any(|line| line.starts_with("accept-encoding")));
 
-    let campus = ClientBuilder::new().gzip(true).build().unwrap();
+    let campus = campus_builder(ClientBuilder::new()).build().unwrap();
     campus.get(&url).send().await.unwrap();
     let headers = requests.recv().unwrap();
     assert!(headers.iter().any(|line| line == "accept-encoding: gzip"));
@@ -336,36 +382,46 @@ mod tests {
       .iter()
       .any(|line| line.starts_with("accept-encoding")));
   }
-}
 
-pub fn normalize_url(input: &str) -> String {
-  let url = match Url::parse(input) {
-    Ok(url) if !url.cannot_be_a_base() && url.host_str().is_some() => url,
-    _ => return input.to_string(),
-  };
-
-  // remove trailing slash except for root
-  let mut path = url.path().to_string();
-  if path != "/" {
-    path = path.trim_end_matches('/').to_string();
+  #[tokio::test]
+  async fn campus_decompresses_but_downloads_and_ranges_keep_the_wire_bytes() {
+    use flate2::{write::GzEncoder, Compression};
+    let plain = br#"{"version":35}"#;
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(plain).unwrap();
+    let compressed = encoder.finish().unwrap();
+    let wire = compressed.clone();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+      for _ in 0..3 {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        loop {
+          let mut line = String::new();
+          reader.read_line(&mut line).unwrap();
+          if line == "\r\n" {
+            break;
+          }
+        }
+        write!(stream, "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", wire.len()).unwrap();
+        stream.write_all(&wire).unwrap();
+      }
+    });
+    let campus = campus_builder(ClientBuilder::new().no_proxy()).build().unwrap();
+    let response = campus.get(&url).send().await.unwrap();
+    assert!(response.content_length().is_none());
+    assert_eq!(response.bytes().await.unwrap().as_ref(), plain);
+    let shared = shared_builder(ClientBuilder::new().no_proxy()).build().unwrap();
+    for range in [false, true] {
+      let mut request = shared.get(&url);
+      if range {
+        request = request.header(reqwest::header::RANGE, "bytes=0-20");
+      }
+      let response = request.send().await.unwrap();
+      assert_eq!(response.content_length(), Some(compressed.len() as u64));
+      assert_eq!(response.bytes().await.unwrap().as_ref(), compressed.as_slice());
+    }
+    server.join().unwrap();
   }
-
-  // remove default port(e.g. 80 for HTTP, 443 for HTTPS)
-  let port = match (url.port(), url.port_or_known_default()) {
-    (Some(p), Some(default)) if p == default => None,
-    (p, _) => p,
-  };
-
-  let mut normalized = match Url::parse(&format!("{}://{}", url.scheme(), url.host_str().unwrap()))
-  {
-    Ok(u) => u,
-    Err(_) => return input.to_string(),
-  };
-
-  let _ = normalized.set_port(port);
-  normalized.set_path(&path);
-  normalized.set_query(url.query());
-  normalized.set_fragment(url.fragment());
-
-  normalized.to_string()
 }

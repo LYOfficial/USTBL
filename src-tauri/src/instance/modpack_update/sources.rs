@@ -636,8 +636,8 @@ pub fn campus_line_status(lines: &[CampusLine], origin: &InstanceOrigin) -> Camp
 /// Range reads keep using the shared client, which never asks for gzip.
 pub fn campus_client(app: &AppHandle) -> reqwest::Client {
   app
-    .try_state::<reqwest::Client>()
-    .map(|client| client.inner().clone())
+    .try_state::<crate::utils::web::CampusClient>()
+    .map(|client| client.0.clone())
     .unwrap_or_else(|| crate::utils::web::build_campus_client(app))
 }
 

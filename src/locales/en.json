@@ -3276,7 +3276,7 @@
       "MODPACK_UPDATE_BASELINE_MISSING": "This instance has no install record for the modpack, or the record is damaged, so it cannot be compared",
       "MODPACK_UPDATE_PACK_UNAVAILABLE": "The files of this version are temporarily unavailable on the platform. Try again later",
       "MODPACK_UPDATE_MERGE_INVALID": "The selected blocks produce an invalid configuration. Adjust your choices and try again",
-      "MODPACK_UPDATE_LOCATE_LOCATING": "Locating the modpack files"
+      "MODPACK_UPDATE_LOCATE_LOCATING": "Could not locate the modpack files. Check your connection and try again."
     },
     "rollback": {
       "hint": "You can undo the last modpack update and restore files and loader as they were before it.",

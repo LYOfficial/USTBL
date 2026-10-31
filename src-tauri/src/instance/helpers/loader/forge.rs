@@ -28,7 +28,10 @@ async fn fetch_bmcl_forge_installer_url(
   loader_ver: &str,
   branch: Option<&str>,
 ) -> Result<String, Error> {
-  let client = Client::builder().redirect(Policy::limited(5)).build()?;
+  let client = Client::builder()
+    .no_gzip()
+    .redirect(Policy::limited(5))
+    .build()?;
 
   let response = client
     .get(root)

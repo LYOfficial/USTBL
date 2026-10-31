@@ -3276,7 +3276,7 @@
       "MODPACK_UPDATE_BASELINE_MISSING": "Cette instance n'a pas d'enregistrement d'installation du pack, ou il est endommagé ; comparaison impossible",
       "MODPACK_UPDATE_PACK_UNAVAILABLE": "Les fichiers de cette version sont momentanément indisponibles sur la plateforme. Réessayez plus tard",
       "MODPACK_UPDATE_MERGE_INVALID": "Les blocs sélectionnés produisent une configuration invalide. Modifiez vos choix et réessayez",
-      "MODPACK_UPDATE_LOCATE_LOCATING": "Localisation des fichiers du pack de mods"
+      "MODPACK_UPDATE_LOCATE_LOCATING": "Impossible de localiser les fichiers du pack de mods. Vérifiez votre connexion et réessayez."
     },
     "rollback": {
       "hint": "Vous pouvez annuler la dernière mise à jour du pack et rétablir fichiers et chargeur comme avant.",

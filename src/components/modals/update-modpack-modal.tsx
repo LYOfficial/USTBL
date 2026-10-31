@@ -797,7 +797,12 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
       <Progress
         size="sm"
         colorScheme={primaryColor}
-        isIndeterminate={!progress || progress.total === 0}
+        isIndeterminate={
+          !progress ||
+          progress.total === 0 ||
+          progress.stage === "preparing" ||
+          progress.stage === "locating"
+        }
         value={
           progress && progress.total > 0
             ? (progress.done / progress.total) * 100
@@ -854,6 +859,14 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
                   ? "UpdateModpackModal.status.checking"
                   : "UpdateModpackModal.status.planning"
               )}
+            </Text>
+          )}
+          {planPhase === "planning" && progress && (
+            <Text className="secondary-text" fontSize="xs" mb={3}>
+              {t(`Services.campusInstall.stage.${progress.stage}`, {
+                done: progress.done,
+                total: progress.total,
+              })}
             </Text>
           )}
           {!checking && renderChecked()}

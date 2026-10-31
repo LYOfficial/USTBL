@@ -213,17 +213,28 @@ impl PackSession {
 
   /// Ask the platform which packs hold `sha1s`. A pack the platform cannot
   /// hand out (gone, or too many of them) is reported as unavailable. Asking
-  /// for the same set again is a no-op, so an early locate (started before
+  /// for a subset again is a no-op, so an early locate (started before
   /// the local files were hashed) is reused by the fetch that follows.
   pub async fn prepare(&self, sha1s: &[String]) -> USTBLResult<()> {
     let mut wanted = sha1s.to_vec();
     wanted.sort();
     wanted.dedup();
     let mut state = self.state.lock().await;
-    if state.located.is_some() && state.wanted == wanted {
+    if state.located.is_some()
+      && wanted
+        .iter()
+        .all(|sha1| state.wanted.binary_search(sha1).is_ok())
+    {
       return Ok(());
     }
+    let started = std::time::Instant::now();
     state.located = Some(self.plan(&wanted).await?);
+    log::info!(
+      "modpack pack locate request: version={}, sha1s={}, elapsed_ms={}",
+      self.version_id,
+      wanted.len(),
+      started.elapsed().as_millis()
+    );
     state.wanted = wanted;
     state.generation += 1;
     Ok(())
@@ -1019,13 +1030,14 @@ mod tests {
   async fn preparing_the_same_files_again_reuses_the_first_locate() {
     let (session, fake, _work) = session(Fake::new(&[("aa", b"x"), ("bb", b"y")]));
     session.prepare(&["aa".into(), "bb".into()]).await.unwrap();
-    // An early locate for exactly these files is not repeated by the fetch's
-    // own prepare; another set locates again, and only once.
+    // The fetch often needs only a subset: identical local files and rules
+    // can remove entries from the manifest's early locate.
     session.prepare(&["bb".into(), "aa".into()]).await.unwrap();
     session.prepare(&["aa".into()]).await.unwrap();
     session.prepare(&["aa".into()]).await.unwrap();
     let calls = fake.calls();
-    assert_eq!(calls.iter().filter(|c| *c == "locate").count(), 2);
+    assert_eq!(calls.iter().filter(|c| *c == "locate").count(), 1);
+    session.fetch("bb", &_work.join("b")).await.unwrap();
   }
 
   #[tokio::test]

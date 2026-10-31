@@ -470,6 +470,10 @@ pub fn pack_wanted(files: &[&RemoteFile]) -> Vec<(std::sync::Arc<PackSession>, V
 /// comparison has to tell its error apart from theirs.
 pub fn wrap_locate(error: crate::error::USTBLError) -> crate::error::USTBLError {
   log::warn!("modpack pack locate failed: {error:?}");
+  // Preserve actionable domain errors (not latest, missing packs, etc.).
+  if error.0.starts_with("MODPACK_UPDATE_") {
+    return error;
+  }
   InstanceError::ModpackUpdateLocateLocating.into()
 }
 
@@ -735,6 +739,11 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
     );
   }
   let wanted: Vec<&RemoteFile> = to_fetch.iter().map(|(file, _)| *file).collect();
+  env.report(Progress {
+    stage: Stage::Locating,
+    done: 0,
+    total: 1,
+  });
   prepare_packs(&wanted).await?;
   // Plan every session's merged groups up front: all of its files, wherever
   // they sit in `to_fetch`, are grouped by pack offset. Each group becomes
