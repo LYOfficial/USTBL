@@ -696,6 +696,7 @@
       "retry": "再試行",
       "neoforge-libraries": "NeoForge ランタイムライブラリ",
       "forge-libraries": "Forge ランタイムライブラリ",
+      "loader-installer": "ローダーインストーラー",
       "launcher-update": "ランチャーを更新",
       "mojang-java": "Java {{param}} ランタイム",
       "modpack-publish": "モッドパックを公開 {{param}}",
@@ -1399,7 +1400,8 @@
     "basicInfo": {
       "title": "基本情報",
       "gameVersion": "ゲームバージョン",
-      "playTime": "累計プレイ時間"
+      "playTime": "累計プレイ時間",
+      "loaderDownloadFailed": "ローダーのダウンロードに失敗しました。インスタンス一覧を更新すると再試行します。"
     },
     "screenshots": {
       "title": "スクリーンショット"

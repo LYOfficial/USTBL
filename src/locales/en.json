@@ -696,6 +696,7 @@
       "retry": "Retry",
       "neoforge-libraries": "NeoForge Libraries",
       "forge-libraries": "Forge Libraries",
+      "loader-installer": "Loader Installer",
       "launcher-update": "Update Launcher",
       "mojang-java": "Java {{param}} Runtime",
       "modpack-publish": "Publish modpack {{param}}",
@@ -1399,7 +1400,8 @@
     "basicInfo": {
       "title": "Basic Info",
       "gameVersion": "Version",
-      "playTime": "Playtime"
+      "playTime": "Playtime",
+      "loaderDownloadFailed": "Loader download failed. Refresh the instance list to retry."
     },
     "screenshots": {
       "title": "Screenshots"

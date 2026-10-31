@@ -90,6 +90,7 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
   const { t } = useTranslation();
   const loaderCompletionClaims = React.useRef(new Map<string, Set<string>>());
   const loaderInstallsInFlight = React.useRef(new Set<string>());
+  const loaderPreparationsClaimed = React.useRef(new Set<string>());
   const [loaderCompletionTick, setLoaderCompletionTick] = useState(0);
 
   useEffect(() => {
@@ -509,6 +510,36 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
 
           const { name, version } = parseTaskGroup(payload.taskGroup);
 
+          if (
+            (name === "loader-installer" || name === "optifine-installer") &&
+            payload.event === GTaskEventStatusEnums.Completed &&
+            version &&
+            !loaderPreparationsClaimed.current.has(payload.taskGroup)
+          ) {
+            const instanceId = version;
+            const component =
+              name === "optifine-installer" ? "optifine" : "loader";
+            loaderPreparationsClaimed.current.add(payload.taskGroup);
+            InstanceService.prepareModLoaderInstall(instanceId, component)
+              .then((response) => {
+                if (response.status !== "success") {
+                  toast({
+                    status: "error",
+                    title: response.message,
+                    description: response.details,
+                  });
+                  getInstanceList(true);
+                }
+              })
+              .catch((error) => {
+                logger.error(
+                  "Failed to prepare mod loader after installer download:",
+                  error
+                );
+                getInstanceList(true);
+              });
+          }
+
           // OptiFine may bundle every runtime dependency, leaving an empty
           // group: it has no Created task event to add its card to the list.
           if (
@@ -527,7 +558,12 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
 
           // Publishing and campus installs report their own final result.
           // The install's initial toast is emitted when it is submitted.
-          if (name !== "modpack-publish" && name !== "modpack-install")
+          if (
+            name !== "modpack-publish" &&
+            name !== "modpack-install" &&
+            name !== "loader-installer" &&
+            name !== "optifine-installer"
+          )
             toast({
               status:
                 payload.event === GTaskEventStatusEnums.Failed

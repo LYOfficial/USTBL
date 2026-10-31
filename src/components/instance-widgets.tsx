@@ -43,6 +43,7 @@ import { useInstanceSharedData } from "@/contexts/instance";
 import { useSharedModals } from "@/contexts/shared-modal";
 import { ModLoaderType } from "@/enums/instance";
 import { GetStateFlag } from "@/hooks/get-state";
+import { ModLoaderStatus } from "@/models/instance/misc";
 import { LocalModInfo } from "@/models/instance/misc";
 import { ScreenshotInfo } from "@/models/instance/misc";
 import { WorldInfo } from "@/models/instance/world";
@@ -131,6 +132,11 @@ export const InstanceBasicInfoWidget = () => {
                   noOfLines={1}
                 >{`${summary?.modLoader.loaderType} ${parseModLoaderVersion(summary?.modLoader.version || "")}`}</Text>
               )}
+            {summary?.modLoader.status === ModLoaderStatus.DownloadFailed && (
+              <Text noOfLines={1} color="orange.400">
+                {t("InstanceWidgets.basicInfo.loaderDownloadFailed")}
+              </Text>
+            )}
           </VStack>
         }
         prefixElement={

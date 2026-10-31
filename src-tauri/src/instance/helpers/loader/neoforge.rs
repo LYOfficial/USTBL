@@ -8,7 +8,9 @@ use zip::ZipArchive;
 
 use crate::error::USTBLResult;
 use crate::instance::helpers::client_json::{LaunchArgumentTemplate, McClientInfo};
-use crate::instance::helpers::loader::common::add_library_entry;
+use crate::instance::helpers::loader::common::{
+  add_library_entry, installer_task_group, is_valid_installer,
+};
 use crate::instance::helpers::loader::forge::InstallProfile;
 use crate::instance::helpers::misc::get_instance_subdir_paths;
 use crate::instance::models::misc::{Instance, InstanceError, InstanceSubdirType, ModLoader};
@@ -157,8 +159,24 @@ pub async fn download_neoforge_libraries(
     ),
     None,
   )?);
-  if !installer_path.exists() {
-    return Err(InstanceError::LoaderInstallerNotFound.into());
+  if !is_valid_installer(&installer_path) {
+    let _ = fs::remove_file(&installer_path);
+    let mut installer_tasks = Vec::new();
+    install_neoforge_loader(
+      priority,
+      &instance.mod_loader,
+      lib_dir.clone(),
+      &mut installer_tasks,
+    )
+    .await?;
+    schedule_progressive_task_group(
+      app.clone(),
+      installer_task_group(&instance.id, false),
+      installer_tasks,
+      true,
+    )
+    .await?;
+    return Ok(());
   }
   let (content, version) = {
     let file = File::open(&installer_path)?;

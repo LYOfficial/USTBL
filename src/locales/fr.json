@@ -696,6 +696,7 @@
       "retry": "Réessayer",
       "neoforge-libraries": "Bibliothèques d'exécution de NeoForge ",
       "forge-libraries": "Bibliothèques d'exécution de Forge",
+      "loader-installer": "Installateur du chargeur",
       "launcher-update": "Mettre à jour le lanceur",
       "mojang-java": "Java {{param}} fonctionne",
       "modpack-publish": "Publication du modpack {{param}}",
@@ -1399,7 +1400,8 @@
     "basicInfo": {
       "title": "Informations de base",
       "gameVersion": "Version du jeu",
-      "playTime": "Temps de jeu"
+      "playTime": "Temps de jeu",
+      "loaderDownloadFailed": "Échec du téléchargement du chargeur. Actualisez la liste des instances pour réessayer."
     },
     "screenshots": {
       "title": "Captures d'écran"

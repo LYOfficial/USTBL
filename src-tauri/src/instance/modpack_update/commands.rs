@@ -18,7 +18,10 @@ use super::restore::restore_component_profile;
 use super::sources::{download_param, latest_version, resolve_remote, LatestVersion};
 use crate::error::USTBLResult;
 use crate::instance::commands::switch_mod_loader;
-use crate::instance::helpers::misc::{get_instance_game_config, refresh_and_update_instances};
+use crate::instance::helpers::client_json::McClientInfo;
+use crate::instance::helpers::misc::{
+  get_instance_game_config, get_instance_subdir_paths, refresh_and_update_instances,
+};
 use crate::instance::helpers::modpack::baseline::{
   BaselineLoader, ModpackBaseline, BASELINE_FILE_NAME,
 };
@@ -28,12 +31,16 @@ use crate::instance::models::misc::{
   OriginPlatform,
 };
 use crate::launch::models::LaunchingState;
-use crate::resource::models::ModLoaderResourceInfo;
+use crate::launch::helpers::file_validator::{get_invalid_assets, get_invalid_library_files};
+use crate::resource::helpers::misc::{download_source_candidates, get_source_priority_list};
+use crate::resource::models::{ModLoaderResourceInfo, ResourceType};
 use crate::tasks::download::DownloadParam;
+use crate::tasks::download::DownloadTransferOptions;
 use crate::tasks::monitor::TaskMonitor;
 use crate::tasks::streams::desc::PDesc;
 use crate::tasks::upload::upload_handle;
 use crate::tasks::{PTaskHandle, PTaskParam};
+use crate::utils::fs::validate_sha1;
 use async_trait::async_trait;
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
@@ -2118,6 +2125,7 @@ async fn install_campus_modpack_inner(
   waiting.progress(Stage::WaitingClient);
   let mut client_group =
     load_campus_install_record(&instance.version_path).and_then(|record| record.client_group);
+  let mut client_requeued = false;
   // Pending installs may be resumed while their client download is still
   // active (including restored download tasks after a launcher restart).
   loop {
@@ -2126,6 +2134,17 @@ async fn install_campus_modpack_inner(
       &instance,
       client_group.as_deref(),
     );
+    if descriptors.is_empty() && !client_requeued {
+      client_requeued = true;
+      if let Some(group) = resume_campus_client(&app, &instance).await? {
+        client_group = Some(group);
+        if let Some(mut record) = load_campus_install_record(&instance.version_path) {
+          record.client_group = client_group.clone();
+          save_campus_install_record(&instance.version_path, &record)?;
+        }
+        continue;
+      }
+    }
     if let Some(client) = descriptors.first() {
       if client_group != client.task_group {
         client_group = client.task_group.clone();
@@ -2290,6 +2309,64 @@ async fn install_campus_modpack_inner(
     version_id,
     loader_install_pending: env.loader_install_pending.load(Ordering::SeqCst),
   })
+}
+
+async fn resume_campus_client(
+  app: &AppHandle,
+  instance: &Instance,
+) -> USTBLResult<Option<String>> {
+  let json_path = instance.version_path.join(format!("{}.json", instance.name));
+  let client: McClientInfo = crate::storage::load_json_async(&json_path).await?;
+  let priority = {
+    let config = app.state::<Mutex<crate::launcher_config::models::LauncherConfig>>();
+    let snapshot = config.lock()?.clone();
+    get_source_priority_list(&snapshot)
+  };
+  let dirs = get_instance_subdir_paths(
+    app,
+    instance,
+    &[&crate::instance::models::misc::InstanceSubdirType::Libraries,
+      &crate::instance::models::misc::InstanceSubdirType::Assets],
+  ).ok_or(InstanceError::InvalidSourcePath)?;
+  let [libraries, assets] = dirs.as_slice() else {
+    return Err(InstanceError::InvalidSourcePath.into());
+  };
+  let mut params = get_invalid_library_files(&priority, libraries, &client, true).await?;
+  params.extend(get_invalid_assets(app, &client, &priority, assets, true).await?);
+  let jar = instance.version_path.join(format!("{}.jar", instance.name));
+  let Some(download) = client.downloads.get("client") else {
+    return Err(InstanceError::ClientJsonParseError.into());
+  };
+  let jar_valid = jar.is_file()
+    && (download.sha1.is_empty() || validate_sha1(jar.clone(), download.sha1.clone()).is_ok());
+  if !jar_valid {
+    let sources = download_source_candidates(
+      &url::Url::parse(&download.url)?,
+      &[ResourceType::Launcher],
+      &priority,
+    )?;
+    let mut sources = sources.into_iter();
+    let src = sources.next().ok_or(InstanceError::ClientJsonParseError)?;
+    params.push(PTaskParam::Download(DownloadParam {
+      src,
+      dest: jar,
+      filename: None,
+      sha1: (!download.sha1.is_empty()).then(|| download.sha1.clone()),
+      custom_headers: None,
+      transfer_options: DownloadTransferOptions::resumable(sources.collect(), 10),
+    }));
+  }
+  if params.is_empty() {
+    return Ok(None);
+  }
+  let group = crate::tasks::commands::schedule_progressive_task_group(
+    app.clone(),
+    format!("retry-game-client?{}", instance.name),
+    params,
+    true,
+  )
+  .await?;
+  Ok(Some(group.task_group))
 }
 
 /// Undo or finish an update that was interrupted. Returns whether anything

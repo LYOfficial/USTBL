@@ -201,7 +201,6 @@ async fn refresh_instance(
       log::warn!("Failed to install mod loader for {}: {:?}", name, e);
       cfg_read.mod_loader.status = ModLoaderStatus::DownloadFailed;
       cfg_read.save_json_cfg().await?;
-      return Ok(None);
     }
   }
 
@@ -240,7 +239,6 @@ async fn refresh_instance(
         optifine_cfg.status = ModLoaderStatus::DownloadFailed;
       }
       cfg_read.save_json_cfg().await?;
-      return Ok(None);
     }
   }
 

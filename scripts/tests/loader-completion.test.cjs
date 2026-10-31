@@ -93,6 +93,13 @@ test("older failed history does not block a successful retry or an empty OptiFin
   );
 });
 
+test("installer-only completion never triggers loader processors", () => {
+  assert.deepEqual(
+    takeLoaderCompletions([group("loader-installer", "a")], new Map()),
+    []
+  );
+});
+
 test("clearing part of the completed history does not repeat completion", () => {
   const claims = new Map();
   const groups = [

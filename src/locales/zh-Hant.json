@@ -696,6 +696,7 @@
       "retry": "重試",
       "neoforge-libraries": "NeoForge 執行庫",
       "forge-libraries": "Forge 執行庫",
+      "loader-installer": "載入器安裝程式",
       "launcher-update": "更新啟動器",
       "mojang-java": "Java {{param}} 執行時",
       "modpack-publish": "發布整合包 {{param}}",
@@ -1399,7 +1400,8 @@
     "basicInfo": {
       "title": "基本資訊",
       "gameVersion": "遊戲版本",
-      "playTime": "遊戲時長"
+      "playTime": "遊戲時長",
+      "loaderDownloadFailed": "載入器下載失敗，重新整理實例列表後將自動重試"
     },
     "screenshots": {
       "title": "截圖"
