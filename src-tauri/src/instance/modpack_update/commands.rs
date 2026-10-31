@@ -170,6 +170,35 @@ fn ensure_not_running(app: &AppHandle, instance_id: &str) -> USTBLResult<()> {
   Ok(())
 }
 
+/// Instances an install or an update is being planned or applied to, from
+/// the command's first step (prepare included) until it answers. The
+/// `UpdateGuard` only covers the transaction on disk; this one covers the
+/// whole run, so a second request is told busy instead of re-planning.
+fn active_plans() -> &'static Mutex<std::collections::HashSet<PathBuf>> {
+  static ACTIVE: OnceLock<Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
+  ACTIVE.get_or_init(Default::default)
+}
+
+struct PlanGuard(PathBuf);
+
+impl PlanGuard {
+  fn acquire(root: &Path) -> USTBLResult<Self> {
+    let mut active = active_plans().lock()?;
+    if !active.insert(root.to_path_buf()) {
+      return Err(InstanceError::ModpackUpdateBusy.into());
+    }
+    Ok(Self(root.to_path_buf()))
+  }
+}
+
+impl Drop for PlanGuard {
+  fn drop(&mut self) {
+    if let Ok(mut active) = active_plans().lock() {
+      active.remove(&self.0);
+    }
+  }
+}
+
 /// The baseline is the record of what the modpack installed. Without a
 /// matching one the instance cannot be compared safely.
 async fn load_baseline(target: &Target) -> USTBLResult<ModpackBaseline> {
@@ -1225,6 +1254,7 @@ pub async fn apply_modpack_update(
   }
   let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   ensure_not_running(&app, &instance_id)?;
+  let _plan_guard = PlanGuard::acquire(&target.root)?;
   let baseline = load_baseline(&target).await?;
   recover_checked(&target.root, || ensure_not_running(&app, &instance_id))?;
   let latest = latest_version(&app, &target.origin)
@@ -1370,6 +1400,8 @@ pub async fn install_campus_modpack(
   refresh_and_update_instances(&app, false).await;
   let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   ensure_not_running(&app, &instance_id)?;
+  // From here until the answer this instance is busy, plan and apply alike.
+  let _plan_guard = PlanGuard::acquire(&target.root)?;
   if target.origin.platform != OriginPlatform::Campus || !is_fresh(&target.origin) {
     // The one-shot install only knows the fresh campus case; anything else
     // goes through plan and apply like the update dialog does.
