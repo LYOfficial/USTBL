@@ -191,10 +191,10 @@ test("task context applies removal events before repeated resume creation and ke
     const group = `modpack-install?航空学 [games:a]@${attempt}`;
     listeners.removed(previous ? [previous] : []);
     for (const [index, filename] of [
-      "WaitingClient",
       "Preparing",
       "Locating",
       "Fetching",
+      "WaitingClient",
       "Applying",
     ].entries()) {
       const id = attempt * 10 + index;
@@ -218,7 +218,7 @@ test("task context applies removal events before repeated resume creation and ke
     assert.equal(states[0][0].taskDescs.length, 5);
     assert.deepEqual(
       states[0][0].taskDescs.map((task) => task.payload.filename),
-      ["WaitingClient", "Preparing", "Locating", "Fetching", "Applying"]
+      ["Preparing", "Locating", "Fetching", "WaitingClient", "Applying"]
     );
     listeners.progress({ group, stage: "locating" });
     assert.deepEqual(Object.keys(states[1]), [group]);
@@ -266,10 +266,10 @@ test("resume and discard controls render once outside the task group cards", () 
 test("install stages keep execution order regardless of status and insertion order", () => {
   const stages = [
     "Applying",
+    "WaitingClient",
     "Locating",
     "Fetching",
     "Preparing",
-    "WaitingClient",
   ].map((filename, index) => ({
     payload: { filename },
     status: index ? "Completed" : "Failed",
@@ -278,16 +278,16 @@ test("install stages keep execution order regardless of status and insertion ord
     stages
       .sort(compareCampusInstallStages)
       .map((task) => task.payload.filename),
-    ["WaitingClient", "Preparing", "Locating", "Fetching", "Applying"]
+    ["Preparing", "Locating", "Fetching", "WaitingClient", "Applying"]
   );
 });
 
 test("unstarted install stages never animate, only an active stage without a total does", () => {
   for (const filename of [
-    "WaitingClient",
     "Preparing",
     "Locating",
     "Fetching",
+    "WaitingClient",
     "Applying",
   ]) {
     for (const total of [0, 1]) {

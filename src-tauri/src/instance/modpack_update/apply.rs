@@ -204,6 +204,14 @@ pub trait UpdateEnv: Send + Sync {
   async fn cancelled(&self) {
     std::future::pending::<()>().await
   }
+  /// Called once everything is staged and nothing has been written to the
+  /// instance yet, right before `begin_commit`. The caller may wait here for
+  /// what the commit needs (a first install waits for the game client). The
+  /// run can still be cancelled while it waits; an error ends the run like any
+  /// other failure before the journal, so the staged files stay for a retry.
+  async fn before_commit(&self) -> USTBLResult<()> {
+    Ok(())
+  }
   /// Called once, right before the journal is written. Fails when the run was
   /// cancelled; otherwise the run can no longer be cancelled.
   fn begin_commit(&self) -> USTBLResult<()> {
@@ -1245,6 +1253,8 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
     }
   }
 
+  env.before_commit().await?;
+
   // Phase 2: write the journal and save the files the update rewrites. From
   // here on the run cannot be cancelled.
   env.begin_commit()?;
@@ -1489,6 +1499,9 @@ mod tests {
     slow_downloads: bool,
     downloads_in_flight: std::sync::atomic::AtomicUsize,
     downloads_peak: std::sync::atomic::AtomicUsize,
+    hold_commit: Option<Arc<tokio::sync::Notify>>,
+    before_commit_error: Option<String>,
+    waiting_to_commit: std::sync::atomic::AtomicBool,
   }
 
   #[async_trait]
@@ -1503,6 +1516,19 @@ mod tests {
       while !self.cancel_requested() {
         tokio::time::sleep(std::time::Duration::from_millis(1)).await;
       }
+    }
+    async fn before_commit(&self) -> USTBLResult<()> {
+      self.waiting_to_commit.store(true, Ordering::SeqCst);
+      if let Some(error) = &self.before_commit_error {
+        return Err(crate::error::USTBLError(error.clone()));
+      }
+      if let Some(hold) = &self.hold_commit {
+        tokio::select! {
+          () = hold.notified() => {}
+          () = self.cancelled() => return Err(cancelled_error()),
+        }
+      }
+      Ok(())
     }
     fn begin_commit(&self) -> USTBLResult<()> {
       if self.cancel_requested() {
@@ -3175,6 +3201,127 @@ mod tests {
 
     let peak = transport.peak.load(Ordering::SeqCst);
     assert!(peak > 1 && peak <= FETCH_CONCURRENCY, "peak was {peak}");
+  }
+  /// Drive `run` until the env reports that it waits to commit.
+  async fn until_waiting_to_commit<T: std::fmt::Debug>(
+    run: &mut std::pin::Pin<Box<impl std::future::Future<Output = T>>>,
+    env: &FakeEnv,
+  ) {
+    for _ in 0..1000 {
+      tokio::select! {
+        result = &mut *run => panic!("finished before the commit wait: {result:?}"),
+        () = tokio::time::sleep(std::time::Duration::from_millis(2)) => {}
+      }
+      if env.waiting_to_commit.load(Ordering::SeqCst) {
+        return;
+      }
+    }
+    panic!("never reached the commit wait");
+  }
+
+  #[tokio::test]
+  async fn files_are_staged_while_the_commit_waits_and_nothing_is_written_to_the_instance() {
+    let root = setup();
+    let hold = Arc::new(tokio::sync::Notify::new());
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      hold_commit: Some(hold.clone()),
+      ..Default::default()
+    };
+    let file = url_file("mods/a.jar", "a", &mut env);
+    let operations = vec![write_op(&file), remove_op("mods/gone.jar")];
+    let mut run = Box::pin(apply(
+      &env,
+      request(&root, vec![file], operations, "0.15.0"),
+    ));
+
+    until_waiting_to_commit(&mut run, &env).await;
+
+    // Fetched and verified into staging; the instance and the journal are
+    // untouched, and the run is still cancellable.
+    assert_eq!(
+      fs::read_to_string(staging_dir(&root.0).join("mods/a.jar")).unwrap(),
+      "a"
+    );
+    assert_eq!(root.read("mods/a.jar"), None);
+    assert_eq!(root.read("mods/gone.jar").as_deref(), Some("gone"));
+    assert!(!journal_path(&root.0).exists());
+    assert!(!env.committing.load(Ordering::SeqCst));
+    assert!(env.switched.lock().unwrap().is_empty());
+
+    hold.notify_one();
+    run.await.unwrap();
+
+    assert_eq!(root.read("mods/a.jar").as_deref(), Some("a"));
+    assert_eq!(root.read("mods/gone.jar"), None);
+    assert!(env.committing.load(Ordering::SeqCst));
+  }
+
+  #[tokio::test]
+  async fn a_failed_commit_wait_writes_nothing_and_keeps_the_staged_files_for_a_retry() {
+    let root = setup();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      before_commit_error: Some("MODPACK_INSTALL_INTERRUPTED".into()),
+      ..Default::default()
+    };
+    let file = url_file("mods/a.jar", "a", &mut env);
+    let operations = vec![write_op(&file), remove_op("mods/gone.jar")];
+
+    let error = apply(
+      &env,
+      request(&root, vec![file.clone()], operations.clone(), "0.15.0"),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(error.0, "MODPACK_INSTALL_INTERRUPTED");
+    assert_eq!(root.read("mods/a.jar"), None);
+    assert_eq!(root.read("mods/gone.jar").as_deref(), Some("gone"));
+    assert_eq!(root.read("pack.json").as_deref(), Some("client-v1"));
+    assert!(!journal_path(&root.0).exists());
+    assert!(!env.committing.load(Ordering::SeqCst));
+    assert!(env.switched.lock().unwrap().is_empty());
+    assert!(env.committed.lock().unwrap().is_empty());
+    // The retry finds the file already staged and fetches nothing.
+    let fetched = env.fetched.lock().unwrap().len();
+    let retry = FakeEnv {
+      root: root.0.clone(),
+      contents: env.contents.clone(),
+      ..Default::default()
+    };
+    apply(&retry, request(&root, vec![file], operations, "0.15.0"))
+      .await
+      .unwrap();
+    assert_eq!(fetched, 1);
+    assert!(retry.fetched.lock().unwrap().is_empty());
+    assert_eq!(root.read("mods/a.jar").as_deref(), Some("a"));
+  }
+
+  #[tokio::test]
+  async fn a_run_can_be_abandoned_while_it_waits_to_commit() {
+    let root = setup();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      hold_commit: Some(Arc::new(tokio::sync::Notify::new())),
+      ..Default::default()
+    };
+    let file = url_file("mods/a.jar", "a", &mut env);
+    let operations = vec![write_op(&file), remove_op("mods/gone.jar")];
+    let mut run = Box::pin(apply(
+      &env,
+      request(&root, vec![file], operations, "0.15.0"),
+    ));
+
+    until_waiting_to_commit(&mut run, &env).await;
+    env.cancel.store(true, Ordering::SeqCst);
+    let error = run.await.unwrap_err();
+
+    assert_eq!(error.0, cancelled_error().0);
+    assert_eq!(root.read("mods/a.jar"), None);
+    assert_eq!(root.read("mods/gone.jar").as_deref(), Some("gone"));
+    assert!(!journal_path(&root.0).exists());
+    assert!(!env.committing.load(Ordering::SeqCst));
   }
   #[tokio::test]
   async fn distant_groups_are_fetched_concurrently() {

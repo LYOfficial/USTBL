@@ -148,10 +148,10 @@ export const canDiscardRunningInstall = (
 };
 
 const installStages = [
-  "waitingclient",
   "preparing",
   "locating",
   "fetching",
+  "waitingclient",
   "applying",
 ];
 
