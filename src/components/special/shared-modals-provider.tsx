@@ -7,6 +7,7 @@ import DownloadResourceModal from "@/components/modals/download-resource-modal";
 import ExportModpackModal from "@/components/modals/export-modpack-modal";
 import GenericConfirmDialog from "@/components/modals/generic-confirm-dialog";
 import ImportModpackModal from "@/components/modals/import-modpack-modal";
+import InstallPlatformModpackModal from "@/components/modals/install-platform-modpack-modal";
 import LaunchProcessModal from "@/components/modals/launch-process-modal";
 import ModpackInstanceDetailsModal from "@/components/modals/modpack-instance-details-modal";
 import ModpackLocalChangesModal from "@/components/modals/modpack-local-changes-modal";
@@ -47,6 +48,7 @@ const SharedModals: React.FC<{ children: React.ReactNode }> = ({
     "export-modpack": ExportModpackModal,
     "generic-confirm": GenericConfirmDialog,
     "import-modpack": ImportModpackModal,
+    "install-platform-modpack": InstallPlatformModpackModal,
     launch: LaunchProcessModal,
     "modpack-instance-details": ModpackInstanceDetailsModal,
     "modpack-local-changes": ModpackLocalChangesModal,

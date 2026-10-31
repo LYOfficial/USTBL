@@ -645,6 +645,25 @@
       "alpha": "アルファ版",
       "beta": "ベータ版",
       "release": "正式版"
+    },
+    "error": {
+      "missingSha1": "このファイルには SHA-1 がないため、インストールできません"
+    }
+  },
+  "InstallPlatformModpackModal": {
+    "header": {
+      "title": "Modpack をインストール"
+    },
+    "label": {
+      "gameVersion": "ゲームバージョン",
+      "modLoader": "Mod ローダー",
+      "manifest": "Modpack マニフェストに従う",
+      "modpackVersion": "Modpack バージョン",
+      "modpackInfo": "Modpack 情報",
+      "summary": "概要"
+    },
+    "button": {
+      "install": "インストール"
     }
   },
   "DownloadTasksPage": {
@@ -2270,7 +2289,7 @@
           "title": "適切な Java ランタイムの選択に失敗",
           "description": {
             "INSTANCE_NOT_FOUND_BY_ID": "インスタンス ID が存在しません",
-            "LAUNCH_INSTANCE_INSTALLING": "このインスタンスは学内パックのインストールが未完了のため起動できません。「ダウンロードとアップロードのタスク」でインストールを完了してください。",
+            "LAUNCH_INSTANCE_INSTALLING": "このインスタンスは Modpack のインストールが未完了のため起動できません。「ダウンロードとアップロードのタスク」でインストールを完了してください。",
             "NO_SUITABLE_JAVA": "選択可能な適切な Java ランタイムがありません",
             "SELECTED_JAVA_UNAVAILABLE": "手動で選択した Java ランタイムが削除されたか利用できません",
             "MODPACK_UPDATE_BUSY": "このインスタンスのモッドパックは更新中です。更新タスクの完了後に起動してください"

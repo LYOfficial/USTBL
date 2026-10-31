@@ -48,6 +48,9 @@ export interface ModpackOriginInput {
   projectId: string;
   versionId: string;
   expectedSha1: string;
+  url?: string;
+  label?: string;
+  loaderType?: ModLoaderType;
 }
 
 export interface InstanceSummary {

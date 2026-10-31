@@ -7,7 +7,6 @@ import {
   VStack,
   useDisclosure,
 } from "@chakra-ui/react";
-import { downloadDir } from "@tauri-apps/api/path";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -18,21 +17,18 @@ import { OptionItemGroup } from "@/components/common/option-item";
 import InstallCampusModpackModal from "@/components/modals/install-campus-modpack-modal";
 import { useLauncherConfig } from "@/contexts/config";
 import { useSharedModals } from "@/contexts/shared-modal";
-import { useTaskContext } from "@/contexts/task";
 import { useToast } from "@/contexts/toast";
+import { OtherResourceSource } from "@/enums/resource";
 import {
   CampusModpackLine,
   CampusModpackProject,
   CampusModpackRecommendation,
 } from "@/models/campus-modpack";
 import { InstanceSummary } from "@/models/instance/misc";
-import { TaskTypeEnums } from "@/models/task";
 import { VustbAccount, isVustbAdmin } from "@/models/vustb";
 import { AccountService } from "@/services/account";
 import { CampusModpackService } from "@/services/campus-modpack";
 import { campusProjectRefs, findInstancesOfLine } from "@/utils/modpack-ledger";
-import { registerPendingModpackOrigin } from "@/utils/modpack-origin";
-import { sanitizeFileName } from "@/utils/string";
 
 type CampusSelection = {
   project: CampusModpackProject;
@@ -63,8 +59,8 @@ export const CampusPlatformSection: React.FC<CampusPlatformSectionProps> = ({
 }) => {
   const { t } = useTranslation();
   const toast = useToast();
-  const { requireVustbAccount, openGenericConfirmDialog } = useSharedModals();
-  const { handleScheduleProgressiveTaskGroup } = useTaskContext();
+  const { requireVustbAccount, openGenericConfirmDialog, openSharedModal } =
+    useSharedModals();
   const { config } = useLauncherConfig();
   const primaryColor = config.appearance.theme.primaryColor;
   const installModal = useDisclosure();
@@ -111,7 +107,7 @@ export const CampusPlatformSection: React.FC<CampusPlatformSectionProps> = ({
   /**
    * Installs the newest Modrinth version of the slot's project for the slot's
    * game version and loader, through the same download-then-import flow as any
-   * other modpack download.
+   * platform installation flow.
    */
   const handleInstallExternalAllowed = useCallback(
     async (rec: CampusModpackRecommendation) => {
@@ -166,41 +162,40 @@ export const CampusPlatformSection: React.FC<CampusPlatformSectionProps> = ({
         }
 
         const { version, file } = picked;
-        const baseDir = await downloadDir();
-        const fileName = sanitizeFileName(
-          file.filename || `${version.id}.mrpack`
-        );
-        const savePath = `${baseDir}/${fileName}`;
         const sha1: string = file.hashes?.sha1 || "";
-        // Only a published SHA-1 lets the backend prove the archive is this version.
-        if (sha1) {
-          registerPendingModpackOrigin(savePath, {
-            platform: "modrinth",
-            projectId: rec.projectRef,
-            versionId: version.id,
-            expectedSha1: sha1,
+        if (!sha1) {
+          toast({
+            title: t("DownloadSpecificResourceModal.error.missingSha1"),
+            status: "error",
           });
+          return;
         }
-        handleScheduleProgressiveTaskGroup("modpack", [
-          {
-            src: file.url,
-            dest: savePath,
+        openSharedModal("install-platform-modpack", {
+          projectName: externalProject?.title || rec.projectRef,
+          projectDescription: "",
+          projectIconSrc: "",
+          projectId: rec.projectRef,
+          source: OtherResourceSource.Modrinth,
+          file: {
+            resourceId: rec.projectRef,
+            fileId: version.id,
+            name: version.name || version.id,
+            releaseType: version.version_type || "release",
+            downloads: 0,
+            fileDate: version.date_published || "",
+            downloadUrl: file.url,
             sha1,
-            taskType: TaskTypeEnums.Download,
+            fileName: file.filename || `${version.id}.mrpack`,
+            dependencies: [],
+            loader: rec.loaderType || undefined,
           },
-        ]);
-        toast({
-          title: t("InstanceSyncPage.platform.downloadStarted", {
-            version: version.version_number || version.name,
-          }),
-          description: t("InstanceSyncPage.platform.downloadDescription"),
-          status: "success",
+          gameVersion: rec.gameVersion,
         });
       } finally {
         setDownloadingExternal(false);
       }
     },
-    [handleScheduleProgressiveTaskGroup, t, toast]
+    [externalProject, openSharedModal, t, toast]
   );
 
   const handleInstallExternal = useCallback(

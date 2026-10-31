@@ -1063,6 +1063,9 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
       bytes_total: 0,
     });
     let mut origin = request.origin.clone();
+    if origin.version_id.is_empty() {
+      origin.loader_type = request.remote.loader.loader_type;
+    }
     origin.version_id = request.remote.version_id.clone();
     let mut baseline = ModpackBaseline::build(
       &origin,

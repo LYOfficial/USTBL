@@ -645,6 +645,25 @@
       "alpha": "Alpha",
       "beta": "Bêta",
       "release": "Version stable"
+    },
+    "error": {
+      "missingSha1": "Ce fichier n'a pas de SHA-1 et ne peut pas être installé"
+    }
+  },
+  "InstallPlatformModpackModal": {
+    "header": {
+      "title": "Installer le modpack"
+    },
+    "label": {
+      "gameVersion": "Version du jeu",
+      "modLoader": "Chargeur de mods",
+      "manifest": "Selon le manifeste du modpack",
+      "modpackVersion": "Version du modpack",
+      "modpackInfo": "Informations du modpack",
+      "summary": "Résumé"
+    },
+    "button": {
+      "install": "Installer"
     }
   },
   "DownloadTasksPage": {
@@ -2270,7 +2289,7 @@
           "title": "Échec de la sélection d'un environnement Java approprié",
           "description": {
             "INSTANCE_NOT_FOUND_BY_ID": "ID d'instance introuvable",
-            "LAUNCH_INSTANCE_INSTALLING": "L’installation du pack du campus est inachevée pour cette instance. Terminez-la dans les tâches de téléchargement et d’envoi avant de lancer le jeu.",
+            "LAUNCH_INSTANCE_INSTALLING": "L’installation du modpack est inachevée pour cette instance. Terminez-la dans les tâches de téléchargement et d’envoi avant de lancer le jeu.",
             "NO_SUITABLE_JAVA": "Aucun environnement Java approprié disponible",
             "SELECTED_JAVA_UNAVAILABLE": "Le runtime Java sélectionné manuellement a été supprimé ou n'est pas disponible",
             "MODPACK_UPDATE_BUSY": "Le modpack de cette instance est en cours de mise à jour. Attendez la fin de la tâche avant de lancer le jeu"

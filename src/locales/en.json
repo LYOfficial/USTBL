@@ -645,6 +645,25 @@
       "alpha": "Alpha",
       "beta": "Beta",
       "release": "Release"
+    },
+    "error": {
+      "missingSha1": "This file has no SHA-1 and cannot be installed"
+    }
+  },
+  "InstallPlatformModpackModal": {
+    "header": {
+      "title": "Install Modpack"
+    },
+    "label": {
+      "gameVersion": "Game Version",
+      "modLoader": "Mod Loader",
+      "manifest": "As specified by the modpack manifest",
+      "modpackVersion": "Modpack Version",
+      "modpackInfo": "Modpack Info",
+      "summary": "Summary"
+    },
+    "button": {
+      "install": "Install"
     }
   },
   "DownloadTasksPage": {
@@ -2269,7 +2288,7 @@
         "error": {
           "title": "Failed to select suitable JRE",
           "description": {
-            "LAUNCH_INSTANCE_INSTALLING": "This instance has an unfinished campus installation and cannot be launched. Complete the installation in Download & Upload Tasks first.",
+            "LAUNCH_INSTANCE_INSTALLING": "This instance has an unfinished modpack installation and cannot be launched. Complete the installation in Download & Upload Tasks first.",
             "INSTANCE_NOT_FOUND_BY_ID": "Instance ID does not exist",
             "NO_SUITABLE_JAVA": "No suitable Java version found",
             "SELECTED_JAVA_UNAVAILABLE": "The manually selected Java runtime has been removed or is unavailable",

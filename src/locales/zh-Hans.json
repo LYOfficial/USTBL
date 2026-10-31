@@ -645,6 +645,25 @@
       "alpha": "内测版",
       "beta": "公测版",
       "release": "正式版"
+    },
+    "error": {
+      "missingSha1": "该文件没有 SHA-1，无法安装"
+    }
+  },
+  "InstallPlatformModpackModal": {
+    "header": {
+      "title": "安装整合包"
+    },
+    "label": {
+      "gameVersion": "游戏版本",
+      "modLoader": "模组加载器",
+      "manifest": "以整合包清单为准",
+      "modpackVersion": "整合包版本",
+      "modpackInfo": "整合包信息",
+      "summary": "简介"
+    },
+    "button": {
+      "install": "安装"
     }
   },
   "DownloadTasksPage": {
@@ -2270,7 +2289,7 @@
           "title": "选择合适 Java 运行时失败",
           "description": {
             "INSTANCE_NOT_FOUND_BY_ID": "实例 ID 不存在",
-            "LAUNCH_INSTANCE_INSTALLING": "此实例的校内安装尚未完成，暂时无法启动。请先前往下载与上传任务完成安装。",
+            "LAUNCH_INSTANCE_INSTALLING": "此实例的整合包安装尚未完成，暂时无法启动。请先前往下载与上传任务完成安装。",
             "NO_SUITABLE_JAVA": "没有合适的 Java 运行时可供选择",
             "MODPACK_UPDATE_BUSY": "该实例的整合包正在更新，请等待更新任务结束后再启动",
             "SELECTED_JAVA_UNAVAILABLE": "手动选择的 Java 运行时已移除或不可用"

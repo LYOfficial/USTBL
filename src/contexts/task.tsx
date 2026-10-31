@@ -48,7 +48,6 @@ import {
   removeCampusInstallGroups,
 } from "@/utils/campus-install-task";
 import { takeLoaderCompletions } from "@/utils/loader-completion";
-import { takePendingModpackOrigin } from "@/utils/modpack-origin";
 import {
   finishModpackUpdate,
   isModpackUpdateGroup,
@@ -619,19 +618,6 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
                   OtherResourceType.ShaderPack
                 );
                 break;
-              case "modpack": {
-                let group = newTasks.find(
-                  (t) => t.taskGroup === payload.taskGroup
-                );
-                if (group && group.taskDescs.length > 0) {
-                  const dest = destOf(group.taskDescs[0].payload) ?? "";
-                  openSharedModal("import-modpack", {
-                    path: dest,
-                    origin: takePendingModpackOrigin(dest),
-                  });
-                }
-                break;
-              }
               case "launcher-update": {
                 let group = newTasks.find(
                   (t) => t.taskGroup === payload.taskGroup
