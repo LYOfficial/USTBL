@@ -3277,14 +3277,19 @@
         "differs": "The content differs. Previous version {{previous}}, local {{local}}.",
         "formatOnly": "The text is the same; only line endings or similar formatting differ. Previous version {{previous}}, local {{local}}.",
         "unavailable": "Temporarily unable to retrieve the previous version's content."
-      }
+      },
+      "localDelete": "Also deleted locally",
+      "localDeleteHint": "This file will also be deleted locally after publishing (backed up first); choose ignore to keep it",
+      "localDeleteCount": "{{count}} also deleted locally"
     },
     "skipped": "{{count}} launcher file(s) were left out",
     "adoption": {
       "keptOther": "The instance already follows another modpack or line, so its source record was left alone.",
       "notIsolated": "Version isolation is off for this instance, so it was not linked to this modpack.",
       "localChanged": "The instance does not match the version just published (for example a file marked Delete is still on disk), so it was not linked to it. The next update will handle it from the version's contents.",
-      "recordFailed": "The version was published, but the instance could not be linked to it. The next check compares as usual."
+      "recordFailed": "The version was published, but the instance could not be linked to it. The next check compares as usual.",
+      "followedWithDeletes": "Followed this version; {{count}} local files were deleted by its rules. Backup: .ustbl-update/publish-deleted",
+      "deleteFailed": "The published version was not followed because deleting a local file failed. The backup was kept."
     },
     "started": {
       "title": "Upload started",
@@ -3320,7 +3325,8 @@
         "rulesAdded": "Ignore or delete rules new in this version.",
         "rulesRemoved": "Rules of the previous version this one no longer carries.",
         "rulesChanged": "Rules that switched between ignore and delete."
-      }
+      },
+      "localDeleted": "{{count}} also deleted locally"
     }
   },
   "InstallCampusModpackModal": {

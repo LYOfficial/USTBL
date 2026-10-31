@@ -26,6 +26,7 @@ export interface CampusPublishOutcome {
   skipped: string[];
   /** What happened to the instance's own record of the modpack. */
   adoption: CampusPublishAdoption;
+  locallyDeleted: number;
 }
 
 export type CampusPublishAdoption =
@@ -33,7 +34,8 @@ export type CampusPublishAdoption =
   | "keptOther"
   | "notIsolated"
   | "localChanged"
-  | "recordFailed";
+  | "recordFailed"
+  | "deleteFailed";
 
 /** What happens before the upload, while the publish dialog is still open. */
 export type CampusPublishStage = "hashing" | "packing";

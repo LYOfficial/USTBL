@@ -47,6 +47,7 @@ import {
   filterNodes,
   isFilterActive,
   keyOf,
+  localDeletePaths,
   nextState,
   restoreInheritance,
   setDirState,
@@ -113,6 +114,22 @@ const PublishFileTree: React.FC<PublishFileTreeProps> = ({
   );
   const counts = useMemo(() => countCategories(marks), [marks]);
   const dirCounts = useMemo(() => dirChangeCounts(marks), [marks]);
+  const localDeletes = useMemo(
+    () => new Set(localDeletePaths(context, draft)),
+    [context, draft]
+  );
+  const localDeleteDirCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    localDeletes.forEach((path) => {
+      let cut = path.lastIndexOf("/");
+      while (cut > 0) {
+        const parent = keyOf(path.slice(0, cut));
+        counts.set(parent, (counts.get(parent) ?? 0) + 1);
+        cut = path.lastIndexOf("/", cut - 1);
+      }
+    });
+    return counts;
+  }, [localDeletes]);
   const changeByKey = useMemo(
     () => new Map(changes.map((change) => [keyOf(change.path), change])),
     [changes]
@@ -228,6 +245,9 @@ const PublishFileTree: React.FC<PublishFileTreeProps> = ({
                 category={marks.get(keyOf(data.path))}
                 change={changeByKey.get(keyOf(data.path))}
                 dirChanges={dirCounts.get(keyOf(data.path)) ?? 0}
+                localDeleteCount={
+                  localDeleteDirCounts.get(keyOf(data.path)) ?? 0
+                }
                 onDraftChange={onDraftChange}
               />
             )}
@@ -250,6 +270,7 @@ interface PublishTreeRowProps {
   category: ChangeCategory | undefined;
   change: PublishChange | undefined;
   dirChanges: number;
+  localDeleteCount: number;
   onDraftChange: (updater: (prev: PublishDraft) => PublishDraft) => void;
 }
 
@@ -263,6 +284,7 @@ const PublishTreeRow: React.FC<PublishTreeRowProps> = ({
   category,
   change,
   dirChanges,
+  localDeleteCount,
   onDraftChange,
 }) => {
   const { t } = useTranslation();
@@ -341,6 +363,13 @@ const PublishTreeRow: React.FC<PublishTreeRowProps> = ({
             <TagLabel>{t("PublishModpackModal.tree.conflict")}</TagLabel>
           </Tag>
         ) : null}
+        {!isDir && !data.ghost && state === "delete" ? (
+          <Tooltip label={t("PublishModpackModal.tree.localDeleteHint")}>
+            <Tag size="sm" colorScheme="red" flexShrink={0}>
+              <TagLabel>{t("PublishModpackModal.tree.localDelete")}</TagLabel>
+            </Tag>
+          </Tooltip>
+        ) : null}
         {!isDir && category ? (
           <Tooltip label={t(`PublishModpackModal.tree.changeHint.${category}`)}>
             <Tag
@@ -366,6 +395,15 @@ const PublishTreeRow: React.FC<PublishTreeRowProps> = ({
           <Tag size="sm" variant="subtle" flexShrink={0}>
             <TagLabel>
               {t("PublishModpackModal.tree.dirChanges", { count: dirChanges })}
+            </TagLabel>
+          </Tag>
+        ) : null}
+        {isDir && localDeleteCount > 0 ? (
+          <Tag size="sm" colorScheme="red" flexShrink={0}>
+            <TagLabel>
+              {t("PublishModpackModal.tree.localDeleteCount", {
+                count: localDeleteCount,
+              })}
             </TagLabel>
           </Tag>
         ) : null}

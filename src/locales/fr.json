@@ -3277,14 +3277,19 @@
         "differs": "Le contenu diffère. Version précédente {{previous}}, local {{local}}.",
         "formatOnly": "Le texte est identique ; seuls les fins de ligne ou un formatage similaire diffèrent. Version précédente {{previous}}, local {{local}}.",
         "unavailable": "Impossible de récupérer temporairement le contenu de la version précédente."
-      }
+      },
+      "localDelete": "Sera aussi supprimé localement",
+      "localDeleteHint": "Ce fichier sera aussi supprimé localement après la publication (avec sauvegarde). Choisissez ignorer pour le conserver",
+      "localDeleteCount": "{{count}} fichiers supprimés localement"
     },
     "skipped": "{{count}} fichier(s) du lanceur exclu(s)",
     "adoption": {
       "keptOther": "L'instance suit déjà un autre pack ou une autre ligne ; son enregistrement de source est inchangé.",
       "notIsolated": "L'isolation de version est désactivée pour cette instance ; elle n'a pas été liée à ce pack.",
       "localChanged": "L'instance ne correspond pas à la version publiée (par exemple un fichier marqué Supprimer est toujours sur le disque) ; elle n'y a pas été liée. La prochaine mise à jour s'appuiera sur le contenu de la version.",
-      "recordFailed": "La version est publiée, mais l'instance n'a pas pu y être liée. La prochaine vérification comparera normalement."
+      "recordFailed": "La version est publiée, mais l'instance n'a pas pu y être liée. La prochaine vérification comparera normalement.",
+      "followedWithDeletes": "Version suivie : {{count}} fichiers locaux supprimés selon les règles, sauvegarde dans .ustbl-update/publish-deleted",
+      "deleteFailed": "La version publiée n’a pas été suivie car la suppression d’un fichier local a échoué. La sauvegarde est conservée."
     },
     "started": {
       "title": "Envoi démarré",
@@ -3320,7 +3325,8 @@
         "rulesAdded": "Règles d'ignorance ou de suppression nouvelles dans cette version.",
         "rulesRemoved": "Règles de la version précédente que celle-ci ne porte plus.",
         "rulesChanged": "Règles passées de ignorer à supprimer, ou l'inverse."
-      }
+      },
+      "localDeleted": "{{count}} fichiers supprimés localement"
     }
   },
   "InstallCampusModpackModal": {

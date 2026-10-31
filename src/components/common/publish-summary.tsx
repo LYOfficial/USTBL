@@ -26,6 +26,7 @@ const ROWS: Row[] = [
   { key: "rulesAdded", colorScheme: "blue" },
   { key: "rulesRemoved", colorScheme: "blue" },
   { key: "rulesChanged", colorScheme: "blue" },
+  { key: "localDeleted", colorScheme: "red" },
 ];
 
 const nameOf = (

@@ -37,6 +37,7 @@ const {
   filterNodes,
   isFilterActive,
   isSummaryEmpty,
+  localDeletePaths,
   nextState,
   publishTargetAfterLoad,
   restoreInheritance,
@@ -972,6 +973,12 @@ test("a file whose enabled state differs is toggled even when the content does t
   ]);
   assert.deepEqual(summary.toggled.sort(), ["mods/both.jar", "mods/off.jar", "mods/on.jar"]);
   assert.deepEqual(summary.modified, ["mods/both.jar"]);
+});
+
+test("local delete paths include real deleted files but not ghosts", () => {
+  const context = ctxOf(["config/remove.cfg"], [ghostOf("config/ghost.cfg")]);
+  const draft = setFileState(context, draftOf(), "config/remove.cfg", "delete");
+  assert.deepEqual(localDeletePaths(context, draft), ["config/remove.cfg"]);
 });
 
 test("first-install flags and content are told apart", () => {

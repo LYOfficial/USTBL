@@ -3277,14 +3277,19 @@
         "differs": "内容不同。上一版 {{previous}}，本地 {{local}}。",
         "formatOnly": "文本内容相同，只有换行等格式不同。上一版 {{previous}}，本地 {{local}}。",
         "unavailable": "暂时取不到上一版的内容。"
-      }
+      },
+      "localDelete": "本机也会删除",
+      "localDeleteHint": "发布后本机的这个文件也会删除（先备份）；想自己保留请改为忽略",
+      "localDeleteCount": "本机也会删除 {{count}} 个文件"
     },
     "skipped": "有 {{count}} 个启动器文件被排除",
     "adoption": {
       "keptOther": "该实例已跟随其他整合包或其他线，未改动其来源记录。",
       "notIsolated": "该实例未开启版本隔离，未将其关联到此整合包。",
       "localChanged": "该实例与刚发布的版本不一致（例如标为删除的文件仍在磁盘上），未将其关联到此版本，下次更新会按版本内容处理。",
-      "recordFailed": "版本已发布，但未能记录该实例与此版本的关联，下次检查将按常规比较。"
+      "recordFailed": "版本已发布，但未能记录该实例与此版本的关联，下次检查将按常规比较。",
+      "followedWithDeletes": "已跟随这一版，按删除规则删除了本机 {{count}} 个文件，备份在 .ustbl-update/publish-deleted",
+      "deleteFailed": "删除本机文件失败，未跟随这一版；备份已保留。"
     },
     "started": {
       "title": "已开始上传整合包",
@@ -3320,7 +3325,8 @@
         "rulesAdded": "上一版没有、这一版新加的忽略或删除规则。",
         "rulesRemoved": "上一版有、这一版不再带的规则。",
         "rulesChanged": "在忽略和删除之间改了状态的规则。"
-      }
+      },
+      "localDeleted": "本机也会删除 {{count}} 个文件"
     }
   },
   "InstallCampusModpackModal": {

@@ -31,6 +31,7 @@ use crate::instance::modpack_update::diff::FileKey;
 use crate::instance::modpack_update::plan::{compare, scan_cache, Compared};
 use crate::instance::modpack_update::release;
 use crate::instance::modpack_update::remote::RemoteRule;
+use crate::instance::modpack_update::decide::Policy;
 use crate::instance::modpack_update::sources::{
   campus_base_remote, campus_client, loader_slug, CAMPUS_API,
 };
@@ -155,6 +156,8 @@ pub struct PublishOutcome {
   pub skipped: Vec<String>,
   /// What happened to the instance's own record of the modpack.
   pub adoption: Adoption,
+  /// Files removed locally because the published version deletes them.
+  pub locally_deleted: usize,
 }
 
 /// Whether the published version became the instance's own baseline. The
@@ -172,6 +175,8 @@ pub enum Adoption {
   LocalChanged,
   /// The release went out but writing the instance's record failed.
   RecordFailed,
+  /// The published version was not adopted because a local deletion failed.
+  DeleteFailed,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -1073,14 +1078,14 @@ pub(super) async fn adopt_published(
   project: &str,
   version_id: i64,
   version_number: &str,
-) -> Adoption {
+) -> (Adoption, usize) {
   match try_adopt(app, instance, project, version_id, version_number).await {
-    Ok(adoption) => adoption,
+    Ok(result) => result,
     Err(error) => {
       // The release itself succeeded; a failed record only means the next
       // check compares the instance with it the ordinary way.
       log::warn!("Could not record the published version: {error:?}");
-      Adoption::RecordFailed
+      (Adoption::RecordFailed, 0)
     }
   }
 }
@@ -1123,6 +1128,29 @@ fn adopt_action(
 /// Whether the comparison of the instance with the published version moves
 /// nothing but the baseline. The instance is the source of the loader and the
 /// component chain, so those never count as a change here.
+/// A publish can adopt a version while applying only its explicit delete rules
+/// to the publisher's disk. Other local changes must still prevent adoption.
+fn is_fast_forward_after_delete_rules(
+  compared: &Compared,
+  remote: &crate::instance::modpack_update::remote::RemoteModpack,
+) -> bool {
+  compared.both_variants.is_empty()
+    && fast_forward(
+      compared
+        .diff
+        .changes
+        .iter()
+        .chain(&compared.diff.auto_merged)
+        .filter(|change| {
+          !(change.kind == crate::instance::modpack_update::diff::ChangeKind::Delete
+            && remote.policy_of(&change.path) == Policy::Delete)
+        }),
+      compared.diff.conflicts.len(),
+      false,
+    )
+}
+
+#[cfg(test)]
 fn is_fast_forward(compared: &Compared) -> bool {
   compared.both_variants.is_empty()
     && fast_forward(
@@ -1136,13 +1164,67 @@ fn is_fast_forward(compared: &Compared) -> bool {
     )
 }
 
+fn publish_delete_paths(
+  root: &Path,
+  compared: &Compared,
+  remote: &crate::instance::modpack_update::remote::RemoteModpack,
+) -> USTBLResult<Vec<String>> {
+  let mut paths = Vec::new();
+  for change in compared.diff.changes.iter().filter(|change| {
+    change.kind == crate::instance::modpack_update::diff::ChangeKind::Delete
+      && remote.policy_of(&change.path) == Policy::Delete
+  }) {
+    safe_relative(&change.path)?;
+    for path in [
+      change.path.clone(),
+      format!(
+        "{}{}",
+        change.path,
+        crate::instance::modpack_update::diff::DISABLED_SUFFIX
+      ),
+    ] {
+      if root.join(&path).is_file() {
+        paths.push(path);
+      }
+    }
+  }
+  Ok(paths)
+}
+
+/// Back up every target before removing any of them. The directory is private
+/// to publishing and never shares the update transaction's last-backup area.
+fn backup_and_delete_publish_files(root: &Path, paths: &[String]) -> USTBLResult<usize> {
+  if paths.is_empty() {
+    return Ok(0);
+  }
+  let backup = root.join(".ustbl-update").join("publish-deleted");
+  if backup.exists() {
+    fs::remove_dir_all(&backup)?;
+  }
+  for path in paths {
+    let source = root.join(path);
+    let target = backup.join(path);
+    if let Some(parent) = target.parent() {
+      fs::create_dir_all(parent)?;
+    }
+    fs::copy(&source, &target)?;
+  }
+  for path in paths {
+    if let Err(error) = fs::remove_file(root.join(path)) {
+      log::warn!("Could not remove published delete target {path}: {error}");
+      return Err(USTBLError(format!("删除发布者本机文件失败：{path}: {error}")));
+    }
+  }
+  Ok(paths.len())
+}
+
 async fn try_adopt(
   app: &AppHandle,
   instance: &Instance,
   project: &str,
   version_id: i64,
   version_number: &str,
-) -> USTBLResult<Adoption> {
+) -> USTBLResult<(Adoption, usize)> {
   let loader_type = instance.mod_loader.loader_type;
   let origin = instance.origin.as_ref();
   // Only ask the platform when the instance follows another campus project;
@@ -1158,10 +1240,10 @@ async fn try_adopt(
     _ => false,
   };
   if adopt_action(origin, project, &instance.version, loader_type, gone) == Adoption::KeptOther {
-    return Ok(Adoption::KeptOther);
+    return Ok((Adoption::KeptOther, 0));
   }
   if !get_instance_game_config(app, instance).version_isolation {
-    return Ok(Adoption::NotIsolated);
+    return Ok((Adoption::NotIsolated, 0));
   }
 
   let root = instance.version_path.clone();
@@ -1188,9 +1270,17 @@ async fn try_adopt(
     _ => ModpackBaseline::build(&new_origin, loader.clone(), Vec::new()),
   };
   let compared = compare(&root, &base, &remote).await?;
-  if !is_fast_forward(&compared) {
-    return Ok(Adoption::LocalChanged);
+  let delete_paths = publish_delete_paths(&root, &compared, &remote)?;
+  if !is_fast_forward_after_delete_rules(&compared, &remote) {
+    return Ok((Adoption::LocalChanged, 0));
   }
+  let locally_deleted = match backup_and_delete_publish_files(&root, &delete_paths) {
+    Ok(count) => count,
+    Err(error) => {
+      log::warn!("Could not apply published delete rules locally: {error:?}");
+      return Ok((Adoption::DeleteFailed, 0));
+    }
+  };
 
   let mut baseline = ModpackBaseline::build(&new_origin, loader, compared.next_baseline);
   if let Some(components) = remote.components.clone() {
@@ -1210,7 +1300,7 @@ async fn try_adopt(
     adopt_instance_identity(stored, new_origin, label);
   })
   .await?;
-  Ok(Adoption::Followed)
+  Ok((Adoption::Followed, locally_deleted))
 }
 
 fn adopt_instance_identity(instance: &mut Instance, origin: InstanceOrigin, version: String) {
@@ -1486,6 +1576,48 @@ mod tests {
     fs::write(root.join("mods/a.jar"), "edited").unwrap();
     let compared = compare(&root, &first_install(), &delete).await.unwrap();
     assert!(!is_fast_forward(&compared));
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn delete_rule_targets_include_enabled_and_disabled_variants() {
+    let root = instance_dir(&[("mods/a.jar.disabled", "a")]);
+    let compared = Compared {
+      diff: crate::instance::modpack_update::diff::Diff {
+        changes: vec![crate::instance::modpack_update::diff::FileChange {
+          path: "mods/a.jar".into(),
+          kind: crate::instance::modpack_update::diff::ChangeKind::Delete,
+          remote: None,
+          local_size: Some(1),
+          restored: false,
+        }],
+        ..Default::default()
+      },
+      next_baseline: Vec::new(),
+      variants: Default::default(),
+      both_variants: Vec::new(),
+      prune_dirs: Default::default(),
+      restored_locals: Default::default(),
+      restored_writes: Default::default(),
+      ignores: Default::default(),
+      ignores_on_disk: Default::default(),
+    };
+    let remote = published(&[], vec![rule("mods/a.jar", RuleKind::File, RuleState::Delete)]);
+    let paths = publish_delete_paths(&root, &compared, &remote).unwrap();
+    assert_eq!(paths, ["mods/a.jar.disabled"]);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn publish_deleted_files_are_backed_up_before_removal() {
+    let root = instance_dir(&[("config/old.txt", "old")]);
+    let count = backup_and_delete_publish_files(&root, &["config/old.txt".into()]).unwrap();
+    assert_eq!(count, 1);
+    assert!(!root.join("config/old.txt").exists());
+    assert_eq!(
+      fs::read_to_string(root.join(".ustbl-update/publish-deleted/config/old.txt")).unwrap(),
+      "old"
+    );
     let _ = fs::remove_dir_all(root);
   }
 

@@ -163,6 +163,17 @@ export const viewOf = (
   };
 };
 
+/** Files present on the publisher's disk that a delete state will remove. */
+export const localDeletePaths = (
+  context: PublishContext,
+  draft: PublishDraft
+): string[] => {
+  const view = viewOf(context, draft);
+  return context.files
+    .filter((file) => view.fileState(file.path) === "delete")
+    .map((file) => file.path);
+};
+
 const withRule = (rules: PublishRule[], next: PublishRule): PublishRule[] => {
   const key = keyOf(next.path);
   const at = rules.findIndex((rule) => keyOf(rule.path) === key);
@@ -615,6 +626,8 @@ export interface PublishSummary {
   rulesAdded: PublishRule[];
   rulesRemoved: PublishRule[];
   rulesChanged: PublishRule[];
+  /** Files the publisher's own instance will remove after following. */
+  localDeleted: string[];
 }
 
 const ruleKey = (rule: PublishRule): string =>
@@ -648,6 +661,7 @@ export const summarizePublish = (
     rulesAdded: [],
     rulesRemoved: [],
     rulesChanged: [],
+    localDeleted: localDeletePaths(context, draft),
   };
   const before = new Map(
     (previous?.files ?? []).map((file) => [keyOf(file.path), file])
