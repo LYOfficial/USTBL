@@ -206,6 +206,12 @@ pub fn stored_tokens(app: &AppHandle) -> USTBLResult<OAuthTokens> {
 pub fn store_tokens(app: &AppHandle, tokens: &OAuthTokens) -> USTBLResult<()> {
   let binding = app.state::<Mutex<AccountInfo>>();
   let mut state = binding.lock()?;
+  apply_tokens(&mut state, tokens);
+  state.save()?;
+  Ok(())
+}
+
+fn apply_tokens(state: &mut AccountInfo, tokens: &OAuthTokens) {
   state.vustb_session = Some(VustbSession {
     access_token: tokens.access_token.clone(),
     refresh_token: tokens.refresh_token.clone(),
@@ -219,15 +225,13 @@ pub fn store_tokens(app: &AppHandle, tokens: &OAuthTokens) -> USTBLResult<()> {
     player.access_token = Some(tokens.access_token.clone());
     player.refresh_token = tokens.refresh_token.clone();
   }
-  state.save()?;
-  Ok(())
 }
 
 fn access_token_was_replaced(failed_access_token: Option<&str>, current: &OAuthTokens) -> bool {
   failed_access_token.is_some_and(|token| token != current.access_token)
 }
 
-async fn refresh_session_after(
+pub async fn refresh_session_after(
   app: &AppHandle,
   failed_access_token: Option<&str>,
 ) -> USTBLResult<OAuthTokens> {
@@ -586,6 +590,26 @@ pub async fn select_profile_texture(
 
 #[cfg(test)]
 mod tests {
+  #[test]
+  fn rotated_tokens_update_session_and_every_vustb_profile() {
+    let mut state = AccountInfo::default();
+    let mut other = player("other");
+    other.auth_server_url = Some("https://other.example".into());
+    state.players = vec![player("one"), player("two"), other];
+    let tokens = OAuthTokens {
+      access_token: "rotated-access".into(),
+      refresh_token: Some("rotated-refresh".into()),
+      id_token: None,
+    };
+    super::apply_tokens(&mut state, &tokens);
+    assert_eq!(tokens_from_state(&state).unwrap().access_token, "rotated-access");
+    for player in &state.players[..2] {
+      assert_eq!(player.access_token.as_deref(), Some("rotated-access"));
+      assert_eq!(player.refresh_token.as_deref(), Some("rotated-refresh"));
+    }
+    assert_eq!(state.players[2].access_token.as_deref(), Some("legacy-access"));
+  }
+
   use super::reqwest;
   use super::{access_token_was_replaced, response_error, tokens_from_state};
   use crate::account::helpers::authlib_injector::constants::USTB_AUTH_SERVER_URL;

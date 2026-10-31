@@ -1352,6 +1352,11 @@ pub async fn refresh_player(app: AppHandle, player_id: String) -> USTBLResult<()
     .find(|player| player.id == player_id)
     .ok_or(AccountError::NotFound)?;
 
+  if is_vustb_player(player) {
+    vustb::refresh_session_after(&app, player.access_token.as_deref()).await?;
+    return Ok(());
+  }
+
   let refreshed_player = match player.player_type {
     PlayerType::ThirdParty => {
       let auth_server = AuthServer::from(get_auth_server_info_by_url(
