@@ -3,16 +3,9 @@ use crate::instance::constants::{
   TRANSLATION_CACHE_EXPIRY_HOURS, TRANSLATION_CACHE_FILE_NAME, TRANSLATION_CACHE_MAX_ENTRIES,
   TRANSLATION_CACHE_RETENTION_HOURS,
 };
-use crate::instance::models::misc::LocalModInfo;
 use crate::resource::helpers::hashing::sha1_file_async;
-use crate::resource::helpers::modrinth::{
-  fetch_remote_resource_by_hash_modrinth, fetch_remote_resource_by_id_modrinth,
-};
-use crate::resource::helpers::translation::translation_is_known;
-use crate::resource::models::OtherResourceSource;
 use crate::storage::Storage;
 use crate::APP_DATA_DIR;
-use log::info;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -93,7 +86,7 @@ pub struct FileStamp {
   pub last_seen: u64,
 }
 
-fn now_secs() -> u64 {
+pub fn now_secs() -> u64 {
   SystemTime::now()
     .duration_since(UNIX_EPOCH)
     .unwrap_or_default()
@@ -195,7 +188,7 @@ impl LocalModTranslationsCache {
   }
 }
 
-fn with_cache<R>(app: &AppHandle, f: impl FnOnce(&mut LocalModTranslationsCache) -> R) -> R {
+pub fn with_cache<R>(app: &AppHandle, f: impl FnOnce(&mut LocalModTranslationsCache) -> R) -> R {
   let state = app.state::<Mutex<LocalModTranslationsCache>>();
   let mut guard = state
     .lock()
@@ -246,55 +239,6 @@ pub fn persist_local_mod_cache(app: &AppHandle) -> USTBLResult<()> {
     cache.prune(now_secs());
     cache.save()
   })?;
-  Ok(())
-}
-
-pub async fn add_local_mod_translations(
-  app: &AppHandle,
-  mod_info: &mut LocalModInfo,
-) -> USTBLResult<()> {
-  let file_name = mod_info.file_name.clone();
-  let Some(sha1) = sha1_of_mod(app, &mod_info.file_path).await else {
-    return Ok(());
-  };
-
-  let cached = with_cache(app, |cache| cache.fresh_entry(&sha1, now_secs()).cloned());
-  if let Some(entry) = cached {
-    info!("Using cached translation for mod: {}", file_name);
-    mod_info.translated_name = entry.translated_name;
-    mod_info.translated_description = entry.translated_description;
-    return Ok(());
-  }
-
-  // Query Modrinth for translated metadata. A failure is not cached, so the next
-  // listing tries again.
-  let app_clone = app.clone();
-  let hash = sha1.clone();
-  let lookup = tokio::spawn(async move {
-    let file_info = fetch_remote_resource_by_hash_modrinth(&app_clone, &hash).await?;
-    fetch_remote_resource_by_id_modrinth(&app_clone, &file_info.resource_id).await
-  })
-  .await;
-
-  if let Ok(Ok(resource_info)) = lookup {
-    info!("Fetched translation for mod: {}", file_name);
-    mod_info.translated_name = resource_info.translated_name.clone();
-    mod_info.translated_description = resource_info.translated_description.clone();
-
-    // The description translator swallows request failures; if it left no trace in
-    // its own cache the result may be incomplete and must not be remembered.
-    if translation_is_known(&OtherResourceSource::Modrinth, &resource_info.id) {
-      with_cache(app, |cache| {
-        cache.insert_entry(
-          &sha1,
-          LocalModTranslationEntry::new(
-            resource_info.translated_name,
-            resource_info.translated_description,
-          ),
-        )
-      });
-    }
-  }
   Ok(())
 }
 

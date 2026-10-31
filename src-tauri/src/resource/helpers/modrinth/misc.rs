@@ -1,4 +1,5 @@
 use crate::error::{USTBLError, USTBLResult};
+use crate::resource::helpers::batch_lookup::{lookup_across_sources, LookupOutcome};
 use crate::resource::helpers::mcim::{
   acquire_mcim_api_permit_for, get_content_source_priority_list, modrinth_api_base, ContentSource,
 };
@@ -10,6 +11,7 @@ use crate::resource::models::{
   ResourceError,
 };
 use serde::Deserialize;
+use std::collections::HashMap;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_http::reqwest;
 
@@ -102,6 +104,120 @@ where
   }
 
   Err(last_error.unwrap_or_else(|| ResourceError::NoDownloadApi.into()))
+}
+
+/// Versions per `POST /version_files` request.
+pub const VERSION_FILES_BATCH_SIZE: usize = 500;
+/// Projects per `GET /projects?ids=` request; ids travel in the URL.
+pub const PROJECTS_BATCH_SIZE: usize = 100;
+
+/// The part of a version object needed to find the project a file belongs to.
+#[derive(Deserialize, Debug)]
+pub struct ModrinthVersionRef {
+  #[serde(default)]
+  pub project_id: String,
+}
+
+/// The part of a project object needed to look up a local mod name.
+#[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ModrinthProjectBrief {
+  #[serde(default)]
+  pub id: String,
+  #[serde(default)]
+  pub slug: String,
+  #[serde(default)]
+  pub project_type: String,
+}
+
+/// `sha1 -> project id` from a `POST /version_files` reply. Hashes Modrinth does
+/// not know are absent from the reply.
+pub fn project_ids_by_hash(reply: HashMap<String, ModrinthVersionRef>) -> HashMap<String, String> {
+  reply
+    .into_iter()
+    .filter(|(_, version)| !version.project_id.is_empty())
+    .map(|(hash, version)| (hash.to_lowercase(), version.project_id))
+    .collect()
+}
+
+/// `project id -> project` from a `GET /projects?ids=` reply. Unknown ids are
+/// absent from the reply.
+pub fn projects_by_id(reply: Vec<ModrinthProjectBrief>) -> HashMap<String, ModrinthProjectBrief> {
+  reply
+    .into_iter()
+    .filter(|project| !project.id.is_empty())
+    .map(|project| (project.id.clone(), project))
+    .collect()
+}
+
+/// Which project each SHA-1 belongs to, one `POST /version_files` per
+/// [`VERSION_FILES_BATCH_SIZE`] hashes. A hash the first source lacks is asked
+/// again from the next source (MCIM only knows what it has cached); a hash is
+/// reported as not found only when the last source answered without it. Hashes
+/// no source could answer for are in neither field of the outcome.
+pub async fn fetch_project_ids_by_hashes_modrinth(
+  app: &AppHandle,
+  hashes: &[String],
+) -> LookupOutcome<String, String> {
+  let client = app.state::<reqwest::Client>();
+  let sources = content_source_priority(app);
+  let mut outcome = LookupOutcome::default();
+  for chunk in hashes.chunks(VERSION_FILES_BATCH_SIZE) {
+    outcome.extend(
+      lookup_across_sources(&sources, chunk, |source, asked: Vec<String>| {
+        let client = &client;
+        async move {
+          let url = format!("{}/version_files", modrinth_api_base(source));
+          let body = serde_json::json!({ "hashes": asked, "algorithm": "sha1" });
+          match make_modrinth_request::<HashMap<String, ModrinthVersionRef>, serde_json::Value>(
+            client,
+            &url,
+            OtherResourceRequestType::Post(&body),
+          )
+          .await
+          {
+            Ok(reply) => Some(project_ids_by_hash(reply)),
+            Err(error) => {
+              log::warn!("Modrinth {} via {:?} failed: {:?}", url, source, error);
+              None
+            }
+          }
+        }
+      })
+      .await,
+    );
+  }
+  outcome
+}
+
+/// Projects for up to [`PROJECTS_BATCH_SIZE`] ids, with the same source-by-source
+/// gap filling as [`fetch_project_ids_by_hashes_modrinth`].
+pub async fn fetch_projects_modrinth(
+  app: &AppHandle,
+  ids: &[String],
+) -> LookupOutcome<String, ModrinthProjectBrief> {
+  let client = app.state::<reqwest::Client>();
+  let sources = content_source_priority(app);
+  lookup_across_sources(&sources, ids, |source, asked: Vec<String>| {
+    let client = &client;
+    async move {
+      let url = format!("{}/projects", modrinth_api_base(source));
+      let params = HashMap::from([("ids".to_string(), serde_json::to_string(&asked).ok()?)]);
+      match make_modrinth_request::<Vec<ModrinthProjectBrief>, HashMap<String, String>>(
+        client,
+        &url,
+        OtherResourceRequestType::GetWithParams(&params),
+      )
+      .await
+      {
+        Ok(reply) => Some(projects_by_id(reply)),
+        Err(error) => {
+          log::warn!("Modrinth {} via {:?} failed: {:?}", url, source, error);
+          None
+        }
+      }
+    }
+  })
+  .await
 }
 
 /// Modrinth API URL for the given endpoint, or `None` when the endpoint is
@@ -346,6 +462,40 @@ pub async fn translate_description_modrinth(
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn version_files_reply_maps_hashes_to_projects_and_skips_unknown_ones() {
+    // Real replies carry full version objects and only contain the known hashes.
+    let reply: HashMap<String, ModrinthVersionRef> = serde_json::from_str(
+      r#"{"1E6AEC741B4134258BA1D7D458BAE96A2E8E187E":{"id":"v","project_id":"AANobbMI","files":[]},
+        "bad":{"id":"v2"}}"#,
+    )
+    .unwrap();
+    let ids = project_ids_by_hash(reply);
+    assert_eq!(
+      ids
+        .get("1e6aec741b4134258ba1d7d458bae96a2e8e187e")
+        .map(String::as_str),
+      Some("AANobbMI")
+    );
+    assert_eq!(ids.len(), 1);
+
+    let empty: HashMap<String, ModrinthVersionRef> = serde_json::from_str("{}").unwrap();
+    assert!(project_ids_by_hash(empty).is_empty());
+  }
+
+  #[test]
+  fn projects_reply_is_indexed_by_id() {
+    let reply: Vec<ModrinthProjectBrief> = serde_json::from_str(
+      r#"[{"id":"AANobbMI","slug":"sodium","project_type":"mod","title":"Sodium","downloads":1},
+        {"slug":"no-id"}]"#,
+    )
+    .unwrap();
+    let projects = projects_by_id(reply);
+    assert_eq!(projects.len(), 1);
+    assert_eq!(projects["AANobbMI"].slug, "sodium");
+    assert_eq!(projects["AANobbMI"].project_type, "mod");
+  }
 
   #[test]
   fn modrinth_file_info_carries_project_and_version_ids() {

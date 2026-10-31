@@ -227,28 +227,47 @@ pub fn version_pack_sort(a: &OtherResourceVersionPack, b: &OtherResourceVersionP
 /// is safe to call for every search result without any network access.
 pub fn apply_local_resource_enhancements(app: &AppHandle, resource_info: &mut OtherResourceInfo) {
   // Extract data from cache in a limited scope to avoid holding lock across await
-  let (translated_name, mcmod_id) = {
+  let mcmod_id = {
     if let Ok(cache) = app.state::<Mutex<ModDataBase>>().lock() {
-      let translated_name = if resource_info._type == "mod" {
-        cache.get_translated_name(&resource_info.slug, &resource_info.source)
-      } else {
-        None
-      };
-      let mcmod_id = cache.get_mcmod_id(&resource_info.slug, &resource_info.source);
-      (translated_name, mcmod_id)
+      cache.get_mcmod_id(&resource_info.slug, &resource_info.source)
     } else {
-      (None, None)
+      None
     }
   };
 
-  if let Some(name) = translated_name {
-    if name.chars().any(|c| matches!(c, '\u{4e00}'..='\u{9fbb}')) {
-      resource_info.translated_name = Some(name);
-    }
+  if let Some(name) = local_translated_name(
+    app,
+    &resource_info.slug,
+    &resource_info._type,
+    &resource_info.source,
+  ) {
+    resource_info.translated_name = Some(name);
   }
   if let Some(id) = mcmod_id {
     resource_info.mcmod_id = id;
   }
+}
+
+/// Chinese name of a mod from the local mod name database, if it has one.
+/// Only projects of type `mod` are translated.
+pub fn local_translated_name(
+  app: &AppHandle,
+  slug: &str,
+  resource_type: &str,
+  source: &OtherResourceSource,
+) -> Option<String> {
+  if resource_type != "mod" {
+    return None;
+  }
+  let name = app
+    .state::<Mutex<ModDataBase>>()
+    .lock()
+    .ok()?
+    .get_translated_name(slug, source)?;
+  name
+    .chars()
+    .any(|c| matches!(c, '\u{4e00}'..='\u{9fbb}'))
+    .then_some(name)
 }
 
 pub async fn apply_other_resource_enhancements(

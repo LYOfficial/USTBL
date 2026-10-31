@@ -9,6 +9,7 @@ pub mod misc;
 
 use crate::error::USTBLResult;
 use crate::launcher_config::models::LauncherConfig;
+use crate::resource::helpers::batch_lookup::lookup_across_sources;
 use crate::resource::helpers::hashing::curseforge_fingerprint_file_async;
 use crate::resource::helpers::mcim::{get_content_source_priority_list, ContentSource};
 use crate::resource::helpers::misc::{
@@ -24,10 +25,11 @@ use crate::resource::models::{
   OtherResourceVersionPackQuery, ResourceError,
 };
 use misc::{
-  class_id_of_resource_type, fetch_curseforge_json, game_versions_of, loaders_of_game_versions,
-  make_curseforge_request, mod_loader_type_of, resolve_category_id, sort_field_of,
-  CurseForgeDataRes, CurseForgeFile, CurseForgeFingerprintRes, CurseForgeListRes, CurseForgeMod,
-  MAX_GAME_VERSION_REQUESTS, MINECRAFT_GAME_ID, PAGE_SIZE_MAX,
+  class_id_of_resource_type, fetch_curseforge_json, game_versions_of, has_official_api_key,
+  loaders_of_game_versions, make_curseforge_request, mod_loader_type_of, resolve_category_id,
+  sort_field_of, CurseForgeDataRes, CurseForgeFile, CurseForgeFingerprintMatch,
+  CurseForgeFingerprintRes, CurseForgeListRes, CurseForgeMod, MAX_GAME_VERSION_REQUESTS,
+  MINECRAFT_GAME_ID, PAGE_SIZE_MAX,
 };
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -329,6 +331,98 @@ pub async fn fetch_remote_resource_by_id_curseforge(
   Ok(resource_info)
 }
 
+/// Fingerprints per `POST /fingerprints` request.
+const FINGERPRINTS_BATCH_SIZE: usize = 500;
+
+/// Match `/fingerprints` results back to the fingerprints that were asked for.
+/// Fingerprints without an exact match are absent from the result.
+fn index_exact_matches(
+  matches: Vec<CurseForgeFingerprintMatch>,
+  requested: &[u32],
+) -> HashMap<u32, CurseForgeFile> {
+  matches
+    .into_iter()
+    .filter_map(|matched| matched.file)
+    .filter_map(|file| {
+      let fingerprint = match file.file_fingerprint {
+        // A reply without the field can only be attributed when one fingerprint was sent.
+        0 if requested.len() == 1 => requested[0],
+        0 => return None,
+        fingerprint => fingerprint,
+      };
+      requested
+        .contains(&fingerprint)
+        .then_some((fingerprint, file))
+    })
+    .collect()
+}
+
+/// Resolve many fingerprints with one `POST /fingerprints` per
+/// [`FINGERPRINTS_BATCH_SIZE`]. A fingerprint the first source lacks is asked
+/// again, in one request, from the next source; there is no per-file fallback. A
+/// fingerprint missing from the result is unknown to the last source that
+/// answered. If a fingerprint could not be settled because every request that
+/// would have done so failed, the whole lookup fails instead.
+///
+/// Misses are not retried against the same source after a pause: without an API
+/// key MCIM is the only source, and a local jar that is simply not on CurseForge
+/// is the common case, so a retry would only add latency to every lookup.
+pub async fn fetch_remote_resources_by_fingerprints_curseforge(
+  app: &AppHandle,
+  fingerprints: &[u32],
+) -> USTBLResult<HashMap<u32, OtherResourceFileInfo>> {
+  let sources: Vec<ContentSource> = content_source_priority(app)
+    .into_iter()
+    .filter(|source| *source != ContentSource::Official || has_official_api_key())
+    .collect();
+  if sources.is_empty() {
+    return Err(ResourceError::NoDownloadApi.into());
+  }
+  let client = app.state::<reqwest::Client>();
+  let mut found = HashMap::new();
+
+  for chunk in fingerprints.chunks(FINGERPRINTS_BATCH_SIZE) {
+    let outcome = lookup_across_sources(&sources, chunk, |source, asked: Vec<u32>| {
+      let client = &client;
+      async move {
+        let url =
+          misc::get_curseforge_api(source, OtherResourceApiEndpoint::FromLocal, None).ok()?;
+        let body = CurseForgeFingerprintsBody {
+          fingerprints: asked.clone(),
+        };
+        match make_curseforge_request::<CurseForgeFingerprintRes, CurseForgeFingerprintsBody>(
+          client,
+          &url,
+          source,
+          OtherResourceRequestType::Post(&body),
+        )
+        .await
+        {
+          Ok(response) => Some(index_exact_matches(response.data.exact_matches, &asked)),
+          Err(error) => {
+            log::warn!(
+              "CurseForge fingerprint lookup via {:?} failed: {:?}",
+              source,
+              error
+            );
+            None
+          }
+        }
+      }
+    })
+    .await;
+
+    if outcome.found.len() + outcome.not_found.len() < chunk.len() {
+      return Err(ResourceError::NetworkError.into());
+    }
+    for (fingerprint, file) in outcome.found {
+      found.insert(fingerprint, OtherResourceFileInfo::from(&file));
+    }
+  }
+
+  Ok(found)
+}
+
 /// CurseForge identifies local files by a MurmurHash2 fingerprint of their
 /// contents with whitespace bytes removed, so the same jar can be resolved on a
 /// machine where the file was copied by another launcher.
@@ -342,50 +436,13 @@ pub async fn fetch_remote_resource_by_local_curseforge(
     .await
     .map_err(|_| ResourceError::FileOperationError)?;
 
-  let priority = content_source_priority(app);
-  let body = CurseForgeFingerprintsBody {
-    fingerprints: vec![fingerprint],
-  };
-
-  let client = app.state::<reqwest::Client>();
-  let mut last_error = None;
-
-  for source in &priority {
-    let url = misc::get_curseforge_api(*source, OtherResourceApiEndpoint::FromLocal, None)?;
-    match make_curseforge_request::<CurseForgeFingerprintRes, CurseForgeFingerprintsBody>(
-      &client,
-      &url,
-      *source,
-      OtherResourceRequestType::Post(&body),
-    )
-    .await
-    {
-      Ok(response) => {
-        let matched = response
-          .data
-          .exact_matches
-          .into_iter()
-          .find_map(|matched| matched.file)
-          .ok_or(ResourceError::ParseError)?;
-
-        return Ok(OtherResourceFileInfo::from(&matched));
-      }
-      Err(error) => {
-        log::warn!(
-          "CurseForge fingerprint lookup via {:?} failed: {:?}",
-          source,
-          error
-        );
-        last_error = Some(error);
-      }
-    }
-  }
-
   // A fingerprint miss is not a transport failure: the file simply is not on
   // CurseForge, so report it as a parse miss for the caller to ignore.
-  Err(last_error.unwrap_or_else(|| ResourceError::ParseError.into()))
+  fetch_remote_resources_by_fingerprints_curseforge(app, &[fingerprint])
+    .await?
+    .remove(&fingerprint)
+    .ok_or_else(|| ResourceError::ParseError.into())
 }
-
 /// Translate a CurseForge description through MCIM's translation service.
 pub async fn translate_description_curseforge(
   app: &AppHandle,
@@ -400,4 +457,48 @@ pub async fn translate_description_curseforge(
   )
   .await;
   Ok(translations.remove(resource_id))
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn matches_from(json: &str) -> (Vec<CurseForgeFingerprintMatch>, Vec<u32>) {
+    let reply: CurseForgeFingerprintRes = serde_json::from_str(json).unwrap();
+    let requested = vec![1481194740, 12345];
+    (reply.data.exact_matches, requested)
+  }
+
+  #[test]
+  fn exact_matches_are_attributed_by_file_fingerprint() {
+    // Shape of a live `POST /fingerprints` reply: one match, one unmatched fingerprint.
+    let (matches, requested) = matches_from(
+      r#"{"data":{"isCacheBuilt":true,
+        "exactMatches":[{"id":238222,"file":{"id":9382240,"modId":238222,"fileName":"jei.jar",
+          "fileFingerprint":1481194740,"hashes":[{"value":"aa","algo":1}]},"latestFiles":[]}],
+        "exactFingerprints":[1481194740],"unmatchedFingerprints":[12345]}}"#,
+    );
+    let indexed = index_exact_matches(matches, &requested);
+    assert_eq!(indexed.len(), 1);
+    assert_eq!(indexed[&1481194740].id, 9382240);
+    assert!(!indexed.contains_key(&12345));
+  }
+
+  #[test]
+  fn matches_for_fingerprints_nobody_asked_for_are_dropped() {
+    let (matches, _) = matches_from(
+      r#"{"data":{"exactMatches":[{"file":{"id":1,"fileFingerprint":777}},{"file":null}]}}"#,
+    );
+    assert!(index_exact_matches(matches, &[1481194740]).is_empty());
+  }
+
+  #[test]
+  fn replies_without_a_file_fingerprint_only_work_for_a_single_request() {
+    let (matches, _) = matches_from(r#"{"data":{"exactMatches":[{"file":{"id":5}}]}}"#);
+    let single = index_exact_matches(matches, &[42]);
+    assert_eq!(single[&42].id, 5);
+
+    let (matches, _) = matches_from(r#"{"data":{"exactMatches":[{"file":{"id":5}}]}}"#);
+    assert!(index_exact_matches(matches, &[42, 43]).is_empty());
+  }
 }

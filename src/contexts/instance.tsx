@@ -24,6 +24,10 @@ import {
 import { WorldInfo } from "@/models/instance/world";
 import { InstanceService } from "@/services/instance";
 import { isInstallingInstance } from "@/utils/installing-instance";
+import {
+  createLocalModUpdateBuffer,
+  mergeLocalModUpdates,
+} from "@/utils/local-mod-updates";
 import { updateByKeyPath } from "@/utils/partial";
 
 export interface InstanceContextType {
@@ -103,6 +107,8 @@ export const InstanceContextProvider: React.FC<{
   const instanceId = Array.isArray(instanceIdRaw)
     ? instanceIdRaw[0]
     : instanceIdRaw;
+
+  const localModUpdateBuffer = React.useRef(createLocalModUpdateBuffer());
 
   const summaryIdRef = React.useRef<string | undefined>(undefined);
   if (instanceId) {
@@ -301,6 +307,9 @@ export const InstanceContextProvider: React.FC<{
       return;
     }
     let lastSummaryIdRef = summaryIdRef.current;
+    // Names found in the background may be announced before this response is
+    // handled, so collect them from now on.
+    localModUpdateBuffer.current.reset(lastSummaryIdRef);
     const response = await InstanceService.retrieveLocalModList(
       summaryIdRef.current
     );
@@ -308,8 +317,12 @@ export const InstanceContextProvider: React.FC<{
       return "%CANCELLED%"; // to avoid state update after unmount
     }
     if (response.status === "success") {
-      setLocalMods(response.data);
-      return response.data;
+      const mods = mergeLocalModUpdates(
+        response.data,
+        localModUpdateBuffer.current.updates()
+      );
+      setLocalMods(mods);
+      return mods;
     } else {
       toast({
         title: response.message,
@@ -564,6 +577,16 @@ export const InstanceContextProvider: React.FC<{
     !!instanceId &&
     instanceSummary?.id === instanceId &&
     !isInstallingInstance(instanceSummary);
+
+  useEffect(() => {
+    return InstanceService.onLocalModUpdates((payload) => {
+      if (payload.instanceId !== summaryIdRef.current) return;
+      if (!localModUpdateBuffer.current.add(payload)) return;
+      setLocalMods((mods) =>
+        mods ? mergeLocalModUpdates(mods, payload.mods) : mods
+      );
+    });
+  }, []);
 
   useEffect(() => {
     if (instanceId && canLoadResources) {

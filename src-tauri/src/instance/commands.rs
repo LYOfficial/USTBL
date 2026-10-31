@@ -39,9 +39,8 @@ use crate::instance::helpers::modpack::multimc::snapshot::{
 use crate::instance::helpers::mods::common::{
   compress_icon, get_mod_info_from_dir, get_mod_info_from_jar,
 };
-use crate::instance::helpers::mods::translation::{
-  add_local_mod_translations, persist_local_mod_cache,
-};
+use crate::instance::helpers::mods::enrich::spawn_mod_info_refresh;
+use crate::instance::helpers::mods::remote::apply_cached_infos;
 use crate::instance::helpers::options_txt::get_zh_hans_lang_tag;
 use crate::instance::helpers::resourcepack::{
   load_resourcepack_from_dir, load_resourcepack_from_zip,
@@ -625,33 +624,13 @@ pub async fn retrieve_local_mod_list(
     }
   });
 
-  // Add translations for mod names and descriptions concurrently (results are
-  // cached by the translator, keyed by the jar's SHA-1)
-  let mut translation_tasks = Vec::new();
-  for mut mod_info in mod_infos {
-    let app = app.clone();
-    let permit = semaphore
-      .clone()
-      .acquire_owned()
-      .await
-      .map_err(|_| InstanceError::SemaphoreAcquireFailed)?;
-    let task = tokio::spawn(async move {
-      log::debug!("Translating mod: {}", mod_info.file_name);
-      let _ = add_local_mod_translations(&app, &mut mod_info).await;
-      drop(permit);
-      mod_info
-    });
-    translation_tasks.push(task);
-  }
-  let mut mod_infos = Vec::new();
-  for task in translation_tasks {
-    if let Ok(mod_info) = task.await {
-      mod_infos.push(mod_info);
-    }
-  }
   // sort by name (and version)
   mod_infos.sort();
-  persist_local_mod_cache(&app)?;
+
+  // Names and descriptions that need the network are completed in the
+  // background; the frontend is told by an event (see `mods::enrich`).
+  let pending = apply_cached_infos(&app, &mut mod_infos);
+  spawn_mod_info_refresh(&app, &instance_id, pending);
 
   Ok(mod_infos)
 }

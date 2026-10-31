@@ -1,7 +1,9 @@
 pub mod common;
+pub mod enrich;
 pub mod fabric;
 pub mod forge;
 pub mod legacy_forge;
 pub mod liteloader;
 pub mod quilt;
+pub mod remote;
 pub mod translation;

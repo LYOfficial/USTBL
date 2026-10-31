@@ -1,3 +1,4 @@
+pub mod batch_lookup;
 pub mod curseforge;
 pub mod hashing;
 pub mod loader_meta;

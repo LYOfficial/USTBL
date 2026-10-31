@@ -289,6 +289,10 @@ pub struct CurseForgeFile {
   pub hashes: Vec<CurseForgeHash>,
   #[serde(default)]
   pub dependencies: Vec<CurseForgeDependency>,
+  /// MurmurHash2 fingerprint of the file; ties a `/fingerprints` match back to
+  /// the fingerprint that was asked for.
+  #[serde(default)]
+  pub file_fingerprint: u32,
 }
 
 #[derive(Deserialize, Debug)]
@@ -697,6 +701,7 @@ mod tests {
       ],
       hashes: vec![],
       dependencies: vec![],
+      file_fingerprint: 0,
     };
 
     assert_eq!(game_versions_of(&file), vec!["1.20.1".to_string()]);
