@@ -356,6 +356,7 @@ pub async fn sync_vustb_account(app: AppHandle) -> USTBLResult<VustbAccount> {
   });
   account_state.players.extend(login.players);
   account_state.vustb_account = Some(refreshed.clone());
+  vustb::synchronize_profile_tokens(&mut account_state)?;
   account_state.save()?;
 
   if !login.selected_player_id.is_empty() {

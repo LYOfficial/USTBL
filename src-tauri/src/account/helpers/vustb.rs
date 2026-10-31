@@ -211,7 +211,7 @@ pub fn store_tokens(app: &AppHandle, tokens: &OAuthTokens) -> USTBLResult<()> {
   Ok(())
 }
 
-fn apply_tokens(state: &mut AccountInfo, tokens: &OAuthTokens) {
+pub fn apply_tokens(state: &mut AccountInfo, tokens: &OAuthTokens) {
   state.vustb_session = Some(VustbSession {
     access_token: tokens.access_token.clone(),
     refresh_token: tokens.refresh_token.clone(),
@@ -241,11 +241,14 @@ fn expire_session(app: &AppHandle) -> USTBLResult<()> {
   if tokens_from_state(&state).is_err() {
     return Ok(());
   }
-  apply_tokens(&mut state, &OAuthTokens {
-    access_token: String::new(),
-    refresh_token: None,
-    id_token: None,
-  });
+  apply_tokens(
+    &mut state,
+    &OAuthTokens {
+      access_token: String::new(),
+      refresh_token: None,
+      id_token: None,
+    },
+  );
   state.save()?;
   drop(state);
   log::warn!("vUSTB session expired; browser reauthentication required");
@@ -263,9 +266,9 @@ pub async fn refresh_session_after(
     return Ok(current);
   }
   let refresh_token = current
-    .refresh_token.clone()
-    .filter(|token| !token.is_empty())
-    ;
+    .refresh_token
+    .clone()
+    .filter(|token| !token.is_empty());
   let Some(refresh_token) = refresh_token else {
     expire_session(app)?;
     return Err(AccountError::Expired.into());
@@ -300,22 +303,45 @@ pub async fn load_all_profiles(app: &AppHandle) -> USTBLResult<OAuthProfileLogin
   let current = stored_tokens(app)?;
   let first_attempt =
     oauth::load_all_profiles(app, USTB_AUTH_SERVER_URL.to_string(), current.clone()).await;
-  let login = match first_attempt {
+  let mut login = match first_attempt {
     Ok(login) => login,
-    Err(error)
-      if current
-        .refresh_token
-        .as_deref()
-        .is_some_and(|token| !token.is_empty()) =>
-    {
+    Err(error) if is_expired(&error) => {
       log::debug!("Refreshing vUSTB session after profile sync failed: {error:?}");
       let refreshed = refresh_session_after(app, Some(&current.access_token)).await?;
       oauth::load_all_profiles(app, USTB_AUTH_SERVER_URL.to_string(), refreshed).await?
     }
     Err(error) => return Err(error),
   };
-  store_tokens(app, &login.tokens)?;
+  let binding = app.state::<Mutex<AccountInfo>>();
+  let mut state = binding.lock()?;
+  if store_tokens_if_current(&mut state, &login.tokens)? {
+    state.save()?;
+  }
+  // Profile fetching can overlap a refresh; never return stale credentials either.
+  let latest = tokens_from_state(&state)?;
+  for player in &mut login.players {
+    player.access_token = Some(latest.access_token.clone());
+    player.refresh_token = latest.refresh_token.clone();
+  }
+  login.tokens = latest;
   Ok(login)
+}
+
+fn store_tokens_if_current(state: &mut AccountInfo, snapshot: &OAuthTokens) -> USTBLResult<bool> {
+  let current = tokens_from_state(state)?;
+  if current.access_token != snapshot.access_token
+    || current.refresh_token != snapshot.refresh_token
+  {
+    return Ok(false);
+  }
+  apply_tokens(state, snapshot);
+  Ok(true)
+}
+
+pub fn synchronize_profile_tokens(state: &mut AccountInfo) -> USTBLResult<()> {
+  let current = tokens_from_state(state)?;
+  apply_tokens(state, &current);
+  Ok(())
 }
 
 pub async fn send_authenticated<F>(
@@ -626,15 +652,41 @@ pub async fn select_profile_texture(
 #[cfg(test)]
 mod tests {
   #[test]
+  fn profile_snapshot_cannot_overwrite_a_concurrent_rotation_or_expiration() {
+    let mut state = AccountInfo::default();
+    let old = OAuthTokens {
+      access_token: "old".into(),
+      refresh_token: Some("old-refresh".into()),
+      id_token: None,
+    };
+    let new = OAuthTokens {
+      access_token: "new".into(),
+      refresh_token: Some("new-refresh".into()),
+      id_token: None,
+    };
+    super::apply_tokens(&mut state, &new);
+    assert!(!super::store_tokens_if_current(&mut state, &old).unwrap());
+    assert_eq!(tokens_from_state(&state).unwrap().access_token, "new");
+    assert!(super::store_tokens_if_current(&mut state, &new).unwrap());
+    state.vustb_session = Some(VustbSession::default());
+    assert!(super::store_tokens_if_current(&mut state, &old).is_err());
+  }
+
+  #[test]
   fn expired_marker_blocks_legacy_fallback_and_new_tokens_restore_session() {
     let mut state = AccountInfo::default();
     state.players = vec![player("one")];
     state.vustb_account = Some(account("one"));
     state.vustb_session = Some(VustbSession::default());
     assert!(super::is_expired(&tokens_from_state(&state).unwrap_err()));
-    super::apply_tokens(&mut state, &OAuthTokens {
-      access_token: "new".into(), refresh_token: Some("new-refresh".into()), id_token: None,
-    });
+    super::apply_tokens(
+      &mut state,
+      &OAuthTokens {
+        access_token: "new".into(),
+        refresh_token: Some("new-refresh".into()),
+        id_token: None,
+      },
+    );
     assert_eq!(tokens_from_state(&state).unwrap().access_token, "new");
   }
 
@@ -650,12 +702,18 @@ mod tests {
       id_token: None,
     };
     super::apply_tokens(&mut state, &tokens);
-    assert_eq!(tokens_from_state(&state).unwrap().access_token, "rotated-access");
+    assert_eq!(
+      tokens_from_state(&state).unwrap().access_token,
+      "rotated-access"
+    );
     for player in &state.players[..2] {
       assert_eq!(player.access_token.as_deref(), Some("rotated-access"));
       assert_eq!(player.refresh_token.as_deref(), Some("rotated-refresh"));
     }
-    assert_eq!(state.players[2].access_token.as_deref(), Some("legacy-access"));
+    assert_eq!(
+      state.players[2].access_token.as_deref(),
+      Some("legacy-access")
+    );
   }
 
   use super::reqwest;
