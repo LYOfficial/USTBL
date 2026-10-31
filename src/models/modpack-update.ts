@@ -169,3 +169,16 @@ export interface ModpackUpdateOutcome {
   versionId: string;
   loaderInstallPending: boolean;
 }
+
+export interface ModpackUpdateStarted {
+  group: string;
+}
+
+export interface ModpackUpdateFinished {
+  instanceId: string;
+  instanceName: string;
+  group: string;
+  planHash: string;
+  outcome: ModpackUpdateOutcome | null;
+  error: string | null;
+}

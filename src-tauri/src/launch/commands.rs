@@ -30,6 +30,7 @@ use crate::launcher_config::models::{
 use crate::resource::helpers::misc::get_source_priority_list;
 use crate::storage::load_json_async;
 use crate::tasks::commands::schedule_progressive_task_group;
+use crate::tasks::monitor::TaskMonitor;
 use crate::utils::fs::create_zip_from_dirs;
 use crate::utils::logging::get_launcher_log_path;
 use crate::utils::shell::{execute_command_line, split_command_line};
@@ -39,6 +40,7 @@ use std::fs;
 use std::io::prelude::*;
 use std::io::BufReader;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::process::{Command, Stdio};
 use std::sync::{mpsc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -120,19 +122,23 @@ pub async fn select_suitable_jre(
   // Return the selected runtime so the launch UI can show which Java was picked.
   let selected_java_for_result = selected_java.clone();
   let mut launching = launching_queue_state.lock()?;
-  // Checked under the update registry lock, so an update cannot start between
-  // this check and the queue entry it guards.
+  // Hold both registries through queue insertion, including registered update
+  // jobs still preparing their plan before they acquire the disk UpdateGuard.
   let root = instance.version_path.clone();
   UpdateGuard::while_idle(&root, || {
-    launching.push(LaunchingState {
-      id: timestamp,
-      game_config,
-      client_info,
-      selected_java,
-      selected_instance: instance,
-      ..LaunchingState::default()
-    })
-  })?;
+    app
+      .state::<Pin<Box<TaskMonitor>>>()
+      .while_no_modpack_update(&instance_id, || {
+        launching.push(LaunchingState {
+          id: timestamp,
+          game_config,
+          client_info,
+          selected_java,
+          selected_instance: instance,
+          ..LaunchingState::default()
+        })
+      })
+  })??;
 
   Ok(selected_java_for_result)
 }

@@ -647,6 +647,8 @@
     }
   },
   "DownloadTasksPage": {
+    "updateStarted": "Mise à jour du modpack ajoutée à la page des tâches",
+    "recheckUpdate": "Rechercher à nouveau les mises à jour",
     "title": "Tâches de téléchargement et d'envoi",
     "unfinishedPublish": {
       "title": "Publications inachevées",
@@ -700,7 +702,8 @@
       "launcher-update": "Mettre à jour le lanceur",
       "mojang-java": "Java {{param}} fonctionne",
       "modpack-publish": "Publication du modpack {{param}}",
-      "modpack-install": "Installation du modpack {{param}}"
+      "modpack-install": "Installation du modpack {{param}}",
+      "modpack-update": "Mise à jour du modpack {{param}}"
     },
     "installStage": {
       "waitingclient": "En attente du client du jeu",
@@ -2250,7 +2253,8 @@
             "INSTANCE_NOT_FOUND_BY_ID": "ID d'instance introuvable",
             "LAUNCH_INSTANCE_INSTALLING": "L’installation du pack du campus est inachevée pour cette instance. Terminez-la dans les tâches de téléchargement et d’envoi avant de lancer le jeu.",
             "NO_SUITABLE_JAVA": "Aucun environnement Java approprié disponible",
-            "SELECTED_JAVA_UNAVAILABLE": "Le runtime Java sélectionné manuellement a été supprimé ou n'est pas disponible"
+            "SELECTED_JAVA_UNAVAILABLE": "Le runtime Java sélectionné manuellement a été supprimé ou n'est pas disponible",
+            "MODPACK_UPDATE_BUSY": "Le modpack de cette instance est en cours de mise à jour. Attendez la fin de la tâche avant de lancer le jeu"
           }
         }
       },
@@ -2757,6 +2761,10 @@
         "error": {
           "title": "Échec de la mise à jour du pack",
           "description": {
+            "MODPACK_UPDATE_TASK_FAILED": "La tâche de mise à jour s'est arrêtée de façon inattendue. Consultez le journal du lanceur et recherchez à nouveau les mises à jour",
+            "NETWORK_ERROR": "Les requêtes réseau ont échoué après plusieurs tentatives. Rétablissez la connexion et recherchez à nouveau les mises à jour",
+            "FILE_OPERATION_ERROR": "Impossible de lire ou d'écrire les fichiers. Vérifiez l'espace disque et les autorisations, puis recherchez à nouveau les mises à jour",
+            "UNKNOWN_ERROR": "La mise à jour a échoué. Consultez le journal du lanceur et recherchez à nouveau les mises à jour",
             "MODPACK_UPDATE_BUSY": "Ce pack de mods est déjà en cours de mise à jour",
             "MODPACK_UPDATE_VERIFY_FAILED": "Un fichier téléchargé a échoué à la vérification ; l’instance n’a pas été modifiée",
             "MODPACK_UPDATE_STALE": "Les fichiers locaux ont changé après la vérification ; vérifiez de nouveau les mises à jour",

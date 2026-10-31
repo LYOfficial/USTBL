@@ -1,4 +1,5 @@
 import {
+  Button,
   Flex,
   HStack,
   IconButton,
@@ -26,6 +27,7 @@ import { Section } from "@/components/common/section";
 import { UnfinishedInstalls } from "@/components/unfinished-installs";
 import { UnfinishedPublishes } from "@/components/unfinished-publishes";
 import { useLauncherConfig } from "@/contexts/config";
+import { useSharedModals } from "@/contexts/shared-modal";
 import { destOf, parseTaskGroup, useTaskContext } from "@/contexts/task";
 import {
   GTaskEventStatusEnums,
@@ -45,17 +47,23 @@ import {
   localizeCampusInstallError,
 } from "@/utils/campus-install-task";
 import { formatTimeInterval } from "@/utils/datetime";
+import {
+  isModpackUpdateGroup,
+  localizeModpackUpdateError,
+} from "@/utils/modpack-update-task";
 import { formatByteSize } from "@/utils/string";
 
 export const DownloadTasksPage = () => {
   const { t } = useTranslation();
   const router = useRouter();
+  const { openSharedModal } = useSharedModals();
   const { config } = useLauncherConfig();
   const primaryColor = config.appearance.theme.primaryColor;
 
   const {
     tasks,
     installProgress,
+    updateResults,
     unfinishedInstalls,
     handleScheduleProgressiveTaskGroup,
     handleCancelProgressiveTaskGroup,
@@ -112,7 +120,7 @@ export const DownloadTasksPage = () => {
     return `${isRetry ? `${t(`DownloadTasksPage.task.retry`)} ` : ""}${t(
       `DownloadTasksPage.task.${name}`,
       {
-        param: isCampusInstallGroup(taskGroup)
+        param: isModpackTransferGroup(taskGroup)
           ? campusInstallGroupLabel(taskGroup)
           : version || "",
       }
@@ -120,9 +128,11 @@ export const DownloadTasksPage = () => {
   };
 
   const localizeReason = (group: TaskGroupDesc, reason?: string) =>
-    isCampusInstallGroup(group.taskGroup)
-      ? localizeCampusInstallError(t, reason)
-      : reason || t("DownloadTasksPage.label.error");
+    isModpackUpdateGroup(group.taskGroup)
+      ? localizeModpackUpdateError(t, reason)
+      : isCampusInstallGroup(group.taskGroup)
+        ? localizeCampusInstallError(t, reason)
+        : reason || t("DownloadTasksPage.label.error");
 
   const showInstallProgress = (group: string) => {
     const progress = campusInstallProgressView(
@@ -142,7 +152,8 @@ export const DownloadTasksPage = () => {
 
   const localizeTaskTitle = (group: TaskGroupDesc, task: TaskDesc) => {
     const { name } = parseTaskGroup(group.taskGroup);
-    if (name !== "modpack-install") return task.payload.filename;
+    if (name !== "modpack-install" && name !== "modpack-update")
+      return task.payload.filename;
     const stage = campusInstallStageKey(task.payload.filename);
     return t(`DownloadTasksPage.installStage.${stage}`, {
       defaultValue: task.payload.filename,
@@ -150,7 +161,7 @@ export const DownloadTasksPage = () => {
   };
 
   const canPause = (group: TaskGroupDesc) =>
-    !isCampusInstallGroup(group.taskGroup);
+    !isModpackTransferGroup(group.taskGroup);
 
   return (
     <Section
@@ -200,6 +211,22 @@ export const DownloadTasksPage = () => {
                   </Text>
 
                   <HStack alignItems="center">
+                    {isModpackUpdateGroup(group.taskGroup) &&
+                      updateResults[group.taskGroup]?.error && (
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          onClick={() => {
+                            const result = updateResults[group.taskGroup];
+                            openSharedModal("update-modpack", {
+                              instanceId: result.instanceId,
+                              instanceName: result.instanceName,
+                            });
+                          }}
+                        >
+                          {t("DownloadTasksPage.recheckUpdate")}
+                        </Button>
+                      )}
                     <Text fontSize="xs" className="secondary-text">
                       {group.finishedCount} / {group.taskDescs.length}
                     </Text>
@@ -227,7 +254,8 @@ export const DownloadTasksPage = () => {
                       <Text fontSize="xs" color="red.600">
                         {localizeReason(
                           group,
-                          group.reason ||
+                          updateResults[group.taskGroup]?.error ||
+                            group.reason ||
                             group.taskDescs.find(
                               (task) =>
                                 task.status === TaskDescStatusEnums.Failed
@@ -311,7 +339,7 @@ export const DownloadTasksPage = () => {
                         </Tooltip>
                       )}
 
-                    {!isCampusInstallGroup(group.taskGroup) &&
+                    {!isModpackTransferGroup(group.taskGroup) &&
                       group.status !== GTaskEventStatusEnums.Cancelled &&
                       group.status !== GTaskEventStatusEnums.Completed && (
                         <Tooltip label={t("General.cancel")}>
@@ -363,7 +391,7 @@ export const DownloadTasksPage = () => {
                     mb={1}
                   />
                 )}
-                {isCampusInstallGroup(group.taskGroup) &&
+                {isModpackTransferGroup(group.taskGroup) &&
                   showInstallProgress(group.taskGroup)}
               </VStack>,
 
@@ -374,9 +402,9 @@ export const DownloadTasksPage = () => {
                       title={localizeTaskTitle(group, task)}
                       description={
                         (task.status === TaskDescStatusEnums.InProgress ||
-                          (isCampusInstallGroup(group.taskGroup) &&
+                          (isModpackTransferGroup(group.taskGroup) &&
                             task.status === TaskDescStatusEnums.Failed)) &&
-                        (!isCampusInstallGroup(group.taskGroup) ||
+                        (!isModpackTransferGroup(group.taskGroup) ||
                           task.payload.filename === "Fetching") && (
                           <Text
                             fontSize="xs"
@@ -398,7 +426,7 @@ export const DownloadTasksPage = () => {
                             // In progress without a total (e.g. the platform
                             // stage of a publish) is indeterminate too.
                             isIndeterminate={
-                              isCampusInstallGroup(group.taskGroup)
+                              isModpackTransferGroup(group.taskGroup)
                                 ? campusInstallTaskIndeterminate(task)
                                 : task.status === TaskDescStatusEnums.Waiting ||
                                   (task.status ===
@@ -441,3 +469,6 @@ export const DownloadTasksPage = () => {
 };
 
 export default DownloadTasksPage;
+
+const isModpackTransferGroup = (group: string) =>
+  isCampusInstallGroup(group) || isModpackUpdateGroup(group);

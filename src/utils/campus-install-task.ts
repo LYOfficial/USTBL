@@ -59,10 +59,7 @@ export const removeCampusInstallGroups = (
 
 export const campusInstallGroupLabel = (group: string): string => {
   const end = group.lastIndexOf("@");
-  const name = group.slice(
-    "modpack-install?".length,
-    end < 0 ? undefined : end
-  );
+  const name = group.slice(group.indexOf("?") + 1, end < 0 ? undefined : end);
   const identity = name.lastIndexOf(" [");
   return identity < 0 ? name : name.slice(0, identity);
 };
