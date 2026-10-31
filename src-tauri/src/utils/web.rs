@@ -450,11 +450,15 @@ mod tests {
         stream.write_all(&wire).unwrap();
       }
     });
-    let campus = campus_builder(ClientBuilder::new().no_proxy()).build().unwrap();
+    let campus = campus_builder(ClientBuilder::new().no_proxy())
+      .build()
+      .unwrap();
     let response = campus.get(&url).send().await.unwrap();
     assert!(response.content_length().is_none());
     assert_eq!(response.bytes().await.unwrap().as_ref(), plain);
-    let shared = shared_builder(ClientBuilder::new().no_proxy()).build().unwrap();
+    let shared = shared_builder(ClientBuilder::new().no_proxy())
+      .build()
+      .unwrap();
     for range in [false, true] {
       let mut request = shared.get(&url);
       if range {
@@ -462,7 +466,10 @@ mod tests {
       }
       let response = request.send().await.unwrap();
       assert_eq!(response.content_length(), Some(compressed.len() as u64));
-      assert_eq!(response.bytes().await.unwrap().as_ref(), compressed.as_slice());
+      assert_eq!(
+        response.bytes().await.unwrap().as_ref(),
+        compressed.as_slice()
+      );
     }
     server.join().unwrap();
   }

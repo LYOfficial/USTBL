@@ -8,8 +8,8 @@ use crate::account::helpers::microsoft::models::{
 use crate::account::helpers::misc::{self, fetch_image, oauth_polling};
 use crate::account::helpers::offline::load_preset_skin;
 use crate::account::models::{
-  AccountError, AccountInfo, DeviceAuthResponse, DeviceAuthResponseInfo, OAuthTokens, PlayerInfo, PlayerType,
-  PresetRole, SkinModel, Texture, TextureType,
+  AccountError, AccountInfo, DeviceAuthResponse, DeviceAuthResponseInfo, OAuthTokens, PlayerInfo,
+  PlayerType, PresetRole, SkinModel, Texture, TextureType,
 };
 use crate::error::USTBLResult;
 use serde_json::{json, Value};
@@ -293,7 +293,11 @@ pub async fn validate(app: &AppHandle, player: &PlayerInfo) -> USTBLResult<bool>
     let current_player = {
       let binding = app.state::<Mutex<AccountInfo>>();
       let accounts = binding.lock()?;
-      accounts.players.iter().find(|item| item.id == player.id).cloned()
+      accounts
+        .players
+        .iter()
+        .find(|item| item.id == player.id)
+        .cloned()
         .ok_or(AccountError::NotFound)?
     };
     let refreshed_player = match refresh(app, &current_player).await {
@@ -301,21 +305,24 @@ pub async fn validate(app: &AppHandle, player: &PlayerInfo) -> USTBLResult<bool>
       Err(error) if error == AccountError::Expired.into() => return Ok(false),
       Err(error) => return Err(error),
     };
-    let token = refreshed_player.access_token.clone().ok_or(AccountError::Invalid)?;
+    let token = refreshed_player
+      .access_token
+      .clone()
+      .ok_or(AccountError::Invalid)?;
     misc::update_player_by_id(app, &player.id, refreshed_player)?;
     return Ok(validate_access_token(app, &token).await?.is_success());
   }
   Ok(status.is_success())
 }
 
-async fn validate_access_token(app: &AppHandle, access_token: &str) -> USTBLResult<reqwest::StatusCode> {
+async fn validate_access_token(
+  app: &AppHandle,
+  access_token: &str,
+) -> USTBLResult<reqwest::StatusCode> {
   let client = app.state::<reqwest::Client>();
   let response = client
     .get(PROFILE_ENDPOINT)
-    .header(
-      "Authorization",
-      format!("Bearer {access_token}"),
-    )
+    .header("Authorization", format!("Bearer {access_token}"))
     .send()
     .await
     .map_err(|_| AccountError::NetworkError)?;

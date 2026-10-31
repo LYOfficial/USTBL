@@ -325,26 +325,53 @@ mod tests {
   fn publish_base_selection_skips_invalid_and_unsupported_local_inputs() {
     let sha1 = "a".repeat(40);
     let remote = [candidate("config/a.cfg", &sha1, 3)];
-    assert_eq!(select_publish_base(false, "../a.cfg", &sha1, Some(3), &remote), None);
-    assert_eq!(select_publish_base(false, "mods/a.jar", &sha1, Some(3), &remote), None);
-    assert_eq!(select_publish_base(false, "config/a.cfg", &sha1, Some(MAX_TEXT_SIZE as u64 + 1), &remote), None);
+    assert_eq!(
+      select_publish_base(false, "../a.cfg", &sha1, Some(3), &remote),
+      None
+    );
+    assert_eq!(
+      select_publish_base(false, "mods/a.jar", &sha1, Some(3), &remote),
+      None
+    );
+    assert_eq!(
+      select_publish_base(
+        false,
+        "config/a.cfg",
+        &sha1,
+        Some(MAX_TEXT_SIZE as u64 + 1),
+        &remote
+      ),
+      None
+    );
   }
 
   #[test]
   fn publish_base_selection_skips_cached_and_oversized_remote_files() {
     let sha1 = "a".repeat(40);
     let remote = [candidate("config/a.cfg", &sha1, 3)];
-    assert_eq!(select_publish_base(true, "config/a.cfg", &sha1, Some(3), &remote), None);
+    assert_eq!(
+      select_publish_base(true, "config/a.cfg", &sha1, Some(3), &remote),
+      None
+    );
     let oversized = [candidate("config/a.cfg", &sha1, MAX_TEXT_SIZE as u64 + 1)];
-    assert_eq!(select_publish_base(false, "config/a.cfg", &sha1, Some(3), &oversized), None);
+    assert_eq!(
+      select_publish_base(false, "config/a.cfg", &sha1, Some(3), &oversized),
+      None
+    );
   }
 
   #[test]
   fn publish_base_selection_requires_case_insensitive_path_and_matching_sha1() {
     let sha1 = "a".repeat(40);
     let remote = [candidate("Config/A.CFG", &sha1, 3)];
-    assert_eq!(select_publish_base(false, "config/a.cfg", &sha1, Some(3), &remote), Some(0));
-    assert_eq!(select_publish_base(false, "config/a.cfg", &"b".repeat(40), Some(3), &remote), None);
+    assert_eq!(
+      select_publish_base(false, "config/a.cfg", &sha1, Some(3), &remote),
+      Some(0)
+    );
+    assert_eq!(
+      select_publish_base(false, "config/a.cfg", &"b".repeat(40), Some(3), &remote),
+      None
+    );
   }
 
   fn run(

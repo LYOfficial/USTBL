@@ -8,8 +8,8 @@ use super::diff::{
   collect_local_states, scan_path, ChangeKind, Conflict, ConflictChoice, ConflictKind, Diff,
   FileChange, FileKey, LocalState, Operation, DISABLED_SUFFIX,
 };
-use super::local_scan::{collect_states_cached, record_states, LocalScanCache};
 use super::ignores::{self, Ignores};
+use super::local_scan::{collect_states_cached, record_states, LocalScanCache};
 use super::merge::{merge_text, text_conflicts, TextMergeError};
 use super::remote::{RemoteModpack, RemoteRule, RuleKind, RuleState};
 use super::text_diff::{edits, lines_of, unified_diff_hiding, DiffHunk, CONTEXT_LINES};
@@ -187,7 +187,6 @@ pub struct LocalChange {
   pub toggled: bool,
 }
 
-
 /// Managed files that differ from what the modpack installed, by path. Text
 /// files that only differ in normalized-away noise are not changes. With
 /// `with_diff` each modified text file carries its line diff. Dormant entries
@@ -288,8 +287,7 @@ pub async fn local_changes(
         _ => None,
       };
       let same = lines.as_ref().is_some_and(|(base, local)| {
-        base == local
-          || entry.is_some_and(|entry| ignores::all_ignored(entry, &edits(base, local)))
+        base == local || entry.is_some_and(|entry| ignores::all_ignored(entry, &edits(base, local)))
       });
       let (hunks, no_diff) = match (base_text, local_text) {
         (Some(_), Some(_)) if same && !toggled => continue,
@@ -357,7 +355,11 @@ pub async fn prepare_with_contents(
 /// The files inside a delete `dir` rule's directory that the decision has to
 /// see: every regular file below it, as (disk spelling, logical path) pairs.
 /// The logical path folds the `.disabled` suffix back to the enabled name.
-fn enumerate_under(root: &Path, dir: &str, found: &mut BTreeMap<String, String>) -> USTBLResult<()> {
+fn enumerate_under(
+  root: &Path,
+  dir: &str,
+  found: &mut BTreeMap<String, String>,
+) -> USTBLResult<()> {
   let base = root.join(dir);
   if !base.is_dir() {
     return Ok(());
@@ -455,7 +457,10 @@ fn find_folded_matches(
 ) -> Vec<(String, String, LocalState)> {
   let mut matches = Vec::new();
   for path in paths {
-    if states.get(path).is_some_and(|state| *state != LocalState::Absent) {
+    if states
+      .get(path)
+      .is_some_and(|state| *state != LocalState::Absent)
+    {
       continue;
     }
     let name = path.rsplit_once('/').map(|(_, name)| name).unwrap_or(path);
@@ -693,7 +698,9 @@ fn decide_path(
     // its local variant wins; every other conflict takes the three-way.
     let remote_disabled = ship.as_ref().map(|ship| {
       if matches!(conflict, DecisionConflict::UnmanagedFileInTheWay) {
-        local.variant_disabled().unwrap_or_else(|| ship.disabled.unwrap_or(false))
+        local
+          .variant_disabled()
+          .unwrap_or_else(|| ship.disabled.unwrap_or(false))
       } else {
         disabled_outcome(
           ship.disabled,
@@ -756,7 +763,11 @@ pub async fn compare(
   .await
   .map_err(|e| USTBLError(e.to_string()))?;
   for (path, spelling, state) in folded {
-    record_states(scan_cache(), &root, &BTreeMap::from([(spelling, state.clone())]));
+    record_states(
+      scan_cache(),
+      &root,
+      &BTreeMap::from([(spelling, state.clone())]),
+    );
     local.insert(path, state);
   }
   // A local file that only differs in normalized-away noise counts as the
@@ -855,8 +866,8 @@ pub async fn compare(
     // delete rule clears both without asking.
     if let LocalState::Both(..) = &state {
       let policy = remote.policy_of(path);
-      let involves =
-        policy != Policy::Delete && (policy == Policy::Ship || entry.is_some_and(|e| e.is_managed()));
+      let involves = policy != Policy::Delete
+        && (policy == Policy::Ship || entry.is_some_and(|e| e.is_managed()));
       if involves {
         both_variants.push(path.clone());
         continue;
@@ -1022,22 +1033,32 @@ pub fn finish(
   };
   let mut remaining = Vec::new();
   for conflict in diff.conflicts {
-      let merged = match (
+    let merged = match (
       conflict.kind,
       conflict.baseline.as_ref(),
       conflict.local.as_ref(),
       conflict.remote.as_ref(),
       remote_contents.get(&conflict.path),
-      ) {
-      (super::diff::ConflictKind::ModifiedLocallyChangedRemotely, Some(base), Some(_local_key), Some(remote_key), Some(remote_bytes)) => {
+    ) {
+      (
+        super::diff::ConflictKind::ModifiedLocallyChangedRemotely,
+        Some(base),
+        Some(_local_key),
+        Some(remote_key),
+        Some(remote_bytes),
+      ) => {
         let base_bytes = base_store::load(root, &base.sha1).ok().flatten();
         let local_bytes = local_content(&conflict.path);
-        base_bytes.and_then(|base_bytes| local_bytes.and_then(|local_bytes| {
-          match merge_text(&conflict.path, &base_bytes, &local_bytes, remote_bytes) {
-            Ok(bytes) => Some((remote_key.clone(), bytes)),
-            Err(TextMergeError::Conflict(_)) | Err(TextMergeError::InvalidText) | Err(TextMergeError::InvalidMergedFormat) => None,
-          }
-        }))
+        base_bytes.and_then(|base_bytes| {
+          local_bytes.and_then(|local_bytes| {
+            match merge_text(&conflict.path, &base_bytes, &local_bytes, remote_bytes) {
+              Ok(bytes) => Some((remote_key.clone(), bytes)),
+              Err(TextMergeError::Conflict(_))
+              | Err(TextMergeError::InvalidText)
+              | Err(TextMergeError::InvalidMergedFormat) => None,
+            }
+          })
+        })
       }
       _ => None,
     };
@@ -1068,10 +1089,14 @@ pub fn finish(
           base_store::load(root, &base.sha1).ok().flatten(),
           local_content(&conflict.path),
         ) {
-          if let Ok(hunks) = text_conflicts(&conflict.path, &base_bytes, &local_bytes, remote_bytes) {
+          if let Ok(hunks) = text_conflicts(&conflict.path, &base_bytes, &local_bytes, remote_bytes)
+          {
             let mut conflict = conflict;
             conflict.hunks = hunks;
-            conflict_sources.insert(conflict.path.clone(), (base_bytes, local_bytes, remote_bytes.clone()));
+            conflict_sources.insert(
+              conflict.path.clone(),
+              (base_bytes, local_bytes, remote_bytes.clone()),
+            );
             remaining.push(conflict);
             continue;
           }
@@ -1358,8 +1383,10 @@ mod tests {
     let baseline = baseline(&[("config/a.toml", "a=1\n")]);
     let baseline_bytes = b"a=1\n";
     let sha1 = hex::encode(Sha1::digest(baseline_bytes));
-    std::fs::create_dir_all(crate::instance::helpers::modpack::base_store::base_dir(&root))
-      .unwrap();
+    std::fs::create_dir_all(crate::instance::helpers::modpack::base_store::base_dir(
+      &root,
+    ))
+    .unwrap();
     std::fs::write(
       crate::instance::helpers::modpack::base_store::base_path(&root, &sha1),
       baseline_bytes,
@@ -1393,10 +1420,14 @@ mod tests {
     let installed = baseline(&[("config/a.properties", "key=base\n")]);
     let remote = remote(&[("config/a.properties", "key=remote\n")]);
     let contents = BTreeMap::from([("config/a.properties".into(), b"key=remote\n".to_vec())]);
-    let missing = prepare_with_contents(&root, &installed, &remote, &contents).await.unwrap();
+    let missing = prepare_with_contents(&root, &installed, &remote, &contents)
+      .await
+      .unwrap();
     assert!(missing.diff.conflicts[0].hunks.is_empty());
     base_store::store(&root, &installed.files[0], b"key=base\n").unwrap();
-    let recovered = prepare_with_contents(&root, &installed, &remote, &contents).await.unwrap();
+    let recovered = prepare_with_contents(&root, &installed, &remote, &contents)
+      .await
+      .unwrap();
     assert_eq!(recovered.diff.conflicts[0].hunks.len(), 1);
     assert_eq!(recovered.diff.conflicts[0].hunks[0].base, vec!["key=base"]);
     let _ = fs::remove_dir_all(root);
@@ -1496,7 +1527,10 @@ mod tests {
     let baseline_bytes = b"a=1\n";
     let baseline_sha1 = hex::encode(Sha1::digest(baseline_bytes));
     let baseline = baseline(&[("config/a.toml", "a=1\n")]);
-    fs::create_dir_all(crate::instance::helpers::modpack::base_store::base_dir(&root)).unwrap();
+    fs::create_dir_all(crate::instance::helpers::modpack::base_store::base_dir(
+      &root,
+    ))
+    .unwrap();
     fs::write(
       crate::instance::helpers::modpack::base_store::base_path(&root, &baseline_sha1),
       baseline_bytes,
@@ -1515,7 +1549,10 @@ mod tests {
     ]);
     let base_text = b"a=1\nb=2\n";
     let base_sha1 = hex::encode(Sha1::digest(base_text));
-    fs::create_dir_all(crate::instance::helpers::modpack::base_store::base_dir(&root)).unwrap();
+    fs::create_dir_all(crate::instance::helpers::modpack::base_store::base_dir(
+      &root,
+    ))
+    .unwrap();
     fs::write(
       crate::instance::helpers::modpack::base_store::base_path(&root, &base_sha1),
       base_text,
@@ -1543,7 +1580,10 @@ mod tests {
       .collect();
     assert_eq!(rendered, ["Context:a=1", "Delete:b=2", "Add:b=3"]);
 
-    assert_eq!(by_path["config/b.toml"].no_diff, Some(NoDiffReason::BaseMissing));
+    assert_eq!(
+      by_path["config/b.toml"].no_diff,
+      Some(NoDiffReason::BaseMissing)
+    );
     assert_eq!(by_path["mods/a.jar"].no_diff, Some(NoDiffReason::NotText));
     assert_eq!(by_path["mods/gone.jar"].kind, LocalChangeKind::Deleted);
 
@@ -2219,10 +2259,18 @@ mod tests {
 
     ignore_range(&root, &installed, 8, 9);
     assert_eq!(count_local_changes(&root, &installed).await.unwrap(), 0);
-    assert!(local_changes(&root, &installed, true).await.unwrap().is_empty());
+    assert!(local_changes(&root, &installed, true)
+      .await
+      .unwrap()
+      .is_empty());
 
-    ignores::undo(&root, &installed, "config/a.toml", Some(ignores::Region { start: 8, end: 9 }))
-      .unwrap();
+    ignores::undo(
+      &root,
+      &installed,
+      "config/a.toml",
+      Some(ignores::Region { start: 8, end: 9 }),
+    )
+    .unwrap();
     assert_eq!(count_local_changes(&root, &installed).await.unwrap(), 1);
     let _ = fs::remove_dir_all(root);
   }
@@ -2241,7 +2289,13 @@ mod tests {
     // A range of a file without a kept text cannot be recorded.
     let sha1 = installed.files[1].sha1.clone();
     assert_eq!(
-      ignores::add(&root, &installed, "mods/a.jar", &sha1, Some(ignores::Region { start: 0, end: 1 })),
+      ignores::add(
+        &root,
+        &installed,
+        "mods/a.jar",
+        &sha1,
+        Some(ignores::Region { start: 0, end: 1 })
+      ),
       Err(ignores::IgnoreError::Mismatch)
     );
     let _ = fs::remove_dir_all(root);
