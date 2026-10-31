@@ -281,6 +281,8 @@ mod tests {
       files,
       rules,
       rules_manifest: true,
+      version_id: None,
+      project_id: None,
     }
   }
 

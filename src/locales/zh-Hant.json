@@ -2720,6 +2720,7 @@
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的組件鏈，無法就地更新，請重新安裝",
             "MODPACK_UPDATE_LINE_GONE": "平台上已不存在該整合包的這條線",
             "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暫時取不到此版本所需的檔案，請稍後重試",
+            "MODPACK_PUBLISH_PREVIOUS_UNAVAILABLE": "暫時取不到上一版的內容",
             "MODPACK_UPDATE_MERGE_INVALID": "按區塊選擇後設定檔的格式無效，請調整選擇後重試",
             "MODPACK_INSTALL_STAGING_MISMATCH": "已儲存的下載屬於其他安裝計畫，已清理",
             "MODPACK_INSTALL_INTERRUPTED": "安裝已中斷，請從任務頁繼續",
@@ -3221,7 +3222,12 @@
       "packing": "正在打包新增內容"
     },
     "tree": {
-      "legend": "勾選：隨版本發布。忽略：這一版不管它，玩家本機的保持不動。刪除：玩家更新時直接刪掉。點擊狀態按鈕依序切換；目錄的狀態會套用到其下所有檔案，單獨設定過的除外。",
+      "legend": {
+        "include": "隨版本發布",
+        "ignore": "這一版不管它，玩家本機的保持不動",
+        "delete": "玩家更新時直接刪掉",
+        "cycle": "點擊圖示依序切換；目錄的狀態會套用到其下所有檔案，單獨設定過的除外"
+      },
       "include": "勾選",
       "ignore": "忽略",
       "delete": "刪除",
@@ -3269,7 +3275,8 @@
         "show": "查看差異",
         "hide": "收起差異",
         "differs": "內容不同。上一版 {{previous}}，本機 {{local}}。",
-        "formatOnly": "文字內容相同，只有換行等格式不同。上一版 {{previous}}，本機 {{local}}。"
+        "formatOnly": "文字內容相同，只有換行等格式不同。上一版 {{previous}}，本機 {{local}}。",
+        "unavailable": "暫時取不到上一版的內容。"
       }
     },
     "skipped": "有 {{count}} 個啟動器檔案被排除",

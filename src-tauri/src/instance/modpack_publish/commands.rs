@@ -15,11 +15,13 @@ use crate::account::helpers::vustb;
 use crate::account::models::AccountInfo;
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::misc::{get_instance_game_config, get_instance_subdir_paths};
+use crate::instance::helpers::modpack::base_store;
 use crate::instance::helpers::modpack::baseline::{
   canonical_loader_version, hash_file, BaselineLoader, ModpackBaseline,
 };
 use crate::instance::helpers::modpack::multimc::profile::safe_relative;
 use crate::instance::helpers::modpack::multimc::snapshot::load_required_snapshot;
+use crate::instance::helpers::modpack::text;
 use crate::instance::models::misc::{
   Instance, InstanceError, InstanceOrigin, InstanceSubdirType, OriginPlatform,
 };
@@ -398,6 +400,10 @@ pub struct PreviousRelease {
   pub rules: Vec<RemoteRule>,
   #[serde(default)]
   pub rules_manifest: bool,
+  #[serde(default)]
+  pub version_id: Option<String>,
+  #[serde(default)]
+  pub project_id: Option<String>,
 }
 
 /// The files and rules the line's current release lists, so the publish dialog
@@ -432,7 +438,9 @@ pub async fn fetch_campus_modpack_previous_release(
     return Err(failure(response).await);
   }
   let body: Value = response.json().await?;
-  Ok(Some(previous_release_of(&body["manifest"])?))
+  let mut release = previous_release_of(&body["manifest"])?;
+  release.version_id = body["id"].as_i64().map(|id| id.to_string());
+  Ok(Some(release))
 }
 
 fn previous_release_of(manifest: &Value) -> USTBLResult<PreviousRelease> {
@@ -462,7 +470,12 @@ pub async fn prepare_campus_modpack_publish_tree(
   let root = instance.version_path.clone();
   let previous = match project {
     Some(project) => {
-      fetch_campus_modpack_previous_release(app.clone(), instance_id, project).await?
+      fetch_campus_modpack_previous_release(app.clone(), instance_id, project.clone())
+        .await?
+        .map(|mut release| {
+          release.project_id = Some(project);
+          release
+        })
     }
     None => None,
   };
@@ -511,8 +524,48 @@ pub async fn diff_campus_modpack_publish_file(
   instance_id: String,
   path: String,
   previous_sha1: String,
+  previous_version_id: String,
+  previous_project_id: String,
 ) -> USTBLResult<Option<Vec<DiffHunk>>> {
-  let root = instance_of(&app, &instance_id)?.version_path;
+  let instance = instance_of(&app, &instance_id)?;
+  let root = instance.version_path.clone();
+  let local_path = root.join(&path);
+  let disabled_path = root.join(format!(
+    "{path}{}",
+    crate::instance::modpack_update::diff::DISABLED_SUFFIX
+  ));
+  let size = [local_path, disabled_path]
+    .iter()
+    .find_map(|file| std::fs::metadata(file).ok().map(|meta| meta.len()));
+  if !text::is_text_path(&path, &[]) || size.is_none_or(|size| size > text::MAX_TEXT_SIZE as u64) {
+    return tokio::task::spawn_blocking(move || {
+      super::changes::file_diff(&root, &path, &previous_sha1)
+    })
+    .await
+    .map_err(|error| USTBLError(error.to_string()))?;
+  }
+  let recovered =
+    if crate::instance::helpers::modpack::base_store::load(&root, &previous_sha1.to_lowercase())?
+      .is_none()
+    {
+      match crate::instance::modpack_update::commands::recover_publish_base(
+        &app,
+        &instance,
+        &previous_project_id,
+        &previous_version_id,
+        &path,
+        &previous_sha1,
+      )
+      .await
+      {
+        Ok(true) => false,
+        Ok(false) => return Err(InstanceError::ModpackPublishPreviousUnavailable.into()),
+        Err(_) => return Err(InstanceError::ModpackPublishPreviousUnavailable.into()),
+      }
+    } else {
+      false
+    };
+  let _ = recovered;
   tokio::task::spawn_blocking(move || super::changes::file_diff(&root, &path, &previous_sha1))
     .await
     .map_err(|error| USTBLError(error.to_string()))?
@@ -1144,6 +1197,9 @@ async fn try_adopt(
     baseline = baseline.with_components(components);
   }
   baseline.save(&instance.version_path).await?;
+  if let Err(error) = base_store::sync(&instance.version_path, &baseline.files) {
+    log::warn!("Could not cache published text baselines: {error}");
+  }
   release::write(
     &instance.version_path,
     &release::Release::from_remote(&remote),

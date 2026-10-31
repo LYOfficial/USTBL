@@ -516,6 +516,73 @@ struct Target {
   root: PathBuf,
 }
 
+pub async fn recover_publish_base(
+  app: &AppHandle,
+  instance: &Instance,
+  project: &str,
+  version_id: &str,
+  path: &str,
+  sha1: &str,
+) -> USTBLResult<bool> {
+  if !text::is_text_path(path, &[]) || sha1.len() != 40 {
+    return Ok(false);
+  }
+  let mut origin = instance.origin.clone().unwrap_or(InstanceOrigin {
+    platform: OriginPlatform::Campus,
+    project_id: project.to_string(),
+    version_id: version_id.to_string(),
+    game_version: instance.version.clone(),
+    loader_type: instance.mod_loader.loader_type,
+    follow: false,
+  });
+  origin.project_id = project.to_string();
+  origin.version_id = version_id.to_string();
+  let remote = super::sources::campus_base_remote(
+    app,
+    &origin,
+    &instance.version_path,
+    &instance.name,
+  )
+  .await?;
+  let Some(file) = remote
+    .files
+    .iter()
+    .find(|file| file.path.eq_ignore_ascii_case(path) && file.key.sha1.eq_ignore_ascii_case(sha1))
+  else {
+    return Ok(false);
+  };
+  if file.key.size > text::MAX_TEXT_SIZE as u64 {
+    return Ok(false);
+  }
+  let env = AppEnv::preparing(
+    app,
+    &Target {
+      instance: instance.clone(),
+      origin,
+      root: instance.version_path.clone(),
+    },
+  );
+  prepare_packs(std::slice::from_ref(&file)).await?;
+  let preview = instance
+    .version_path
+    .join(super::remote::UPDATE_DIR)
+    .join(format!("publish-diff-{}", uuid::Uuid::new_v4()));
+  let dest = preview.join(path);
+  let result = materialize_remote_file(&env, dest.clone(), file).await;
+  if result.is_ok() {
+    let bytes = tokio::fs::read(&dest).await.map_err(crate::error::USTBLError::from)?;
+    let baseline = crate::instance::helpers::modpack::baseline::BaselineFile::managed(
+      path,
+      file.key.clone(),
+      file.disabled,
+    );
+    crate::instance::helpers::modpack::base_store::store(&instance.version_path, &baseline, &bytes)
+      .map_err(crate::error::USTBLError::from)?;
+  }
+  let _ = tokio::fs::remove_dir_all(preview).await;
+  result.map(|_| true)
+}
+
 fn current_instance(app: &AppHandle, instance_id: &str) -> USTBLResult<Instance> {
   let binding = app.state::<Mutex<HashMap<String, Instance>>>();
   let state = binding.lock()?;

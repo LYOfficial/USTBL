@@ -49,6 +49,9 @@ pub struct PublishChange {
   /// The player-side ignore list names the file. Only a mark: publishing
   /// follows the tree.
   pub local_ignored: bool,
+  /// The verified platform version used to recover a missing base copy.
+  pub previous_version_id: Option<String>,
+  pub previous_project_id: Option<String>,
 }
 
 fn folded(path: &str) -> String {
@@ -127,6 +130,8 @@ pub fn classify(
         previous_size: None,
         local_size: local_size(root, file),
         local_ignored: ignored,
+        previous_version_id: previous.and_then(|release| release.version_id.clone()),
+        previous_project_id: previous.and_then(|release| release.project_id.clone()),
       });
       continue;
     };
@@ -152,6 +157,8 @@ pub fn classify(
       previous_size: Some(before.size),
       local_size: Some(found.size),
       local_ignored: ignored,
+      previous_version_id: previous.and_then(|release| release.version_id.clone()),
+      previous_project_id: previous.and_then(|release| release.project_id.clone()),
     });
   }
   Ok(changes)
@@ -272,6 +279,8 @@ mod tests {
       files,
       rules: Vec::new(),
       rules_manifest: true,
+      version_id: None,
+      project_id: None,
     }
   }
 

@@ -24,6 +24,7 @@ const PublishChangeDiff: React.FC<PublishChangeDiffProps> = ({
 }) => {
   const { t } = useTranslation();
   // undefined while loading, null when no diff can be drawn.
+  const [unavailable, setUnavailable] = useState(false);
   const [hunks, setHunks] = useState<ModpackDiffHunk[] | null | undefined>();
 
   useEffect(() => {
@@ -33,19 +34,33 @@ const PublishChangeDiff: React.FC<PublishChangeDiffProps> = ({
     }
     let isActive = true;
     setHunks(undefined);
+    setUnavailable(false);
     CampusModpackService.diffCampusModpackPublishFile(
       instanceId,
       change.path,
-      change.previousSha1
+      change.previousSha1,
+      change.previousVersionId ?? "",
+      change.previousProjectId ?? ""
     ).then((response) => {
       if (isActive) {
-        setHunks(response.status === "success" ? response.data : null);
+        if (response.status === "success") {
+          setHunks(response.data);
+        } else {
+          setUnavailable(true);
+          setHunks(null);
+        }
       }
     });
     return () => {
       isActive = false;
     };
-  }, [instanceId, change.path, change.previousSha1]);
+  }, [
+    instanceId,
+    change.path,
+    change.previousSha1,
+    change.previousProjectId,
+    change.previousVersionId,
+  ]);
 
   const sizes = {
     previous: formatByteSize(change.previousSize ?? 0),
@@ -59,9 +74,11 @@ const PublishChangeDiff: React.FC<PublishChangeDiffProps> = ({
     return (
       <Text fontSize="xs" className="secondary-text">
         {t(
-          hunks === null
-            ? "PublishModpackModal.tree.diff.differs"
-            : "PublishModpackModal.tree.diff.formatOnly",
+          unavailable
+            ? "PublishModpackModal.tree.diff.unavailable"
+            : hunks === null
+              ? "PublishModpackModal.tree.diff.differs"
+              : "PublishModpackModal.tree.diff.formatOnly",
           sizes
         )}
       </Text>

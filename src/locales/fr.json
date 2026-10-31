@@ -2720,6 +2720,7 @@
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "Cette version modifie la chaîne de composants du pack et ne peut pas être appliquée sur place ; réinstallez-la",
             "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack",
             "MODPACK_UPDATE_PACK_UNAVAILABLE": "Les fichiers de cette version sont momentanément indisponibles sur la plateforme. Réessayez plus tard",
+            "MODPACK_PUBLISH_PREVIOUS_UNAVAILABLE": "Impossible de récupérer temporairement le contenu de la version précédente",
             "MODPACK_UPDATE_MERGE_INVALID": "Les blocs sélectionnés produisent une configuration invalide. Modifiez vos choix et réessayez",
             "MODPACK_INSTALL_STAGING_MISMATCH": "Le téléchargement enregistré appartient à un autre plan d'installation et a été supprimé",
             "MODPACK_INSTALL_INTERRUPTED": "L'installation a été interrompue ; continuez-la depuis la page des tâches",
@@ -3221,7 +3222,12 @@
       "packing": "Création du paquet des nouveautés"
     },
     "tree": {
-      "legend": "Inclure : publié avec la version. Ignorer : cette version n'y touche pas, les joueurs gardent le leur. Supprimer : retiré à la mise à jour des joueurs. Cliquez sur le bouton d'état pour changer ; l'état d'un dossier s'applique à tous ses fichiers, sauf ceux réglés individuellement.",
+      "legend": {
+        "include": "Publié avec la version",
+        "ignore": "Cette version n'y touche pas, les joueurs gardent le leur",
+        "delete": "Retiré à la mise à jour des joueurs",
+        "cycle": "Cliquez sur l'icône pour changer ; l'état d'un dossier s'applique à ses fichiers sauf ceux réglés individuellement"
+      },
       "include": "Inclure",
       "ignore": "Ignorer",
       "delete": "Supprimer",
@@ -3269,7 +3275,8 @@
         "show": "Afficher les différences",
         "hide": "Masquer les différences",
         "differs": "Le contenu diffère. Version précédente {{previous}}, local {{local}}.",
-        "formatOnly": "Le texte est identique ; seuls les fins de ligne ou un formatage similaire diffèrent. Version précédente {{previous}}, local {{local}}."
+        "formatOnly": "Le texte est identique ; seuls les fins de ligne ou un formatage similaire diffèrent. Version précédente {{previous}}, local {{local}}.",
+        "unavailable": "Impossible de récupérer temporairement le contenu de la version précédente."
       }
     },
     "skipped": "{{count}} fichier(s) du lanceur exclu(s)",

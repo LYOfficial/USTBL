@@ -581,6 +581,8 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
                 <TreeView
                   nodes={tree}
                   defaultExpandedDepth={expandedDepth(shownMain.length)}
+                  preserveExpanded
+                  leafPlaceholderWidth={0}
                   renderNode={({ node: { data } }) =>
                     data.entry ? (
                       renderEntry(data.entry, data.name)

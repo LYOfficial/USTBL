@@ -2720,6 +2720,7 @@
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的组件链，无法就地更新，请重新安装",
             "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线",
             "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试",
+            "MODPACK_PUBLISH_PREVIOUS_UNAVAILABLE": "暂时取不到上一版的内容",
             "MODPACK_UPDATE_MERGE_INVALID": "按块选择后配置文件的格式无效，请调整选择后重试",
             "MODPACK_INSTALL_STAGING_MISMATCH": "已保存的下载属于其他安装计划，已清理",
             "MODPACK_INSTALL_INTERRUPTED": "安装已中断，请从任务页继续",
@@ -3221,7 +3222,6 @@
       "packing": "正在打包新增内容"
     },
     "tree": {
-      "legend": "勾选：随版本发布。忽略：这一版不管它，玩家本地的保持不动。删除：玩家更新时直接删掉。点击状态按钮依次切换；目录的状态会应用到其下所有文件，单独设置过的除外。",
       "include": "勾选",
       "ignore": "忽略",
       "delete": "删除",
@@ -3235,6 +3235,12 @@
       "missing": "磁盘上已没有",
       "conflict": "启用和禁用两个文件同时存在",
       "toggle": "{{name}}：当前为“{{state}}”，点击切换为“{{next}}”",
+      "legend": {
+        "include": "随版本发布",
+        "ignore": "这一版不管它，玩家本地的保持不动",
+        "delete": "玩家更新时直接删掉",
+        "cycle": "点击图标依次切换；目录的状态会应用到其下所有文件，单独设置过的除外"
+      },
       "hint": {
         "include": "随这一版发给玩家，由整合包管理：没有的会装上，已有的更新为这一版；玩家改过的会合并，合并不了时提示冲突。",
         "ignore": "这一版不管这个文件：玩家已有的保留原样，没有的不会拿到。",
@@ -3269,7 +3275,8 @@
         "show": "查看差异",
         "hide": "收起差异",
         "differs": "内容不同。上一版 {{previous}}，本地 {{local}}。",
-        "formatOnly": "文本内容相同，只有换行等格式不同。上一版 {{previous}}，本地 {{local}}。"
+        "formatOnly": "文本内容相同，只有换行等格式不同。上一版 {{previous}}，本地 {{local}}。",
+        "unavailable": "暂时取不到上一版的内容。"
       }
     },
     "skipped": "有 {{count}} 个启动器文件被排除",

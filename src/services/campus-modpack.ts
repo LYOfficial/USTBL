@@ -196,12 +196,16 @@ export class CampusModpackService {
   static async diffCampusModpackPublishFile(
     instanceId: string,
     path: string,
-    previousSha1: string
+    previousSha1: string,
+    previousVersionId: string,
+    previousProjectId: string
   ): Promise<InvokeResponse<ModpackDiffHunk[] | null>> {
     return await invoke("diff_campus_modpack_publish_file", {
       instanceId,
       path,
       previousSha1,
+      previousVersionId,
+      previousProjectId,
     });
   }
 

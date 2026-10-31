@@ -60,6 +60,7 @@ export enum InstanceError {
   ModpackUpdateNotIsolated = "MODPACK_UPDATE_NOT_ISOLATED",
   ModpackUpdateBaselineMissing = "MODPACK_UPDATE_BASELINE_MISSING",
   ModpackUpdatePackUnavailable = "MODPACK_UPDATE_PACK_UNAVAILABLE",
+  ModpackPublishPreviousUnavailable = "MODPACK_PUBLISH_PREVIOUS_UNAVAILABLE",
   ModpackUpdateUnlinkPending = "MODPACK_UPDATE_UNLINK_PENDING",
   ModpackUpdateBothVariants = "MODPACK_UPDATE_BOTH_VARIANTS",
   ModpackUpdateLocateLocating = "MODPACK_UPDATE_LOCATE_LOCATING",

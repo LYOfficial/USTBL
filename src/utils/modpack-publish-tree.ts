@@ -436,6 +436,9 @@ export interface PublishChange {
   localSize: number | null;
   /** The player-side ignore list names the file; publishing does not care. */
   localIgnored: boolean;
+  /** Backend-verified location of the previous release. */
+  previousVersionId?: string | null;
+  previousProjectId?: string | null;
 }
 
 export interface PreviousFile {

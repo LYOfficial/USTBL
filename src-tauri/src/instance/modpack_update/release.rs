@@ -116,6 +116,8 @@ impl Release {
         .collect(),
       rules: self.rules.clone(),
       rules_manifest: self.rules_manifest,
+      version_id: None,
+      project_id: None,
     }
   }
 }
