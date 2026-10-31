@@ -8,7 +8,7 @@ use crate::error::USTBLResult;
 use crate::instance::helpers::modpack::base_store;
 use crate::instance::helpers::modpack::baseline::ModpackBaseline;
 use crate::instance::helpers::modpack::multimc::profile::safe_relative;
-use crate::instance::helpers::modpack::text::{normalize_text, MAX_TEXT_SIZE};
+use crate::instance::helpers::modpack::text::{self, normalize_text, MAX_TEXT_SIZE};
 use crate::instance::models::misc::InstanceError;
 use crate::instance::modpack_update::changes::logical_disk_path;
 use crate::instance::modpack_update::diff::{FileKey, LocalState, DISABLED_SUFFIX};
@@ -52,6 +52,35 @@ pub struct PublishChange {
   /// The verified platform version used to recover a missing base copy.
   pub previous_version_id: Option<String>,
   pub previous_project_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublishBaseCandidate {
+  pub path: String,
+  pub sha1: String,
+  pub size: u64,
+}
+
+/// Select the one remote object eligible for recovering a missing publish base.
+/// The caller performs the network operation only when this returns an index.
+pub fn select_publish_base(
+  has_base: bool,
+  path: &str,
+  sha1: &str,
+  local_size: Option<u64>,
+  remote: &[PublishBaseCandidate],
+) -> Option<usize> {
+  if has_base
+    || !text::is_text_path(path, &[])
+    || local_size.is_none_or(|size| size > MAX_TEXT_SIZE as u64)
+  {
+    return None;
+  }
+  remote.iter().position(|file| {
+    file.path.eq_ignore_ascii_case(path)
+      && file.sha1.eq_ignore_ascii_case(sha1)
+      && file.size <= MAX_TEXT_SIZE as u64
+  })
 }
 
 fn folded(path: &str) -> String {
@@ -282,6 +311,40 @@ mod tests {
       version_id: None,
       project_id: None,
     }
+  }
+
+  fn candidate(path: &str, sha1: &str, size: u64) -> PublishBaseCandidate {
+    PublishBaseCandidate {
+      path: path.into(),
+      sha1: sha1.into(),
+      size,
+    }
+  }
+
+  #[test]
+  fn publish_base_selection_skips_invalid_and_unsupported_local_inputs() {
+    let sha1 = "a".repeat(40);
+    let remote = [candidate("config/a.cfg", &sha1, 3)];
+    assert_eq!(select_publish_base(false, "../a.cfg", &sha1, Some(3), &remote), None);
+    assert_eq!(select_publish_base(false, "mods/a.jar", &sha1, Some(3), &remote), None);
+    assert_eq!(select_publish_base(false, "config/a.cfg", &sha1, Some(MAX_TEXT_SIZE as u64 + 1), &remote), None);
+  }
+
+  #[test]
+  fn publish_base_selection_skips_cached_and_oversized_remote_files() {
+    let sha1 = "a".repeat(40);
+    let remote = [candidate("config/a.cfg", &sha1, 3)];
+    assert_eq!(select_publish_base(true, "config/a.cfg", &sha1, Some(3), &remote), None);
+    let oversized = [candidate("config/a.cfg", &sha1, MAX_TEXT_SIZE as u64 + 1)];
+    assert_eq!(select_publish_base(false, "config/a.cfg", &sha1, Some(3), &oversized), None);
+  }
+
+  #[test]
+  fn publish_base_selection_requires_case_insensitive_path_and_matching_sha1() {
+    let sha1 = "a".repeat(40);
+    let remote = [candidate("Config/A.CFG", &sha1, 3)];
+    assert_eq!(select_publish_base(false, "config/a.cfg", &sha1, Some(3), &remote), Some(0));
+    assert_eq!(select_publish_base(false, "config/a.cfg", &"b".repeat(40), Some(3), &remote), None);
   }
 
   fn run(

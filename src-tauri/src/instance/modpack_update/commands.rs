@@ -523,9 +523,9 @@ pub async fn recover_publish_base(
   version_id: &str,
   path: &str,
   sha1: &str,
-) -> USTBLResult<bool> {
+) -> USTBLResult<Option<()>> {
   if !text::is_text_path(path, &[]) || sha1.len() != 40 {
-    return Ok(false);
+    return Ok(None);
   }
   let mut origin = instance.origin.clone().unwrap_or(InstanceOrigin {
     platform: OriginPlatform::Campus,
@@ -544,16 +544,33 @@ pub async fn recover_publish_base(
     &instance.name,
   )
   .await?;
-  let Some(file) = remote
+  let local_size = [
+    instance.version_path.join(path),
+    instance
+      .version_path
+      .join(format!("{path}{}", super::diff::DISABLED_SUFFIX)),
+  ]
+  .iter()
+  .find_map(|file| std::fs::metadata(file).ok().map(|meta| meta.len()));
+  let candidates: Vec<_> = remote
     .files
     .iter()
-    .find(|file| file.path.eq_ignore_ascii_case(path) && file.key.sha1.eq_ignore_ascii_case(sha1))
-  else {
-    return Ok(false);
+    .map(|file| super::super::modpack_publish::changes::PublishBaseCandidate {
+      path: file.path.clone(),
+      sha1: file.key.sha1.clone(),
+      size: file.key.size,
+    })
+    .collect();
+  let Some(index) = super::super::modpack_publish::changes::select_publish_base(
+    false,
+    path,
+    sha1,
+    local_size,
+    &candidates,
+  ) else {
+    return Ok(None);
   };
-  if file.key.size > text::MAX_TEXT_SIZE as u64 {
-    return Ok(false);
-  }
+  let file = &remote.files[index];
   let env = AppEnv::preparing(
     app,
     &Target {
@@ -580,7 +597,7 @@ pub async fn recover_publish_base(
       .map_err(crate::error::USTBLError::from)?;
   }
   let _ = tokio::fs::remove_dir_all(preview).await;
-  result.map(|_| true)
+  result.map(|_| Some(()))
 }
 
 fn current_instance(app: &AppHandle, instance_id: &str) -> USTBLResult<Instance> {

@@ -419,11 +419,7 @@ pub async fn fetch_campus_modpack_previous_release(
   instance_id: String,
   project: String,
 ) -> USTBLResult<Option<PreviousRelease>> {
-  let valid = !project.is_empty()
-    && project
-      .chars()
-      .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
-  if !valid {
+  if !is_project_slug(&project) {
     return Err(InstanceError::ModpackUpdateUnsupported.into());
   }
   let instance = instance_of(&app, &instance_id)?;
@@ -532,6 +528,14 @@ pub async fn diff_campus_modpack_publish_file(
   previous_version_id: String,
   previous_project_id: String,
 ) -> USTBLResult<Option<Vec<DiffHunk>>> {
+  if !valid_publish_diff_inputs(
+    &path,
+    &previous_sha1,
+    &previous_version_id,
+    &previous_project_id,
+  ) {
+    return Err(InstanceError::ModpackUpdateUnsupported.into());
+  }
   let instance = instance_of(&app, &instance_id)?;
   let root = instance.version_path.clone();
   let local_path = root.join(&path);
@@ -549,31 +553,45 @@ pub async fn diff_campus_modpack_publish_file(
     .await
     .map_err(|error| USTBLError(error.to_string()))?;
   }
-  let recovered =
-    if crate::instance::helpers::modpack::base_store::load(&root, &previous_sha1.to_lowercase())?
+  if crate::instance::helpers::modpack::base_store::load(&root, &previous_sha1.to_lowercase())?
       .is_none()
+  {
+    match crate::instance::modpack_update::commands::recover_publish_base(
+      &app,
+      &instance,
+      &previous_project_id,
+      &previous_version_id,
+      &path,
+      &previous_sha1,
+    )
+    .await
     {
-      match crate::instance::modpack_update::commands::recover_publish_base(
-        &app,
-        &instance,
-        &previous_project_id,
-        &previous_version_id,
-        &path,
-        &previous_sha1,
-      )
-      .await
-      {
-        Ok(true) => false,
-        Ok(false) => return Err(InstanceError::ModpackPublishPreviousUnavailable.into()),
-        Err(_) => return Err(InstanceError::ModpackPublishPreviousUnavailable.into()),
-      }
-    } else {
-      false
-    };
-  let _ = recovered;
+      Ok(Some(())) | Ok(None) => {}
+      Err(_) => return Err(InstanceError::ModpackPublishPreviousUnavailable.into()),
+    }
+  }
   tokio::task::spawn_blocking(move || super::changes::file_diff(&root, &path, &previous_sha1))
     .await
     .map_err(|error| USTBLError(error.to_string()))?
+}
+
+fn is_sha1(value: &str) -> bool {
+  value.len() == 40 && value.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn is_project_slug(value: &str) -> bool {
+  !value.is_empty()
+    && value
+      .chars()
+      .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+fn valid_publish_diff_inputs(path: &str, sha1: &str, version_id: &str, project_id: &str) -> bool {
+  safe_relative(path).is_ok()
+    && is_sha1(sha1)
+    && !version_id.is_empty()
+    && version_id.chars().all(|c| c.is_ascii_digit())
+    && is_project_slug(project_id)
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1312,9 +1330,20 @@ fn adopt_instance_identity(instance: &mut Instance, origin: InstanceOrigin, vers
 #[cfg(test)]
 mod tests {
   use super::*;
+
   use crate::instance::models::misc::ModLoaderType;
   use crate::instance::modpack_update::remote::{RemoteModpack, RuleKind, RuleState};
   use std::path::PathBuf;
+
+  #[test]
+  fn publish_diff_inputs_are_rejected_before_filesystem_access() {
+    let sha1 = "a".repeat(40);
+    assert!(!valid_publish_diff_inputs("../config/a.cfg", &sha1, "1", "project"));
+    assert!(!valid_publish_diff_inputs("config/a.cfg", "../base", "1", "project"));
+    assert!(!valid_publish_diff_inputs("config/a.cfg", &sha1, "1x", "project"));
+    assert!(!valid_publish_diff_inputs("config/a.cfg", &sha1, "1", "bad/project"));
+    assert!(valid_publish_diff_inputs("config/a.cfg", &sha1, "1", "project_name-2"));
+  }
 
   fn instance_dir(files: &[(&str, &str)]) -> PathBuf {
     let root = std::env::temp_dir().join(format!("ustbl-publish-test-{}", uuid::Uuid::new_v4()));
