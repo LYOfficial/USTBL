@@ -1,6 +1,5 @@
 use super::helpers::loader::fabric::remove_fabric_api_mods;
 use crate::error::USTBLResult;
-use crate::instance::constants::TRANSLATION_CACHE_EXPIRY_HOURS;
 use crate::instance::helpers::client_json::{replace_native_libraries, McClientInfo};
 use crate::instance::helpers::deletion::{delete_instance_files, InstanceDeletionProgress};
 use crate::instance::helpers::game_version::{build_game_version_cmp_fn, compare_game_versions};
@@ -41,7 +40,7 @@ use crate::instance::helpers::mods::common::{
   compress_icon, get_mod_info_from_dir, get_mod_info_from_jar,
 };
 use crate::instance::helpers::mods::translation::{
-  add_local_mod_translations, LocalModTranslationEntry, LocalModTranslationsCache,
+  add_local_mod_translations, persist_local_mod_cache,
 };
 use crate::instance::helpers::options_txt::get_zh_hans_lang_tag;
 use crate::instance::helpers::resourcepack::{
@@ -626,7 +625,8 @@ pub async fn retrieve_local_mod_list(
     }
   });
 
-  // Add translations for mod names and descriptions concurrently
+  // Add translations for mod names and descriptions concurrently (results are
+  // cached by the translator, keyed by the jar's SHA-1)
   let mut translation_tasks = Vec::new();
   for mut mod_info in mod_infos {
     let app = app.clone();
@@ -651,23 +651,7 @@ pub async fn retrieve_local_mod_list(
   }
   // sort by name (and version)
   mod_infos.sort();
-  let local_mod_translations_cache_state = app.state::<Mutex<LocalModTranslationsCache>>();
-  let mut cache = local_mod_translations_cache_state.lock()?;
-  for info in mod_infos.iter() {
-    if let Some(entry) = cache.translations.get(&info.file_name) {
-      if !entry.is_expired(TRANSLATION_CACHE_EXPIRY_HOURS) {
-        continue;
-      }
-    }
-    cache.translations.insert(
-      info.file_name.clone(),
-      LocalModTranslationEntry::new(
-        info.translated_name.clone(),
-        info.translated_description.clone(),
-      ),
-    );
-  }
-  cache.save()?;
+  persist_local_mod_cache(&app)?;
 
   Ok(mod_infos)
 }

@@ -130,7 +130,14 @@ pub async fn fetch_remote_resource_by_local_modrinth(
   let hash_string = sha1_file_async(PathBuf::from(file_path))
     .await
     .map_err(|_| ResourceError::ParseError)?;
+  fetch_remote_resource_by_hash_modrinth(app, &hash_string).await
+}
 
+/// Look a file up on Modrinth by its SHA-1.
+pub async fn fetch_remote_resource_by_hash_modrinth(
+  app: &AppHandle,
+  hash_string: &str,
+) -> USTBLResult<OtherResourceFileInfo> {
   let mut params = HashMap::new();
   params.insert("algorithm".to_string(), "sha1".to_string());
 
@@ -138,7 +145,7 @@ pub async fn fetch_remote_resource_by_local_modrinth(
     make_modrinth_request_with_fallbacks::<ModrinthVersionPack, HashMap<String, String>>(
       app,
       OtherResourceApiEndpoint::FromLocal,
-      Some(&hash_string),
+      Some(hash_string),
       OtherResourceRequestType::GetWithParams(&params),
     )
     .await?;

@@ -293,6 +293,16 @@ pub fn cached_translations(
     .collect()
 }
 
+/// Whether the cache holds an answer for `id`, including "no translation". An id
+/// that is not known had a failed or skipped request, so a result built without
+/// its translation is incomplete.
+pub fn translation_is_known(source: &OtherResourceSource, id: &str) -> bool {
+  let Some(source) = TranslationSource::from_resource_source(source) else {
+    return true;
+  };
+  lock_cache(&TRANSLATION_CACHE).get(source, id).is_some()
+}
+
 /// Fill `translated_description` from the cache for entries that lack one.
 pub fn apply_cached_translations(list: &mut [OtherResourceInfo]) {
   for info in list.iter_mut() {
