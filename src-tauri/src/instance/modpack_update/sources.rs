@@ -591,6 +591,7 @@ pub async fn remote_from_archive(
     return Err(InstanceError::ModpackUpdateLineMismatch.into());
   }
 
+  let params_started = std::time::Instant::now();
   let mut downloads = Vec::new();
   for download in manifest.get_download_params(app, root).await? {
     // Without a hash and size a file cannot be compared; a fresh install does
@@ -614,6 +615,13 @@ pub async fn remote_from_archive(
     });
   }
 
+  log::info!(
+    "modpack archive files: {} downloads, platform lookup elapsed_ms={}",
+    downloads.len(),
+    params_started.elapsed().as_millis()
+  );
+
+  let hashing_started = std::time::Instant::now();
   let overrides_paths = manifest.get_overrides_paths();
   let (archive_path, name) = (archive.to_path_buf(), instance_name.to_string());
   let overrides = tokio::task::spawn_blocking(move || -> USTBLResult<Vec<RemoteFile>> {
@@ -639,6 +647,11 @@ pub async fn remote_from_archive(
   })
   .await
   .map_err(|e| USTBLError(e.to_string()))??;
+  log::info!(
+    "modpack archive overrides: {} files hashed elapsed_ms={}",
+    overrides.len(),
+    hashing_started.elapsed().as_millis()
+  );
 
   let (downloads, overrides) = read_disabled_mods(downloads, overrides);
 
@@ -1092,9 +1105,14 @@ pub async fn resolve_remote(
         })
         .await
         .map_err(|e| USTBLError(e.to_string()))?;
+        let download_started = std::time::Instant::now();
         if !cached {
           download_url(app, url, &path, Some(sha1)).await?;
         }
+        log::info!(
+          "modpack archive ready: cached={cached} elapsed_ms={}",
+          download_started.elapsed().as_millis()
+        );
         let size = fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
         (
           remote_from_archive(app, &path, root, instance_name, origin, latest).await?,

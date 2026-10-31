@@ -2085,6 +2085,11 @@ async fn plan_fresh_install(
     }
     resolve_latest_for_plan(app, target).await?
   };
+  log::info!(
+    "modpack install version located: instance={} elapsed_ms={}",
+    target.instance.id,
+    details_started.elapsed().as_millis()
+  );
   let baseline = ModpackBaseline::build(
     &target.origin,
     BaselineLoader {
