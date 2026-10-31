@@ -112,6 +112,10 @@ struct Journal {
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Stage {
+  /// Fetching the version detail and comparing it with the instance.
+  Preparing,
+  /// Asking the platform where the needed files sit in its packs.
+  Locating,
   Fetching,
   Applying,
   Finalizing,
@@ -437,19 +441,36 @@ fn extract_entry(archive: &Path, entry: &str, dest: &Path) -> USTBLResult<()> {
 /// Tell every pack session which of its files are about to be fetched, so it
 /// can locate just those.
 pub async fn prepare_packs(files: &[&RemoteFile]) -> USTBLResult<()> {
-  for (session, mut wanted) in pack_sessions(files) {
-    wanted.sort();
-    wanted.dedup();
+  for (session, wanted) in pack_wanted(files) {
     let locating = Instant::now();
-    session.prepare(&wanted).await?;
+    let result = session.prepare(&wanted).await;
     log::info!(
       "modpack pack locate: version {}, {} sha1s, {:?} elapsed",
       session.version_id(),
       wanted.len(),
       locating.elapsed()
     );
+    result?;
   }
   Ok(())
+}
+
+/// The sha1s of `files` per pack session, sorted and deduplicated. Owned, so
+/// a locate can start before the hashing it runs next to finishes.
+pub fn pack_wanted(files: &[&RemoteFile]) -> Vec<(std::sync::Arc<PackSession>, Vec<String>)> {
+  let mut packs = pack_sessions(files);
+  for (_, wanted) in &mut packs {
+    wanted.sort();
+    wanted.dedup();
+  }
+  packs
+}
+
+/// Mark the locate's own failure: a locate that runs next to the hashing and
+/// comparison has to tell its error apart from theirs.
+pub fn wrap_locate(error: crate::error::USTBLError) -> crate::error::USTBLError {
+  log::warn!("modpack pack locate failed: {error:?}");
+  InstanceError::ModpackUpdateLocateLocating.into()
 }
 
 /// The pack sessions behind `files`, each with the sha1s it has to fetch.

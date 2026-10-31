@@ -212,12 +212,17 @@ impl PackSession {
   }
 
   /// Ask the platform which packs hold `sha1s`. A pack the platform cannot
-  /// hand out (gone, or too many of them) is reported as unavailable.
+  /// hand out (gone, or too many of them) is reported as unavailable. Asking
+  /// for the same set again is a no-op, so an early locate (started before
+  /// the local files were hashed) is reused by the fetch that follows.
   pub async fn prepare(&self, sha1s: &[String]) -> USTBLResult<()> {
     let mut wanted = sha1s.to_vec();
     wanted.sort();
     wanted.dedup();
     let mut state = self.state.lock().await;
+    if state.located.is_some() && state.wanted == wanted {
+      return Ok(());
+    }
     state.located = Some(self.plan(&wanted).await?);
     state.wanted = wanted;
     state.generation += 1;
@@ -1008,6 +1013,19 @@ mod tests {
     let (session, fake, _work) = session(Fake::new(&[("aa", b"x")]));
     session.prepare(&[]).await.unwrap();
     assert!(fake.calls().is_empty());
+  }
+
+  #[tokio::test]
+  async fn preparing_the_same_files_again_reuses_the_first_locate() {
+    let (session, fake, _work) = session(Fake::new(&[("aa", b"x"), ("bb", b"y")]));
+    session.prepare(&["aa".into(), "bb".into()]).await.unwrap();
+    // An early locate for exactly these files is not repeated by the fetch's
+    // own prepare; another set locates again, and only once.
+    session.prepare(&["bb".into(), "aa".into()]).await.unwrap();
+    session.prepare(&["aa".into()]).await.unwrap();
+    session.prepare(&["aa".into()]).await.unwrap();
+    let calls = fake.calls();
+    assert_eq!(calls.iter().filter(|c| *c == "locate").count(), 2);
   }
 
   #[tokio::test]

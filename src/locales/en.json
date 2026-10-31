@@ -2823,6 +2823,8 @@
     "campusInstall": {
       "installing": "Installing {{name}}",
       "stage": {
+        "preparing": "Preparing the update",
+        "locating": "Locating files",
         "fetching": "Downloading files {{done}}/{{total}}",
         "applying": "Writing files {{done}}/{{total}}",
         "finalizing": "Finishing up"
@@ -3273,7 +3275,8 @@
       "MODPACK_UPDATE_NOT_ISOLATED": "Version isolation is off for this instance, so it cannot be compared safely. Turn it on in the instance settings and retry",
       "MODPACK_UPDATE_BASELINE_MISSING": "This instance has no install record for the modpack, or the record is damaged, so it cannot be compared",
       "MODPACK_UPDATE_PACK_UNAVAILABLE": "The files of this version are temporarily unavailable on the platform. Try again later",
-      "MODPACK_UPDATE_MERGE_INVALID": "The selected blocks produce an invalid configuration. Adjust your choices and try again"
+      "MODPACK_UPDATE_MERGE_INVALID": "The selected blocks produce an invalid configuration. Adjust your choices and try again",
+      "MODPACK_UPDATE_LOCATE_LOCATING": "Locating the modpack files"
     },
     "rollback": {
       "hint": "You can undo the last modpack update and restore files and loader as they were before it.",

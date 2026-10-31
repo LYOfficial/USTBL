@@ -2823,6 +2823,8 @@
     "campusInstall": {
       "installing": "正在安装 {{name}}",
       "stage": {
+        "preparing": "正在准备更新",
+        "locating": "正在定位文件",
         "fetching": "下载文件 {{done}}/{{total}}",
         "applying": "写入文件 {{done}}/{{total}}",
         "finalizing": "收尾中"
@@ -3273,7 +3275,8 @@
       "MODPACK_UPDATE_NOT_ISOLATED": "该实例没有开启版本隔离，无法安全对比更新。请在实例设置中开启后重试",
       "MODPACK_UPDATE_BASELINE_MISSING": "该实例缺少整合包的安装记录或记录已损坏，无法对比更新",
       "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试",
-      "MODPACK_UPDATE_MERGE_INVALID": "按块选择后配置文件的格式无效，请调整选择后重试"
+      "MODPACK_UPDATE_MERGE_INVALID": "按块选择后配置文件的格式无效，请调整选择后重试",
+      "MODPACK_UPDATE_LOCATE_LOCATING": "正在定位整合包文件"
     },
     "rollback": {
       "hint": "可以撤销上一次整合包更新，把文件和加载器恢复成更新前的样子。",

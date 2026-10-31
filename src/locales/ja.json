@@ -2823,6 +2823,8 @@
     "campusInstall": {
       "installing": "{{name}} をインストール中",
       "stage": {
+        "preparing": "更新を準備中",
+        "locating": "ファイルを特定中",
         "fetching": "ファイルをダウンロード中 {{done}}/{{total}}",
         "applying": "ファイルを書き込み中 {{done}}/{{total}}",
         "finalizing": "仕上げ中"
@@ -3273,7 +3275,8 @@
       "MODPACK_UPDATE_NOT_ISOLATED": "このインスタンスはバージョン分離が無効のため、安全に比較できません。インスタンス設定で有効にして再試行してください",
       "MODPACK_UPDATE_BASELINE_MISSING": "このインスタンスにはモッドパックのインストール記録がないか、記録が破損しているため比較できません",
       "MODPACK_UPDATE_PACK_UNAVAILABLE": "このバージョンのファイルはプラットフォーム上で一時的に利用できません。しばらくしてからやり直してください",
-      "MODPACK_UPDATE_MERGE_INVALID": "選択したブロックでは設定形式が無効になります。選択を変更して再試行してください"
+      "MODPACK_UPDATE_MERGE_INVALID": "選択したブロックでは設定形式が無効になります。選択を変更して再試行してください",
+      "MODPACK_UPDATE_LOCATE_LOCATING": "Modパックのファイルを特定中"
     },
     "rollback": {
       "hint": "前回のモッドパック更新を取り消し、ファイルとローダーを更新前の状態に戻せます。",

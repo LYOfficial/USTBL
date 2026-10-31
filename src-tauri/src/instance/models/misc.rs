@@ -350,6 +350,8 @@ pub enum InstanceError {
   ModpackUpdatePackUnavailable,
   ModpackUpdateUnlinkPending,
   ModpackUpdateBothVariants,
+  /// The pack locate of an early (pre-hashing) locate failed.
+  ModpackUpdateLocateLocating,
   ModpackUploadRestarted,
   ModpackUploadCloudUnavailable,
   ModpackUploadVerifyFailed,
