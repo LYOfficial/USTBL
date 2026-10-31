@@ -34,7 +34,10 @@ export function responseHandler(serviceDomain: string): MethodDecorator {
             )
           : "";
 
-        if (isDev) {
+        // Session expiration is reported once by the native session event.
+        const sessionExpired =
+          serviceDomain === "account" && String(error) === "EXPIRED";
+        if (isDev && !sessionExpired) {
           const errorSet = {
             Key: String(error),
             "Service Domain": serviceDomain,
@@ -44,9 +47,11 @@ export function responseHandler(serviceDomain: string): MethodDecorator {
           };
           console.table(errorSet);
         }
-        logger.error(
-          `Invoke ${String(propertyKey)} failed: ${message} - ${details}`
-        );
+        if (!sessionExpired) {
+          logger.error(
+            `Invoke ${String(propertyKey)} failed: ${message} - ${details}`
+          );
+        }
 
         return { status: "error", message, details, raw_error: error };
       }

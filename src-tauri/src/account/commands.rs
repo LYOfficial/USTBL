@@ -26,6 +26,10 @@ use url::Url;
 
 static FRIEND_STREAM_RUNNING: AtomicBool = AtomicBool::new(false);
 
+fn next_stream_delay(seconds: u64) -> u64 {
+  seconds.saturating_mul(2).min(60)
+}
+
 #[tauri::command]
 pub fn retrieve_player_list(app: AppHandle) -> USTBLResult<Vec<Player>> {
   let account_binding = app.state::<Mutex<AccountInfo>>();
@@ -220,6 +224,7 @@ pub async fn login_vustb_account(
   app: AppHandle,
   auth_info: DeviceAuthResponseInfo,
 ) -> USTBLResult<VustbAccount> {
+  let refresh_guard = vustb::SESSION_REFRESH_LOCK.lock().await;
   let _ = check_authlib_jar(&app).await;
   let auth_server = AuthServer::from(get_auth_server_info_by_url(
     &app,
@@ -272,6 +277,8 @@ pub async fn login_vustb_account(
     }
   }
 
+  drop(refresh_guard);
+  start_vustb_friend_message_stream(app.clone()).await?;
   misc::check_full_login_availability(&app).await?;
   let sync_app = app.clone();
   tauri::async_runtime::spawn(async move {
@@ -438,9 +445,11 @@ pub async fn start_vustb_friend_message_stream(app: AppHandle) -> USTBLResult<()
     return Ok(());
   }
   tauri::async_runtime::spawn(async move {
+    let mut retry_delay = 2;
     while FRIEND_STREAM_RUNNING.load(Ordering::SeqCst) {
       match vustb::open_friend_event_stream(&app).await {
         Ok(mut response) if response.status().is_success() => {
+          retry_delay = 2;
           let mut buffer = String::new();
           loop {
             match response.chunk().await {
@@ -472,10 +481,19 @@ pub async fn start_vustb_friend_message_stream(app: AppHandle) -> USTBLResult<()
           log::trace!("vUSTB friend stream returned status {}", response.status());
         }
         Err(error) => {
+          if vustb::is_expired(&error) {
+            let _guard = vustb::SESSION_REFRESH_LOCK.lock().await;
+            if vustb::stored_tokens(&app).is_ok() {
+              continue;
+            }
+            FRIEND_STREAM_RUNNING.store(false, Ordering::SeqCst);
+            return;
+          }
           log::trace!("vUSTB friend stream unavailable: {error:?}");
         }
       }
-      tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+      tokio::time::sleep(std::time::Duration::from_secs(retry_delay)).await;
+      retry_delay = next_stream_delay(retry_delay);
     }
     FRIEND_STREAM_RUNNING.store(false, Ordering::SeqCst);
   });
@@ -1204,6 +1222,17 @@ fn remove_local_player(state: &mut AccountInfo, player_id: &str) -> USTBLResult<
 
 #[cfg(test)]
 mod deletion_tests {
+  #[test]
+  fn friend_stream_backoff_is_bounded() {
+    let mut delay = 2;
+    let mut sequence = vec![delay];
+    for _ in 0..7 {
+      delay = super::next_stream_delay(delay);
+      sequence.push(delay);
+    }
+    assert_eq!(sequence, vec![2, 4, 8, 16, 32, 60, 60, 60]);
+  }
+
   use super::*;
 
   fn state() -> AccountInfo {

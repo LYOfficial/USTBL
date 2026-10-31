@@ -244,6 +244,16 @@ pub async fn validate_selected_player(
 ) -> USTBLResult<bool> {
   let mut player = get_selected_player_info(&app)?.clone();
 
+  if player.player_type == PlayerType::ThirdParty
+    && player.auth_server_url.as_deref().is_some_and(|url| {
+      url.trim_end_matches('/')
+        == crate::account::helpers::authlib_injector::constants::USTB_AUTH_SERVER_URL
+          .trim_end_matches('/')
+    })
+  {
+    crate::account::helpers::vustb::stored_tokens(&app)?;
+  }
+
   if player.player_type == PlayerType::Microsoft {
     if !microsoft::oauth::validate(&app, &player).await? {
       return Ok(false);

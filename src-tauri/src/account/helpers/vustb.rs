@@ -10,11 +10,11 @@ use crate::error::{USTBLError, USTBLResult};
 use crate::storage::Storage;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::sync::{LazyLock, Mutex};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_http::reqwest::{self, RequestBuilder};
 
 const VUSTB_ISSUER: &str = "https://www.ustb.world";
-static SESSION_REFRESH_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+pub static SESSION_REFRESH_LOCK: LazyLock<tokio::sync::Mutex<()>> =
   LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 #[derive(Deserialize)]
@@ -172,11 +172,11 @@ async fn get_json_with_token<T: DeserializeOwned>(
 }
 
 fn tokens_from_state(state: &AccountInfo) -> USTBLResult<OAuthTokens> {
-  if let Some(session) = state
-    .vustb_session
-    .as_ref()
-    .filter(|session| !session.access_token.is_empty())
-  {
+  if let Some(session) = state.vustb_session.as_ref() {
+    // An empty independent session is a persisted reauthentication marker.
+    if session.access_token.is_empty() {
+      return Err(AccountError::Expired.into());
+    }
     return Ok(OAuthTokens {
       access_token: session.access_token.clone(),
       refresh_token: session.refresh_token.clone(),
@@ -231,6 +231,28 @@ fn access_token_was_replaced(failed_access_token: Option<&str>, current: &OAuthT
   failed_access_token.is_some_and(|token| token != current.access_token)
 }
 
+pub fn is_expired(error: &USTBLError) -> bool {
+  error.0 == AccountError::Expired.to_string()
+}
+
+fn expire_session(app: &AppHandle) -> USTBLResult<()> {
+  let binding = app.state::<Mutex<AccountInfo>>();
+  let mut state = binding.lock()?;
+  if tokens_from_state(&state).is_err() {
+    return Ok(());
+  }
+  apply_tokens(&mut state, &OAuthTokens {
+    access_token: String::new(),
+    refresh_token: None,
+    id_token: None,
+  });
+  state.save()?;
+  drop(state);
+  log::warn!("vUSTB session expired; browser reauthentication required");
+  app.emit("ustbl:vustb-session-expired", ())?;
+  Ok(())
+}
+
 pub async fn refresh_session_after(
   app: &AppHandle,
   failed_access_token: Option<&str>,
@@ -241,9 +263,13 @@ pub async fn refresh_session_after(
     return Ok(current);
   }
   let refresh_token = current
-    .refresh_token
+    .refresh_token.clone()
     .filter(|token| !token.is_empty())
-    .ok_or(AccountError::Expired)?;
+    ;
+  let Some(refresh_token) = refresh_token else {
+    expire_session(app)?;
+    return Err(AccountError::Expired.into());
+  };
   let auth_server = AuthServer::from(get_auth_server_info_by_url(
     app,
     USTB_AUTH_SERVER_URL.to_string(),
@@ -256,7 +282,16 @@ pub async fn refresh_session_after(
     auth_server.redirect_uri,
     auth_server.client_secret,
   )
-  .await?;
+  .await;
+  let tokens = match tokens {
+    Ok(tokens) => tokens,
+    Err(error) => {
+      if is_expired(&error) {
+        expire_session(app)?;
+      }
+      return Err(error);
+    }
+  };
   store_tokens(app, &tokens)?;
   Ok(tokens)
 }
@@ -590,6 +625,19 @@ pub async fn select_profile_texture(
 
 #[cfg(test)]
 mod tests {
+  #[test]
+  fn expired_marker_blocks_legacy_fallback_and_new_tokens_restore_session() {
+    let mut state = AccountInfo::default();
+    state.players = vec![player("one")];
+    state.vustb_account = Some(account("one"));
+    state.vustb_session = Some(VustbSession::default());
+    assert!(super::is_expired(&tokens_from_state(&state).unwrap_err()));
+    super::apply_tokens(&mut state, &OAuthTokens {
+      access_token: "new".into(), refresh_token: Some("new-refresh".into()), id_token: None,
+    });
+    assert_eq!(tokens_from_state(&state).unwrap().access_token, "new");
+  }
+
   #[test]
   fn rotated_tokens_update_session_and_every_vustb_profile() {
     let mut state = AccountInfo::default();

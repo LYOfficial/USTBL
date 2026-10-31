@@ -112,6 +112,9 @@ pub async fn queue_playtime_delta(
 
 pub async fn flush_playtime_queue(app: &AppHandle) -> USTBLResult<()> {
   let _flush_guard = PLAYTIME_FLUSH_LOCK.lock().await;
+  if vustb::stored_tokens(app).is_err() {
+    return Ok(());
+  }
   let Some(subject) = current_subject(app)? else {
     return Ok(());
   };
@@ -137,7 +140,9 @@ pub async fn flush_playtime_queue(app: &AppHandle) -> USTBLResult<()> {
       vustb::post_authenticated::<_, serde_json::Value>(app, "/api/launcher/playtime", &payload)
         .await;
     if let Err(error) = result {
-      log::warn!("vUSTB playtime sync will retry later: {error:?}");
+      if !vustb::is_expired(&error) {
+        log::warn!("vUSTB playtime sync will retry later: {error:?}");
+      }
       break;
     }
 

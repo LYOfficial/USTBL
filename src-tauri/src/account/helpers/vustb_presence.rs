@@ -85,6 +85,10 @@ pub async fn clear(app: &AppHandle) -> USTBLResult<()> {
 
 pub async fn monitor(app: AppHandle) {
   loop {
+    if vustb::stored_tokens(&app).is_err() {
+      tokio::time::sleep(PRESENCE_INTERVAL).await;
+      continue;
+    }
     if let Err(error) = sync(&app).await {
       log::debug!("vUSTB presence heartbeat skipped: {error:?}");
     }

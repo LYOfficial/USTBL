@@ -94,6 +94,9 @@ async fn fetch_profiles(
     .map_err(|_| AccountError::NetworkError)?;
   log::debug!("OAuth profiles response status={}", response.status());
   if !response.status().is_success() {
+    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+      return Err(AccountError::Expired.into());
+    }
     return Err(AccountError::ParseError.into());
   }
 
@@ -451,7 +454,8 @@ pub async fn refresh_tokens(
     .post(&openid_configuration.token_endpoint)
     .form(&form_params)
     .send()
-    .await?;
+    .await
+    .map_err(|_| AccountError::NetworkError)?;
 
   if !token_response.status().is_success() {
     let status = token_response.status();
@@ -459,23 +463,19 @@ pub async fn refresh_tokens(
       .json::<crate::account::models::OAuthErrorResponse>()
       .await
       .ok();
-    log::warn!(
-      "OAuth token refresh failed: status={status}, error={}, description={}",
+    log::debug!(
+      "OAuth token refresh failed: status={status}, error={}",
       error
         .as_ref()
-        .map_or("unknown", |value| value.error.as_str()),
-      error
-        .as_ref()
-        .and_then(|value| value.error_description.as_deref())
-        .unwrap_or("unknown")
+        .map_or("unknown", |value| value.error.as_str())
     );
-    return Err(AccountError::Expired)?;
+    return Err(refresh_error(status, error.as_ref().map(|value| value.error.as_str())).into());
   }
 
   let mut tokens: OAuthTokens = token_response
     .json()
     .await
-    .map_err(|_| AccountError::ParseError)?;
+    .map_err(|_| AccountError::NetworkError)?;
 
   preserve_refresh_token(&mut tokens, refresh_token);
 
@@ -490,6 +490,26 @@ fn preserve_refresh_token(tokens: &mut OAuthTokens, previous_refresh_token: Stri
     .is_empty()
   {
     tokens.refresh_token = Some(previous_refresh_token);
+  }
+}
+
+fn refresh_error(status: reqwest::StatusCode, error: Option<&str>) -> AccountError {
+  if matches!(status.as_u16(), 400 | 401 | 403)
+    && matches!(
+      error,
+      Some(
+        "invalid_grant"
+          | "invalid_client"
+          | "unauthorized_client"
+          | "access_denied"
+          | "invalid_scope"
+          | "unsupported_grant_type"
+      )
+    )
+  {
+    AccountError::Expired
+  } else {
+    AccountError::NetworkError
   }
 }
 
@@ -529,6 +549,32 @@ pub async fn refresh(
 
 #[cfg(test)]
 mod tests {
+  #[test]
+  fn only_explicit_oauth_rejections_expire_the_session() {
+    use super::{refresh_error, reqwest};
+    use crate::account::models::AccountError;
+    for status in [400, 401, 403] {
+      for error in ["invalid_grant", "invalid_client", "access_denied"] {
+        assert!(matches!(
+          refresh_error(reqwest::StatusCode::from_u16(status).unwrap(), Some(error)),
+          AccountError::Expired
+        ));
+      }
+    }
+    for (status, error) in [
+      (500, Some("invalid_grant")),
+      (429, Some("invalid_client")),
+      (400, None),
+      (400, Some("temporarily_unavailable")),
+      (401, None),
+    ] {
+      assert!(matches!(
+        refresh_error(reqwest::StatusCode::from_u16(status).unwrap(), error),
+        AccountError::NetworkError
+      ));
+    }
+  }
+
   use super::{preferred_profile, preserve_refresh_token};
   use crate::account::helpers::authlib_injector::models::MinecraftProfile;
   use crate::account::models::OAuthTokens;
