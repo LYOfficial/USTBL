@@ -12,8 +12,8 @@ use crate::instance::helpers::loader::optifine::{
   download_optifine_installer, finish_optifine_install,
 };
 use crate::instance::helpers::loader_lifecycle::{
-  claim_install, complete_install, loader_patch_ready, optifine_patch_ready, preparation_allowed,
-  LOADER_LIFECYCLE,
+  claim_install, complete_install, fail_download, loader_patch_ready, optifine_patch_ready,
+  preparation_allowed, LOADER_LIFECYCLE,
 };
 use crate::instance::helpers::misc::{
   get_instance_game_config, get_instance_subdir_path_by_id, get_instance_subdir_paths, owns_files,
@@ -1485,15 +1485,11 @@ pub async fn prepare_mod_loader_install(
       }
       .await;
       if let Err(error) = result {
-        let mut failed = instance.clone();
-        if optifine {
-          if let Some(value) = &mut failed.optifine {
-            value.status = ModLoaderStatus::DownloadFailed;
-          }
-        } else {
-          failed.mod_loader.status = ModLoaderStatus::DownloadFailed;
+        // Only the status changes; `instance` is a memory snapshot and must not
+        // be written back as a whole.
+        if let Err(save_error) = fail_download(&instance, optifine).await {
+          log::warn!("Could not save the failed download state: {save_error:?}");
         }
-        failed.save_json_cfg().await?;
         let state = app.state::<Mutex<HashMap<String, Instance>>>();
         if let Some(current) = state.lock()?.get_mut(&instance_id) {
           if optifine {
@@ -1560,7 +1556,7 @@ async fn finish_mod_loader_install_inner(app: &AppHandle, instance_id: &str) -> 
       )
     })
     .await?;
-  let Some((mut instance, steps)) = claimed else {
+  let Some((instance, steps)) = claimed else {
     return Ok(false);
   };
 
@@ -1595,14 +1591,18 @@ async fn finish_mod_loader_install_inner(app: &AppHandle, instance_id: &str) -> 
   // serialized. This also publishes DownloadFailed when processors fail.
   LOADER_LIFECYCLE
     .run(async {
-      let result = complete_install(&mut instance, steps, process_result).await;
-      let binding = app.state::<Mutex<HashMap<String, Instance>>>();
-      let mut state = binding.lock()?;
-      let current = state
-        .get_mut(instance_id)
-        .ok_or(InstanceError::InstanceNotFoundByID)?;
-      current.mod_loader = instance.mod_loader;
-      current.optifine = instance.optifine;
+      // The claim snapshot only located the config and fed the processors; the
+      // saved config (re-read inside the lock) is what gets published.
+      let (saved, result) = complete_install(&instance, steps, process_result).await;
+      if let Some(saved) = saved {
+        let binding = app.state::<Mutex<HashMap<String, Instance>>>();
+        let mut state = binding.lock()?;
+        let current = state
+          .get_mut(instance_id)
+          .ok_or(InstanceError::InstanceNotFoundByID)?;
+        current.mod_loader = saved.mod_loader;
+        current.optifine = saved.optifine;
+      }
       result
     })
     .await
