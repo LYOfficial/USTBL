@@ -724,4 +724,5 @@ export const isSummaryEmpty = (summary: PublishSummary): boolean =>
   summary.onceOff.length === 0 &&
   summary.rulesAdded.length === 0 &&
   summary.rulesRemoved.length === 0 &&
-  summary.rulesChanged.length === 0;
+  summary.rulesChanged.length === 0 &&
+  summary.localDeleted.length === 0;

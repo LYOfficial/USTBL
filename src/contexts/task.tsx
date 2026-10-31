@@ -806,10 +806,15 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
         adoption && adoption !== "followed"
           ? t(`PublishModpackModal.adoption.${adoption}`)
           : locallyDeleted > 0
-            ? t("PublishModpackModal.adoption.followedWithDeletes", {
+            ? t("PublishModpackModal.adoption.localDeleted", {
                 count: locallyDeleted,
               })
             : "",
+        adoption && adoption !== "followed" && locallyDeleted > 0
+          ? t("PublishModpackModal.adoption.localDeleted", {
+              count: locallyDeleted,
+            })
+          : "",
       ].filter(Boolean);
       toast({
         title: t("Services.instance.publishCampusModpack.success"),

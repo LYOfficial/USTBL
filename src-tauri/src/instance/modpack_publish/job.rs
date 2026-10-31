@@ -865,7 +865,7 @@ impl PublishJob {
             )
             .await
           }
-            Err(_) => (super::commands::Adoption::RecordFailed, 0),
+          Err(_) => (super::commands::Adoption::RecordFailed, 0),
         };
         JobRecord::remove(&jobs_dir(), &self.record.id);
         let outcome = PublishOutcome {

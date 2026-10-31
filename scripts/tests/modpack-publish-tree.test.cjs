@@ -975,10 +975,27 @@ test("a file whose enabled state differs is toggled even when the content does t
   assert.deepEqual(summary.modified, ["mods/both.jar"]);
 });
 
+test("a locally deleted file keeps the summary visible when content is unchanged", () => {
+  const context = ctxOf(["config/remove.cfg"]);
+  const previous = release([before("config/remove.cfg")]);
+  const draft = setFileState(context, draftOf(), "config/remove.cfg", "delete");
+  const summary = summarizePublish(context, draft, previous, []);
+  assert.deepEqual(summary.localDeleted, ["config/remove.cfg"]);
+  assert.equal(isSummaryEmpty(summary), false);
+});
+
 test("local delete paths include real deleted files but not ghosts", () => {
   const context = ctxOf(["config/remove.cfg"], [ghostOf("config/ghost.cfg")]);
   const draft = setFileState(context, draftOf(), "config/remove.cfg", "delete");
   assert.deepEqual(localDeletePaths(context, draft), ["config/remove.cfg"]);
+});
+
+test("a directory delete counts inherited local files but an explicit ignore does not", () => {
+  const context = ctxOf(["config/a.cfg", "config/keep.cfg"]);
+  let draft = setDirState(context, draftOf(), "config", "delete");
+  assert.deepEqual(localDeletePaths(context, draft).sort(), ["config/a.cfg", "config/keep.cfg"]);
+  draft = setFileState(context, draft, "config/keep.cfg", "ignore");
+  assert.deepEqual(localDeletePaths(context, draft), ["config/a.cfg"]);
 });
 
 test("first-install flags and content are told apart", () => {

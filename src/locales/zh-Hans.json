@@ -3288,7 +3288,7 @@
       "notIsolated": "该实例未开启版本隔离，未将其关联到此整合包。",
       "localChanged": "该实例与刚发布的版本不一致（例如标为删除的文件仍在磁盘上），未将其关联到此版本，下次更新会按版本内容处理。",
       "recordFailed": "版本已发布，但未能记录该实例与此版本的关联，下次检查将按常规比较。",
-      "followedWithDeletes": "已跟随这一版，按删除规则删除了本机 {{count}} 个文件，备份在 .ustbl-update/publish-deleted",
+      "localDeleted": "按删除规则删除了本机 {{count}} 个文件，备份在 .ustbl-update/publish-deleted",
       "deleteFailed": "删除本机文件失败，未跟随这一版；备份已保留。"
     },
     "started": {
@@ -3324,7 +3324,8 @@
         "onceOff": "这些文件不再是仅首次安装，之后随版本更新。",
         "rulesAdded": "上一版没有、这一版新加的忽略或删除规则。",
         "rulesRemoved": "上一版有、这一版不再带的规则。",
-        "rulesChanged": "在忽略和删除之间改了状态的规则。"
+        "rulesChanged": "在忽略和删除之间改了状态的规则。",
+        "localDeleted": "发布后本机的这些文件也会删除（先备份）；想自己保留请改为忽略"
       },
       "localDeleted": "本机也会删除 {{count}} 个文件"
     }
