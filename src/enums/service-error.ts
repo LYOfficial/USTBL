@@ -72,6 +72,11 @@ export enum InstanceError {
   ModpackUploadCloudUnavailable = "MODPACK_UPLOAD_CLOUD_UNAVAILABLE",
   ModpackUploadVerifyFailed = "MODPACK_UPLOAD_VERIFY_FAILED",
   ModpackUploadSessionGone = "MODPACK_UPLOAD_SESSION_GONE",
+  FileBlockedByAntivirus = "FILE_BLOCKED_BY_ANTIVIRUS",
+  FileMissing = "FILE_MISSING",
+  FileInaccessible = "FILE_INACCESSIBLE",
+  DiskFull = "DISK_FULL",
+  FileIoFailed = "FILE_IO_FAILED",
 }
 
 export enum ConfigServiceError {

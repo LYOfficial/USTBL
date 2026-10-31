@@ -10,6 +10,7 @@ use super::snapshot::{
 };
 use super::{ModpackManifest, MultiMcManifest};
 use crate::error::{USTBLError, USTBLResult};
+use crate::file_error::AtPath;
 use crate::instance::helpers::client_json::*;
 use crate::launch::helpers::file_validator::{convert_library_name_to_path, merge_library_lists};
 use crate::utils::web::fetch_json_with_fallbacks;
@@ -163,10 +164,10 @@ impl PackFiles for StagedFiles {
       .files
       .get(name)
       .ok_or_else(|| invalid(format!("missing pack file: {name}")))?;
-    if fs::metadata(path)?.len() > limit {
+    if fs::metadata(path).at(path)?.len() > limit {
       return Err(invalid("pack file exceeds size limit"));
     }
-    Ok(fs::read(path)?)
+    Ok(fs::read(path).at(path)?)
   }
 }
 
@@ -583,11 +584,9 @@ impl ResolvedMultiMc {
       .and_then(|d| d.artifact)
       .ok_or_else(|| invalid("missing mainJar artifact"))?;
     if main.url.is_empty() {
-      fs::create_dir_all(instance)?;
-      fs::copy(
-        libraries.join(&main.path),
-        instance.join(format!("{}.jar", self.client.id)),
-      )?;
+      let main_jar = instance.join(format!("{}.jar", self.client.id));
+      fs::create_dir_all(instance).at(instance)?;
+      fs::copy(libraries.join(&main.path), &main_jar).at_in(&main_jar, instance)?;
     }
     self.client.downloads.insert(
       "client".into(),
@@ -599,11 +598,12 @@ impl ResolvedMultiMc {
     );
     self.client.component_profile.as_mut().unwrap().maven_files = maven;
     add_wrapper_arguments(&mut self.client)?;
-    fs::create_dir_all(instance)?;
+    fs::create_dir_all(instance).at(instance)?;
     fs::write(
       instance.join(COMPONENTS_FILE_NAME),
       serde_json::to_vec_pretty(&self.patches)?,
-    )?;
+    )
+    .at_in(&instance.join(COMPONENTS_FILE_NAME), instance)?;
     // What the pack declared besides the resolved patches. None of it is applied
     // again on launch; it is kept so the pack can be exported without loss.
     let snapshot = ComponentSnapshot {
@@ -620,7 +620,8 @@ impl ResolvedMultiMc {
     fs::write(
       instance.join(SNAPSHOT_FILE_NAME),
       serde_json::to_vec_pretty(&snapshot)?,
-    )?;
+    )
+    .at_in(&instance.join(SNAPSHOT_FILE_NAME), instance)?;
     Ok(())
   }
 }
@@ -769,8 +770,8 @@ fn normalize_library(
     let sha1 = hex::encode(Sha1::digest(&bytes));
     let path = format!("ustbl-local/{sha1}/{}", rel.rsplit('/').next().unwrap());
     let target = libraries.join(&path);
-    fs::create_dir_all(target.parent().unwrap())?;
-    fs::write(&target, &bytes)?;
+    fs::create_dir_all(target.parent().unwrap()).at(target.parent().unwrap())?;
+    fs::write(&target, &bytes).at(&target)?;
     let entry = LocalLibrary {
       filename: filename.to_string(),
       path: path.clone(),

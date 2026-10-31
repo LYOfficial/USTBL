@@ -836,6 +836,13 @@
       "description": "首次启动，正在自动下载 Java 25 运行时"
     }
   },
+  "FileError": {
+    "FILE_BLOCKED_BY_ANTIVIRUS": "文件 {{file}} 被杀毒软件拦截。请在 Windows 安全中心允许该文件，或把游戏目录加入排除项后重试。",
+    "FILE_MISSING": "找不到文件 {{file}}，可能已被删除、移动或被杀毒软件隔离。请检查后重试。",
+    "FILE_INACCESSIBLE": "无法访问文件 {{file}}，可能正被游戏或其他程序占用，或没有权限。请关闭相关程序后重试。",
+    "DISK_FULL": "磁盘空间不足，无法写入 {{file}}。请清理磁盘后重试。",
+    "FILE_IO_FAILED": "读写文件 {{file}} 失败（{{detail}}）。"
+  },
   "GameAdvancedSettingsPage": {
     "title": "高级游戏设置",
     "topWarning": "高级游戏设置仅提供给专业玩家使用。修改以下选项可能导致游戏无法启动。除非您充分了解其中的意义，否则请不要修改这些选项！",

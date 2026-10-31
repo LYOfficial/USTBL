@@ -7,6 +7,7 @@
 
 use super::manifest::PackObject;
 use crate::error::{USTBLError, USTBLResult};
+use crate::file_error::AtPath;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
@@ -139,14 +140,15 @@ pub fn paths(dir: &Path, id: &str) -> USTBLResult<JobPaths> {
 impl JobRecord {
   /// Written through a temporary file, so a crash never leaves half a record.
   pub fn save(&self, dir: &Path) -> USTBLResult<()> {
-    fs::create_dir_all(dir)?;
+    fs::create_dir_all(dir).at(dir)?;
     let target = paths(dir, &self.id)?.record;
     let temporary = target.with_extension("json.tmp");
     fs::write(
       &temporary,
       serde_json::to_vec_pretty(self).map_err(|e| USTBLError(e.to_string()))?,
-    )?;
-    fs::rename(&temporary, &target)?;
+    )
+    .at(&temporary)?;
+    fs::rename(&temporary, &target).at(&target)?;
     Ok(())
   }
 

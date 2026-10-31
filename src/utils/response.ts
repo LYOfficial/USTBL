@@ -1,6 +1,7 @@
 import { t } from "i18next";
 import { InvokeResponse } from "@/models/response";
 import { isDev } from "@/utils/env";
+import { localizeFileError } from "@/utils/file-error";
 import { logger } from "@/utils/logging";
 
 export function responseHandler(serviceDomain: string): MethodDecorator {
@@ -25,14 +26,17 @@ export function responseHandler(serviceDomain: string): MethodDecorator {
           `Services.${serviceDomain}.${String(propertyKey)}.error.title`
         );
 
-        const details = String(error)
-          ? t(
-              `Services.${serviceDomain}.${String(propertyKey)}.error.description.${String(error)}`,
-              {
-                defaultValue: String(error),
-              }
-            )
-          : "";
+        const fileError = localizeFileError(t, String(error));
+        const details = fileError
+          ? fileError
+          : String(error)
+            ? t(
+                `Services.${serviceDomain}.${String(propertyKey)}.error.description.${String(error)}`,
+                {
+                  defaultValue: String(error),
+                }
+              )
+            : "";
 
         // Session expiration is reported once by the native session event.
         const sessionExpired =

@@ -25,9 +25,16 @@ function load(file, requireModule = () => ({})) {
 }
 
 const choices = load("src/utils/modpack-update-choices.ts");
-const stages = load("src/utils/campus-install-task.ts");
+const fileError = load("src/utils/file-error.ts");
+const stages = load("src/utils/campus-install-task.ts", (name) =>
+  name === "@/utils/file-error" ? fileError : {}
+);
 const update = load("src/utils/modpack-update-task.ts", (name) =>
-  name.endsWith("modpack-update-choices") ? choices : stages
+  name.endsWith("modpack-update-choices")
+    ? choices
+    : name === "@/utils/file-error"
+      ? fileError
+      : stages
 );
 
 test("update groups are separate from installs, have ordered stages and a clean title", () => {
@@ -88,6 +95,7 @@ test("launch busy errors are localized by the actual response handler and displa
             key,
         };
       if (name === "@/utils/env") return { isDev: false };
+      if (name === "@/utils/file-error") return fileError;
       if (name === "@/utils/logging") return { logger: { error: () => {} } };
       return {};
     });
@@ -109,7 +117,10 @@ test("launch busy errors are localized by the actual response handler and displa
     assert.doesNotMatch(result.details, /MODPACK_|Services\./);
   }
   const modal = fs.readFileSync(
-    path.join(__dirname, "../../src/components/modals/launch-process-modal.tsx"),
+    path.join(
+      __dirname,
+      "../../src/components/modals/launch-process-modal.tsx"
+    ),
     "utf8"
   );
   assert.match(modal, /setErrorDesc\(response\.details\)/);
@@ -199,6 +210,7 @@ test("global task context receives results with no update modal mounted", () => 
     if (name === "@/contexts/toast")
       return { useToast: () => (notice) => notices.push(notice) };
     if (name === "@/utils/modpack-update-task") return update;
+    if (name === "@/utils/file-error") return fileError;
     if (name === "@/services/modpack-update")
       return {
         ModpackUpdateService: {

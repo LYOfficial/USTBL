@@ -10,6 +10,7 @@
 //! but they refresh the entries of the files they just hashed.
 
 use super::diff::{FileKey, LocalState, DISABLED_SUFFIX};
+use crate::file_error::AtPath;
 use crate::instance::helpers::modpack::baseline::hash_file;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io;
@@ -136,8 +137,8 @@ fn scan_one(root: &Path, path: &str, baseline: Option<&FileKey>) -> io::Result<L
   let file = root.join(path);
   let disabled = root.join(format!("{path}{DISABLED_SUFFIX}"));
   if file.is_file() && disabled.is_file() {
-    let (enabled_sha1, enabled_size) = hash_file(&file)?;
-    let (disabled_sha1, disabled_size) = hash_file(&disabled)?;
+    let (enabled_sha1, enabled_size) = hash_file(&file).rooted(root)?;
+    let (disabled_sha1, disabled_size) = hash_file(&disabled).rooted(root)?;
     return Ok(LocalState::Both(
       FileKey {
         sha1: enabled_sha1,
@@ -152,7 +153,7 @@ fn scan_one(root: &Path, path: &str, baseline: Option<&FileKey>) -> io::Result<L
   if file.is_file() {
     // A size that already differs can never hash to the baseline key.
     if let Some(key) = baseline {
-      let size = std::fs::metadata(&file)?.len();
+      let size = std::fs::metadata(&file).at_in(&file, root)?.len();
       if size != key.size {
         return Ok(LocalState::Present(FileKey {
           sha1: String::new(),
@@ -160,7 +161,7 @@ fn scan_one(root: &Path, path: &str, baseline: Option<&FileKey>) -> io::Result<L
         }));
       }
     }
-    let (sha1, size) = hash_file(&file)?;
+    let (sha1, size) = hash_file(&file).rooted(root)?;
     return Ok(LocalState::Present(FileKey { sha1, size }));
   }
   if file.exists() {
@@ -170,7 +171,7 @@ fn scan_one(root: &Path, path: &str, baseline: Option<&FileKey>) -> io::Result<L
     ));
   }
   if disabled.is_file() {
-    let (sha1, size) = hash_file(&disabled)?;
+    let (sha1, size) = hash_file(&disabled).rooted(root)?;
     return Ok(LocalState::Disabled(FileKey { sha1, size }));
   }
   Ok(LocalState::Absent)

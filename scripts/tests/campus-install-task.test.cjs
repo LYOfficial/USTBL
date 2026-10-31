@@ -24,6 +24,8 @@ function load(file, requireModule = () => ({})) {
   return module.exports;
 }
 
+const fileError = load("src/utils/file-error.ts");
+
 const {
   campusInstallCardState,
   campusInstallStageKey,
@@ -36,7 +38,9 @@ const {
   campusInstallGroupLabel,
   campusInstallGroupInstanceId,
   canDiscardRunningInstall,
-} = load("src/utils/campus-install-task.ts");
+} = load("src/utils/campus-install-task.ts", (name) =>
+  name === "@/utils/file-error" ? fileError : {}
+);
 
 test("campus install cards expose active, paused, complete and failure states", () => {
   assert.equal(campusInstallCardState("Started"), "active-install");
@@ -150,7 +154,9 @@ test("task context applies removal events before repeated resume creation and ke
     if (name === "@/contexts/toast") return { useToast: () => () => {} };
     if (name === "@/models/task") return taskModel;
     if (name === "@/utils/campus-install-task")
-      return load("src/utils/campus-install-task.ts");
+      return load("src/utils/campus-install-task.ts", (inner) =>
+        inner === "@/utils/file-error" ? fileError : {}
+      );
     if (name === "@/utils/modpack-update-task")
       return {
         isModpackUpdateGroup: (group) => group.startsWith("modpack-update?"),

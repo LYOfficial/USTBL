@@ -388,6 +388,11 @@ pub enum InstanceError {
   ModpackUploadCloudUnavailable,
   ModpackUploadVerifyFailed,
   ModpackUploadSessionGone,
+  FileBlockedByAntivirus,
+  FileMissing,
+  FileInaccessible,
+  DiskFull,
+  FileIoFailed,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize, Default)]

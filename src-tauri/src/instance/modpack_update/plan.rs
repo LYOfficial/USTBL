@@ -14,6 +14,7 @@ use super::merge::{merge_text, text_conflicts, TextMergeError};
 use super::remote::{RemoteModpack, RemoteRule, RuleKind, RuleState};
 use super::text_diff::{edits, lines_of, unified_diff_hiding, DiffHunk, CONTEXT_LINES};
 use crate::error::{USTBLError, USTBLResult};
+use crate::file_error::AtPath;
 use crate::instance::helpers::modpack::baseline::{BaselineFile, ModpackBaseline};
 use crate::instance::helpers::modpack::{base_store, text};
 use serde::Serialize;
@@ -269,7 +270,8 @@ pub async fn local_changes(
         Some(true) => format!("{path}{DISABLED_SUFFIX}"),
         _ => path.clone(),
       };
-      let local_bytes = std::fs::read(root.join(&local_path))?;
+      let local_file = root.join(&local_path);
+      let local_bytes = std::fs::read(&local_file).at_in(&local_file, &root)?;
       let local_text = text::normalize_text(&path, &local_bytes);
       let base_text = match &local_text {
         Some(_) => base_store::load(&root, &key.sha1)
@@ -362,9 +364,9 @@ fn enumerate_under(root: &Path, dir: &str, found: &mut BTreeMap<String, String>)
   }
   let mut stack = vec![base];
   while let Some(current) = stack.pop() {
-    for entry in std::fs::read_dir(&current)? {
-      let entry = entry?;
-      let file_type = entry.file_type()?;
+    for entry in std::fs::read_dir(&current).at_in(&current, root)? {
+      let entry = entry.at_in(&current, root)?;
+      let file_type = entry.file_type().at_in(&entry.path(), root)?;
       let relative = entry
         .path()
         .strip_prefix(root)

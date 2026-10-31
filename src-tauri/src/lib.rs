@@ -2,6 +2,7 @@ mod accelerator;
 mod account;
 mod discover;
 mod error;
+mod file_error;
 mod instance;
 mod launch;
 mod launcher_config;

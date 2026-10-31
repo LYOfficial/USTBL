@@ -8,6 +8,7 @@ import type {
   TaskDesc,
   TaskGroupDesc,
 } from "@/models/task";
+import { localizeFileError } from "@/utils/file-error";
 
 export type CampusInstallCardState =
   | "active-install"
@@ -129,6 +130,8 @@ export const localizeCampusInstallError = (
   reason?: string
 ): string => {
   if (!reason) return t("DownloadTasksPage.label.error");
+  const fileMessage = localizeFileError(t, reason);
+  if (fileMessage) return fileMessage;
   if (
     /network|connection|timeout|timed out|request|http|status|range ended/i.test(
       reason

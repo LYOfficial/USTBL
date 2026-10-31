@@ -14,6 +14,7 @@ use super::record::{
 use crate::account::helpers::vustb;
 use crate::account::models::AccountInfo;
 use crate::error::{USTBLError, USTBLResult};
+use crate::file_error::{tag, AtPath};
 use crate::instance::helpers::misc::{get_instance_game_config, get_instance_subdir_paths};
 use crate::instance::helpers::modpack::base_store;
 use crate::instance::helpers::modpack::baseline::{
@@ -353,7 +354,7 @@ where
       async move {
         let file = tokio::task::spawn_blocking(move || {
           let on_disk = checked_disk_path(&root, &picked)?;
-          let (sha1, size) = hash_file(&root.join(on_disk))?;
+          let (sha1, size) = hash_file(&root.join(on_disk)).rooted(&root)?;
           Ok::<LocalFile, USTBLError>(LocalFile {
             path: picked.path,
             key: FileKey { sha1, size },
@@ -834,7 +835,7 @@ async fn prepare(
     None
   } else {
     report(app, instance_id, Stage::Packing, 0, 1);
-    fs::create_dir_all(dir)?;
+    fs::create_dir_all(dir).at(dir)?;
     let (objects, target) = (needed.clone(), job_paths.pack.clone());
     tokio::task::spawn_blocking(move || build_pack(&objects, &target))
       .await
@@ -1214,22 +1215,20 @@ fn backup_and_delete_publish_files(root: &Path, paths: &[String]) -> USTBLResult
   }
   let backup = root.join(".ustbl-update").join("publish-deleted");
   if backup.exists() {
-    fs::remove_dir_all(&backup)?;
+    fs::remove_dir_all(&backup).at_in(&backup, root)?;
   }
   for path in paths {
     let source = root.join(path);
     let target = backup.join(path);
     if let Some(parent) = target.parent() {
-      fs::create_dir_all(parent)?;
+      fs::create_dir_all(parent).at_in(parent, root)?;
     }
-    fs::copy(&source, &target)?;
+    fs::copy(&source, &target).at_in(&source, root)?;
   }
   for path in paths {
     if let Err(error) = fs::remove_file(root.join(path)) {
       log::warn!("Could not remove published delete target {path}: {error}");
-      return Err(USTBLError(format!(
-        "删除发布者本机文件失败：{path}: {error}"
-      )));
+      return Err(tag(error, &root.join(path), Some(root)).into());
     }
   }
   Ok(paths.len())

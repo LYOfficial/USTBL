@@ -5,6 +5,7 @@ import { OptionItemGroup } from "@/components/common/option-item";
 import { useTaskContext } from "@/contexts/task";
 import { useToast } from "@/contexts/toast";
 import { CampusModpackService } from "@/services/campus-modpack";
+import { localizeFileError } from "@/utils/file-error";
 
 /**
  * Local publish records that need the user's attention: an interrupted
@@ -60,7 +61,8 @@ export const UnfinishedPublishes: React.FC = () => {
                 className={job.error ? undefined : "secondary-text"}
                 color={job.error ? "red.600" : undefined}
               >
-                {job.error ??
+                {(job.error &&
+                  (localizeFileError(t, job.error) ?? job.error)) ||
                   t(`DownloadTasksPage.unfinishedPublish.phase.${job.phase}`)}
               </Text>
             </VStack>

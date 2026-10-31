@@ -8,6 +8,7 @@
 //! every other file.
 
 use crate::error::{USTBLError, USTBLResult};
+use crate::file_error::AtPath;
 use crate::instance::helpers::modpack::baseline::hash_file;
 use crate::instance::helpers::modpack::multimc::profile::safe_relative;
 use crate::instance::helpers::modpack::multimc::snapshot::ComponentSnapshot;
@@ -78,7 +79,7 @@ pub fn plan_components(
   libraries_dir: &Path,
   work_dir: &Path,
 ) -> USTBLResult<ComponentPlan> {
-  fs::create_dir_all(work_dir)?;
+  fs::create_dir_all(work_dir).at(work_dir)?;
   let mut patches = BTreeMap::new();
   for (uid, patch) in &snapshot.local_patches {
     if !is_plain_name(uid) {
@@ -88,7 +89,8 @@ pub fn plan_components(
     fs::write(
       &path,
       serde_json::to_vec_pretty(patch).map_err(|e| USTBLError(e.to_string()))?,
-    )?;
+    )
+    .at(&path)?;
     patches.insert(uid.clone(), blob_of(path)?);
   }
 

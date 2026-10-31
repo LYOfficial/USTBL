@@ -10,6 +10,7 @@ use super::diff::{Operation, DISABLED_SUFFIX};
 use super::packs::{FetchGroup, PackFetch, PackSession};
 use super::remote::{ComponentPack, FileSource, RemoteFile, RemoteModpack, UPDATE_DIR};
 use crate::error::USTBLResult;
+use crate::file_error::{tag, AtPath};
 use crate::instance::helpers::modpack::base_store;
 use crate::instance::helpers::modpack::baseline::{
   hash_file, BaselineLoader, ComponentRef, ModpackBaseline, BASELINE_FILE_NAME,
@@ -78,23 +79,24 @@ fn staging_meta_path(root: &Path) -> PathBuf {
 }
 
 fn read_staging_meta(root: &Path) -> io::Result<Option<StagingMeta>> {
-  match fs::read(staging_meta_path(root)) {
+  let path = staging_meta_path(root);
+  match fs::read(&path) {
     Ok(bytes) => {
       Ok(Some(serde_json::from_slice(&bytes).map_err(|error| {
         io::Error::new(io::ErrorKind::InvalidData, error)
       })?))
     }
     Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-    Err(error) => Err(error),
+    Err(error) => Err(tag(error, &path, Some(root))),
   }
 }
 
 fn write_staging_meta(root: &Path, meta: &StagingMeta) -> io::Result<()> {
-  fs::create_dir_all(staging_dir(root))?;
+  fs::create_dir_all(staging_dir(root)).at_in(&staging_dir(root), root)?;
   let path = staging_meta_path(root);
   let temp = path.with_extension("json.tmp");
-  fs::write(&temp, serde_json::to_vec_pretty(meta)?)?;
-  fs::rename(temp, path)
+  fs::write(&temp, serde_json::to_vec_pretty(meta)?).at_in(&temp, root)?;
+  fs::rename(&temp, &path).at_in(&temp, root)
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Deserialize, Serialize)]
@@ -284,32 +286,35 @@ fn io_error(error: io::Error) -> crate::error::USTBLError {
 fn write_journal(root: &Path, journal: &Journal) -> io::Result<()> {
   let path = journal_path(root);
   let temp = path.with_extension("json.tmp");
-  fs::write(&temp, serde_json::to_vec_pretty(journal)?)?;
-  fs::rename(temp, path)
+  fs::write(&temp, serde_json::to_vec_pretty(journal)?).at_in(&temp, root)?;
+  fs::rename(&temp, &path).at_in(&temp, root)
 }
 
 fn read_journal(root: &Path) -> io::Result<Option<Journal>> {
-  match fs::read(journal_path(root)) {
+  let path = journal_path(root);
+  match fs::read(&path) {
     Ok(bytes) => {
       Ok(Some(serde_json::from_slice(&bytes).map_err(|e| {
         io::Error::new(io::ErrorKind::InvalidData, e)
       })?))
     }
     Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-    Err(error) => Err(error),
+    Err(error) => Err(tag(error, &path, Some(root))),
   }
 }
 
-fn move_file(from: &Path, to: &Path) -> io::Result<()> {
+/// Rename `from` to `to`. A failure names `from`: that is the file a scanner
+/// or another program holds on to.
+fn move_file(root: &Path, from: &Path, to: &Path) -> io::Result<()> {
   if let Some(parent) = to.parent() {
-    fs::create_dir_all(parent)?;
+    fs::create_dir_all(parent).at_in(parent, root)?;
   }
-  fs::rename(from, to)
+  fs::rename(from, to).at_in(from, root)
 }
 
-fn remove_file_if_exists(path: &Path) -> io::Result<()> {
+fn remove_file_if_exists(root: &Path, path: &Path) -> io::Result<()> {
   match fs::remove_file(path) {
-    Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+    Err(error) if error.kind() != io::ErrorKind::NotFound => Err(tag(error, path, Some(root))),
     _ => Ok(()),
   }
 }
@@ -350,30 +355,30 @@ fn roll_back_from(root: &Path, backup: &Path, journal: &Journal) -> io::Result<(
     // rollback behaved the same for both, so `unwrap_or(!had_original)`.
     let wrote_enabled = op.writes_enabled.unwrap_or(!op.had_original);
     if op.had_original && saved.is_file() {
-      remove_file_if_exists(&target)?;
-      move_file(&saved, &target)?;
+      remove_file_if_exists(root, &target)?;
+      move_file(root, &saved, &target)?;
     } else if wrote_enabled {
-      remove_file_if_exists(&target)?;
+      remove_file_if_exists(root, &target)?;
     }
     let disabled = disabled_path(&op.path);
     if op.moves_disabled {
       let saved = backup.join("files").join(&disabled);
-      remove_file_if_exists(&root.join(&disabled))?;
+      remove_file_if_exists(root, &root.join(&disabled))?;
       if saved.is_file() {
-        move_file(&saved, &root.join(&disabled))?;
+        move_file(root, &saved, &root.join(&disabled))?;
       }
     } else if op.writes_disabled {
-      remove_file_if_exists(&root.join(&disabled))?;
+      remove_file_if_exists(root, &root.join(&disabled))?;
     }
   }
   for name in &journal.meta_present {
     let saved = backup.join("meta").join(name);
     if saved.is_file() {
-      fs::copy(&saved, root.join(name))?;
+      fs::copy(&saved, root.join(name)).at_in(&root.join(name), root)?;
     }
   }
   for name in &journal.meta_absent {
-    remove_file_if_exists(&root.join(name))?;
+    remove_file_if_exists(root, &root.join(name))?;
   }
   // Recreate the directories the update pruned, deepest first.
   let mut dirs: Vec<&String> = journal
@@ -384,7 +389,7 @@ fn roll_back_from(root: &Path, backup: &Path, journal: &Journal) -> io::Result<(
   dirs.sort_by_key(|dir| std::cmp::Reverse(dir.matches('/').count()));
   dirs.dedup();
   for dir in dirs {
-    fs::create_dir_all(root.join(dir))?;
+    fs::create_dir_all(root.join(dir)).at_in(&root.join(dir), root)?;
   }
   Ok(())
 }
@@ -431,13 +436,16 @@ pub fn roll_back_last_checked(
   check()?;
   recover_locked(root)?;
   let backup = last_backup_dir(root);
-  let journal: Journal = match fs::read(backup.join(LAST_JOURNAL_NAME)) {
+  let journal_file = backup.join(LAST_JOURNAL_NAME);
+  let journal: Journal = match fs::read(&journal_file) {
     Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| io_error(e.into()))?,
     Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
-    Err(error) => return Err(io_error(error)),
+    Err(error) => return Err(io_error(tag(error, &journal_file, Some(root)))),
   };
   roll_back_from(root, &backup, &journal).map_err(io_error)?;
-  fs::remove_dir_all(&backup).map_err(io_error)?;
+  fs::remove_dir_all(&backup)
+    .at_in(&backup, root)
+    .map_err(io_error)?;
   Ok(true)
 }
 
@@ -488,13 +496,13 @@ fn recover_locked(root: &Path) -> USTBLResult<Recovery> {
 }
 
 fn extract_entry(archive: &Path, entry: &str, dest: &Path) -> USTBLResult<()> {
-  let mut zip = zip::ZipArchive::new(fs::File::open(archive).map_err(io_error)?)?;
+  let mut zip = zip::ZipArchive::new(fs::File::open(archive).at(archive).map_err(io_error)?)?;
   let mut source = zip.by_name(entry)?;
   if let Some(parent) = dest.parent() {
-    fs::create_dir_all(parent).map_err(io_error)?;
+    fs::create_dir_all(parent).at(parent).map_err(io_error)?;
   }
-  let mut out = fs::File::create(dest).map_err(io_error)?;
-  io::copy(&mut source, &mut out).map_err(io_error)?;
+  let mut out = fs::File::create(dest).at(dest).map_err(io_error)?;
+  io::copy(&mut source, &mut out).at(dest).map_err(io_error)?;
   Ok(())
 }
 
@@ -647,24 +655,28 @@ fn commit_files(root: &Path, operations: &[Operation], journal: &Journal) -> io:
       };
       let saved = backup.join("files").join(backed);
       if let Some(parent) = saved.parent() {
-        fs::create_dir_all(parent)?;
+        fs::create_dir_all(parent).at_in(parent, root)?;
       }
-      fs::copy(&source, &saved)?;
-      move_file(&source, &dest)?;
+      fs::copy(&source, &saved).at_in(&source, root)?;
+      move_file(root, &source, &dest)?;
       continue;
     }
     if op.had_original {
-      move_file(&target, &backup.join("files").join(&op.path))?;
+      move_file(root, &target, &backup.join("files").join(&op.path))?;
     }
     if op.moves_disabled {
-      move_file(&root.join(&disabled), &backup.join("files").join(&disabled))?;
+      move_file(
+        root,
+        &root.join(&disabled),
+        &backup.join("files").join(&disabled),
+      )?;
     }
     if operation.write.is_some() || operation.write_local {
       let staged = staging_dir(root).join(&op.path);
       if operation.final_disabled {
-        move_file(&staged, &root.join(&disabled))?;
+        move_file(root, &staged, &root.join(&disabled))?;
       } else {
-        move_file(&staged, &target)?;
+        move_file(root, &staged, &target)?;
       }
     }
   }
@@ -695,16 +707,16 @@ fn prune_empty_dirs(root: &Path, operations: &[Operation]) {
 
 fn save_meta_backup(root: &Path, names: &[String]) -> io::Result<(Vec<String>, Vec<String>)> {
   let meta = backup_dir(root).join("meta");
-  fs::create_dir_all(&meta)?;
+  fs::create_dir_all(&meta).at_in(&meta, root)?;
   let (mut present, mut absent) = (Vec::new(), Vec::new());
   for name in names {
     let file = root.join(name);
     if file.is_file() {
       let saved = meta.join(name);
       if let Some(parent) = saved.parent() {
-        fs::create_dir_all(parent)?;
+        fs::create_dir_all(parent).at_in(parent, root)?;
       }
-      fs::copy(&file, saved)?;
+      fs::copy(&file, saved).at_in(&file, root)?;
       present.push(name.clone());
     } else {
       absent.push(name.clone());
@@ -780,10 +792,10 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
   };
   if !reusable {
     for path in [staging_dir(root), components_dir(root)] {
-      match fs::remove_dir_all(path) {
+      match fs::remove_dir_all(&path) {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(io_error(error)),
+        Err(error) => return Err(io_error(tag(error, &path, Some(root)))),
       }
     }
   }
@@ -1016,9 +1028,13 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
   for (path, bytes) in &request.merged_contents {
     let dest = staging_dir(root).join(path);
     if let Some(parent) = dest.parent() {
-      fs::create_dir_all(parent).map_err(io_error)?;
+      fs::create_dir_all(parent)
+        .at_in(parent, root)
+        .map_err(io_error)?;
     }
-    fs::write(&dest, bytes).map_err(io_error)?;
+    fs::write(&dest, bytes)
+      .at_in(&dest, root)
+      .map_err(io_error)?;
     if !crate::instance::helpers::modpack::text::is_text_path(path, bytes) {
       return Err(InstanceError::ModpackUpdateVerifyFailed.into());
     }
@@ -1067,7 +1083,9 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
       }
     })
     .collect();
-  fs::create_dir_all(backup_dir(root)).map_err(io_error)?;
+  fs::create_dir_all(backup_dir(root))
+    .at_in(&backup_dir(root), root)
+    .map_err(io_error)?;
   let (meta_present, meta_absent) = save_meta_backup(
     root,
     &meta_files(&request.instance_name, request.restore_components),
@@ -1176,7 +1194,8 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
       match undone {
         // Keep the journal so the next start can retry the rollback.
         Err(rollback_error) => Err(crate::error::USTBLError(format!(
-          "{error:?}; rollback failed: {rollback_error}"
+          "{}; rollback failed: {rollback_error}",
+          error.0
         ))),
         Ok(()) => {
           finish_cleanup(root, false);
@@ -3133,5 +3152,28 @@ mod tests {
     assert_eq!(root.read("config/c.toml").as_deref(), Some("x = 2\n"));
     let restored = ignores::read(&root.0);
     assert!(restored.files["config/c.toml"].whole);
+  }
+
+  #[test]
+  fn a_failed_file_operation_names_the_file_relative_to_the_instance() {
+    let root = setup();
+    let from = root.0.join("mods").join("missing.jar");
+    let to = root
+      .0
+      .join(".ustbl-update")
+      .join("backup")
+      .join("missing.jar");
+    let error = move_file(&root.0, &from, &to).unwrap_err();
+    let parsed = crate::file_error::parse(&error.to_string()).unwrap();
+    assert_eq!(parsed.kind, crate::file_error::FileErrorKind::Missing);
+    assert_eq!(
+      parsed.file,
+      Path::new("mods").join("missing.jar").display().to_string()
+    );
+
+    fs::create_dir_all(staging_meta_path(&root.0)).unwrap();
+    let error = read_staging_meta(&root.0).unwrap_err();
+    let parsed = crate::file_error::parse(&error.to_string()).unwrap();
+    assert!(parsed.file.starts_with(".ustbl-update"));
   }
 }

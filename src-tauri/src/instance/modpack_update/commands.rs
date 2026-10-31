@@ -18,6 +18,7 @@ use super::remote::{ComponentPack, RemoteModpack};
 use super::restore::restore_component_profile;
 use super::sources::{download_param, latest_version, resolve_remote, LatestVersion, Payload};
 use crate::error::USTBLResult;
+use crate::file_error::AtPath;
 use crate::instance::commands::{remove_instance_blocking, switch_mod_loader};
 use crate::instance::helpers::client_json::McClientInfo;
 use crate::instance::helpers::loader::common::installer_task_group;
@@ -312,10 +313,10 @@ fn campus_install_record(root: &Path) -> PathBuf {
 
 fn save_campus_install_record(root: &Path, record: &CampusInstallRecord) -> USTBLResult<()> {
   let path = campus_install_record(root);
-  fs::create_dir_all(path.parent().unwrap())?;
+  fs::create_dir_all(path.parent().unwrap()).at_in(path.parent().unwrap(), root)?;
   let temporary = path.with_extension("json.tmp");
-  fs::write(&temporary, serde_json::to_vec_pretty(record)?)?;
-  fs::rename(temporary, path)?;
+  fs::write(&temporary, serde_json::to_vec_pretty(record)?).at_in(&temporary, root)?;
+  fs::rename(&temporary, &path).at_in(&path, root)?;
   Ok(())
 }
 
@@ -700,7 +701,10 @@ pub async fn recover_publish_base(
   let dest = preview.join(path);
   let result = materialize_remote_file(&env, dest.clone(), file).await;
   if result.is_ok() {
-    let bytes = tokio::fs::read(&dest).await.map_err(crate::error::USTBLError::from)?;
+    let bytes = tokio::fs::read(&dest)
+      .await
+      .at_in(&dest, &instance.version_path)
+      .map_err(crate::error::USTBLError::from)?;
     let baseline = crate::instance::helpers::modpack::baseline::BaselineFile::managed(
       path,
       file.key.clone(),
@@ -2257,7 +2261,7 @@ async fn recover_base_copies(
       for file in files {
         let dest = preview.join(&file.path);
         materialize_remote_file(&env, dest.clone(), file).await?;
-        let bytes = tokio::fs::read(dest).await?;
+        let bytes = tokio::fs::read(&dest).await.at_in(&dest, &target.root)?;
         if let Some(base) = wanted.iter().find(|b| b.path == file.path) {
           base_store::store(&target.root, base, &bytes)?;
           recovered = true;
@@ -2397,7 +2401,7 @@ async fn materialize_text_candidates(
     }
     let dest = preview.join(&file.path);
     materialize_remote_file(&env, dest.clone(), file).await?;
-    let bytes = tokio::fs::read(&dest).await?;
+    let bytes = tokio::fs::read(&dest).await.at_in(&dest, &target.root)?;
     if text::is_text_path(&file.path, &bytes) {
       result.insert(file.path.clone(), bytes);
     }

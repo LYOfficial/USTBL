@@ -7,6 +7,7 @@
 
 use super::remote::ComponentPack;
 use crate::error::{USTBLError, USTBLResult};
+use crate::file_error::AtPath;
 use crate::instance::helpers::client_json::McClientInfo;
 use crate::instance::helpers::misc::get_instance_subdir_paths;
 use crate::instance::helpers::modpack::baseline::BaselineLoader;
@@ -135,12 +136,11 @@ pub async fn restore_component_profile(
   task_params
     .extend(get_invalid_assets(app, &version_info, &priority_list, assets_dir, false).await?);
 
-  save_json_async(
-    &version_info,
-    &instance.version_path.join(format!("{name}.json")),
-  )
-  .await
-  .map_err(|e| USTBLError(e.to_string()))?;
+  let client_json = instance.version_path.join(format!("{name}.json"));
+  save_json_async(&version_info, &client_json)
+    .await
+    .at_in(&client_json, &instance.version_path)
+    .map_err(|e| USTBLError(e.to_string()))?;
   schedule_progressive_task_group(
     app.clone(),
     format!("game-client?{name}"),

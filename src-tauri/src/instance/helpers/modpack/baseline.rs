@@ -8,6 +8,7 @@
 //! it stores no instance name or path, and renaming or moving the instance does
 //! not affect it.
 
+use crate::file_error::AtPath;
 use crate::instance::models::misc::{InstanceOrigin, ModLoaderType, OriginPlatform};
 use crate::instance::modpack_update::diff::FileKey;
 use crate::instance::modpack_update::remote::RemoteRule;
@@ -188,12 +189,12 @@ pub fn normalize_relative_path(path: &str) -> String {
 
 /// SHA-1 and size of a file, streamed.
 pub fn hash_file(path: &Path) -> std::io::Result<(String, u64)> {
-  let mut file = File::open(path)?;
+  let mut file = File::open(path).at(path)?;
   let mut hasher = Sha1::new();
   let mut buffer = vec![0u8; 64 * 1024];
   let mut size = 0u64;
   loop {
-    let read = file.read(&mut buffer)?;
+    let read = file.read(&mut buffer).at(path)?;
     if read == 0 {
       break;
     }
@@ -211,7 +212,7 @@ pub fn hash_existing_files(
   relative_paths
     .iter()
     .map(|relative| {
-      let (sha1, size) = hash_file(&root.join(relative))?;
+      let (sha1, size) = hash_file(&root.join(relative)).rooted(root)?;
       Ok(BaselineFile::managed(
         &normalize_relative_path(relative),
         FileKey { sha1, size },
@@ -371,7 +372,10 @@ impl ModpackBaseline {
   }
 
   pub async fn save(&self, instance_dir: &Path) -> std::io::Result<()> {
-    save_json_async(self, &instance_dir.join(BASELINE_FILE_NAME)).await
+    let path = instance_dir.join(BASELINE_FILE_NAME);
+    save_json_async(self, &path)
+      .await
+      .at_in(&path, instance_dir)
   }
 
   #[cfg_attr(not(test), allow(dead_code))]

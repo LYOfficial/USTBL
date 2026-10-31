@@ -1,5 +1,6 @@
 import type { TFunction } from "i18next";
 import type { ModpackUpdateFinished } from "@/models/modpack-update";
+import { localizeFileError } from "@/utils/file-error";
 import {
   failedUpdatePlans,
   rememberedChoices,
@@ -9,6 +10,8 @@ export const isModpackUpdateGroup = (group: string): boolean =>
   group.startsWith("modpack-update?");
 
 export const localizeModpackUpdateError = (t: TFunction, reason?: string) => {
+  const fileMessage = localizeFileError(t, reason);
+  if (fileMessage) return fileMessage;
   const category =
     reason &&
     /network|connection|timeout|timed out|request|http|status|range ended/i.test(

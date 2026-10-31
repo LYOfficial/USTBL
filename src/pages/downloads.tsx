@@ -50,6 +50,7 @@ import {
   localizeCampusInstallError,
 } from "@/utils/campus-install-task";
 import { formatTimeInterval } from "@/utils/datetime";
+import { localizeFileError } from "@/utils/file-error";
 import {
   isModpackUpdateGroup,
   localizeModpackUpdateError,
@@ -137,7 +138,9 @@ export const DownloadTasksPage = () => {
       ? localizeModpackUpdateError(t, reason)
       : isCampusInstallGroup(group.taskGroup)
         ? localizeCampusInstallError(t, reason)
-        : reason || t("DownloadTasksPage.label.error");
+        : localizeFileError(t, reason) ||
+          reason ||
+          t("DownloadTasksPage.label.error");
 
   const showInstallProgress = (group: string) => {
     const progress = campusInstallProgressView(

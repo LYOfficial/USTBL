@@ -1,5 +1,6 @@
 use super::diff::FileKey;
 use super::remote::{RemoteModpack, RemoteRule, UPDATE_DIR};
+use crate::file_error::{tag, AtPath};
 use crate::instance::helpers::modpack::baseline::ModpackBaseline;
 use crate::instance::modpack_publish::commands::{PreviousFile, PreviousRelease};
 use crate::storage::save_json_async;
@@ -142,12 +143,14 @@ pub fn read(root: &Path) -> Option<Release> {
 }
 
 pub async fn write(root: &Path, release: &Release) -> io::Result<()> {
-  save_json_async(release, &release_path(root)).await
+  let path = release_path(root);
+  save_json_async(release, &path).await.at_in(&path, root)
 }
 
 pub fn remove(root: &Path) -> io::Result<()> {
-  match std::fs::remove_file(release_path(root)) {
-    Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+  let path = release_path(root);
+  match std::fs::remove_file(&path) {
+    Err(error) if error.kind() != io::ErrorKind::NotFound => Err(tag(error, &path, Some(root))),
     _ => Ok(()),
   }
 }

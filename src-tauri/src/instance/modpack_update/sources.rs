@@ -8,6 +8,7 @@ use super::diff::{FileKey, DISABLED_SUFFIX};
 use super::packs::{AppTransport, PackSession};
 use super::remote::{ComponentPack, FileSource, RemoteFile, RemoteModpack, UPDATE_DIR};
 use crate::error::{USTBLError, USTBLResult};
+use crate::file_error::AtPath;
 use crate::instance::helpers::modpack::baseline::{
   components_of_mmc_pack, hash_file, normalize_relative_path, BaselineLoader,
 };
@@ -484,13 +485,13 @@ pub fn write_remote_cache(root: &Path, cache: &RemoteCache) -> std::io::Result<(
 
 /// SHA-1 and size of one archive entry, streamed.
 pub fn hash_archive_entry(archive: &Path, entry: &str) -> USTBLResult<FileKey> {
-  let mut zip = zip::ZipArchive::new(File::open(archive)?)?;
+  let mut zip = zip::ZipArchive::new(File::open(archive).at(archive)?)?;
   let mut source = zip.by_name(entry)?;
   let mut hasher = Sha1::new();
   let mut buffer = vec![0u8; 64 * 1024];
   let mut size = 0u64;
   loop {
-    let read = source.read(&mut buffer)?;
+    let read = source.read(&mut buffer).at(archive)?;
     if read == 0 {
       break;
     }
@@ -760,8 +761,9 @@ pub async fn download_param(app: &AppHandle, mut param: DownloadParam) -> USTBLR
       .map(|name| name.to_string_lossy().into_owned());
   }
   if let Some(parent) = param.dest.parent() {
-    fs::create_dir_all(parent)?;
+    fs::create_dir_all(parent).at(parent)?;
   }
+  let dest = param.dest.clone();
   let monitor = app.state::<Pin<Box<TaskMonitor>>>();
   let task = DownloadTask::new(
     app.clone(),
@@ -773,7 +775,11 @@ pub async fn download_param(app: &AppHandle, mut param: DownloadParam) -> USTBLR
   let (future, _handle) = task
     .future(app.clone(), monitor.download_rate_limiter.clone())
     .await?;
-  future.await
+  // The task reports a failed write as text; name the file for the known
+  // file problems (a scanner removing it, no space) instead of the bare code.
+  future
+    .await
+    .map_err(|error| USTBLError(crate::file_error::from_os_text(&error.0, &dest, None)))
 }
 
 async fn download_url(
@@ -1063,7 +1069,7 @@ pub async fn resolve_remote(
   latest: &LatestVersion,
 ) -> USTBLResult<RemoteModpack> {
   let dir = remote_dir(root);
-  fs::create_dir_all(&dir)?;
+  fs::create_dir_all(&dir).at_in(&dir, root)?;
   let remote = if let Some(remote) = load_remote_cache(app, origin, root, latest) {
     remote
   } else {

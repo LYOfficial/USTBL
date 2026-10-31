@@ -836,6 +836,13 @@
       "description": "Premier lancement détecté, téléchargement automatique de l'environnement Java 25"
     }
   },
+  "FileError": {
+    "FILE_BLOCKED_BY_ANTIVIRUS": "Le fichier {{file}} a été bloqué par l'antivirus. Autorisez-le dans Sécurité Windows, ou ajoutez le dossier du jeu aux exclusions, puis réessayez.",
+    "FILE_MISSING": "Fichier {{file}} introuvable. Il a peut-être été supprimé, déplacé ou mis en quarantaine par l'antivirus. Vérifiez puis réessayez.",
+    "FILE_INACCESSIBLE": "Impossible d'accéder au fichier {{file}}. Il est peut-être utilisé par le jeu ou un autre programme, ou vous n'avez pas les droits nécessaires. Fermez les programmes concernés puis réessayez.",
+    "DISK_FULL": "Espace disque insuffisant pour écrire {{file}}. Libérez de l'espace disque puis réessayez.",
+    "FILE_IO_FAILED": "Échec de lecture ou d'écriture du fichier {{file}} ({{detail}})."
+  },
   "GameAdvancedSettingsPage": {
     "title": "Paramètres avancés du jeu",
     "topWarning": "Les paramètres avancés sont réservés aux utilisateurs expérimentés. Modifier ces options peut empêcher le jeu de démarrer. Ne modifiez pas ces options à moins de bien comprendre leur signification !",

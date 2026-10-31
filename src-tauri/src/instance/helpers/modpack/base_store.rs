@@ -2,6 +2,7 @@
 
 use super::baseline::BaselineFile;
 use super::text::is_text_path;
+use crate::file_error::{tag, AtPath};
 use crate::instance::modpack_update::remote::UPDATE_DIR;
 use sha1::{Digest, Sha1};
 use std::fs;
@@ -17,10 +18,11 @@ pub fn base_path(root: &Path, sha1: &str) -> PathBuf {
 }
 
 pub fn load(root: &Path, sha1: &str) -> io::Result<Option<Vec<u8>>> {
-  match fs::read(base_path(root, sha1)) {
+  let path = base_path(root, sha1);
+  match fs::read(&path) {
     Ok(bytes) => Ok(Some(bytes)),
     Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-    Err(error) => Err(error),
+    Err(error) => Err(tag(error, &path, Some(root))),
   }
 }
 
@@ -34,11 +36,11 @@ pub fn store(root: &Path, file: &BaselineFile, bytes: &[u8]) -> io::Result<()> {
       "invalid text baseline",
     ));
   }
-  fs::create_dir_all(base_dir(root))?;
+  fs::create_dir_all(base_dir(root)).at_in(&base_dir(root), root)?;
   let target = base_path(root, &file.sha1);
   let temporary = target.with_extension(uuid::Uuid::new_v4().to_string());
-  fs::write(&temporary, bytes)?;
-  let result = fs::rename(&temporary, &target);
+  fs::write(&temporary, bytes).at_in(&temporary, root)?;
+  let result = fs::rename(&temporary, &target).at_in(&target, root);
   let _ = fs::remove_file(temporary);
   result
 }
@@ -52,7 +54,7 @@ pub fn store(root: &Path, file: &BaselineFile, bytes: &[u8]) -> io::Result<()> {
 /// too; a disabled file reads from its `.disabled` variant.
 pub fn sync(root: &Path, files: &[BaselineFile]) -> io::Result<()> {
   let dir = base_dir(root);
-  fs::create_dir_all(&dir)?;
+  fs::create_dir_all(&dir).at_in(&dir, root)?;
   let mut referenced = std::collections::BTreeSet::new();
   for file in files {
     if file.sha1.is_empty() {
@@ -75,7 +77,7 @@ pub fn sync(root: &Path, files: &[BaselineFile]) -> io::Result<()> {
       Ok(bytes) if is_text_path(&file.path, &bytes) => bytes,
       Ok(_) => continue,
       Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-      Err(error) => return Err(error),
+      Err(error) => return Err(tag(error, &source, Some(root))),
     };
     let actual = hex::encode(Sha1::digest(&bytes));
     if actual != file.sha1 {
@@ -85,16 +87,16 @@ pub fn sync(root: &Path, files: &[BaselineFile]) -> io::Result<()> {
     let target = base_path(root, &file.sha1);
     if !target.exists() {
       let temporary = target.with_extension("tmp");
-      fs::write(&temporary, bytes)?;
-      fs::rename(temporary, target)?;
+      fs::write(&temporary, bytes).at_in(&temporary, root)?;
+      fs::rename(&temporary, &target).at_in(&target, root)?;
     }
   }
-  for entry in fs::read_dir(&dir)? {
-    let entry = entry?;
-    if entry.file_type()?.is_file()
+  for entry in fs::read_dir(&dir).at_in(&dir, root)? {
+    let entry = entry.at_in(&dir, root)?;
+    if entry.file_type().at_in(&entry.path(), root)?.is_file()
       && !referenced.contains(&entry.file_name().to_string_lossy().to_string())
     {
-      fs::remove_file(entry.path())?;
+      fs::remove_file(entry.path()).at_in(&entry.path(), root)?;
     }
   }
   Ok(())
