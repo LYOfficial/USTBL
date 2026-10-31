@@ -37,23 +37,29 @@ jobs:
           cache: npm
 
       - name: Install frontend dependencies
+        id: deps
         run: npm ci
 
       - name: Check version consistency
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: npm run version check
 
       - name: Lint
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: npx eslint --max-warnings=0 "src/**/*.{js,jsx,ts,tsx}" "scripts/**/*.js"
 
       - name: Check locale keys
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: |
           npm run locale diff en
           npm run locale diff zh-Hans
 
       - name: Run script tests
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: node --test scripts/tests/*.test.cjs
 
       - name: Build frontend
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         run: npm run build
 
   SecurityPatches:
@@ -87,6 +93,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install Rust stable
+        id: toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -151,8 +158,10 @@ jobs:
 
       # tauri::generate_context! requires the configured frontendDist to exist at compile time.
       - name: Prepare placeholder frontend output
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
         run: mkdir -p out && echo '<!doctype html>' > out/index.html
 
       - name: Run Rust tests
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
         working-directory: src-tauri
         run: cargo test --locked --lib
