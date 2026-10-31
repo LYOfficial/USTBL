@@ -17,6 +17,9 @@ use tauri_plugin_http::reqwest;
 use zip::ZipArchive;
 
 use crate::error::{USTBLError, USTBLResult};
+use crate::instance::helpers::modpack::curseforge_cache::{
+  cache_path, is_cacheable, FileMetaCache, MAX_ENTRIES,
+};
 use crate::instance::helpers::modpack::misc::{ModpackDownload, ModpackManifest, ModpackMetaInfo};
 use crate::instance::models::misc::{InstanceError, ModLoader, ModLoaderType};
 use crate::launcher_config::models::LauncherConfig;
@@ -397,6 +400,88 @@ async fn fetch_file_metas(
   Ok(metas)
 }
 
+/// Serializes cache writes, so two installs finishing together cannot drop each
+/// other's entries.
+static CACHE_WRITE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Metadata for a modpack's files, plus how many came from the cache.
+struct ResolvedMetas {
+  metas: HashMap<u64, CurseForgeFileMeta>,
+  cache_hits: usize,
+}
+
+/// Like [`fetch_file_metas`], but files already in the persistent cache at
+/// `cache_path` are not requested again, and complete answers for the others
+/// are stored. Cache problems never fail the lookup.
+async fn fetch_file_metas_cached(
+  client: &dyn MetadataClient,
+  files: &[CurseForgeFiles],
+  cache_path: Option<&Path>,
+) -> USTBLResult<ResolvedMetas> {
+  let Some(cache_path) = cache_path else {
+    return Ok(ResolvedMetas {
+      metas: fetch_file_metas(client, files).await?,
+      cache_hits: 0,
+    });
+  };
+
+  let cache = {
+    let path = cache_path.to_path_buf();
+    tokio::task::spawn_blocking(move || FileMetaCache::load(&path))
+      .await
+      .unwrap_or_default()
+  };
+
+  let mut metas: HashMap<u64, CurseForgeFileMeta> = HashMap::new();
+  let mut misses: Vec<CurseForgeFiles> = Vec::new();
+  for file in files {
+    if metas.contains_key(&file.file_id) {
+      continue;
+    }
+    match cache.get(file.file_id, file.project_id) {
+      Some(meta) => {
+        metas.insert(file.file_id, meta);
+      }
+      None => misses.push(file.clone()),
+    }
+  }
+  let hit_ids: Vec<u64> = metas.keys().copied().collect();
+  let cache_hits = hit_ids.len();
+
+  if !misses.is_empty() {
+    let fetched = fetch_file_metas(client, &misses).await?;
+    let storable: Vec<(u64, CurseForgeFileMeta)> = fetched
+      .iter()
+      .filter(|(_, meta)| is_cacheable(meta))
+      .map(|(id, meta)| (*id, meta.clone()))
+      .collect();
+    metas.extend(fetched);
+
+    if !storable.is_empty() {
+      let path = cache_path.to_path_buf();
+      let _guard = CACHE_WRITE_LOCK.lock().await;
+      let saved = tokio::task::spawn_blocking(move || {
+        // Reload under the lock to keep what other installs stored meanwhile.
+        let mut cache = FileMetaCache::load(&path);
+        for (id, meta) in storable {
+          cache.insert(id, meta);
+        }
+        for id in hit_ids {
+          cache.touch(id);
+        }
+        cache.save(&path, MAX_ENTRIES)
+      })
+      .await;
+      match saved {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => log::warn!("Failed to store CurseForge metadata cache: {error}"),
+        Err(error) => log::warn!("Failed to store CurseForge metadata cache: {error}"),
+      }
+    }
+  }
+
+  Ok(ResolvedMetas { metas, cache_hits })
+}
 /// Where a file of the given CurseForge class belongs in the instance.
 fn target_folder(class_id: Option<i32>) -> &'static str {
   match class_id {
@@ -509,7 +594,9 @@ impl ModpackManifest for CurseForgeManifest {
       curseforge_content_sources(app),
     );
 
-    let metas = fetch_file_metas(&client, &self.files).await?;
+    let store_path = crate::APP_DATA_DIR.get().map(|dir| cache_path(dir));
+    let ResolvedMetas { metas, cache_hits } =
+      fetch_file_metas_cached(&client, &self.files, store_path.as_deref()).await?;
 
     let mut downloads = Vec::with_capacity(self.files.len());
     for file in &self.files {
@@ -520,8 +607,9 @@ impl ModpackManifest for CurseForgeManifest {
     }
 
     log::info!(
-      "CurseForge modpack metadata: {} files, {} requests, {} ms",
+      "CurseForge modpack metadata: {} files, {} from cache, {} requests, {} ms",
       self.files.len(),
+      cache_hits,
       client.request_count(),
       started.elapsed().as_millis()
     );
@@ -827,5 +915,125 @@ mod tests {
       download.param.src.as_str(),
       "https://edge.forgecdn.net/files/5123/456/a%20b.jar"
     );
+  }
+
+  fn cache_test_path() -> std::path::PathBuf {
+    std::env::temp_dir()
+      .join(format!("ustbl-cf-meta-{}", uuid::Uuid::new_v4()))
+      .join("curseforge_file_meta.json")
+  }
+
+  #[tokio::test]
+  async fn a_second_lookup_is_served_from_the_cache_without_requests() {
+    let path = cache_test_path();
+    let client = FakeClient::with_files(&[(1, 100, Some(6)), (2, 200, Some(12))]);
+    let files = manifest_files(&[(100, 1), (200, 2)]);
+
+    let first = fetch_file_metas_cached(&client, &files, Some(&path))
+      .await
+      .unwrap();
+    assert_eq!(first.cache_hits, 0);
+    let calls = client.batch_calls.load(Ordering::SeqCst);
+    assert!(calls > 0);
+
+    let second = fetch_file_metas_cached(&client, &files, Some(&path))
+      .await
+      .unwrap();
+    assert_eq!(second.cache_hits, 2);
+    assert_eq!(client.batch_calls.load(Ordering::SeqCst), calls);
+    assert_eq!(second.metas, first.metas);
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+  }
+
+  #[tokio::test]
+  async fn only_files_missing_from_the_cache_are_requested() {
+    let path = cache_test_path();
+    let client =
+      FakeClient::with_files(&[(1, 100, Some(6)), (2, 200, Some(12)), (3, 300, Some(6))]);
+
+    fetch_file_metas_cached(&client, &manifest_files(&[(100, 1), (200, 2)]), Some(&path))
+      .await
+      .unwrap();
+    client.batch_sizes.lock().unwrap().clear();
+
+    let all = manifest_files(&[(100, 1), (200, 2), (300, 3)]);
+    let result = fetch_file_metas_cached(&client, &all, Some(&path))
+      .await
+      .unwrap();
+
+    assert_eq!(result.cache_hits, 2);
+    assert_eq!(result.metas.len(), 3);
+    // One file batch and one project batch, one id each.
+    assert_eq!(*client.batch_sizes.lock().unwrap(), vec![1, 1]);
+
+    let third = fetch_file_metas_cached(&client, &all, Some(&path))
+      .await
+      .unwrap();
+    assert_eq!(third.cache_hits, 3);
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+  }
+
+  #[tokio::test]
+  async fn a_corrupt_cache_is_ignored_and_rewritten() {
+    let path = cache_test_path();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, b"\0\0 definitely not json").unwrap();
+    let client = FakeClient::with_files(&[(1, 100, Some(6))]);
+    let files = manifest_files(&[(100, 1)]);
+
+    let first = fetch_file_metas_cached(&client, &files, Some(&path))
+      .await
+      .unwrap();
+    assert_eq!(first.cache_hits, 0);
+    assert_eq!(first.metas.len(), 1);
+
+    let second = fetch_file_metas_cached(&client, &files, Some(&path))
+      .await
+      .unwrap();
+    assert_eq!(second.cache_hits, 1);
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+  }
+
+  #[tokio::test]
+  async fn answers_without_a_class_are_not_cached() {
+    let path = cache_test_path();
+    let client = FakeClient::with_files(&[(1, 100, None)]);
+    let files = manifest_files(&[(100, 1)]);
+
+    fetch_file_metas_cached(&client, &files, Some(&path))
+      .await
+      .unwrap();
+    let second = fetch_file_metas_cached(&client, &files, Some(&path))
+      .await
+      .unwrap();
+
+    assert_eq!(second.cache_hits, 0);
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+  }
+
+  #[tokio::test]
+  async fn a_failed_lookup_stores_nothing() {
+    let path = cache_test_path();
+    let mut client = FakeClient::with_files(&[(1, 100, Some(6))]);
+    client.fail_everything = true;
+    let files = manifest_files(&[(100, 1)]);
+
+    assert!(fetch_file_metas_cached(&client, &files, Some(&path))
+      .await
+      .is_err());
+    assert!(!path.exists());
+  }
+
+  #[tokio::test]
+  async fn without_a_cache_path_everything_is_requested() {
+    let client = FakeClient::with_files(&[(1, 100, Some(6))]);
+    let files = manifest_files(&[(100, 1)]);
+
+    let result = fetch_file_metas_cached(&client, &files, None)
+      .await
+      .unwrap();
+
+    assert_eq!(result.cache_hits, 0);
+    assert_eq!(result.metas.len(), 1);
   }
 }
