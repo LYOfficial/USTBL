@@ -203,6 +203,7 @@ pub async fn run() -> i32 {
       instance::modpack_publish::commands::delete_campus_modpack_project,
       instance::modpack_publish::commands::publish_campus_modpack,
       instance::modpack_publish::commands::prepare_campus_modpack_publish_tree,
+      instance::modpack_publish::commands::diff_campus_modpack_publish_file,
       instance::modpack_publish::commands::check_campus_modpack_publishable,
       instance::modpack_update::commands::set_modpack_follow,
       instance::modpack_update::commands::unlink_modpack_origin,

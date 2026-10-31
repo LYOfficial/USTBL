@@ -14,7 +14,12 @@ function load(file) {
     "require",
     ts.transpileModule(
       fs.readFileSync(path.join(__dirname, "../../", file), "utf8"),
-      { compilerOptions: { module: ts.ModuleKind.CommonJS } }
+      {
+        compilerOptions: {
+          module: ts.ModuleKind.CommonJS,
+          target: ts.ScriptTarget.ES2017,
+        },
+      }
     ).outputText
   )(exports, module, () => ({}));
   return module.exports;
@@ -22,14 +27,25 @@ function load(file) {
 
 const {
   MAX_RULES,
+  NO_FILTER,
   buildPublishNodes,
   canRemoveFile,
+  categorizeChanges,
+  countCategories,
+  defaultPublishProject,
+  dirChangeCounts,
+  filterNodes,
+  isFilterActive,
+  isSummaryEmpty,
   nextState,
+  publishTargetAfterLoad,
   restoreInheritance,
   setDirState,
   setFileState,
   setOnce,
+  summarizePublish,
   toPublishPayload,
+  toggleCategory,
   viewOf,
 } = load("src/utils/modpack-publish-tree.ts");
 
@@ -594,4 +610,450 @@ test("a rule with nothing ticked is still a publishable payload", () => {
   const payload = toPublishPayload(context, draft);
   assert.deepEqual(payload.files, []);
   assert.deepEqual(payload.rules, [rule("a.txt", "file", "delete")]);
+});
+
+// ------------------------------------------------------- default project (H2)
+
+test("the project the instance came from is the default when it can be published to", () => {
+  const projects = [{ slug: "gtnh" }, { slug: "other" }];
+  const origin = { platform: "campus", projectId: "gtnh" };
+  assert.equal(defaultPublishProject(origin, projects), "gtnh");
+});
+
+test("an origin whose project is not in the list defaults to a new project", () => {
+  const origin = { platform: "campus", projectId: "gone" };
+  assert.equal(defaultPublishProject(origin, [{ slug: "gtnh" }]), null);
+  assert.equal(defaultPublishProject(origin, []), null);
+});
+
+test("an instance from another platform or without an origin defaults to a new project", () => {
+  const projects = [{ slug: "gtnh" }];
+  // The same id on Modrinth is another project.
+  assert.equal(
+    defaultPublishProject({ platform: "modrinth", projectId: "gtnh" }, projects),
+    null
+  );
+  assert.equal(
+    defaultPublishProject({ platform: "curseforge", projectId: "gtnh" }, projects),
+    null
+  );
+  assert.equal(defaultPublishProject(undefined, projects), null);
+  assert.equal(defaultPublishProject(null, projects), null);
+});
+
+test("the default does not look at whether the instance still follows the project", () => {
+  // `follow` is not even an input: an unfollowed instance publishes back.
+  const origin = { platform: "campus", projectId: "gtnh", follow: false };
+  assert.equal(defaultPublishProject(origin, [{ slug: "gtnh" }]), "gtnh");
+});
+
+test("a target the user picked is kept when the list arrives", () => {
+  const origin = { platform: "campus", projectId: "gtnh" };
+  const projects = [{ slug: "gtnh" }, { slug: "other" }];
+  assert.equal(publishTargetAfterLoad(undefined, origin, projects), "gtnh");
+  assert.equal(publishTargetAfterLoad("other", origin, projects), "other");
+  // Choosing "new project" is a choice too.
+  assert.equal(publishTargetAfterLoad(null, origin, projects), null);
+});
+
+// --------------------------------------------------------------- change marks
+
+const change = (p, kind, extra = {}) => ({
+  path: p,
+  kind,
+  previousSha1: kind === "added" ? null : "aa",
+  previousSize: kind === "added" ? null : 1,
+  localSize: 2,
+  localIgnored: false,
+  ...extra,
+});
+const before = (p, extra = {}) => ({
+  path: p,
+  sha1: "aa",
+  size: 1,
+  disabled: false,
+  once: false,
+  ...extra,
+});
+const release = (files, rules = []) => ({ files, rules, rulesManifest: true });
+
+test("every mark is by lowercased path and a missing previous file is deleted", () => {
+  const ghosts = [ghostOf("mods/Gone.jar"), ghostOf("cache", "dir"), ghostOf("old/rule.txt")];
+  const previous = release([before("mods/gone.jar"), before("mods/A.jar")]);
+  const marks = categorizeChanges(
+    [change("Mods/A.jar", "modified"), change("mods/new.jar", "added")],
+    ghosts,
+    previous,
+    viewOf(ctxOf(["mods/A.jar", "mods/new.jar"]), draftOf())
+  );
+  assert.equal(marks.get("mods/a.jar"), "modified");
+  assert.equal(marks.get("mods/new.jar"), "added");
+  assert.equal(marks.get("mods/gone.jar"), "deleted");
+  // A rule's target and a directory are not deleted files.
+  assert.equal(marks.has("cache"), false);
+  assert.equal(marks.has("old/rule.txt"), false);
+  assert.deepEqual(countCategories(marks), {
+    modified: 1,
+    added: 1,
+    toggled: 0,
+    onceChanged: 0,
+    deleted: 1,
+  });
+});
+
+test("a new project has no deleted files", () => {
+  const marks = categorizeChanges(
+    [change("a.txt", "added")],
+    [ghostOf("b.txt")],
+    null,
+    viewOf(ctxOf(["a.txt"]), draftOf())
+  );
+  assert.deepEqual(Array.from(marks.keys()), ["a.txt"]);
+});
+
+test("a directory counts the marked files below it at every level", () => {
+  const marks = categorizeChanges(
+    [
+      change("mods/a.jar", "modified"),
+      change("mods/sub/b.jar", "added"),
+      change("config/c.cfg", "toggled"),
+      change("root.txt", "added"),
+    ],
+    [],
+    null,
+    viewOf(
+      ctxOf(["mods/a.jar", "mods/sub/b.jar", "config/c.cfg", "root.txt"]),
+      draftOf()
+    )
+  );
+  const counts = dirChangeCounts(marks);
+  assert.equal(counts.get("mods"), 2);
+  assert.equal(counts.get("mods/sub"), 1);
+  assert.equal(counts.get("config"), 1);
+  assert.equal(counts.has("root.txt"), false);
+});
+
+test("a new file only counts as added while the draft publishes it", () => {
+  const context = ctxOf(["saves/w/r.mca", "mods/new.jar", "mods/a.jar"]);
+  const changes = [
+    change("saves/w/r.mca", "added"),
+    change("mods/new.jar", "added"),
+    change("mods/a.jar", "modified"),
+  ];
+  const previous = release([before("mods/a.jar")]);
+  const draft = draftOf([rule("saves", "dir", "ignore")]);
+  const marksOf = (d) =>
+    categorizeChanges(changes, [], previous, viewOf(context, d));
+
+  let marks = marksOf(draft);
+  assert.equal(marks.has("saves/w/r.mca"), false);
+  assert.equal(marks.get("mods/new.jar"), "added");
+  assert.equal(countCategories(marks).added, 1);
+  assert.equal(countCategories(marks).modified, 1);
+
+  // Publishing the ignored file brings it into "added"; ignoring it again removes it.
+  const published = setFileState(context, draft, "saves/w/r.mca", "include");
+  marks = marksOf(published);
+  assert.equal(marks.get("saves/w/r.mca"), "added");
+  assert.equal(countCategories(marks).added, 2);
+  assert.equal(dirChangeCounts(marks).get("saves/w"), 1);
+  const back = setFileState(context, published, "saves/w/r.mca", "ignore");
+  assert.equal(marksOf(back).has("saves/w/r.mca"), false);
+});
+
+test("a new file under the previous release's ignore rule is added only once published", () => {
+  const context = ctxOf(["config/x.cfg"]);
+  const changes = [change("config/x.cfg", "added")];
+  const previous = release([], [rule("config", "dir", "ignore")]);
+  const covered = draftOf(previous.rules);
+  assert.equal(
+    categorizeChanges(changes, [], previous, viewOf(context, covered)).has(
+      "config/x.cfg"
+    ),
+    false
+  );
+  const published = setFileState(context, covered, "config/x.cfg", "include");
+  assert.equal(
+    categorizeChanges(changes, [], previous, viewOf(context, published)).get(
+      "config/x.cfg"
+    ),
+    "added"
+  );
+});
+
+test("a new project marks only the files it publishes as added", () => {
+  const context = ctxOf(["a.txt", "saves/s.dat"]);
+  const changes = [change("a.txt", "added"), change("saves/s.dat", "added")];
+  const draft = draftOf([rule("saves", "dir", "ignore")]);
+  const marks = categorizeChanges(changes, [], null, viewOf(context, draft));
+  assert.deepEqual(Array.from(marks.keys()), ["a.txt"]);
+});
+
+const treeFixture = () => {
+  const context = ctxOf(
+    ["mods/a.jar", "mods/b.jar", "mods/sub/c.jar", "config/d.cfg", "keep/e.txt"],
+    [ghostOf("mods/old.jar")]
+  );
+  const previous = release([before("mods/old.jar"), before("mods/a.jar")]);
+  const marks = categorizeChanges(
+    [
+      change("mods/a.jar", "modified"),
+      change("mods/sub/c.jar", "added"),
+      change("config/d.cfg", "toggled"),
+    ],
+    context.ghosts,
+    previous,
+    viewOf(context, draftOf())
+  );
+  return { nodes: buildPublishNodes(context), marks };
+};
+const names = (nodes) =>
+  nodes.flatMap((node) =>
+    node.kind === "file" ? [node.path] : names(node.children)
+  );
+
+test("without a filter the tree is returned as is", () => {
+  const { nodes, marks } = treeFixture();
+  assert.equal(isFilterActive(NO_FILTER), false);
+  assert.equal(filterNodes(nodes, marks, NO_FILTER), nodes);
+});
+
+test("only changed keeps marked files and the directories leading to them", () => {
+  const { nodes, marks } = treeFixture();
+  const shown = filterNodes(nodes, marks, { ...NO_FILTER, onlyChanged: true });
+  assert.deepEqual(names(shown).sort(), [
+    "config/d.cfg",
+    "mods/a.jar",
+    "mods/old.jar",
+    "mods/sub/c.jar",
+  ]);
+  assert.deepEqual(shown.map((node) => node.name).sort(), ["config", "mods"]);
+});
+
+test("picking a mark shows only that mark and several marks add up", () => {
+  const { nodes, marks } = treeFixture();
+  let filter = toggleCategory(NO_FILTER, "added");
+  assert.equal(isFilterActive(filter), true);
+  assert.deepEqual(names(filterNodes(nodes, marks, filter)), ["mods/sub/c.jar"]);
+  filter = toggleCategory(filter, "deleted");
+  assert.deepEqual(names(filterNodes(nodes, marks, filter)).sort(), [
+    "mods/old.jar",
+    "mods/sub/c.jar",
+  ]);
+  filter = toggleCategory(toggleCategory(filter, "added"), "deleted");
+  assert.equal(isFilterActive(filter), false);
+  assert.deepEqual(NO_FILTER.categories.size, 0);
+});
+
+test("a filter that nothing matches leaves an empty tree", () => {
+  const { nodes, marks } = treeFixture();
+  const shown = filterNodes(nodes, marks, toggleCategory(NO_FILTER, "onceChanged"));
+  assert.deepEqual(shown, []);
+});
+
+// ------------------------------------------------------------ publish summary
+
+const sizes = (summary) =>
+  Object.fromEntries(
+    Object.entries(summary)
+      .filter(([, value]) => Array.isArray(value) && value.length > 0)
+      .map(([key, value]) => [key, value.length])
+  );
+
+test("a new project adds every pushed file and every rule", () => {
+  const context = ctxOf(["a.txt", "b/c.txt", "cache/x.bin"]);
+  const draft = draftOf([rule("cache", "dir", "ignore")]);
+  const summary = summarizePublish(context, draft, null, [
+    change("a.txt", "added"),
+    change("b/c.txt", "added"),
+    change("cache/x.bin", "added"),
+  ]);
+  assert.equal(summary.isNew, true);
+  assert.equal(summary.pushed, 2);
+  assert.deepEqual(summary.added.sort(), ["a.txt", "b/c.txt"]);
+  assert.deepEqual(summary.rulesAdded, [rule("cache", "dir", "ignore")]);
+  assert.deepEqual(sizes(summary), { added: 2, rulesAdded: 1 });
+});
+
+test("pushing exactly the previous release says nothing", () => {
+  const context = ctxOf(["a.txt", "mods/b.jar"]);
+  const previous = release([before("a.txt"), before("mods/b.jar")]);
+  const summary = summarizePublish(context, draftOf(), previous, []);
+  assert.equal(summary.isNew, false);
+  assert.equal(summary.pushed, 2);
+  assert.equal(isSummaryEmpty(summary), true);
+});
+
+test("a modified file and an added one are pushed; a removed one is not", () => {
+  const context = ctxOf(["a.txt", "new.txt"], [ghostOf("gone.txt")]);
+  const previous = release([before("a.txt"), before("gone.txt")]);
+  const summary = summarizePublish(context, draftOf(), previous, [
+    change("a.txt", "modified"),
+    change("new.txt", "added"),
+  ]);
+  assert.deepEqual(summary.modified, ["a.txt"]);
+  assert.deepEqual(summary.added, ["new.txt"]);
+  assert.deepEqual(summary.removed, ["gone.txt"]);
+  assert.deepEqual(sizes(summary), { added: 1, modified: 1, removed: 1 });
+});
+
+test("setting a file of the previous release to ignore moves it out of the push", () => {
+  const context = ctxOf(["a.txt", "b.txt"]);
+  const previous = release([before("a.txt"), before("b.txt")]);
+  const draft = setFileState(context, draftOf(), "a.txt", "ignore");
+  const summary = summarizePublish(context, draft, previous, [change("a.txt", "modified")]);
+  assert.equal(summary.pushed, 1);
+  assert.deepEqual(summary.ignored, ["a.txt"]);
+  // Not pushed, so its changed content is not part of the push.
+  assert.deepEqual(summary.modified, []);
+  assert.deepEqual(summary.rulesAdded, [rule("a.txt", "file", "ignore")]);
+  assert.deepEqual(sizes(summary), { ignored: 1, rulesAdded: 1 });
+});
+
+test("setting a file to delete is told apart from ignore", () => {
+  const context = ctxOf(["a.txt"], [ghostOf("g.txt")]);
+  const previous = release([before("a.txt"), before("g.txt")]);
+  let draft = setFileState(context, draftOf(), "a.txt", "delete");
+  draft = setFileState(context, draft, "g.txt", "ignore");
+  const summary = summarizePublish(context, draft, previous, []);
+  assert.deepEqual(summary.deleted, ["a.txt"]);
+  assert.deepEqual(summary.ignored, ["g.txt"]);
+  assert.equal(summary.pushed, 0);
+});
+
+test("a new file set to ignore is not mentioned apart from its rule", () => {
+  const context = ctxOf(["a.txt", "extra.txt"]);
+  const previous = release([before("a.txt")]);
+  const draft = setFileState(context, draftOf(), "extra.txt", "ignore");
+  const summary = summarizePublish(context, draft, previous, [change("extra.txt", "added")]);
+  assert.deepEqual(summary.added, []);
+  assert.deepEqual(summary.rulesAdded, [rule("extra.txt", "file", "ignore")]);
+});
+
+test("dropping a rule of the previous release is a removed rule", () => {
+  const context = ctxOf(["cache/x.bin"]);
+  const rules = [rule("cache", "dir", "ignore"), rule("logs", "dir", "delete")];
+  const previous = release([], rules);
+  // `x.bin` was covered by the ignore rule; without it the file is pushed.
+  const draft = draftOf([rules[1]]);
+  const summary = summarizePublish(context, draft, previous, [change("cache/x.bin", "added")]);
+  assert.deepEqual(summary.rulesRemoved, [rules[0]]);
+  assert.deepEqual(summary.rulesAdded, []);
+  assert.deepEqual(summary.added, ["cache/x.bin"]);
+});
+
+test("a rule that changes its state is a changed rule", () => {
+  const context = ctxOf(["a.txt"]);
+  const previous = release([], [rule("cache", "dir", "ignore")]);
+  const draft = draftOf([rule("cache", "dir", "delete")]);
+  const summary = summarizePublish(context, draft, previous, []);
+  assert.deepEqual(summary.rulesChanged, [rule("cache", "dir", "delete")]);
+  assert.deepEqual(summary.rulesAdded, []);
+  assert.deepEqual(summary.rulesRemoved, []);
+});
+
+test("a file whose enabled state differs is toggled even when the content does too", () => {
+  const context = ctxOf([
+    { path: "mods/off.jar", disabled: true },
+    { path: "mods/on.jar", disabled: false },
+    { path: "mods/same.jar", disabled: false },
+    { path: "mods/both.jar", disabled: true },
+  ]);
+  const previous = release([
+    before("mods/off.jar"),
+    before("mods/on.jar", { disabled: true }),
+    before("mods/same.jar"),
+    before("mods/both.jar"),
+  ]);
+  const summary = summarizePublish(context, draftOf(), previous, [
+    change("mods/off.jar", "toggled"),
+    change("mods/on.jar", "toggled"),
+    change("mods/both.jar", "modified"),
+  ]);
+  assert.deepEqual(summary.toggled.sort(), ["mods/both.jar", "mods/off.jar", "mods/on.jar"]);
+  assert.deepEqual(summary.modified, ["mods/both.jar"]);
+});
+
+test("first-install flags and content are told apart", () => {
+  const context = ctxOf(["a.cfg", "b.cfg", "c.cfg", "d.cfg"]);
+  const previous = release([
+    before("a.cfg", { once: true }),
+    before("b.cfg"),
+    before("c.cfg", { once: true }),
+    before("d.cfg", { once: true }),
+  ]);
+  // a stays first-install with new content, b becomes first-install, c turns
+  // into an ordinary file with new content, d is unchanged.
+  const draft = setOnce(
+    setOnce(setOnce(draftOf([], { once: ["a.cfg", "d.cfg"] }), "b.cfg", true), "c.cfg", false),
+    "d.cfg",
+    true
+  );
+  const summary = summarizePublish(context, draft, previous, [
+    change("a.cfg", "onceChanged"),
+    change("c.cfg", "onceChanged"),
+  ]);
+  assert.deepEqual(summary.onceUpdated, ["a.cfg"]);
+  assert.deepEqual(summary.onceOn, ["b.cfg"]);
+  assert.deepEqual(summary.onceOff, ["c.cfg"]);
+  assert.deepEqual(summary.modified, ["c.cfg"]);
+});
+
+test("a file that left the disk is a removal until it is ignored, and the summary follows the draft", () => {
+  const context = ctxOf(["a.txt"], [ghostOf("old.txt")]);
+  const previous = release([before("a.txt"), before("old.txt")]);
+  const first = summarizePublish(context, draftOf(), previous, []);
+  assert.deepEqual(first.removed, ["old.txt"]);
+  const ignored = setFileState(context, draftOf(), "old.txt", "ignore");
+  const second = summarizePublish(context, ignored, previous, []);
+  assert.deepEqual(second.removed, []);
+  assert.deepEqual(second.ignored, ["old.txt"]);
+});
+
+test("the summary always agrees with the payload the dialog sends", () => {
+  const context = ctxOf(
+    [
+      "a.txt",
+      "mods/b.jar",
+      { path: "mods/c.jar", disabled: true },
+      "cache/x.bin",
+      "cache/keep.bin",
+      "new.txt",
+    ],
+    [ghostOf("gone.txt"), ghostOf("lost", "dir")]
+  );
+  const previous = release(
+    [before("a.txt"), before("mods/b.jar"), before("mods/c.jar"), before("gone.txt")],
+    [rule("lost", "dir", "ignore")]
+  );
+  let draft = draftOf([rule("cache", "dir", "ignore")], { included: ["cache/keep.bin"] });
+  draft = setFileState(context, draft, "mods/b.jar", "delete");
+  draft = setOnce(draft, "new.txt", true);
+  const changes = [
+    change("a.txt", "modified"),
+    change("mods/c.jar", "toggled"),
+    change("new.txt", "added"),
+    change("cache/x.bin", "added"),
+    change("cache/keep.bin", "added"),
+  ];
+  const payload = toPublishPayload(context, draft);
+  const summary = summarizePublish(context, draft, previous, changes);
+  assert.equal(summary.pushed, payload.files.length);
+  // Every pushed file is either new or a file of the previous release.
+  const pushed = new Set(payload.files.map((file) => file.path));
+  const listed = new Set(previous.files.map((file) => file.path));
+  const added = new Set(summary.added);
+  for (const file of pushed) assert.equal(added.has(file), !listed.has(file), file);
+  for (const file of added) assert.ok(pushed.has(file), file);
+  // Every file of the previous release that is not pushed is accounted for once.
+  const gone = [...summary.removed, ...summary.ignored, ...summary.deleted].sort();
+  assert.deepEqual(
+    gone,
+    previous.files.map((file) => file.path).filter((file) => !pushed.has(file)).sort()
+  );
+  assert.deepEqual(summary.rulesAdded, [
+    rule("cache", "dir", "ignore"),
+    rule("mods/b.jar", "file", "delete"),
+  ]);
+  assert.deepEqual(summary.rulesRemoved, [rule("lost", "dir", "ignore")]);
 });

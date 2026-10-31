@@ -3242,7 +3242,35 @@
         "remove": "Cette version ne le contient plus : supprimé chez les joueurs qui ne l'ont pas modifié, question posée à la mise à jour pour ceux qui l'ont modifié, rien ne change là où le modpack ne le gère pas.",
         "mixed": "Les fichiers qu'il contient ont des états différents."
       },
-      "clickTo": "Cliquez pour passer à {{next}}"
+      "clickTo": "Cliquez pour passer à {{next}}",
+      "change": {
+        "modified": "Modifié",
+        "added": "Ajouté",
+        "toggled": "État activé",
+        "onceChanged": "Changement première installation",
+        "deleted": "Supprimé"
+      },
+      "changeHint": {
+        "modified": "Le contenu diffère de la version précédente.",
+        "added": "La version précédente n'a pas ce fichier.",
+        "toggled": "Le contenu est identique à la version précédente ; seul l'état activé ou désactivé diffère.",
+        "onceChanged": "La version précédente le marque « première installation uniquement » et son contenu diffère maintenant. Avec ce marquage, seules les nouvelles installations reçoivent le nouveau contenu ; sans lui, les joueurs qui l'ont déjà le reçoivent à la mise à jour.",
+        "deleted": "La version précédente a ce fichier, mais il n'est plus sur le disque."
+      },
+      "filter": {
+        "title": "Changements :",
+        "onlyChanged": "Changements seulement"
+      },
+      "noPrevious": "Il n'y a pas de version précédente à comparer : tous les fichiers comptent comme ajoutés.",
+      "dirChanges": "{{count}} changement(s)",
+      "localIgnored": "Ignoré localement",
+      "localIgnoredHint": "C'est un réglage côté joueur : il n'agit que sur l'affichage et les mises à jour de cet ordinateur, pas sur la publication. Le fichier est toujours publié dans l'état défini ici.",
+      "diff": {
+        "show": "Afficher les différences",
+        "hide": "Masquer les différences",
+        "differs": "Le contenu diffère. Version précédente {{previous}}, local {{local}}.",
+        "formatOnly": "Le texte est identique ; seuls les fins de ligne ou un formatage similaire diffèrent. Version précédente {{previous}}, local {{local}}."
+      }
     },
     "skipped": "{{count}} fichier(s) du lanceur exclu(s)",
     "adoption": {
@@ -3254,6 +3282,38 @@
     "started": {
       "title": "Envoi démarré",
       "description": "L'envoi continue en arrière-plan. Suivez-le sur la page des téléchargements."
+    },
+    "summary": {
+      "title": "Cette publication par rapport à la version précédente",
+      "isNew": "Il n'y a pas de version précédente à comparer ; tout ce qui suit est nouveau.",
+      "same": "Le contenu publié est identique à la version précédente ({{count}} fichier(s)).",
+      "more": "…et {{count}} de plus",
+      "added": "{{count}} fichier(s) ajouté(s)",
+      "modified": "{{count}} fichier(s) modifié(s)",
+      "onceUpdated": "{{count}} fichier(s) de première installation modifié(s)",
+      "removed": "{{count}} fichier(s) retiré(s)",
+      "ignored": "{{count}} fichier(s) passé(s) en ignoré",
+      "deleted": "{{count}} fichier(s) passé(s) en supprimé",
+      "toggled": "{{count}} changement(s) d'état activé",
+      "onceOn": "{{count}} passé(s) en première installation uniquement",
+      "onceOff": "{{count}} qui ne sont plus en première installation uniquement",
+      "rulesAdded": "{{count}} règle(s) ajoutée(s)",
+      "rulesRemoved": "{{count}} règle(s) retirée(s)",
+      "rulesChanged": "{{count}} règle(s) ayant changé d'état",
+      "hint": {
+        "added": "Absents de la version précédente ; celle-ci les apporte.",
+        "modified": "Le contenu diffère de la version précédente ; les joueurs le reçoivent à la mise à jour.",
+        "onceUpdated": "Ces fichiers restent en première installation uniquement : seules les nouvelles installations reçoivent le nouveau contenu.",
+        "removed": "Présents dans la version précédente, plus inclus : supprimés chez les joueurs qui ne les ont pas modifiés, avec une question à la mise à jour pour les autres.",
+        "ignored": "Présents dans la version précédente, désormais ignorés : les joueurs gardent ce qu'ils ont, les autres ne les reçoivent pas.",
+        "deleted": "Présents dans la version précédente, désormais à supprimer : les fichiers des joueurs sont supprimés.",
+        "toggled": "L'état activé ou désactivé diffère de la version précédente : les joueurs qui ne l'ont pas changé suivent, les changements des joueurs sont conservés.",
+        "onceOn": "Désormais en première installation uniquement ; plus mis à jour ensuite.",
+        "onceOff": "Ne sont plus en première installation uniquement ; mis à jour avec la version.",
+        "rulesAdded": "Règles d'ignorance ou de suppression nouvelles dans cette version.",
+        "rulesRemoved": "Règles de la version précédente que celle-ci ne porte plus.",
+        "rulesChanged": "Règles passées de ignorer à supprimer, ou l'inverse."
+      }
     }
   },
   "InstallCampusModpackModal": {

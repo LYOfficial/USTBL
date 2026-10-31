@@ -1,3 +1,8 @@
+import type {
+  PreviousRelease,
+  PublishChange,
+} from "@/utils/modpack-publish-tree";
+
 export interface CampusModpackLine {
   id: number;
   gameVersion: string;
@@ -73,6 +78,16 @@ export interface CampusPublishDefaults {
   included: string[];
   /** Lowercased paths of the files that install only once. */
   once: string[];
+}
+
+/**
+ * The publish tree to open with: the starting state, how the files differ
+ * from the line's current release, and that release (`null` for a new project
+ * or a line without a release, where every file is an addition).
+ */
+export interface CampusPublishTree extends CampusPublishDefaults {
+  changes: PublishChange[];
+  previous: PreviousRelease | null;
 }
 
 export interface CampusNewProject {

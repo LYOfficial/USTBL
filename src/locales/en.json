@@ -3242,7 +3242,35 @@
         "remove": "This version no longer includes it: deleted for players who did not change it, asked about on update for players who did, and left alone where the modpack does not manage it.",
         "mixed": "Files under it have different states."
       },
-      "clickTo": "Click to change to {{next}}"
+      "clickTo": "Click to change to {{next}}",
+      "change": {
+        "modified": "Modified",
+        "added": "Added",
+        "toggled": "Enabled state",
+        "onceChanged": "First-install change",
+        "deleted": "Deleted"
+      },
+      "changeHint": {
+        "modified": "The content differs from the previous version.",
+        "added": "The previous version does not have this file.",
+        "toggled": "The content is the same as in the previous version; only the enabled or disabled state differs.",
+        "onceChanged": "The previous version marks it as first install only, and the content now differs. Kept as first install only, just new installs get the new content; without the mark, players who already have it receive it on update.",
+        "deleted": "The previous version has this file and it is no longer on disk."
+      },
+      "filter": {
+        "title": "Changes:",
+        "onlyChanged": "Changes only"
+      },
+      "noPrevious": "There is no previous version to compare with, so every file counts as added.",
+      "dirChanges": "{{count}} change(s)",
+      "localIgnored": "Ignored locally",
+      "localIgnoredHint": "This is a player-side setting. It only affects what this computer shows and how it updates, not publishing: the file is still pushed in the state set here.",
+      "diff": {
+        "show": "Show diff",
+        "hide": "Hide diff",
+        "differs": "The content differs. Previous version {{previous}}, local {{local}}.",
+        "formatOnly": "The text is the same; only line endings or similar formatting differ. Previous version {{previous}}, local {{local}}."
+      }
     },
     "skipped": "{{count}} launcher file(s) were left out",
     "adoption": {
@@ -3254,6 +3282,38 @@
     "started": {
       "title": "Upload started",
       "description": "It continues in the background. Follow it on the Downloads page."
+    },
+    "summary": {
+      "title": "This push compared with the previous version",
+      "isNew": "There is no previous version to compare with; everything below is new.",
+      "same": "What is pushed matches the previous version ({{count}} file(s)).",
+      "more": "…and {{count}} more",
+      "added": "{{count}} file(s) added",
+      "modified": "{{count}} file(s) modified",
+      "onceUpdated": "{{count}} first-install file(s) modified",
+      "removed": "{{count}} file(s) removed",
+      "ignored": "{{count}} file(s) set to ignore",
+      "deleted": "{{count}} file(s) set to delete",
+      "toggled": "{{count}} enabled state change(s)",
+      "onceOn": "{{count}} set to first install only",
+      "onceOff": "{{count}} no longer first install only",
+      "rulesAdded": "{{count}} rule(s) added",
+      "rulesRemoved": "{{count}} rule(s) dropped",
+      "rulesChanged": "{{count}} rule(s) changed state",
+      "hint": {
+        "added": "Not in the previous version; this one brings them.",
+        "modified": "The content differs from the previous version; players receive it on update.",
+        "onceUpdated": "These stay first install only: only new installs get the new content.",
+        "removed": "In the previous version, no longer included: deleted for players who did not change them, asked about on update for players who did.",
+        "ignored": "In the previous version, now ignored: players keep what they have, and players without them do not get them.",
+        "deleted": "In the previous version, now set to delete: players' files are deleted.",
+        "toggled": "The enabled or disabled state differs from the previous version: players who did not change it follow, and players' own changes are kept.",
+        "onceOn": "Now first install only; never updated afterwards.",
+        "onceOff": "No longer first install only; updated with the version.",
+        "rulesAdded": "Ignore or delete rules new in this version.",
+        "rulesRemoved": "Rules of the previous version this one no longer carries.",
+        "rulesChanged": "Rules that switched between ignore and delete."
+      }
     }
   },
   "InstallCampusModpackModal": {

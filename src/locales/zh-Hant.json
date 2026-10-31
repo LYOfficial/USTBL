@@ -3242,7 +3242,35 @@
         "remove": "這一版不再包含它：玩家沒改過的會被刪除，改過的在更新時詢問，不歸整合包管理的不動。",
         "mixed": "其下檔案的狀態不同。"
       },
-      "clickTo": "點擊切換為「{{next}}」"
+      "clickTo": "點擊切換為「{{next}}」",
+      "change": {
+        "modified": "修改",
+        "added": "新增",
+        "toggled": "啟用狀態",
+        "onceChanged": "僅首次安裝改動",
+        "deleted": "刪除"
+      },
+      "changeHint": {
+        "modified": "內容和上一版不同。",
+        "added": "上一版沒有這個檔案。",
+        "toggled": "內容和上一版相同，只有啟用或停用狀態不同。",
+        "onceChanged": "上一版把它標為「僅首次安裝」，現在內容不同。保持「僅首次安裝」，只有新安裝的玩家會拿到新內容；去掉標記，已安裝的玩家更新時也會收到。",
+        "deleted": "上一版有這個檔案，磁碟上已經沒有了。"
+      },
+      "filter": {
+        "title": "改動：",
+        "onlyChanged": "只看改動"
+      },
+      "noPrevious": "沒有上一版可以比較，所有檔案都算新增。",
+      "dirChanges": "{{count}} 處改動",
+      "localIgnored": "本機已忽略",
+      "localIgnoredHint": "這是玩家端的設定，只影響這台電腦上的顯示和更新，不影響發布：這個檔案仍按這裡的狀態推送。",
+      "diff": {
+        "show": "查看差異",
+        "hide": "收起差異",
+        "differs": "內容不同。上一版 {{previous}}，本機 {{local}}。",
+        "formatOnly": "文字內容相同，只有換行等格式不同。上一版 {{previous}}，本機 {{local}}。"
+      }
     },
     "skipped": "有 {{count}} 個啟動器檔案被排除",
     "adoption": {
@@ -3254,6 +3282,38 @@
     "started": {
       "title": "已開始上傳整合包",
       "description": "上傳在背景進行，可在下載頁查看進度。"
+    },
+    "summary": {
+      "title": "這次推送相對上一版",
+      "isNew": "沒有上一版可以比較，以下全部為新增。",
+      "same": "推送的內容和上一版一致（{{count}} 個檔案）。",
+      "more": "…還有 {{count}} 項",
+      "added": "新增 {{count}} 個檔案",
+      "modified": "修改 {{count}} 個檔案",
+      "onceUpdated": "修改 {{count}} 個僅首次安裝檔案",
+      "removed": "移除 {{count}} 個檔案",
+      "ignored": "改為忽略 {{count}} 個檔案",
+      "deleted": "改為刪除 {{count}} 個檔案",
+      "toggled": "啟用狀態變化 {{count}} 個",
+      "onceOn": "改為僅首次安裝 {{count}} 個",
+      "onceOff": "不再僅首次安裝 {{count}} 個",
+      "rulesAdded": "新增規則 {{count}} 條",
+      "rulesRemoved": "去掉規則 {{count}} 條",
+      "rulesChanged": "規則改狀態 {{count}} 條",
+      "hint": {
+        "added": "上一版沒有，這一版會帶上。",
+        "modified": "內容和上一版不同，玩家更新時會收到。",
+        "onceUpdated": "這些檔案保持「僅首次安裝」，新內容只有新安裝的玩家會拿到。",
+        "removed": "上一版有，這一版不再包含：玩家沒改過的會被刪除，改過的在更新時詢問。",
+        "ignored": "上一版有，這一版改為忽略：玩家那裡保持原樣，沒有的不會拿到。",
+        "deleted": "上一版有，這一版改為刪除：玩家那裡的檔案會被刪除。",
+        "toggled": "啟用或停用狀態和上一版不同：沒改過狀態的玩家會跟隨，玩家自己改過的保留。",
+        "onceOn": "這些檔案改為僅首次安裝，之後不再更新。",
+        "onceOff": "這些檔案不再是僅首次安裝，之後隨版本更新。",
+        "rulesAdded": "上一版沒有、這一版新加的忽略或刪除規則。",
+        "rulesRemoved": "上一版有、這一版不再帶的規則。",
+        "rulesChanged": "在忽略和刪除之間改了狀態的規則。"
+      }
     }
   },
   "InstallCampusModpackModal": {

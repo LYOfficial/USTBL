@@ -26,12 +26,13 @@ use crate::instance::models::misc::{
 use crate::instance::modpack_update::commands::fast_forward;
 use crate::instance::modpack_update::commands::store_instance;
 use crate::instance::modpack_update::diff::FileKey;
-use crate::instance::modpack_update::plan::{compare, Compared};
+use crate::instance::modpack_update::plan::{compare, scan_cache, Compared};
 use crate::instance::modpack_update::release;
 use crate::instance::modpack_update::remote::RemoteRule;
 use crate::instance::modpack_update::sources::{
   campus_base_remote, campus_client, loader_slug, CAMPUS_API,
 };
+use crate::instance::modpack_update::text_diff::DiffHunk;
 use crate::utils::web::build_part_upload_client;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -439,13 +440,26 @@ fn previous_release_of(manifest: &Value) -> USTBLResult<PreviousRelease> {
     .map_err(|_| InstanceError::ModpackUpdateRemoteInvalid.into())
 }
 
+/// The publish tree's starting state, and what the files differ in from the
+/// line's current release (`previous`, `None` for a new project or a line
+/// without a release; then every file is an addition).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublishTree {
+  #[serde(flatten)]
+  pub defaults: super::defaults::PublishDefaults,
+  pub changes: Vec<super::changes::PublishChange>,
+  pub previous: Option<PreviousRelease>,
+}
+
 #[tauri::command]
 pub async fn prepare_campus_modpack_publish_tree(
   app: AppHandle,
   instance_id: String,
   project: Option<String>,
-) -> USTBLResult<super::defaults::PublishDefaults> {
+) -> USTBLResult<PublishTree> {
   let instance = instance_of(&app, &instance_id)?;
+  let root = instance.version_path.clone();
   let previous = match project {
     Some(project) => {
       fetch_campus_modpack_previous_release(app.clone(), instance_id, project).await?
@@ -471,11 +485,37 @@ pub async fn prepare_campus_modpack_publish_tree(
       })
     })
     .collect::<Vec<_>>();
-  Ok(super::defaults::create_initial_model(
-    &list.all,
-    previous.as_ref(),
-    &suggested,
-  ))
+  let defaults = super::defaults::create_initial_model(&list.all, previous.as_ref(), &suggested);
+  let baseline = ModpackBaseline::load(&root).await.ok();
+  let files = defaults.files.clone();
+  let listed = previous.clone();
+  let changes = tokio::task::spawn_blocking(move || {
+    let ignored = super::changes::locally_ignored(&root, baseline.as_ref());
+    super::changes::classify(&root, scan_cache(), &files, listed.as_ref(), &ignored)
+  })
+  .await
+  .map_err(|error| USTBLError(error.to_string()))??;
+  Ok(PublishTree {
+    defaults,
+    changes,
+    previous,
+  })
+}
+
+/// The line diff of one file from the previous release's text to the file on
+/// disk. `None` when the previous text is not kept locally or the file is not
+/// text; the tree then only says the content differs.
+#[tauri::command]
+pub async fn diff_campus_modpack_publish_file(
+  app: AppHandle,
+  instance_id: String,
+  path: String,
+  previous_sha1: String,
+) -> USTBLResult<Option<Vec<DiffHunk>>> {
+  let root = instance_of(&app, &instance_id)?.version_path;
+  tokio::task::spawn_blocking(move || super::changes::file_diff(&root, &path, &previous_sha1))
+    .await
+    .map_err(|error| USTBLError(error.to_string()))?
 }
 
 #[derive(Debug, Clone, Deserialize)]

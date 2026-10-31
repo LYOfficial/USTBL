@@ -7,15 +7,16 @@ import {
   CampusModpackProject,
   CampusModpackRecommendation,
   CampusNewProject,
-  CampusPublishDefaults,
   CampusPublishFile,
   CampusPublishFinished,
   CampusPublishProgress,
   CampusPublishRule,
   CampusPublishStarted,
+  CampusPublishTree,
   CampusUnfinishedInstall,
   CampusUnfinishedPublish,
 } from "@/models/campus-modpack";
+import { ModpackDiffHunk } from "@/models/modpack-update";
 import { InvokeResponse } from "@/models/response";
 import { responseHandler } from "@/utils/response";
 
@@ -171,17 +172,36 @@ export class CampusModpackService {
 
   /**
    * The publish tree to open with: the instance's files, starting from what
-   * the project line's current release lists. `project` is null for a new
-   * project. Failing to read the release is an error, never "no release".
+   * the project line's current release lists, and how each file differs from
+   * that release. `project` is null for a new project. Failing to read the
+   * release is an error, never "no release".
    */
   @responseHandler("instance")
   static async prepareCampusModpackPublishTree(
     instanceId: string,
     project: string | null
-  ): Promise<InvokeResponse<CampusPublishDefaults>> {
+  ): Promise<InvokeResponse<CampusPublishTree>> {
     return await invoke("prepare_campus_modpack_publish_tree", {
       instanceId,
       project,
+    });
+  }
+
+  /**
+   * The line diff of a file from the previous release's text to the file on
+   * disk. `null` when the previous text is not kept locally or the file is not
+   * text; empty when the texts only differ in line endings and the like.
+   */
+  @responseHandler("instance")
+  static async diffCampusModpackPublishFile(
+    instanceId: string,
+    path: string,
+    previousSha1: string
+  ): Promise<InvokeResponse<ModpackDiffHunk[] | null>> {
+    return await invoke("diff_campus_modpack_publish_file", {
+      instanceId,
+      path,
+      previousSha1,
     });
   }
 
