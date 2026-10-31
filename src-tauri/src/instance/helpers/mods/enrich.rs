@@ -4,19 +4,22 @@
 //! the cache already knows. The mods it could not answer are handed to
 //! [`spawn_mod_info_refresh`], which hashes them, asks Modrinth and MCIM in
 //! batches and then emits [`MOD_UPDATES_EVENT`] with the names and descriptions it
-//! found.
+//! found. The jars Modrinth does not know are then asked about on CurseForge,
+//! and a second event carries those answers.
 //!
 //! There is at most one refresh per instance: starting another one for the same
 //! instance cancels the running one, and a refresh that has been replaced never
 //! emits. Every payload names its instance, and every update names the jar by
 //! path, so the frontend can drop what no longer applies.
 
-use crate::instance::helpers::mods::remote::{hash_mods, refresh_remote_infos};
+use crate::instance::helpers::mods::remote::{
+  hash_mods, refresh_curseforge_infos, refresh_remote_infos,
+};
 use crate::instance::helpers::mods::translation::{
   persist_local_mod_cache, LocalModTranslationEntry,
 };
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
 use tauri::{AppHandle, Emitter};
@@ -99,7 +102,9 @@ fn jobs() -> std::sync::MutexGuard<'static, JobRegistry> {
 }
 
 /// Updates for the jars whose hash resolved to an entry; the others are left
-/// out so the frontend keeps what it has.
+/// out so the frontend keeps what it has. An entry that only says "not on
+/// Modrinth" has nothing to show and is left out too, so it cannot blank a name
+/// the list already displays while CurseForge is being asked.
 pub fn build_updates(
   paths: &[PathBuf],
   hashes: &[Option<String>],
@@ -109,7 +114,9 @@ pub fn build_updates(
     .iter()
     .zip(hashes)
     .filter_map(|(path, hash)| {
-      let entry = entries.get(hash.as_ref()?)?;
+      let entry = entries
+        .get(hash.as_ref()?)
+        .filter(|entry| !entry.needs_curseforge())?;
       Some(LocalModUpdate {
         file_path: path.clone(),
         translated_name: entry.translated_name.clone(),
@@ -139,14 +146,16 @@ pub fn spawn_mod_info_refresh(app: &AppHandle, instance_id: &str, pending: Vec<P
   jobs().attach(instance_id, generation, task.abort_handle());
 }
 
+/// One refresh runs in two steps. The Modrinth answers are sent as soon as they
+/// are in; the jars Modrinth does not know are then looked up on CurseForge, and
+/// their answers follow in a second event. The two are kept apart because the
+/// second needs the jars to be read again for their fingerprints.
 async fn run_refresh(app: &AppHandle, instance_id: &str, generation: u64, pending: Vec<PathBuf>) {
   let started = std::time::Instant::now();
   let hashes = hash_mods(app, &pending).await;
   let wanted: Vec<String> = hashes.iter().flatten().cloned().collect();
   let entries = refresh_remote_infos(app, &wanted).await;
-
-  let cache_app = app.clone();
-  let _ = tokio::task::spawn_blocking(move || persist_local_mod_cache(&cache_app)).await;
+  persist(app).await;
 
   let updates = build_updates(&pending, &hashes, &entries);
   log::debug!(
@@ -156,6 +165,32 @@ async fn run_refresh(app: &AppHandle, instance_id: &str, generation: u64, pendin
     updates.len(),
     started.elapsed().as_millis()
   );
+  emit_updates(app, instance_id, generation, updates);
+
+  let targets = curseforge_targets(&pending, &hashes, &entries);
+  if targets.is_empty() {
+    return;
+  }
+  let curseforge_entries = refresh_curseforge_infos(app, &targets).await;
+  persist(app).await;
+
+  let updates = build_updates(&pending, &hashes, &curseforge_entries);
+  log::debug!(
+    "Mod list refresh for {}: {} on CurseForge candidates, {} updates, {} ms",
+    instance_id,
+    targets.len(),
+    updates.len(),
+    started.elapsed().as_millis()
+  );
+  emit_updates(app, instance_id, generation, updates);
+}
+
+async fn persist(app: &AppHandle) {
+  let cache_app = app.clone();
+  let _ = tokio::task::spawn_blocking(move || persist_local_mod_cache(&cache_app)).await;
+}
+
+fn emit_updates(app: &AppHandle, instance_id: &str, generation: u64, updates: Vec<LocalModUpdate>) {
   if updates.is_empty() || !jobs().is_current(instance_id, generation) {
     return;
   }
@@ -168,9 +203,31 @@ async fn run_refresh(app: &AppHandle, instance_id: &str, generation: u64, pendin
   );
 }
 
+/// One jar per distinct hash among those Modrinth does not know and CurseForge
+/// has not settled. Mods Modrinth knows never appear here.
+pub fn curseforge_targets(
+  paths: &[PathBuf],
+  hashes: &[Option<String>],
+  entries: &HashMap<String, LocalModTranslationEntry>,
+) -> Vec<(String, PathBuf)> {
+  let mut seen = HashSet::new();
+  paths
+    .iter()
+    .zip(hashes)
+    .filter_map(|(path, hash)| {
+      let hash = hash.as_ref()?;
+      entries.get(hash)?.needs_curseforge().then_some(())?;
+      seen
+        .insert(hash.clone())
+        .then(|| (hash.clone(), path.clone()))
+    })
+    .collect()
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::instance::helpers::mods::translation::EntryOrigin;
 
   fn idle_task() -> tokio::task::JoinHandle<()> {
     tokio::spawn(std::future::pending())
@@ -244,6 +301,62 @@ mod tests {
         translated_description: None,
       }]
     );
+  }
+
+  fn entry(origin: EntryOrigin) -> LocalModTranslationEntry {
+    LocalModTranslationEntry::with_origin(origin, None, None)
+  }
+
+  #[test]
+  fn only_jars_modrinth_lacks_go_to_curseforge_once_per_hash() {
+    let paths: Vec<PathBuf> = ["a", "b", "c", "d", "e"]
+      .iter()
+      .map(|name| PathBuf::from(format!("/m/{name}.jar")))
+      .collect();
+    let hashes = vec![
+      Some("on-modrinth".to_string()),
+      Some("missing".to_string()),
+      // The same jar twice.
+      Some("missing".to_string()),
+      Some("settled".to_string()),
+      None,
+    ];
+    let entries = HashMap::from([
+      ("on-modrinth".to_string(), entry(EntryOrigin::Modrinth)),
+      ("missing".to_string(), entry(EntryOrigin::NotOnModrinth)),
+      ("settled".to_string(), entry(EntryOrigin::Nowhere)),
+    ]);
+
+    assert_eq!(
+      curseforge_targets(&paths, &hashes, &entries),
+      vec![("missing".to_string(), PathBuf::from("/m/b.jar"))]
+    );
+  }
+
+  #[test]
+  fn a_not_on_modrinth_entry_is_not_sent_as_an_update() {
+    let paths = vec![PathBuf::from("/m/a.jar"), PathBuf::from("/m/b.jar")];
+    let hashes = vec![Some("pending".to_string()), Some("done".to_string())];
+    let entries = HashMap::from([
+      ("pending".to_string(), entry(EntryOrigin::NotOnModrinth)),
+      ("done".to_string(), entry(EntryOrigin::CurseForge)),
+    ]);
+    let updates = build_updates(&paths, &hashes, &entries);
+    assert_eq!(updates.len(), 1);
+    assert_eq!(updates[0].file_path, PathBuf::from("/m/b.jar"));
+  }
+
+  #[test]
+  fn a_named_not_on_modrinth_entry_is_neither_sent_nor_skipped_for_curseforge() {
+    let paths = vec![PathBuf::from("/m/a.jar")];
+    let hashes = vec![Some("h".to_string())];
+    let entries = HashMap::from([(
+      "h".to_string(),
+      LocalModTranslationEntry::with_origin(EntryOrigin::NotOnModrinth, Some("旧名".into()), None),
+    )]);
+    // The list keeps showing the name it got from the cache.
+    assert!(build_updates(&paths, &hashes, &entries).is_empty());
+    assert_eq!(curseforge_targets(&paths, &hashes, &entries).len(), 1);
   }
 
   #[test]

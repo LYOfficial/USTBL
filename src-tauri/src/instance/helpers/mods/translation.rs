@@ -15,8 +15,10 @@ use tauri::{AppHandle, Manager};
 
 /// Bumped whenever the layout of the cache file changes. A file with any other
 /// version (including the original layout keyed by file name, which has no
-/// version at all) is ignored and rebuilt.
-pub const CACHE_FORMAT_VERSION: u32 = 2;
+/// version at all) is ignored and rebuilt, except [`PREVIOUS_FORMAT_VERSION`],
+/// which is upgraded.
+pub const CACHE_FORMAT_VERSION: u32 = 3;
+const PREVIOUS_FORMAT_VERSION: u32 = 2;
 
 /// Remote information about local mods, keyed by the SHA-1 of the jar so that a
 /// replaced file never shows the data of its predecessor.
@@ -71,11 +73,32 @@ impl Storage for LocalModTranslationsCache {
   }
 }
 
+/// What the lookup of a jar has established so far.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum EntryOrigin {
+  /// Written by version 2 of the cache, which only knew Modrinth and did not say
+  /// whether an empty entry meant "not on Modrinth". Replaced while loading.
+  #[default]
+  Legacy,
+  /// The mod is on Modrinth.
+  Modrinth,
+  /// Modrinth answered that it does not know the jar; CurseForge has not been
+  /// asked (or could not be reached), so the entry is not final.
+  NotOnModrinth,
+  /// Not on Modrinth, and CurseForge identified the jar.
+  CurseForge,
+  /// Neither Modrinth nor CurseForge knows the jar.
+  Nowhere,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalModTranslationEntry {
   pub translated_name: Option<String>,
   pub translated_description: Option<String>,
   pub timestamp: u64,
+  #[serde(default)]
+  pub origin: EntryOrigin,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,12 +117,32 @@ pub fn now_secs() -> u64 {
 }
 
 impl LocalModTranslationEntry {
+  /// An entry for a mod found on Modrinth.
   pub fn new(translated_name: Option<String>, translated_description: Option<String>) -> Self {
+    Self::with_origin(
+      EntryOrigin::Modrinth,
+      translated_name,
+      translated_description,
+    )
+  }
+
+  pub fn with_origin(
+    origin: EntryOrigin,
+    translated_name: Option<String>,
+    translated_description: Option<String>,
+  ) -> Self {
     Self {
       translated_name,
       translated_description,
       timestamp: now_secs(),
+      origin,
     }
+  }
+
+  /// Whether CurseForge still has to be asked about this jar, however recent
+  /// the entry is.
+  pub fn needs_curseforge(&self) -> bool {
+    self.origin == EntryOrigin::NotOnModrinth
   }
 
   pub fn is_expired_at(&self, now: u64, max_age_hours: u64) -> bool {
@@ -112,8 +155,29 @@ impl LocalModTranslationsCache {
   pub fn from_json(json: &str) -> Self {
     match serde_json::from_str::<Self>(json) {
       Ok(cache) if cache.version == CACHE_FORMAT_VERSION => cache,
+      Ok(cache) if cache.version == PREVIOUS_FORMAT_VERSION => cache.upgraded_from_previous(),
       _ => Self::default(),
     }
+  }
+
+  /// Version 2 held Modrinth results only. An entry with a name or description
+  /// came from a Modrinth project and is kept. An empty one is either "not on
+  /// Modrinth" or a Modrinth project with nothing to show, which the file does
+  /// not tell apart, so it is dropped and looked up again (the recorded file
+  /// hashes stay, so no jar is read again).
+  fn upgraded_from_previous(mut self) -> Self {
+    self.version = CACHE_FORMAT_VERSION;
+    self.translations.retain(|_, entry| {
+      if entry.origin != EntryOrigin::Legacy {
+        return true;
+      }
+      if entry.translated_name.is_none() && entry.translated_description.is_none() {
+        return false;
+      }
+      entry.origin = EntryOrigin::Modrinth;
+      true
+    });
+    self
   }
 
   /// The SHA-1 recorded for `path`, if the file still has the recorded size and
@@ -150,6 +214,31 @@ impl LocalModTranslationsCache {
 
   pub fn insert_entry(&mut self, sha1: &str, entry: LocalModTranslationEntry) {
     self.translations.insert(sha1.to_string(), entry);
+  }
+
+  /// Store the outcome of a Modrinth lookup. "Not on Modrinth" says nothing
+  /// about CurseForge, so when the entry it replaces came from CurseForge (or
+  /// already carries such a result) the name and description are kept until
+  /// CurseForge has answered again; a failed CurseForge request then leaves the
+  /// old result in place instead of an empty one. Returns the stored entry.
+  pub fn insert_modrinth_outcome(
+    &mut self,
+    sha1: &str,
+    mut entry: LocalModTranslationEntry,
+  ) -> LocalModTranslationEntry {
+    if entry.origin == EntryOrigin::NotOnModrinth {
+      if let Some(previous) = self.translations.get(sha1).filter(|previous| {
+        matches!(
+          previous.origin,
+          EntryOrigin::CurseForge | EntryOrigin::NotOnModrinth
+        )
+      }) {
+        entry.translated_name = previous.translated_name.clone();
+        entry.translated_description = previous.translated_description.clone();
+      }
+    }
+    self.translations.insert(sha1.to_string(), entry.clone());
+    entry
   }
 
   /// Drop entries nobody has refreshed for a long time and keep both maps below
@@ -251,6 +340,7 @@ mod tests {
       translated_name: Some("名".into()),
       translated_description: None,
       timestamp,
+      origin: EntryOrigin::Modrinth,
     }
   }
 
@@ -280,6 +370,138 @@ mod tests {
       .files
       .is_empty());
     assert!(LocalModTranslationsCache::from_json("").files.is_empty());
+  }
+
+  #[test]
+  fn version_2_cache_keeps_named_entries_and_drops_empty_ones() {
+    let old = r#"{"version":2,
+      "translations":{
+        "named":{"translated_name":"钠","translated_description":null,"timestamp":5},
+        "described":{"translated_name":null,"translated_description":"描述","timestamp":5},
+        "empty":{"translated_name":null,"translated_description":null,"timestamp":5}},
+      "files":{"/m/a.jar":{"size":1,"modified_ms":2,"sha1":"empty","last_seen":5}}}"#;
+    let cache = LocalModTranslationsCache::from_json(old);
+
+    assert_eq!(cache.version, CACHE_FORMAT_VERSION);
+    assert_eq!(cache.entry("named").unwrap().origin, EntryOrigin::Modrinth);
+    assert_eq!(
+      cache.entry("described").unwrap().origin,
+      EntryOrigin::Modrinth
+    );
+    // An empty v2 entry may have been "not on Modrinth", so it must not block CurseForge.
+    assert!(cache.entry("empty").is_none());
+    // The hash of the jar is still known, so it is not read again.
+    assert_eq!(cache.files["/m/a.jar"].sha1, "empty");
+  }
+
+  fn curseforge_entry(timestamp: u64) -> LocalModTranslationEntry {
+    LocalModTranslationEntry {
+      translated_name: Some("物品管理器".into()),
+      translated_description: Some("显示配方".into()),
+      timestamp,
+      origin: EntryOrigin::CurseForge,
+    }
+  }
+
+  fn not_on_modrinth() -> LocalModTranslationEntry {
+    LocalModTranslationEntry::with_origin(EntryOrigin::NotOnModrinth, None, None)
+  }
+
+  #[test]
+  fn expired_curseforge_entry_keeps_its_names_when_modrinth_still_lacks_the_jar() {
+    let mut cache = LocalModTranslationsCache::default();
+    cache.insert_entry("s", curseforge_entry(1));
+
+    // Modrinth is asked again after expiry and still does not know the jar;
+    // CurseForge then fails, so nothing else is written.
+    let stored = cache.insert_modrinth_outcome("s", not_on_modrinth());
+
+    for entry in [&stored, cache.entry("s").unwrap()] {
+      assert_eq!(entry.origin, EntryOrigin::NotOnModrinth);
+      assert!(entry.needs_curseforge());
+      assert_eq!(entry.translated_name.as_deref(), Some("物品管理器"));
+      assert_eq!(entry.translated_description.as_deref(), Some("显示配方"));
+    }
+    // A fresh timestamp, so the next refresh goes straight to CurseForge.
+    assert!(cache.entry("s").unwrap().timestamp > 1);
+  }
+
+  #[test]
+  fn names_survive_repeated_modrinth_misses_until_curseforge_answers() {
+    let mut cache = LocalModTranslationsCache::default();
+    cache.insert_entry("s", curseforge_entry(1));
+    cache.insert_modrinth_outcome("s", not_on_modrinth());
+    cache.insert_modrinth_outcome("s", not_on_modrinth());
+    assert_eq!(
+      cache.entry("s").unwrap().translated_name.as_deref(),
+      Some("物品管理器")
+    );
+  }
+
+  #[test]
+  fn a_curseforge_conclusion_replaces_the_kept_names() {
+    let mut cache = LocalModTranslationsCache::default();
+    cache.insert_entry("s", curseforge_entry(1));
+    cache.insert_modrinth_outcome("s", not_on_modrinth());
+
+    let updated =
+      LocalModTranslationEntry::with_origin(EntryOrigin::CurseForge, Some("新名".into()), None);
+    cache.insert_entry("s", updated);
+    let entry = cache.entry("s").unwrap();
+    assert_eq!(entry.translated_name.as_deref(), Some("新名"));
+    assert_eq!(entry.translated_description, None);
+
+    cache.insert_entry(
+      "s",
+      LocalModTranslationEntry::with_origin(EntryOrigin::Nowhere, None, None),
+    );
+    let entry = cache.entry("s").unwrap();
+    assert_eq!(entry.origin, EntryOrigin::Nowhere);
+    assert!(entry.translated_name.is_none() && entry.translated_description.is_none());
+  }
+
+  #[test]
+  fn only_curseforge_results_are_carried_over_a_modrinth_miss() {
+    let mut cache = LocalModTranslationsCache::default();
+    // A name from a Modrinth project is not carried over, nor is anything for a new hash.
+    cache.insert_entry("moved", entry_at(1));
+    cache.insert_modrinth_outcome("moved", not_on_modrinth());
+    cache.insert_modrinth_outcome("new", not_on_modrinth());
+    assert!(cache.entry("moved").unwrap().translated_name.is_none());
+    assert!(cache.entry("new").unwrap().translated_name.is_none());
+
+    // Modrinth hits are stored as they are.
+    cache.insert_entry("c", curseforge_entry(1));
+    let hit = LocalModTranslationEntry::new(Some("钠".into()), None);
+    cache.insert_modrinth_outcome("c", hit);
+    assert_eq!(cache.entry("c").unwrap().origin, EntryOrigin::Modrinth);
+    assert_eq!(
+      cache.entry("c").unwrap().translated_name.as_deref(),
+      Some("钠")
+    );
+  }
+
+  #[test]
+  fn origins_round_trip_and_only_not_on_modrinth_needs_curseforge() {
+    let mut cache = LocalModTranslationsCache::default();
+    for (key, origin) in [
+      ("a", EntryOrigin::Modrinth),
+      ("b", EntryOrigin::NotOnModrinth),
+      ("c", EntryOrigin::CurseForge),
+      ("d", EntryOrigin::Nowhere),
+    ] {
+      cache.insert_entry(
+        key,
+        LocalModTranslationEntry::with_origin(origin, None, None),
+      );
+    }
+    let loaded = LocalModTranslationsCache::from_json(&serde_json::to_string(&cache).unwrap());
+    let needs: Vec<&str> = ["a", "b", "c", "d"]
+      .into_iter()
+      .filter(|key| loaded.entry(key).unwrap().needs_curseforge())
+      .collect();
+    assert_eq!(needs, vec!["b"]);
+    assert_eq!(loaded.entry("c").unwrap().origin, EntryOrigin::CurseForge);
   }
 
   #[test]
