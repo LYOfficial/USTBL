@@ -325,6 +325,61 @@ test("install group titles hide internal identity but keep the human label", () 
   assert.equal(campusInstallGroupLabel("modpack-install?航空学@123"), "航空学");
 });
 
+test("install group titles use the known instance id when it contains brackets", () => {
+  const id = "APP_DATA_SUBDIR:Pack [Fabric] 1.8.2";
+  const group = `modpack-install?Pack [Fabric] 1.8.2 [${id}]@123`;
+  const known = ["games:Other", id];
+  assert.equal(campusInstallGroupLabel(group, known), "Pack [Fabric] 1.8.2");
+  assert.equal(campusInstallGroupInstanceId(group, known), id);
+
+  // An id with "[" and characters the backend replaces in group names.
+  const odd = "games:A [x?y@z";
+  const oddGroup = "modpack-install?Title [games:A [x y z]@9";
+  assert.equal(campusInstallGroupLabel(oddGroup, [odd]), "Title");
+  assert.equal(campusInstallGroupInstanceId(oddGroup, [odd]), odd);
+
+  // The longest matching id wins over a shorter one that ends the same way.
+  const longer = "games:Pack [Fabric]";
+  const shorter = "Fabric]";
+  const both = `modpack-install?Pack [${longer}]@1`;
+  assert.equal(campusInstallGroupInstanceId(both, [shorter, longer]), longer);
+  assert.equal(campusInstallGroupLabel(both, [shorter, longer]), "Pack");
+});
+
+test("install group titles fall back to splitting when the id is unknown", () => {
+  const group = "modpack-install?Pack [games:Pack]@123";
+  assert.equal(campusInstallGroupLabel(group, ["games:Other"]), "Pack");
+  assert.equal(
+    campusInstallGroupInstanceId(group, ["games:Other"]),
+    "games:Pack"
+  );
+  // Groups from before the id was written have nothing to split.
+  assert.equal(
+    campusInstallGroupLabel("modpack-install?Pack@123", ["x"]),
+    "Pack"
+  );
+  assert.equal(
+    campusInstallGroupInstanceId("modpack-install?Pack@123", ["x"]),
+    null
+  );
+});
+
+test("abandoning finds an install whose instance id contains brackets", () => {
+  const id = "APP_DATA_SUBDIR:Pack [Fabric] 1.8.2";
+  const group = `modpack-install?Pack [Fabric] 1.8.2 [${id}]@1`;
+  const card = (descs) => ({
+    taskGroup: group,
+    status: "Started",
+    taskDescs: descs,
+  });
+  const applying = [
+    { payload: { filename: "Applying" }, status: "InProgress" },
+  ];
+  assert.equal(canDiscardRunningInstall(id, [card(applying)], {}), false);
+  assert.equal(canDiscardRunningInstall(id, [card([])], {}), true);
+  assert.equal(canDiscardRunningInstall(id, [card(applying)], {}, [id]), false);
+});
+
 test("failure reasons use locale keys and unknown errors never leak raw codes", () => {
   const t = (key, options) =>
     key.includes("MODPACK_UPDATE_VERIFY_FAILED")

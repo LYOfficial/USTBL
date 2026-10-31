@@ -24,6 +24,7 @@ import NavMenu from "@/components/common/nav-menu";
 import { Section } from "@/components/common/section";
 import { InstanceLaunchButton } from "@/components/instance-launch-button";
 import { useLauncherConfig } from "@/contexts/config";
+import { useGlobalData } from "@/contexts/global-data";
 import {
   InstanceContextProvider,
   useInstanceSharedData,
@@ -61,6 +62,7 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
 
   const { summary, handleUpdateInstanceConfig } = useInstanceSharedData();
   const { tasks, installProgress } = useTaskContext();
+  const { getInstanceList } = useGlobalData();
   const { discard, discarding } = useDiscardCampusInstall();
   const installing = isInstallingInstance(summary);
   const { config } = useLauncherConfig();
@@ -272,7 +274,12 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
               isDisabled={
                 discarding ||
                 !summary ||
-                !canDiscardRunningInstall(summary.id, tasks, installProgress)
+                !canDiscardRunningInstall(
+                  summary.id,
+                  tasks,
+                  installProgress,
+                  (getInstanceList() ?? []).map((i) => i.id)
+                )
               }
               onClick={async () => {
                 if (summary && (await discard(summary.id))) {

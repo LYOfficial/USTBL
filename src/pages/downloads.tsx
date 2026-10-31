@@ -27,6 +27,7 @@ import { Section } from "@/components/common/section";
 import { UnfinishedInstalls } from "@/components/unfinished-installs";
 import { UnfinishedPublishes } from "@/components/unfinished-publishes";
 import { useLauncherConfig } from "@/contexts/config";
+import { useGlobalData } from "@/contexts/global-data";
 import { useSharedModals } from "@/contexts/shared-modal";
 import { destOf, parseTaskGroup, useTaskContext } from "@/contexts/task";
 import { useDiscardCampusInstall } from "@/hooks/discard-campus-install";
@@ -62,6 +63,7 @@ export const DownloadTasksPage = () => {
   const router = useRouter();
   const { openSharedModal } = useSharedModals();
   const { config } = useLauncherConfig();
+  const { getInstanceList } = useGlobalData();
   const primaryColor = config.appearance.theme.primaryColor;
 
   const {
@@ -120,6 +122,8 @@ export const DownloadTasksPage = () => {
       (task) => task.payload.taskType === TaskTypeEnums.Download
     );
 
+  const knownInstanceIds = (getInstanceList() ?? []).map((i) => i.id);
+
   const parseGroupTitle = (taskGroup: string) => {
     let { name, version, isRetry } = parseTaskGroup(taskGroup);
 
@@ -127,7 +131,7 @@ export const DownloadTasksPage = () => {
       `DownloadTasksPage.task.${name}`,
       {
         param: isModpackTransferGroup(taskGroup)
-          ? campusInstallGroupLabel(taskGroup)
+          ? campusInstallGroupLabel(taskGroup, knownInstanceIds)
           : version || "",
       }
     )}`;
@@ -173,7 +177,7 @@ export const DownloadTasksPage = () => {
 
   const runningInstallId = (taskGroup: string) =>
     installProgress[taskGroup]?.instanceId ??
-    campusInstallGroupInstanceId(taskGroup);
+    campusInstallGroupInstanceId(taskGroup, knownInstanceIds);
 
   return (
     <Section
@@ -381,7 +385,8 @@ export const DownloadTasksPage = () => {
                             !canDiscardRunningInstall(
                               runningInstallId(group.taskGroup)!,
                               tasks,
-                              installProgress
+                              installProgress,
+                              knownInstanceIds
                             )
                           }
                           onClick={() =>

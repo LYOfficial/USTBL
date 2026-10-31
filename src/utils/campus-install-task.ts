@@ -58,18 +58,56 @@ export const removeCampusInstallGroups = (
   groups: string[]
 ) => tasks.filter((task) => !groups.includes(task.taskGroup));
 
-export const campusInstallGroupLabel = (group: string): string => {
+const campusInstallGroupName = (group: string): string => {
   const end = group.lastIndexOf("@");
-  const name = group.slice(group.indexOf("?") + 1, end < 0 ? undefined : end);
+  return group.slice(group.indexOf("?") + 1, end < 0 ? undefined : end);
+};
+
+// The backend writes the instance id into the group name with these
+// characters replaced (campus_install_group_belongs_to).
+const groupIdentitySuffix = (instanceId: string): string =>
+  ` [${instanceId.replace(/[?@\n\r]/g, " ")}]`;
+
+// The longest known id whose " [<id>]" ends the group name. Instance ids may
+// contain brackets themselves, so splitting on the last " [" is only the
+// fallback for ids that are not known (for example a deleted instance).
+const matchKnownIdentity = (
+  name: string,
+  knownIds: readonly string[]
+): { id: string; start: number } | null => {
+  let best: { id: string; start: number } | null = null;
+  for (const id of knownIds) {
+    const suffix = groupIdentitySuffix(id);
+    if (
+      name.endsWith(suffix) &&
+      (best === null || suffix.length > name.length - best.start)
+    ) {
+      best = { id, start: name.length - suffix.length };
+    }
+  }
+  return best;
+};
+
+export const campusInstallGroupLabel = (
+  group: string,
+  knownIds: readonly string[] = []
+): string => {
+  const name = campusInstallGroupName(group);
+  const known = matchKnownIdentity(name, knownIds);
+  if (known) return name.slice(0, known.start);
   const identity = name.lastIndexOf(" [");
   return identity < 0 ? name : name.slice(0, identity);
 };
 
 // "modpack-install?<label> [<instance id>]@<time>": the instance id as the
 // backend wrote it into the group name.
-export const campusInstallGroupInstanceId = (group: string): string | null => {
-  const end = group.lastIndexOf("@");
-  const name = group.slice(group.indexOf("?") + 1, end < 0 ? undefined : end);
+export const campusInstallGroupInstanceId = (
+  group: string,
+  knownIds: readonly string[] = []
+): string | null => {
+  const name = campusInstallGroupName(group);
+  const known = matchKnownIdentity(name, knownIds);
+  if (known) return known.id;
   const start = name.lastIndexOf(" [");
   return start < 0 || !name.endsWith("]")
     ? null
@@ -87,14 +125,16 @@ const pastCommitStages = ["applying", "finalizing"];
 export const canDiscardRunningInstall = (
   instanceId: string,
   tasks: TaskGroupDesc[],
-  progress: Record<string, Pick<CampusInstallProgress, "instanceId" | "stage">>
+  progress: Record<string, Pick<CampusInstallProgress, "instanceId" | "stage">>,
+  knownIds: readonly string[] = []
 ): boolean => {
+  const ids = [instanceId, ...knownIds];
   const running = tasks.filter(
     (group) =>
       isCampusInstallGroup(group.taskGroup) &&
       String(group.status) === "Started" &&
       (progress[group.taskGroup]?.instanceId ??
-        campusInstallGroupInstanceId(group.taskGroup)) === instanceId
+        campusInstallGroupInstanceId(group.taskGroup, ids)) === instanceId
   );
   return !running.some(
     (group) =>
