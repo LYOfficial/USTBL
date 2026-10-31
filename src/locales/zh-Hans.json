@@ -719,6 +719,8 @@
       "neoforge-libraries": "NeoForge 运行库",
       "forge-libraries": "Forge 运行库",
       "loader-installer": "加载器安装器",
+      "optifine-installer": "OptiFine 安装器",
+      "optifine-libraries": "OptiFine 运行库",
       "launcher-update": "更新启动器",
       "mojang-java": "Java {{param}} 运行时",
       "modpack-publish": "发布整合包 {{param}}",

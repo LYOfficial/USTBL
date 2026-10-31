@@ -719,6 +719,8 @@
       "neoforge-libraries": "NeoForge ランタイムライブラリ",
       "forge-libraries": "Forge ランタイムライブラリ",
       "loader-installer": "ローダーインストーラー",
+      "optifine-installer": "OptiFine インストーラー",
+      "optifine-libraries": "OptiFine ランタイムライブラリ",
       "launcher-update": "ランチャーを更新",
       "mojang-java": "Java {{param}} ランタイム",
       "modpack-publish": "モッドパックを公開 {{param}}",

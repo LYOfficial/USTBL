@@ -719,6 +719,8 @@
       "neoforge-libraries": "NeoForge Libraries",
       "forge-libraries": "Forge Libraries",
       "loader-installer": "Loader Installer",
+      "optifine-installer": "OptiFine Installer",
+      "optifine-libraries": "OptiFine Libraries",
       "launcher-update": "Update Launcher",
       "mojang-java": "Java {{param}} Runtime",
       "modpack-publish": "Publish modpack {{param}}",

@@ -719,6 +719,8 @@
       "neoforge-libraries": "Bibliothèques d'exécution de NeoForge ",
       "forge-libraries": "Bibliothèques d'exécution de Forge",
       "loader-installer": "Installateur du chargeur",
+      "optifine-installer": "Installateur d'OptiFine",
+      "optifine-libraries": "Bibliothèques d'exécution d'OptiFine",
       "launcher-update": "Mettre à jour le lanceur",
       "mojang-java": "Java {{param}} fonctionne",
       "modpack-publish": "Publication du modpack {{param}}",
