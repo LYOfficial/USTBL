@@ -647,6 +647,8 @@
     }
   },
   "DownloadTasksPage": {
+    "updateStarted": "Modpack update added to the task page",
+    "recheckUpdate": "Check for updates again",
     "title": "Download & Upload Tasks",
     "unfinishedPublish": {
       "title": "Unfinished publishes",
@@ -700,7 +702,8 @@
       "launcher-update": "Update Launcher",
       "mojang-java": "Java {{param}} Runtime",
       "modpack-publish": "Publish modpack {{param}}",
-      "modpack-install": "Install modpack {{param}}"
+      "modpack-install": "Install modpack {{param}}",
+      "modpack-update": "Update modpack {{param}}"
     },
     "installStage": {
       "waitingclient": "Waiting for game client",
@@ -2250,7 +2253,8 @@
             "LAUNCH_INSTANCE_INSTALLING": "This instance has an unfinished campus installation and cannot be launched. Complete the installation in Download & Upload Tasks first.",
             "INSTANCE_NOT_FOUND_BY_ID": "Instance ID does not exist",
             "NO_SUITABLE_JAVA": "No suitable Java version found",
-            "SELECTED_JAVA_UNAVAILABLE": "The manually selected Java runtime has been removed or is unavailable"
+            "SELECTED_JAVA_UNAVAILABLE": "The manually selected Java runtime has been removed or is unavailable",
+            "MODPACK_UPDATE_BUSY": "This instance's modpack is updating. Wait for the update task to finish before launching"
           }
         }
       },
@@ -2757,6 +2761,10 @@
         "error": {
           "title": "Modpack update failed",
           "description": {
+            "MODPACK_UPDATE_TASK_FAILED": "The update task ended unexpectedly. Details are in the launcher log; check for updates again",
+            "NETWORK_ERROR": "Network requests still failed after retries. Restore the connection and check for updates again",
+            "FILE_OPERATION_ERROR": "Cannot read or write update files. Check disk space and permissions, then check for updates again",
+            "UNKNOWN_ERROR": "The update failed. Details are in the launcher log; check for updates again",
             "MODPACK_UPDATE_BUSY": "This modpack is already being updated",
             "MODPACK_UPDATE_VERIFY_FAILED": "A downloaded file failed verification; the instance was not changed",
             "MODPACK_UPDATE_STALE": "Local files changed after the check; check for updates again",

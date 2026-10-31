@@ -136,6 +136,7 @@ test("task context applies removal events before repeated resume creation and ke
   const taskModel = load("src/models/task.ts");
   const context = load("src/contexts/task.tsx", (name) => {
     if (name === "react") return { ...react, default: react };
+    if (name === "next/router") return { useRouter: () => ({}) };
     if (name === "@chakra-ui/react")
       return { useToast: () => ({ close: () => {} }) };
     if (name === "react-i18next")
@@ -148,6 +149,10 @@ test("task context applies removal events before repeated resume creation and ke
     if (name === "@/models/task") return taskModel;
     if (name === "@/utils/campus-install-task")
       return load("src/utils/campus-install-task.ts");
+    if (name === "@/utils/modpack-update-task")
+      return {
+        isModpackUpdateGroup: (group) => group.startsWith("modpack-update?"),
+      };
     if (name === "@/services/task")
       return {
         TaskService: {

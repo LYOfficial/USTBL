@@ -20,6 +20,7 @@ use tokio::sync::Semaphore;
 pub struct GroupMonitor {
   pub phs: HashMap<u32, Arc<RwLock<PTaskHandle>>>,
   pub status: GEventStatus,
+  modpack_update_instance: Option<String>,
 }
 
 pub struct TaskMonitor {
@@ -140,6 +141,7 @@ impl TaskMonitor {
           GroupMonitor {
             phs: HashMap::from_iter([(id, p_handle.clone())]),
             status: GEventStatus::Started,
+            modpack_update_instance: None,
           },
         );
       }
@@ -206,6 +208,7 @@ impl TaskMonitor {
       GroupMonitor {
         phs: HashMap::from_iter(hvec),
         status: GEventStatus::Started,
+        modpack_update_instance: None,
       },
     );
     GEvent::emit_group_started(&self.app_handle, &task_group);
@@ -236,6 +239,24 @@ impl TaskMonitor {
 
   /// Puts tasks that a job drives itself on the task list as a group.
   pub fn register_job_group(&self, task_group: &str, handles: &[Arc<RwLock<PTaskHandle>>]) {
+    self.register_job_group_inner(task_group, handles, None);
+  }
+
+  pub fn register_modpack_update_group(
+    &self,
+    instance_id: &str,
+    task_group: &str,
+    handles: &[Arc<RwLock<PTaskHandle>>],
+  ) {
+    self.register_job_group_inner(task_group, handles, Some(instance_id.to_string()));
+  }
+
+  fn register_job_group_inner(
+    &self,
+    task_group: &str,
+    handles: &[Arc<RwLock<PTaskHandle>>],
+    modpack_update_instance: Option<String>,
+  ) {
     let mut group = HashMap::new();
     for handle in handles {
       let desc = handle.read().unwrap().desc.clone();
@@ -257,9 +278,21 @@ impl TaskMonitor {
       GroupMonitor {
         phs: group,
         status: GEventStatus::Started,
+        modpack_update_instance,
       },
     );
     GEvent::emit_group_started(&self.app_handle, task_group);
+  }
+
+  /// Hold the registry read lock through the launch queue insertion. Previews
+  /// never register a job group and cannot block launching via this check.
+  pub fn while_no_modpack_update<T>(
+    &self,
+    instance_id: &str,
+    action: impl FnOnce() -> T,
+  ) -> USTBLResult<T> {
+    let groups = self.group_map.read()?;
+    while_no_modpack_update(&groups, instance_id, action)
   }
 
   /// Lets cancelling the group stop the job: the group's cancel aborts the
@@ -409,7 +442,7 @@ impl TaskMonitor {
         .desc
         .task_group
         .as_deref()
-        .is_some_and(|group| group.starts_with("modpack-install?"))
+        .is_some_and(is_modpack_transaction)
       {
         return;
       }
@@ -433,7 +466,7 @@ impl TaskMonitor {
         .desc
         .task_group
         .as_deref()
-        .is_some_and(|group| group.starts_with("modpack-install?"))
+        .is_some_and(is_modpack_transaction)
       {
         return;
       }
@@ -498,7 +531,7 @@ impl TaskMonitor {
   }
 
   pub fn cancel_progressive_task_group(&self, task_group: String) {
-    if task_group.starts_with("modpack-install?") {
+    if is_modpack_transaction(&task_group) {
       return;
     }
     if let Some(group) = self.group_map.write().unwrap().remove(&task_group) {
@@ -518,7 +551,7 @@ impl TaskMonitor {
   }
 
   pub fn stop_progressive_task_group(&self, task_group: String) {
-    if task_group.starts_with("modpack-install?") {
+    if is_modpack_transaction(&task_group) {
       return;
     }
     if let Some(group) = self.group_map.write().unwrap().get_mut(&task_group) {
@@ -534,6 +567,9 @@ impl TaskMonitor {
   }
 
   pub async fn resume_progressive_task_group(&self, task_group: String) {
+    if is_modpack_transaction(&task_group) {
+      return;
+    }
     if let Some(group) = self.group_map.write().unwrap().get_mut(&task_group) {
       group.status = GEventStatus::Started;
 
@@ -640,5 +676,78 @@ impl TaskMonitor {
       }
     }
     false
+  }
+}
+
+fn is_modpack_transaction(group: &str) -> bool {
+  group.starts_with("modpack-install?") || group.starts_with("modpack-update?")
+}
+
+fn while_no_modpack_update<T>(
+  groups: &HashMap<String, GroupMonitor>,
+  instance_id: &str,
+  action: impl FnOnce() -> T,
+) -> USTBLResult<T> {
+  if groups.iter().any(|(name, group)| {
+    name.starts_with("modpack-update?")
+      && group.status == GEventStatus::Started
+      && group.modpack_update_instance.as_deref() == Some(instance_id)
+  }) {
+    return Err(crate::instance::models::misc::InstanceError::ModpackUpdateBusy.into());
+  }
+  Ok(action())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn only_registered_active_updates_block_their_instance_until_group_finish() {
+    let mut groups = HashMap::new();
+    let id = "APP_DATA_SUBDIR:pack?@exact";
+    let mut queued = 0;
+    // Preparing a preview creates no registered group, even with PlanGuard held.
+    while_no_modpack_update(&groups, id, || queued += 1).unwrap();
+    let name = "modpack-update?label [sanitized id]@1".to_string();
+    groups.insert(
+      name.clone(),
+      GroupMonitor {
+        phs: HashMap::new(),
+        status: GEventStatus::Started,
+        modpack_update_instance: Some(id.into()),
+      },
+    );
+    // No stage has to start: registration already blocks preparing/locating.
+    let error = while_no_modpack_update(&groups, id, || queued += 1).unwrap_err();
+    assert_eq!(error.0, "MODPACK_UPDATE_BUSY");
+    assert_eq!(queued, 1);
+    while_no_modpack_update(&groups, "other-instance", || queued += 1).unwrap();
+    for status in [GEventStatus::Completed, GEventStatus::Failed] {
+      groups.get_mut(&name).unwrap().status = status;
+      while_no_modpack_update(&groups, id, || queued += 1).unwrap();
+    }
+    assert_eq!(queued, 4);
+    groups.clear();
+    groups.insert(
+      "modpack-install?label@1".into(),
+      GroupMonitor {
+        phs: HashMap::new(),
+        status: GEventStatus::Started,
+        modpack_update_instance: None,
+      },
+    );
+    while_no_modpack_update(&groups, id, || queued += 1).unwrap();
+    assert_eq!(queued, 5);
+  }
+
+  #[test]
+  fn install_and_update_transactions_cannot_be_paused_or_aborted() {
+    for group in ["modpack-install?pack@1", "modpack-update?pack@2"] {
+      assert!(super::is_modpack_transaction(group));
+    }
+    for group in ["modpack-publish?pack@1", "game-client?pack@1"] {
+      assert!(!super::is_modpack_transaction(group));
+    }
   }
 }

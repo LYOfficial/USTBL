@@ -36,10 +36,13 @@ use crate::resource::helpers::misc::{download_source_candidates, get_source_prio
 use crate::resource::models::{ModLoaderResourceInfo, ResourceType};
 use crate::tasks::download::DownloadParam;
 use crate::tasks::download::DownloadTransferOptions;
+use crate::tasks::events::TauriEventSink;
 use crate::tasks::monitor::TaskMonitor;
 use crate::tasks::streams::desc::PDesc;
+use crate::tasks::streams::reporter::Sink;
+use crate::tasks::streams::PHandle;
 use crate::tasks::upload::upload_handle;
-use crate::tasks::{PTaskHandle, PTaskParam};
+use crate::tasks::PTaskParam;
 use crate::utils::fs::validate_sha1;
 use async_trait::async_trait;
 use serde::Serialize;
@@ -140,6 +143,12 @@ pub struct CampusInstallStarted {
   pub group: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateStarted {
+  pub group: String,
+}
+
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CampusUnfinishedInstall {
@@ -158,6 +167,17 @@ pub struct CampusUnfinishedInstall {
 struct CampusInstallFinished {
   instance_id: String,
   group: String,
+  error: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModpackUpdateFinished {
+  instance_id: String,
+  instance_name: String,
+  group: String,
+  plan_hash: String,
+  outcome: Option<UpdateOutcome>,
   error: Option<String>,
 }
 
@@ -552,43 +572,66 @@ struct AppEnv {
   tasks: Option<CampusInstallTasks>,
 }
 
-#[derive(Clone)]
-struct CampusInstallTasks {
+type ModpackTaskHandle<S> = Arc<RwLock<PHandle<S, PTaskParam>>>;
+
+/// Shared stage handles for campus installs and existing-instance updates.
+struct CampusInstallTasks<S: Sink = TauriEventSink> {
   group: String,
-  waiting_client: Arc<RwLock<PTaskHandle>>,
-  preparing: Arc<RwLock<PTaskHandle>>,
-  locating: Arc<RwLock<PTaskHandle>>,
-  fetching: Arc<RwLock<PTaskHandle>>,
-  applying: Arc<RwLock<PTaskHandle>>,
+  is_update: bool,
+  waiting_client: ModpackTaskHandle<S>,
+  preparing: ModpackTaskHandle<S>,
+  locating: ModpackTaskHandle<S>,
+  fetching: ModpackTaskHandle<S>,
+  applying: ModpackTaskHandle<S>,
 }
 
-impl CampusInstallTasks {
-  fn all(&self) -> [&Arc<RwLock<PTaskHandle>>; 5] {
-    [
+impl<S: Sink> Clone for CampusInstallTasks<S> {
+  fn clone(&self) -> Self {
+    Self {
+      group: self.group.clone(),
+      is_update: self.is_update,
+      waiting_client: self.waiting_client.clone(),
+      preparing: self.preparing.clone(),
+      locating: self.locating.clone(),
+      fetching: self.fetching.clone(),
+      applying: self.applying.clone(),
+    }
+  }
+}
+
+impl<S: Sink> CampusInstallTasks<S> {
+  fn all(&self) -> Vec<&ModpackTaskHandle<S>> {
+    let mut handles = vec![
       &self.waiting_client,
       &self.preparing,
       &self.locating,
       &self.fetching,
       &self.applying,
-    ]
+    ];
+    if self.is_update {
+      handles.remove(0);
+    }
+    handles
   }
 
-  fn register(app: &AppHandle, instance_id: &str, label: &str) -> Self {
-    let monitor = app.state::<Pin<Box<TaskMonitor>>>();
-    let group = format!(
-      "modpack-install?{} [{}]@{}",
-      label.replace(['?', '@', '\n', '\r'], " "),
-      instance_id.replace(['?', '@', '\n', '\r'], " "),
-      chrono::Utc::now().timestamp_millis()
-    );
-    let waiting_client =
-      upload_handle(app, monitor.get_new_id(), &group, "WaitingClient".into(), 1);
-    let preparing = upload_handle(app, monitor.get_new_id(), &group, "Preparing".into(), 1);
-    let locating = upload_handle(app, monitor.get_new_id(), &group, "Locating".into(), 1);
-    let fetching = upload_handle(app, monitor.get_new_id(), &group, "Fetching".into(), 0);
-    let applying = upload_handle(app, monitor.get_new_id(), &group, "Applying".into(), 1);
+  fn with_handles(
+    group: String,
+    is_update: bool,
+    mut make: impl FnMut(&str, i64) -> ModpackTaskHandle<S>,
+  ) -> Self {
+    let preparing = make("Preparing", 1);
+    // Updates have no waiting-client phase; this unused alias is not registered.
+    let waiting_client = if is_update {
+      preparing.clone()
+    } else {
+      make("WaitingClient", 1)
+    };
+    let locating = make("Locating", 1);
+    let fetching = make("Fetching", 0);
+    let applying = make("Applying", 1);
     Self {
       group,
+      is_update,
       waiting_client,
       preparing,
       locating,
@@ -597,13 +640,23 @@ impl CampusInstallTasks {
     }
   }
 
-  fn complete(handle: &Arc<RwLock<PTaskHandle>>) {
+  fn finish(&self, error: Option<&str>) {
+    if let Some(error) = error {
+      self.fail(error);
+    } else {
+      for handle in self.all() {
+        Self::complete(handle);
+      }
+    }
+  }
+
+  fn complete(handle: &ModpackTaskHandle<S>) {
     let mut handle = handle.write().unwrap();
     handle.desc.current = handle.desc.total;
     handle.mark_completed();
   }
 
-  fn start(handle: &Arc<RwLock<PTaskHandle>>) {
+  fn start(handle: &ModpackTaskHandle<S>) {
     handle.write().unwrap().mark_started();
   }
 
@@ -620,6 +673,30 @@ impl CampusInstallTasks {
     if let Some(handle) = current {
       handle.write().unwrap().mark_failed(error.to_string());
     }
+  }
+}
+
+impl CampusInstallTasks {
+  fn register(app: &AppHandle, instance_id: &str, label: &str) -> Self {
+    Self::register_kind(app, instance_id, label, false)
+  }
+
+  fn register_kind(app: &AppHandle, instance_id: &str, label: &str, is_update: bool) -> Self {
+    let monitor = app.state::<Pin<Box<TaskMonitor>>>();
+    let kind = if is_update {
+      "modpack-update"
+    } else {
+      "modpack-install"
+    };
+    let group = format!(
+      "{kind}?{} [{}]@{}",
+      label.replace(['?', '@', '\n', '\r'], " "),
+      instance_id.replace(['?', '@', '\n', '\r'], " "),
+      chrono::Utc::now().timestamp_millis()
+    );
+    Self::with_handles(group.clone(), is_update, |filename, total| {
+      upload_handle(app, monitor.get_new_id(), &group, filename.into(), total)
+    })
   }
 }
 
@@ -734,11 +811,13 @@ impl UpdateEnv for AppEnv {
       );
     }
     if let Some(tasks) = &self.tasks {
-      if let Ok(instance) = current_instance(&self.app, &self.instance_id) {
-        if let Some(mut record) = load_campus_install_record(&instance.version_path) {
-          record.progress = Some(progress);
-          if let Err(error) = save_campus_install_record(&instance.version_path, &record) {
-            log::warn!("cannot save campus install progress: {error:?}");
+      if !tasks.is_update {
+        if let Ok(instance) = current_instance(&self.app, &self.instance_id) {
+          if let Some(mut record) = load_campus_install_record(&instance.version_path) {
+            record.progress = Some(progress);
+            if let Err(error) = save_campus_install_record(&instance.version_path, &record) {
+              log::warn!("cannot save campus install progress: {error:?}");
+            }
           }
         }
       }
@@ -750,7 +829,9 @@ impl UpdateEnv for AppEnv {
         Stage::Applying | Stage::Finalizing => (&tasks.applying, Some(&tasks.fetching)),
       };
       if let Some(previous) = next {
-        if !previous.read().unwrap().status().is_completed() {
+        if !(tasks.is_update && progress.stage == Stage::Preparing)
+          && !previous.read().unwrap().status().is_completed()
+        {
           CampusInstallTasks::complete(previous);
         }
       }
@@ -1772,13 +1853,85 @@ pub async fn apply_modpack_update(
   instance_id: String,
   plan_hash: String,
   choices: BTreeMap<String, ConflictChoice>,
-) -> USTBLResult<UpdateOutcome> {
+) -> USTBLResult<UpdateStarted> {
   let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let guard = PlanGuard::acquire(&target.root)?;
   if has_campus_install(&target.root) {
     return Err(InstanceError::ModpackInstallInterrupted.into());
   }
-  apply_modpack_update_inner(app, instance_id, plan_hash, choices, guard).await
+  ensure_not_running(&app, &instance_id)?;
+  let tasks = CampusInstallTasks::register_kind(&app, &instance_id, &target.instance.name, true);
+  let monitor = app.state::<Pin<Box<TaskMonitor>>>();
+  monitor.register_modpack_update_group(
+    &instance_id,
+    &tasks.group,
+    &tasks.all().into_iter().cloned().collect::<Vec<_>>(),
+  );
+  let group = tasks.group.clone();
+  let anchor = tasks.applying.read().unwrap().desc.task_id;
+  let app_for_job = app.clone();
+  let group_for_job = group.clone();
+  let (start, ready) = tokio::sync::oneshot::channel::<()>();
+  let job = tauri::async_runtime::spawn(async move {
+    let _guard = guard;
+    if ready.await.is_err() {
+      return;
+    }
+    let mut result = run_modpack_update_task(apply_modpack_update_inner(
+      app_for_job.clone(),
+      instance_id.clone(),
+      plan_hash.clone(),
+      choices,
+      tasks.clone(),
+    ))
+    .await;
+    if result.is_err() {
+      log::warn!("modpack update failed: {:?}", result.as_ref().err());
+      // An unwound worker may have left a journal. Recover it before releasing
+      // the plan claim, just as the next opening of the dialog would do.
+      if let Err(error) = recover_checked(&target.root, || {
+        ensure_not_running(&app_for_job, &instance_id)
+      }) {
+        log::warn!("modpack update recovery failed: {error:?}");
+        result = Err(error);
+      }
+      refresh_and_update_instances(&app_for_job, false).await;
+    }
+    plan_cache::clear_plan_cache(&target.root);
+    tasks.finish(result.as_ref().err().map(|error| error.0.as_str()));
+    app_for_job
+      .state::<Pin<Box<TaskMonitor>>>()
+      .finish_job_group(&group_for_job, anchor, result.is_ok());
+    drop(_guard);
+    let (outcome, error) = match result {
+      Ok(outcome) => (Some(outcome), None),
+      Err(error) => (None, Some(error.0)),
+    };
+    let _ = app_for_job.emit_to(
+      "main",
+      "modpack-update:finished",
+      ModpackUpdateFinished {
+        instance_id,
+        instance_name: target.instance.name,
+        group: group_for_job,
+        plan_hash,
+        outcome,
+        error,
+      },
+    );
+  });
+  monitor.bind_job(anchor, job);
+  let _ = start.send(());
+  Ok(UpdateStarted { group })
+}
+
+async fn run_modpack_update_task(
+  task: impl std::future::Future<Output = USTBLResult<UpdateOutcome>> + Send + 'static,
+) -> USTBLResult<UpdateOutcome> {
+  tokio::spawn(task).await.map_err(|error| {
+    log::warn!("modpack update task terminated: {error:?}");
+    crate::error::USTBLError::from(InstanceError::ModpackUpdateTaskFailed)
+  })?
 }
 
 async fn apply_modpack_update_inner(
@@ -1786,7 +1939,7 @@ async fn apply_modpack_update_inner(
   instance_id: String,
   plan_hash: String,
   choices: BTreeMap<String, ConflictChoice>,
-  _plan_guard: PlanGuard,
+  tasks: CampusInstallTasks,
 ) -> USTBLResult<UpdateOutcome> {
   // What the player answered, before anything is checked: a Stale answer
   // below must not take the record of the choices with it. Paths, hunk
@@ -1803,7 +1956,9 @@ async fn apply_modpack_update_inner(
   }
   let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   ensure_not_running(&app, &instance_id)?;
-  let reporter = AppEnv::preparing(&app, &target);
+  let mut reporter = AppEnv::preparing(&app, &target);
+  reporter.tasks = Some(tasks);
+  reporter.progress(Stage::Preparing);
   let baseline = load_baseline(&target).await?;
   recover_checked(&target.root, || ensure_not_running(&app, &instance_id))?;
   let latest = latest_version(&app, &target.origin)
@@ -1870,7 +2025,7 @@ async fn apply_modpack_update_inner(
     loader: remote.loader.clone(),
     loader_install_pending: AtomicBool::new(false),
     started: reporter.started,
-    tasks: None,
+    tasks: reporter.tasks,
   };
   let version_id = remote.version_id.clone();
   let mut apply_choices = choices.clone();
@@ -1900,12 +2055,8 @@ async fn apply_modpack_update_inner(
     },
   )
   .await;
-  if result.is_err() {
-    // A rolled back update restored the files on disk; drop stale memory.
-    refresh_and_update_instances(&app, false).await;
-  }
-  // Applied or not, the preview was consumed.
-  plan_cache::clear_plan_cache(&target.root);
+  // The supervisor refreshes memory on every error, including preparation and
+  // panic failures, and consumes the preview while it still holds PlanGuard.
   result?;
   Ok(UpdateOutcome {
     version_id,
@@ -2375,10 +2526,14 @@ async fn resume_campus_client(
 pub async fn recover_modpack_update(app: AppHandle, instance_id: String) -> USTBLResult<bool> {
   let instance = current_instance(&app, &instance_id)?;
   let root = instance.version_path.clone();
+  let guard = PlanGuard::acquire(&root)?;
   let check_app = app.clone();
   let outcome = tokio::task::spawn_blocking({
     let root = root.clone();
-    move || recover_checked(&root, || ensure_not_running(&check_app, &instance_id))
+    move || {
+      let _guard = guard;
+      recover_checked(&root, || ensure_not_running(&check_app, &instance_id))
+    }
   })
   .await
   .map_err(|e| crate::error::USTBLError(e.to_string()))??;
@@ -2395,6 +2550,129 @@ pub async fn recover_modpack_update(app: AppHandle, instance_id: String) -> USTB
 mod tests {
   use super::*;
   use crate::instance::models::misc::InstanceError;
+
+  #[derive(Clone, Default)]
+  struct StageSink(Arc<Mutex<Vec<String>>>);
+
+  impl Sink for StageSink {
+    fn report_progress(
+      &self,
+      _: u32,
+      _: Option<&str>,
+      _: i64,
+      _: i64,
+      _: u32,
+      _: Option<f64>,
+      _: f64,
+    ) {
+    }
+    fn report_completion(&self, _: u32, _: Option<&str>) {
+      self.0.lock().unwrap().push("completed".into());
+    }
+    fn report_stopped(&self, _: u32, _: Option<&str>) {}
+    fn report_cancelled(&self, _: u32, _: Option<&str>) {}
+    fn report_started(&self, _: u32, _: Option<&str>, _: i64) {}
+    fn report_failed(&self, _: u32, _: Option<&str>, reason: String) {
+      self.0.lock().unwrap().push(reason);
+    }
+  }
+
+  #[tokio::test]
+  async fn update_groups_register_four_stages_and_finish_success_or_readable_failure() {
+    use crate::tasks::streams::desc::PStatus;
+    use crate::tasks::streams::reporter::Reporter;
+    use crate::tasks::upload::UploadParam;
+    let root = std::env::temp_dir().join(format!("ustbl-update-card-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    for failure in [None, Some("MODPACK_UPDATE_VERIFY_FAILED")] {
+      let sink = StageSink::default();
+      let mut id = 0;
+      let mut created = Vec::new();
+      let tasks = CampusInstallTasks::with_handles(
+        "modpack-update?test@1".into(),
+        true,
+        |name, total| {
+          created.push(name.to_owned());
+          id += 1;
+          Arc::new(RwLock::new(PHandle::new(
+            PDesc::new(
+              id,
+              Some("modpack-update?test@1".into()),
+              total,
+              PTaskParam::Upload(UploadParam { filename: name.into() }),
+              PStatus::Waiting,
+            ),
+            std::time::Duration::from_secs(1),
+            root.join(format!("{id}.json")),
+            Reporter::new(total, std::time::Duration::from_secs(1), sink.clone()),
+          )))
+        },
+      );
+      assert_eq!(created, ["Preparing", "Locating", "Fetching", "Applying"]);
+      assert_eq!(tasks.all().len(), 4);
+      CampusInstallTasks::complete(&tasks.preparing);
+      CampusInstallTasks::complete(&tasks.locating);
+      CampusInstallTasks::start(&tasks.fetching);
+      tasks.finish(failure);
+      if let Some(reason) = failure {
+        assert!(matches!(
+          tasks.fetching.read().unwrap().status(),
+          PStatus::Failed
+        ));
+        assert!(sink.0.lock().unwrap().contains(&reason.to_string()));
+        assert!(tasks.applying.read().unwrap().status().is_waiting());
+      } else {
+        assert!(tasks
+          .all()
+          .iter()
+          .all(|task| task.read().unwrap().status().is_completed()));
+      }
+    }
+    fs::remove_dir_all(root).unwrap();
+  }
+
+  #[tokio::test]
+  async fn update_supervisor_catches_panic_and_holds_instance_claim_through_final_result() {
+    let root = std::env::temp_dir().join(format!("ustbl-update-panic-{}", uuid::Uuid::new_v4()));
+    let guard = PlanGuard::acquire(&root).unwrap();
+    let error = run_modpack_update_task(async { panic!("simulated update panic") })
+      .await
+      .unwrap_err();
+    assert_eq!(error.0, "MODPACK_UPDATE_TASK_FAILED");
+    assert!(PlanGuard::acquire(&root).is_err());
+    let event = ModpackUpdateFinished {
+      instance_id: "test".into(),
+      instance_name: "test".into(),
+      group: "modpack-update?test@1".into(),
+      plan_hash: "hash".into(),
+      outcome: None,
+      error: Some(error.0),
+    };
+    assert_eq!(
+      serde_json::to_value(event).unwrap()["error"],
+      "MODPACK_UPDATE_TASK_FAILED"
+    );
+    drop(guard);
+    assert!(PlanGuard::acquire(&root).is_ok());
+  }
+
+  #[tokio::test]
+  async fn update_supervisor_preserves_outcome_and_normal_failure() {
+    let outcome = run_modpack_update_task(async {
+      Ok(UpdateOutcome {
+        version_id: "next".into(),
+        loader_install_pending: true,
+      })
+    })
+    .await
+    .unwrap();
+    assert!(outcome.loader_install_pending);
+    assert_eq!(outcome.version_id, "next");
+    let error = run_modpack_update_task(async { Err(InstanceError::ModpackUpdateStale.into()) })
+      .await
+      .unwrap_err();
+    assert_eq!(error.0, "MODPACK_UPDATE_STALE");
+  }
 
   #[tokio::test]
   async fn persisted_installs_skip_the_entire_update_check_including_the_platform() {

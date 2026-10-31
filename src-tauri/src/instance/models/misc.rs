@@ -361,6 +361,7 @@ pub enum InstanceError {
   ModpackInstallStagingMismatch,
   ModpackInstallInterrupted,
   ModpackInstallTaskFailed,
+  ModpackUpdateTaskFailed,
   ModpackUploadRestarted,
   ModpackUploadCloudUnavailable,
   ModpackUploadVerifyFailed,

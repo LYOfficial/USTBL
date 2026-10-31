@@ -647,6 +647,8 @@
     }
   },
   "DownloadTasksPage": {
+    "updateStarted": "整合包更新已加入任务页",
+    "recheckUpdate": "重新检查更新",
     "title": "下载与上传任务",
     "unfinishedPublish": {
       "title": "未完成的发布",
@@ -700,7 +702,8 @@
       "launcher-update": "更新启动器",
       "mojang-java": "Java {{param}} 运行时",
       "modpack-publish": "发布整合包 {{param}}",
-      "modpack-install": "安装整合包 {{param}}"
+      "modpack-install": "安装整合包 {{param}}",
+      "modpack-update": "更新整合包 {{param}}"
     },
     "installStage": {
       "waitingclient": "等待游戏客户端",
@@ -2250,6 +2253,7 @@
             "INSTANCE_NOT_FOUND_BY_ID": "实例 ID 不存在",
             "LAUNCH_INSTANCE_INSTALLING": "此实例的校内安装尚未完成，暂时无法启动。请先前往下载与上传任务完成安装。",
             "NO_SUITABLE_JAVA": "没有合适的 Java 运行时可供选择",
+            "MODPACK_UPDATE_BUSY": "该实例的整合包正在更新，请等待更新任务结束后再启动",
             "SELECTED_JAVA_UNAVAILABLE": "手动选择的 Java 运行时已移除或不可用"
           }
         }
@@ -2757,6 +2761,10 @@
         "error": {
           "title": "整合包更新失败",
           "description": {
+            "MODPACK_UPDATE_TASK_FAILED": "更新任务意外终止，详情已记录到启动器日志；请重新检查更新",
+            "NETWORK_ERROR": "网络请求重试后仍失败，请恢复网络后重新检查更新",
+            "FILE_OPERATION_ERROR": "更新时无法读写文件，请检查磁盘空间和权限后重新检查更新",
+            "UNKNOWN_ERROR": "更新失败，详情已记录到启动器日志；请重新检查更新",
             "MODPACK_UPDATE_BUSY": "该整合包正在更新中",
             "MODPACK_UPDATE_VERIFY_FAILED": "下载的文件校验失败，未对实例做任何修改",
             "MODPACK_UPDATE_STALE": "本地文件在检查后发生了变化，请重新检查更新",

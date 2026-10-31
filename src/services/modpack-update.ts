@@ -1,11 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
   ModpackConflictChoice,
   ModpackIgnoredItem,
   ModpackLocalChange,
   ModpackUpdateCheck,
-  ModpackUpdateOutcome,
+  ModpackUpdateFinished,
   ModpackUpdatePlan,
+  ModpackUpdateStarted,
 } from "@/models/modpack-update";
 import { InvokeResponse } from "@/models/response";
 import { responseHandler } from "@/utils/response";
@@ -65,12 +67,24 @@ export class ModpackUpdateService {
     instanceId: string,
     planHash: string,
     choices: Record<string, ModpackConflictChoice>
-  ): Promise<InvokeResponse<ModpackUpdateOutcome>> {
+  ): Promise<InvokeResponse<ModpackUpdateStarted>> {
     return await invoke("apply_modpack_update", {
       instanceId,
       planHash,
       choices,
     });
+  }
+
+  static onUpdateFinished(
+    callback: (payload: ModpackUpdateFinished) => void
+  ): () => void {
+    const unlisten = getCurrentWebview().listen<ModpackUpdateFinished>(
+      "modpack-update:finished",
+      (event) => callback(event.payload)
+    );
+    return () => {
+      unlisten.then((removeListener) => removeListener());
+    };
   }
 
   /**

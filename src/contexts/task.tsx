@@ -1,5 +1,6 @@
 import { useToast as useChakraToast } from "@chakra-ui/react";
 import { emit } from "@tauri-apps/api/event";
+import { useRouter } from "next/router";
 import React, {
   createContext,
   useCallback,
@@ -18,6 +19,7 @@ import {
   CampusUnfinishedInstall,
   CampusUnfinishedPublish,
 } from "@/models/campus-modpack";
+import { ModpackUpdateFinished } from "@/models/modpack-update";
 import {
   CreatedPTaskEventStatus,
   FailedPTaskEventStatus,
@@ -37,6 +39,7 @@ import {
 import { CampusModpackService } from "@/services/campus-modpack";
 import { ConfigService } from "@/services/config";
 import { InstanceService } from "@/services/instance";
+import { ModpackUpdateService } from "@/services/modpack-update";
 import { TaskService } from "@/services/task";
 import {
   compareCampusInstallStages,
@@ -46,9 +49,15 @@ import {
 } from "@/utils/campus-install-task";
 import { takeLoaderCompletions } from "@/utils/loader-completion";
 import { takePendingModpackOrigin } from "@/utils/modpack-origin";
+import {
+  finishModpackUpdate,
+  isModpackUpdateGroup,
+  localizeModpackUpdateError,
+} from "@/utils/modpack-update-task";
 
 interface TaskContextType {
   installProgress: Record<string, CampusInstallProgress>;
+  updateResults: Record<string, ModpackUpdateFinished>;
   tasks: TaskGroupDesc[];
   generalPercent: number | undefined; // General progress percentage for all tasks
   /** Publish records waiting on the user (§3.2.3); the nav-bar task button
@@ -76,7 +85,8 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
 }) => {
   const toast = useToast();
   const { close: closeToast } = useChakraToast();
-  const { getInstanceList } = useGlobalData();
+  const { getInstanceList, checkModpackUpdate } = useGlobalData();
+  const router = useRouter();
   const { getJavaInfos } = useLauncherConfig();
   const { openSharedModal } = useSharedModals();
   const [tasks, setTasks] = useState<TaskGroupDesc[]>([]);
@@ -87,6 +97,9 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
     CampusUnfinishedInstall[]
   >([]);
   const [generalPercent, setGeneralPercent] = useState<number>();
+  const [updateResults, setUpdateResults] = useState<
+    Record<string, ModpackUpdateFinished>
+  >({});
   const { t } = useTranslation();
   const loaderCompletionClaims = React.useRef(new Map<string, Set<string>>());
   const loaderInstallsInFlight = React.useRef(new Set<string>());
@@ -176,7 +189,10 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
       t.progress = t.total ? (t.current * 100) / t.total : 0;
     });
     group.taskDescs.sort((a, b) => {
-      if (isCampusInstallGroup(group.taskGroup)) {
+      if (
+        isCampusInstallGroup(group.taskGroup) ||
+        isModpackUpdateGroup(group.taskGroup)
+      ) {
         return compareCampusInstallStages(a, b);
       }
       let level = (desc: TaskDesc) => {
@@ -556,11 +572,12 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
             ];
           }
 
-          // Publishing and campus installs report their own final result.
-          // The install's initial toast is emitted when it is submitted.
+          // Modpack jobs report their own final result, independently of dialogs.
+          // Installer-only groups continue into loader preparation silently.
           if (
             name !== "modpack-publish" &&
             name !== "modpack-install" &&
+            name !== "modpack-update" &&
             name !== "loader-installer" &&
             name !== "optifine-installer"
           )
@@ -663,6 +680,49 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
   const [unfinishedPublishes, setUnfinishedPublishes] = useState<
     CampusUnfinishedPublish[]
   >([]);
+
+  // Keep the native listener mounted across list refreshes and navigation.
+  const updateFinishedHandler = React.useRef<
+    (payload: ModpackUpdateFinished) => void
+  >(() => {});
+  updateFinishedHandler.current = (payload) => {
+    setUpdateResults((previous) => ({
+      ...previous,
+      [payload.group]: payload,
+    }));
+    finishModpackUpdate(payload, {
+      refresh: () => {
+        getInstanceList(true);
+      },
+      check: checkModpackUpdate,
+      notify: (failed, error) =>
+        toast({
+          title: t(
+            failed
+              ? "Services.instance.applyModpackUpdate.error.title"
+              : "Services.instance.applyModpackUpdate.success"
+          ),
+          description: error
+            ? localizeModpackUpdateError(t, error)
+            : payload.instanceName,
+          status: failed ? "error" : "success",
+        }),
+      loaderPending: () => {
+        toast({
+          title: t("UpdateModpackModal.toast.loaderPending"),
+          status: "info",
+        });
+        void router.push("/downloads");
+      },
+    });
+  };
+  useEffect(
+    () =>
+      ModpackUpdateService.onUpdateFinished((payload) =>
+        updateFinishedHandler.current(payload)
+      ),
+    []
+  );
   const refreshUnfinishedPublishes = useCallback(() => {
     CampusModpackService.listCampusModpackPublishJobs().then((response) => {
       if (response.status === "success") setUnfinishedPublishes(response.data);
@@ -792,6 +852,7 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
       value={{
         tasks,
         installProgress,
+        updateResults,
         generalPercent,
         unfinishedPublishes,
         refreshUnfinishedPublishes,

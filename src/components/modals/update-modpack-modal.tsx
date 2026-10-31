@@ -19,7 +19,6 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { useRouter } from "next/router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LuChevronDown, LuChevronRight } from "react-icons/lu";
@@ -38,7 +37,8 @@ import {
 import { CampusModpackService } from "@/services/campus-modpack";
 import { ModpackUpdateService } from "@/services/modpack-update";
 import {
-  RememberedChoices,
+  failedUpdatePlans,
+  rememberedChoices,
   resolvePlanChoices,
 } from "@/utils/modpack-update-choices";
 
@@ -55,9 +55,6 @@ interface PlanError {
   message: string;
   details?: string;
 }
-
-/** Conflict choices remembered per instance while the launcher runs. */
-const rememberedChoices: RememberedChoices = new Map();
 
 const formatSize = (size?: number) => {
   if (size === undefined) return "";
@@ -157,7 +154,6 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
   const { t } = useTranslation();
   const { config } = useLauncherConfig();
   const toast = useToast();
-  const router = useRouter();
   const { getInstanceList, checkModpackUpdate } = useGlobalData();
   const primaryColor = config.appearance.theme.primaryColor;
 
@@ -176,12 +172,9 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
   // Each run of the open/retry flow gets a token; a preview that answers to
   // an older token is stale (cancelled by the check or a retry) and dropped.
   const roundRef = useRef(0);
-  const planRef = useRef(plan);
-  planRef.current = plan;
   // After a failed apply the choices stay until the re-check proves the plan
   // still is the one they were made for. The failed plan's hash travels in a
-  // ref: runCheck's setPlan(null) clears planRef long before the new prepare
-  // answers.
+  // ref: runCheck clears the displayed plan before the new prepare answers.
   const keepChoicesForRecheckRef = useRef(false);
   const failedPlanHashRef = useRef<string | null>(null);
   // Synchronous in-flight guards so two clicks inside the same render frame
@@ -206,6 +199,7 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
           keepChoicesForRecheckRef.current = false;
           const failedPlanHash = failedPlanHashRef.current;
           failedPlanHashRef.current = null;
+          failedUpdatePlans.delete(instanceId);
           const resolved = resolvePlanChoices({
             instanceId,
             newPlanHash: response.data.planHash,
@@ -246,6 +240,13 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
     checkInFlight.current = true;
     try {
       const round = ++roundRef.current;
+      const failedHash = failedUpdatePlans.get(instanceId);
+      if (failedHash) {
+        keepChoicesForRecheckRef.current = true;
+        failedPlanHashRef.current = failedHash;
+        choicesRef.current = rememberedChoices.get(instanceId)?.choices ?? {};
+        setChoices(choicesRef.current);
+      }
       setCheckPhase("checking");
       setPlanPhase("planning");
       setPlan(null);
@@ -267,6 +268,20 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
       // An interrupted update is rolled back before anything is compared.
       const recovered =
         await ModpackUpdateService.recoverModpackUpdate(instanceId);
+      if (
+        recovered.status !== "success" &&
+        recovered.raw_error === InstanceError.ModpackUpdateBusy
+      ) {
+        setCheck({
+          status: "unknown",
+          follow: true,
+          canRollBack: false,
+          reason: InstanceError.ModpackUpdateBusy,
+        });
+        setCheckPhase("checked");
+        setPlanPhase("idle");
+        return;
+      }
       if (recovered.status === "success" && recovered.data) {
         getInstanceList(true);
       }
@@ -305,18 +320,16 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
     void runCheckRef.current();
   }, [instanceId]);
 
-  // Remember the current choices when the dialog closes, by plan hash.
+  // Save before submitting: even a completion before the acknowledgement can
+  // clear these, without a later unmount writing stale choices back.
   useEffect(() => {
-    return () => {
-      const plan = planRef.current;
-      if (plan) {
-        rememberedChoices.set(instanceId, {
-          planHash: plan.planHash,
-          choices: choicesRef.current,
-        });
-      }
-    };
-  }, [instanceId]);
+    if (plan && checkPhase !== "applying") {
+      rememberedChoices.set(instanceId, {
+        planHash: plan.planHash,
+        choices,
+      });
+    }
+  }, [instanceId, plan, choices, checkPhase]);
 
   useEffect(() => {
     return CampusModpackService.onInstallProgress((payload) => {
@@ -328,6 +341,7 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
     if (!plan || applyInFlight.current) return;
     applyInFlight.current = true;
     try {
+      rememberedChoices.set(instanceId, { planHash: plan.planHash, choices });
       setProgress(null);
       setCheckPhase("applying");
       // Take the plan off the screen so its buttons stop rendering.
@@ -337,24 +351,12 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
         plan.planHash,
         choices
       );
-      getInstanceList(true);
       if (response.status === "success") {
-        // The ledger reads local changes from the cached check; refresh it so
-        // conflicts answered with the remote side stop counting.
-        void checkModpackUpdate(instanceId, true);
-        rememberedChoices.delete(instanceId);
         toast({
-          title: response.message,
-          description: plan.toLabel,
-          status: "success",
+          title: t("DownloadTasksPage.updateStarted"),
+          description: instanceName,
+          status: "info",
         });
-        if (response.data.loaderInstallPending) {
-          toast({
-            title: t("UpdateModpackModal.toast.loaderPending"),
-            status: "info",
-          });
-          router.push("/downloads");
-        }
         modalProps.onClose();
       } else {
         toast({
@@ -372,18 +374,7 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
     } finally {
       applyInFlight.current = false;
     }
-  }, [
-    plan,
-    instanceId,
-    choices,
-    getInstanceList,
-    checkModpackUpdate,
-    toast,
-    t,
-    router,
-    modalProps,
-    runCheck,
-  ]);
+  }, [plan, instanceId, choices, instanceName, toast, t, modalProps, runCheck]);
 
   const handleRollback = useCallback(async () => {
     if (rollbackInFlight.current) return;

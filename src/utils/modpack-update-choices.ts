@@ -6,6 +6,9 @@ export type RememberedChoices = Map<
   { planHash: string; choices: Record<string, ModpackConflictChoice> }
 >;
 
+export const rememberedChoices: RememberedChoices = new Map();
+export const failedUpdatePlans = new Map<string, string>();
+
 /**
  * The choices the dialog should show when `newPlanHash` is prepared. After a
  * failed apply (`recheckAfterFailure`) the player's own answers survive only

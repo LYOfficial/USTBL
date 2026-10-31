@@ -647,6 +647,8 @@
     }
   },
   "DownloadTasksPage": {
+    "updateStarted": "整合包更新已加入任務頁",
+    "recheckUpdate": "重新檢查更新",
     "title": "下載與上傳任務",
     "unfinishedPublish": {
       "title": "未完成的發佈",
@@ -700,7 +702,8 @@
       "launcher-update": "更新啟動器",
       "mojang-java": "Java {{param}} 執行時",
       "modpack-publish": "發布整合包 {{param}}",
-      "modpack-install": "安裝整合包 {{param}}"
+      "modpack-install": "安裝整合包 {{param}}",
+      "modpack-update": "更新整合包 {{param}}"
     },
     "installStage": {
       "waitingclient": "等待遊戲用戶端",
@@ -2250,7 +2253,8 @@
             "INSTANCE_NOT_FOUND_BY_ID": "實例 ID 不存在",
             "LAUNCH_INSTANCE_INSTALLING": "此實例的校內安裝尚未完成，暫時無法啟動。請先前往下載與上傳任務完成安裝。",
             "NO_SUITABLE_JAVA": "沒有合適的 Java 執行時可供選擇",
-            "SELECTED_JAVA_UNAVAILABLE": "手動選擇的 Java 執行時已移除或不可用"
+            "SELECTED_JAVA_UNAVAILABLE": "手動選擇的 Java 執行時已移除或不可用",
+            "MODPACK_UPDATE_BUSY": "此實例的整合包正在更新，請等待更新任務結束後再啟動"
           }
         }
       },
@@ -2757,6 +2761,10 @@
         "error": {
           "title": "整合包更新失敗",
           "description": {
+            "MODPACK_UPDATE_TASK_FAILED": "更新任務意外終止，詳情已記錄至啟動器日誌；請重新檢查更新",
+            "NETWORK_ERROR": "網路請求重試後仍失敗，請恢復網路後重新檢查更新",
+            "FILE_OPERATION_ERROR": "更新時無法讀寫檔案，請檢查磁碟空間和權限後重新檢查更新",
+            "UNKNOWN_ERROR": "更新失敗，詳情已記錄至啟動器日誌；請重新檢查更新",
             "MODPACK_UPDATE_BUSY": "此整合包正在更新中",
             "MODPACK_UPDATE_VERIFY_FAILED": "下載的檔案校驗失敗，未對實例做任何修改",
             "MODPACK_UPDATE_STALE": "本機檔案在檢查後發生了變化，請重新檢查更新",

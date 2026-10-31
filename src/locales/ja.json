@@ -647,6 +647,8 @@
     }
   },
   "DownloadTasksPage": {
+    "updateStarted": "モッドパックの更新をタスクページに追加しました",
+    "recheckUpdate": "更新を再確認",
     "title": "ダウンロード・アップロードタスク",
     "unfinishedPublish": {
       "title": "未完了の公開",
@@ -700,7 +702,8 @@
       "launcher-update": "ランチャーを更新",
       "mojang-java": "Java {{param}} ランタイム",
       "modpack-publish": "モッドパックを公開 {{param}}",
-      "modpack-install": "モッドパックをインストール {{param}}"
+      "modpack-install": "モッドパックをインストール {{param}}",
+      "modpack-update": "モッドパックを更新 {{param}}"
     },
     "installStage": {
       "waitingclient": "ゲームクライアントを待機中",
@@ -2250,7 +2253,8 @@
             "INSTANCE_NOT_FOUND_BY_ID": "インスタンス ID が存在しません",
             "LAUNCH_INSTANCE_INSTALLING": "このインスタンスは学内パックのインストールが未完了のため起動できません。「ダウンロードとアップロードのタスク」でインストールを完了してください。",
             "NO_SUITABLE_JAVA": "選択可能な適切な Java ランタイムがありません",
-            "SELECTED_JAVA_UNAVAILABLE": "手動で選択した Java ランタイムが削除されたか利用できません"
+            "SELECTED_JAVA_UNAVAILABLE": "手動で選択した Java ランタイムが削除されたか利用できません",
+            "MODPACK_UPDATE_BUSY": "このインスタンスのモッドパックは更新中です。更新タスクの完了後に起動してください"
           }
         }
       },
@@ -2757,6 +2761,10 @@
         "error": {
           "title": "モッドパックの更新に失敗しました",
           "description": {
+            "MODPACK_UPDATE_TASK_FAILED": "更新タスクが予期せず終了しました。ランチャーログを確認し、更新を再確認してください",
+            "NETWORK_ERROR": "再試行後もネットワーク要求に失敗しました。接続を復旧して更新を再確認してください",
+            "FILE_OPERATION_ERROR": "更新ファイルを読み書きできません。ディスク容量と権限を確認して更新を再確認してください",
+            "UNKNOWN_ERROR": "更新に失敗しました。ランチャーログを確認し、更新を再確認してください",
             "MODPACK_UPDATE_BUSY": "このModパックは更新中です",
             "MODPACK_UPDATE_VERIFY_FAILED": "ダウンロードしたファイルの検証に失敗しました。インスタンスは変更されていません",
             "MODPACK_UPDATE_STALE": "確認後にローカルファイルが変更されました。もう一度更新を確認してください",
