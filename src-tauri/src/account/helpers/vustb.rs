@@ -10,11 +10,11 @@ use crate::error::{USTBLError, USTBLResult};
 use crate::storage::Storage;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::sync::{LazyLock, Mutex};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_http::reqwest::{self, RequestBuilder};
 
 const VUSTB_ISSUER: &str = "https://www.ustb.world";
-static SESSION_REFRESH_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+pub static SESSION_REFRESH_LOCK: LazyLock<tokio::sync::Mutex<()>> =
   LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 #[derive(Deserialize)]
@@ -172,11 +172,11 @@ async fn get_json_with_token<T: DeserializeOwned>(
 }
 
 fn tokens_from_state(state: &AccountInfo) -> USTBLResult<OAuthTokens> {
-  if let Some(session) = state
-    .vustb_session
-    .as_ref()
-    .filter(|session| !session.access_token.is_empty())
-  {
+  if let Some(session) = state.vustb_session.as_ref() {
+    // An empty independent session is a persisted reauthentication marker.
+    if session.access_token.is_empty() {
+      return Err(AccountError::Expired.into());
+    }
     return Ok(OAuthTokens {
       access_token: session.access_token.clone(),
       refresh_token: session.refresh_token.clone(),
@@ -206,6 +206,12 @@ pub fn stored_tokens(app: &AppHandle) -> USTBLResult<OAuthTokens> {
 pub fn store_tokens(app: &AppHandle, tokens: &OAuthTokens) -> USTBLResult<()> {
   let binding = app.state::<Mutex<AccountInfo>>();
   let mut state = binding.lock()?;
+  apply_tokens(&mut state, tokens);
+  state.save()?;
+  Ok(())
+}
+
+pub fn apply_tokens(state: &mut AccountInfo, tokens: &OAuthTokens) {
   state.vustb_session = Some(VustbSession {
     access_token: tokens.access_token.clone(),
     refresh_token: tokens.refresh_token.clone(),
@@ -219,15 +225,38 @@ pub fn store_tokens(app: &AppHandle, tokens: &OAuthTokens) -> USTBLResult<()> {
     player.access_token = Some(tokens.access_token.clone());
     player.refresh_token = tokens.refresh_token.clone();
   }
-  state.save()?;
-  Ok(())
 }
 
 fn access_token_was_replaced(failed_access_token: Option<&str>, current: &OAuthTokens) -> bool {
   failed_access_token.is_some_and(|token| token != current.access_token)
 }
 
-async fn refresh_session_after(
+pub fn is_expired(error: &USTBLError) -> bool {
+  error.0 == AccountError::Expired.to_string()
+}
+
+fn expire_session(app: &AppHandle) -> USTBLResult<()> {
+  let binding = app.state::<Mutex<AccountInfo>>();
+  let mut state = binding.lock()?;
+  if tokens_from_state(&state).is_err() {
+    return Ok(());
+  }
+  apply_tokens(
+    &mut state,
+    &OAuthTokens {
+      access_token: String::new(),
+      refresh_token: None,
+      id_token: None,
+    },
+  );
+  state.save()?;
+  drop(state);
+  log::warn!("vUSTB session expired; browser reauthentication required");
+  app.emit("ustbl:vustb-session-expired", ())?;
+  Ok(())
+}
+
+pub async fn refresh_session_after(
   app: &AppHandle,
   failed_access_token: Option<&str>,
 ) -> USTBLResult<OAuthTokens> {
@@ -238,8 +267,12 @@ async fn refresh_session_after(
   }
   let refresh_token = current
     .refresh_token
-    .filter(|token| !token.is_empty())
-    .ok_or(AccountError::Expired)?;
+    .clone()
+    .filter(|token| !token.is_empty());
+  let Some(refresh_token) = refresh_token else {
+    expire_session(app)?;
+    return Err(AccountError::Expired.into());
+  };
   let auth_server = AuthServer::from(get_auth_server_info_by_url(
     app,
     USTB_AUTH_SERVER_URL.to_string(),
@@ -252,7 +285,16 @@ async fn refresh_session_after(
     auth_server.redirect_uri,
     auth_server.client_secret,
   )
-  .await?;
+  .await;
+  let tokens = match tokens {
+    Ok(tokens) => tokens,
+    Err(error) => {
+      if is_expired(&error) {
+        expire_session(app)?;
+      }
+      return Err(error);
+    }
+  };
   store_tokens(app, &tokens)?;
   Ok(tokens)
 }
@@ -261,22 +303,45 @@ pub async fn load_all_profiles(app: &AppHandle) -> USTBLResult<OAuthProfileLogin
   let current = stored_tokens(app)?;
   let first_attempt =
     oauth::load_all_profiles(app, USTB_AUTH_SERVER_URL.to_string(), current.clone()).await;
-  let login = match first_attempt {
+  let mut login = match first_attempt {
     Ok(login) => login,
-    Err(error)
-      if current
-        .refresh_token
-        .as_deref()
-        .is_some_and(|token| !token.is_empty()) =>
-    {
+    Err(error) if is_expired(&error) => {
       log::debug!("Refreshing vUSTB session after profile sync failed: {error:?}");
       let refreshed = refresh_session_after(app, Some(&current.access_token)).await?;
       oauth::load_all_profiles(app, USTB_AUTH_SERVER_URL.to_string(), refreshed).await?
     }
     Err(error) => return Err(error),
   };
-  store_tokens(app, &login.tokens)?;
+  let binding = app.state::<Mutex<AccountInfo>>();
+  let mut state = binding.lock()?;
+  if store_tokens_if_current(&mut state, &login.tokens)? {
+    state.save()?;
+  }
+  // Profile fetching can overlap a refresh; never return stale credentials either.
+  let latest = tokens_from_state(&state)?;
+  for player in &mut login.players {
+    player.access_token = Some(latest.access_token.clone());
+    player.refresh_token = latest.refresh_token.clone();
+  }
+  login.tokens = latest;
   Ok(login)
+}
+
+fn store_tokens_if_current(state: &mut AccountInfo, snapshot: &OAuthTokens) -> USTBLResult<bool> {
+  let current = tokens_from_state(state)?;
+  if current.access_token != snapshot.access_token
+    || current.refresh_token != snapshot.refresh_token
+  {
+    return Ok(false);
+  }
+  apply_tokens(state, snapshot);
+  Ok(true)
+}
+
+pub fn synchronize_profile_tokens(state: &mut AccountInfo) -> USTBLResult<()> {
+  let current = tokens_from_state(state)?;
+  apply_tokens(state, &current);
+  Ok(())
 }
 
 pub async fn send_authenticated<F>(
@@ -586,6 +651,71 @@ pub async fn select_profile_texture(
 
 #[cfg(test)]
 mod tests {
+  #[test]
+  fn profile_snapshot_cannot_overwrite_a_concurrent_rotation_or_expiration() {
+    let mut state = AccountInfo::default();
+    let old = OAuthTokens {
+      access_token: "old".into(),
+      refresh_token: Some("old-refresh".into()),
+      id_token: None,
+    };
+    let new = OAuthTokens {
+      access_token: "new".into(),
+      refresh_token: Some("new-refresh".into()),
+      id_token: None,
+    };
+    super::apply_tokens(&mut state, &new);
+    assert!(!super::store_tokens_if_current(&mut state, &old).unwrap());
+    assert_eq!(tokens_from_state(&state).unwrap().access_token, "new");
+    assert!(super::store_tokens_if_current(&mut state, &new).unwrap());
+    state.vustb_session = Some(VustbSession::default());
+    assert!(super::store_tokens_if_current(&mut state, &old).is_err());
+  }
+
+  #[test]
+  fn expired_marker_blocks_legacy_fallback_and_new_tokens_restore_session() {
+    let mut state = AccountInfo::default();
+    state.players = vec![player("one")];
+    state.vustb_account = Some(account("one"));
+    state.vustb_session = Some(VustbSession::default());
+    assert!(super::is_expired(&tokens_from_state(&state).unwrap_err()));
+    super::apply_tokens(
+      &mut state,
+      &OAuthTokens {
+        access_token: "new".into(),
+        refresh_token: Some("new-refresh".into()),
+        id_token: None,
+      },
+    );
+    assert_eq!(tokens_from_state(&state).unwrap().access_token, "new");
+  }
+
+  #[test]
+  fn rotated_tokens_update_session_and_every_vustb_profile() {
+    let mut state = AccountInfo::default();
+    let mut other = player("other");
+    other.auth_server_url = Some("https://other.example".into());
+    state.players = vec![player("one"), player("two"), other];
+    let tokens = OAuthTokens {
+      access_token: "rotated-access".into(),
+      refresh_token: Some("rotated-refresh".into()),
+      id_token: None,
+    };
+    super::apply_tokens(&mut state, &tokens);
+    assert_eq!(
+      tokens_from_state(&state).unwrap().access_token,
+      "rotated-access"
+    );
+    for player in &state.players[..2] {
+      assert_eq!(player.access_token.as_deref(), Some("rotated-access"));
+      assert_eq!(player.refresh_token.as_deref(), Some("rotated-refresh"));
+    }
+    assert_eq!(
+      state.players[2].access_token.as_deref(),
+      Some("legacy-access")
+    );
+  }
+
   use super::reqwest;
   use super::{access_token_was_replaced, response_error, tokens_from_state};
   use crate::account::helpers::authlib_injector::constants::USTB_AUTH_SERVER_URL;

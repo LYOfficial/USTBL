@@ -38,6 +38,20 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
   const notifiedVersionRef = useRef<string | null>(null);
   const knownMessageIds = useRef<Set<number> | null>(null);
 
+  useEffect(() => {
+    if (isStandAlone) return;
+    const unlisten = listen("ustbl:vustb-session-expired", () => {
+      toast({
+        title: "像素北科登录已过期",
+        description: "请在浏览器中重新授权，完成后会自动恢复账户同步。",
+        status: "warning",
+      });
+    });
+    return () => {
+      void unlisten.then((stop) => stop());
+    };
+  }, [isStandAlone, toast]);
+
   const isMainWindowHidden = async () => {
     let mainWindow;
     try {

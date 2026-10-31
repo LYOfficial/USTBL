@@ -38,6 +38,7 @@ import { ResponseError } from "@/models/response";
 import { JavaInfo } from "@/models/system-info";
 import { AccountService } from "@/services/account";
 import { LaunchService } from "@/services/launch";
+import { isVustbPlayer } from "@/utils/account";
 
 // This modal will use shared-modal-context
 interface LaunchProcessModal extends Omit<ModalProps, "children"> {
@@ -135,6 +136,17 @@ const LaunchProcessModal: React.FC<LaunchProcessModal> = ({
       {
         label: "validateSelectedPlayer",
         function: async () => {
+          if (selectedPlayer && isVustbPlayer(selectedPlayer)) {
+            const validation = await LaunchService.validateSelectedPlayer();
+            if (validation.status !== "success" || validation.data) {
+              return validation;
+            }
+            const refreshed = await AccountService.refreshPlayer(
+              selectedPlayer.id
+            );
+            if (refreshed.status !== "success") return refreshed;
+            return LaunchService.validateSelectedPlayer();
+          }
           if (
             selectedPlayer?.playerType === PlayerType.ThirdParty &&
             selectedPlayer.refreshToken
