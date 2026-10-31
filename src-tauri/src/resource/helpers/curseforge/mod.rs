@@ -333,8 +333,10 @@ pub async fn fetch_remote_resource_by_id_curseforge(
   Ok(resource_info)
 }
 
-/// Fingerprints per `POST /fingerprints` request.
-const FINGERPRINTS_BATCH_SIZE: usize = 500;
+/// Fingerprints per `POST /fingerprints` request. Kept small because the mirror
+/// is slow per connection and large replies take long; the caller runs the
+/// batches in parallel.
+pub const FINGERPRINTS_BATCH_SIZE: usize = 50;
 
 /// Match `/fingerprints` results back to the fingerprints that were asked for.
 /// Fingerprints without an exact match are absent from the result.
@@ -359,12 +361,13 @@ fn index_exact_matches(
     .collect()
 }
 
-/// Resolve many fingerprints with one `POST /fingerprints` per
-/// [`FINGERPRINTS_BATCH_SIZE`]. A fingerprint the first source lacks is asked
-/// again, in one request, from the next source; there is no per-file fallback. A
+/// Resolve up to [`FINGERPRINTS_BATCH_SIZE`] fingerprints with one
+/// `POST /fingerprints` per source; the caller splits larger lists and runs the
+/// batches in parallel. A fingerprint the first source lacks is asked again, in
+/// one request, from the next source; there is no per-file fallback. A
 /// fingerprint missing from the result is unknown to the last source that
 /// answered. If a fingerprint could not be settled because every request that
-/// would have done so failed, the whole lookup fails instead.
+/// would have done so failed, the whole batch fails instead.
 ///
 /// Misses are not retried against the same source after a pause: without an API
 /// key MCIM is the only source, and a local jar that is simply not on CurseForge
@@ -381,52 +384,52 @@ pub async fn fetch_remote_resources_by_fingerprints_curseforge(
     return Err(ResourceError::NoDownloadApi.into());
   }
   let client = app.state::<ApiClient>();
-  let mut found = HashMap::new();
 
-  for chunk in fingerprints.chunks(FINGERPRINTS_BATCH_SIZE) {
-    let outcome = lookup_across_sources(&sources, chunk, |source, asked: Vec<u32>| {
-      let client = &client;
-      async move {
-        let url =
-          misc::get_curseforge_api(source, OtherResourceApiEndpoint::FromLocal, None).ok()?;
-        let body = CurseForgeFingerprintsBody {
-          fingerprints: asked.clone(),
-        };
-        match make_curseforge_request::<CurseForgeFingerprintRes, CurseForgeFingerprintsBody>(
-          client,
-          &url,
-          source,
-          OtherResourceRequestType::Post(&body),
-        )
-        .await
-        {
-          Ok(response) => Some(index_exact_matches(response.data.exact_matches, &asked)),
-          Err(error) => {
-            log::warn!(
-              "CurseForge fingerprint lookup via {:?} failed: {:?}",
-              source,
-              error
-            );
-            None
-          }
+  let outcome = lookup_across_sources(&sources, fingerprints, |source, asked: Vec<u32>| {
+    let client = &client;
+    async move {
+      let url = misc::get_curseforge_api(source, OtherResourceApiEndpoint::FromLocal, None).ok()?;
+      let body = CurseForgeFingerprintsBody {
+        fingerprints: asked.clone(),
+      };
+      match make_curseforge_request::<CurseForgeFingerprintRes, CurseForgeFingerprintsBody>(
+        client,
+        &url,
+        source,
+        OtherResourceRequestType::Post(&body),
+      )
+      .await
+      {
+        Ok(response) => Some(index_exact_matches(response.data.exact_matches, &asked)),
+        Err(error) => {
+          log::warn!(
+            "CurseForge fingerprint lookup via {:?} failed: {:?}",
+            source,
+            error
+          );
+          None
         }
       }
-    })
-    .await;
+    }
+  })
+  .await;
 
-    if outcome.found.len() + outcome.not_found.len() < chunk.len() {
-      return Err(ResourceError::NetworkError.into());
-    }
-    for (fingerprint, file) in outcome.found {
-      found.insert(fingerprint, OtherResourceFileInfo::from(&file));
-    }
+  if outcome.found.len() + outcome.not_found.len() < fingerprints.len() {
+    return Err(ResourceError::NetworkError.into());
   }
-
-  Ok(found)
+  Ok(
+    outcome
+      .found
+      .into_iter()
+      .map(|(fingerprint, file)| (fingerprint, OtherResourceFileInfo::from(&file)))
+      .collect(),
+  )
 }
 
-/// Mods per `POST /mods` request.
-pub const MODS_BATCH_SIZE: usize = 200;
+/// Mods per `POST /mods` request. Kept small for the same reason as
+/// [`FINGERPRINTS_BATCH_SIZE`]: the replies are large and the caller runs the
+/// batches in parallel.
+pub const MODS_BATCH_SIZE: usize = 25;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -444,11 +447,12 @@ fn mods_by_id(reply: CurseForgeDataRes<Vec<CurseForgeMod>>) -> HashMap<u64, Curs
     .collect()
 }
 
-/// Projects for many mod ids, one `POST /mods` per [`MODS_BATCH_SIZE`]. Like
-/// the fingerprint lookup, an id the first source lacks is asked again from the
-/// next source, and it is reported as not found only when the last source
-/// answered without it. Ids no source could answer for are in neither field of
-/// the outcome.
+/// Projects for up to [`MODS_BATCH_SIZE`] mod ids in one `POST /mods` per source;
+/// the caller splits larger lists and runs the batches in parallel. Like the
+/// fingerprint lookup, an id the first source lacks is asked again from the next
+/// source, and it is reported as not found only when the last source answered
+/// without it. Ids no source could answer for are in neither field of the
+/// outcome.
 pub async fn fetch_mods_curseforge(
   app: &AppHandle,
   mod_ids: &[u64],
@@ -458,38 +462,32 @@ pub async fn fetch_mods_curseforge(
     .filter(|source| *source != ContentSource::Official || has_official_api_key())
     .collect();
   let client = app.state::<ApiClient>();
-  let mut outcome = LookupOutcome::default();
 
-  for chunk in mod_ids.chunks(MODS_BATCH_SIZE) {
-    outcome.extend(
-      lookup_across_sources(&sources, chunk, |source, asked: Vec<u64>| {
-        let client = &client;
-        async move {
-          let url = format!("{}/mods", curseforge_api_base(source));
-          let body = CurseForgeModsBody {
-            mod_ids: asked,
-            filter_pc_only: false,
-          };
-          match make_curseforge_request::<CurseForgeDataRes<Vec<CurseForgeMod>>, CurseForgeModsBody>(
-            client,
-            &url,
-            source,
-            OtherResourceRequestType::Post(&body),
-          )
-          .await
-          {
-            Ok(reply) => Some(mods_by_id(reply)),
-            Err(error) => {
-              log::warn!("CurseForge {} via {:?} failed: {:?}", url, source, error);
-              None
-            }
-          }
+  lookup_across_sources(&sources, mod_ids, |source, asked: Vec<u64>| {
+    let client = &client;
+    async move {
+      let url = format!("{}/mods", curseforge_api_base(source));
+      let body = CurseForgeModsBody {
+        mod_ids: asked,
+        filter_pc_only: false,
+      };
+      match make_curseforge_request::<CurseForgeDataRes<Vec<CurseForgeMod>>, CurseForgeModsBody>(
+        client,
+        &url,
+        source,
+        OtherResourceRequestType::Post(&body),
+      )
+      .await
+      {
+        Ok(reply) => Some(mods_by_id(reply)),
+        Err(error) => {
+          log::warn!("CurseForge {} via {:?} failed: {:?}", url, source, error);
+          None
         }
-      })
-      .await,
-    );
-  }
-  outcome
+      }
+    }
+  })
+  .await
 }
 
 /// CurseForge identifies local files by a MurmurHash2 fingerprint of their

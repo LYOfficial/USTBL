@@ -21,11 +21,13 @@
 //!   cached.
 //!
 //! A jar Modrinth does not know is then looked up on CurseForge, again in
-//! batches: `POST /fingerprints` (MurmurHash2 to mod id), `POST /mods` (mod id to
-//! slug and class) and the batched MCIM translation. Only those jars are
-//! fingerprinted. If the fingerprint lookup fails, nothing is concluded about
-//! them: the cache keeps "not on Modrinth, CurseForge not asked yet" and the next
-//! refresh asks CurseForge again without repeating the Modrinth requests.
+//! small batches that run in parallel: `POST /fingerprints` (MurmurHash2 to mod
+//! id), `POST /mods` (mod id to slug and class) and the batched MCIM
+//! translation. Only those jars are fingerprinted. If the fingerprint lookup of a
+//! batch fails, nothing is concluded about the jars in it: the cache keeps "not on
+//! Modrinth, CurseForge not asked yet" and the next refresh asks CurseForge again
+//! without repeating the Modrinth requests. Other batches are unaffected, and so
+//! is a failed `POST /mods` batch: only the jars whose mod was in it stay open.
 
 use crate::instance::constants::TRANSLATION_CACHE_EXPIRY_HOURS;
 use crate::instance::helpers::mods::translation::{
@@ -36,6 +38,7 @@ use crate::resource::helpers::batch_lookup::LookupOutcome;
 use crate::resource::helpers::curseforge::fetch_mods_curseforge;
 use crate::resource::helpers::curseforge::fetch_remote_resources_by_fingerprints_curseforge;
 use crate::resource::helpers::curseforge::misc::{resource_type_of_class_id, CurseForgeMod};
+use crate::resource::helpers::curseforge::{FINGERPRINTS_BATCH_SIZE, MODS_BATCH_SIZE};
 use crate::resource::helpers::hashing::curseforge_fingerprint_file_async;
 use crate::resource::helpers::mcim::MCIM_MAX_CONCURRENT_API_REQUESTS;
 use crate::resource::helpers::misc::local_translated_name;
@@ -107,8 +110,8 @@ fn not_on_modrinth() -> RemoteModResolution {
   }
 }
 
-fn batches_of(values: &[String], size: usize) -> Vec<Vec<String>> {
-  values.chunks(size).map(<[String]>::to_vec).collect()
+fn batches_of<T: Clone>(values: &[T], size: usize) -> Vec<Vec<T>> {
+  values.chunks(size).map(<[T]>::to_vec).collect()
 }
 
 /// Resolve `hashes` to names and descriptions. Hashes that could not be looked up
@@ -231,9 +234,10 @@ impl RemoteModLookup for ModrinthLookup<'_> {
 /// [`RemoteModLookup`].
 #[allow(async_fn_in_trait)]
 pub trait CurseForgeModLookup {
-  /// `fingerprint -> mod id` for the fingerprints CurseForge knows. `None` when
-  /// the lookup failed, in which case nothing is known about any of them.
-  async fn mod_ids_by_fingerprint(&self, fingerprints: &[u32]) -> Option<HashMap<u32, u64>>;
+  /// `fingerprint -> mod id` for one batch. Fingerprints CurseForge answered
+  /// without are in `not_found`; if the lookup failed, nothing is known about
+  /// any of them and the outcome is empty.
+  async fn mod_ids_by_fingerprint(&self, fingerprints: &[u32]) -> LookupOutcome<u32, u64>;
   /// Mods by id, with the same outcome rules as [`RemoteModLookup::projects`].
   async fn mods(&self, ids: &[u64]) -> LookupOutcome<u64, CurseForgeMod>;
   async fn translations(&self, mod_ids: &[String]) -> TranslationLookup;
@@ -260,10 +264,22 @@ pub async fn resolve_curseforge_mod_infos<L: CurseForgeModLookup>(
   if asked.is_empty() {
     return HashMap::new();
   }
-  // A failed fingerprint lookup settles nothing, so there is no follow-up request.
-  let Some(mod_id_of) = lookup.mod_ids_by_fingerprint(&asked).await else {
-    return HashMap::new();
-  };
+  // Batches are owned and run like the Modrinth ones above. A failed batch
+  // settles nothing about its fingerprints: they are in neither field of the
+  // merged outcome, and no follow-up request is made for them.
+  let batches: Vec<_> = futures::stream::iter(batches_of(&asked, FINGERPRINTS_BATCH_SIZE))
+    .map(|chunk| async move { lookup.mod_ids_by_fingerprint(&chunk).await })
+    .buffered(MAX_CONCURRENT_BATCHES)
+    .collect()
+    .await;
+  let mut matched = LookupOutcome::default();
+  for outcome in batches {
+    matched.extend(outcome);
+  }
+  let LookupOutcome {
+    found: mod_id_of,
+    not_found: unmatched,
+  } = matched;
 
   let mut mod_ids: Vec<u64> = mod_id_of.values().copied().collect();
   mod_ids.sort_unstable();
@@ -271,7 +287,15 @@ pub async fn resolve_curseforge_mod_infos<L: CurseForgeModLookup>(
   let (mods, translations) = if mod_ids.is_empty() {
     (LookupOutcome::default(), TranslationLookup::default())
   } else {
-    let mods = lookup.mods(&mod_ids).await;
+    let batches: Vec<_> = futures::stream::iter(batches_of(&mod_ids, MODS_BATCH_SIZE))
+      .map(|chunk| async move { lookup.mods(&chunk).await })
+      .buffered(MAX_CONCURRENT_BATCHES)
+      .collect()
+      .await;
+    let mut mods = LookupOutcome::default();
+    for outcome in batches {
+      mods.extend(outcome);
+    }
     let translatable: Vec<String> = mods.found.keys().map(|id| id.to_string()).collect();
     let translations = if translatable.is_empty() {
       TranslationLookup::default()
@@ -284,7 +308,9 @@ pub async fn resolve_curseforge_mod_infos<L: CurseForgeModLookup>(
   let mut resolved = HashMap::new();
   for (hash, fingerprint) in fingerprints {
     let Some(mod_id) = mod_id_of.get(fingerprint) else {
-      resolved.insert(hash.clone(), nowhere());
+      if unmatched.contains(fingerprint) {
+        resolved.insert(hash.clone(), nowhere());
+      }
       continue;
     };
     match mods.found.get(mod_id) {
@@ -316,19 +342,28 @@ struct CurseForgeLookup<'a> {
 }
 
 impl CurseForgeModLookup for CurseForgeLookup<'_> {
-  async fn mod_ids_by_fingerprint(&self, fingerprints: &[u32]) -> Option<HashMap<u32, u64>> {
-    let matches = fetch_remote_resources_by_fingerprints_curseforge(self.app, fingerprints)
-      .await
-      .ok()?;
-    Some(
-      matches
-        .into_iter()
-        .filter_map(|(fingerprint, file)| {
-          let mod_id = file.resource_id.parse::<u64>().ok().filter(|id| *id != 0)?;
-          Some((fingerprint, mod_id))
-        })
-        .collect(),
-    )
+  async fn mod_ids_by_fingerprint(&self, fingerprints: &[u32]) -> LookupOutcome<u32, u64> {
+    let mut outcome = LookupOutcome::default();
+    let Ok(matches) =
+      fetch_remote_resources_by_fingerprints_curseforge(self.app, fingerprints).await
+    else {
+      return outcome;
+    };
+    for fingerprint in fingerprints {
+      let mod_id = matches
+        .get(fingerprint)
+        .and_then(|file| file.resource_id.parse::<u64>().ok())
+        .filter(|id| *id != 0);
+      match mod_id {
+        Some(mod_id) => {
+          outcome.found.insert(*fingerprint, mod_id);
+        }
+        None => {
+          outcome.not_found.insert(*fingerprint);
+        }
+      }
+    }
+    outcome
   }
 
   async fn mods(&self, ids: &[u64]) -> LookupOutcome<u64, CurseForgeMod> {
@@ -736,8 +771,14 @@ mod tests {
     mods_unanswered: bool,
     translations: HashMap<String, String>,
     fail_fingerprints: bool,
+    /// A fingerprint batch containing any of these fingerprints fails.
+    fail_fingerprint_batches_with: HashSet<u32>,
+    /// A mods batch containing any of these ids fails.
+    fail_mod_batches_with: HashSet<u64>,
     fail_translation: bool,
     calls: Mutex<Vec<(&'static str, usize)>>,
+    fingerprints_in_flight: InFlight,
+    mods_in_flight: InFlight,
   }
 
   fn cf_mod(id: u64, slug: &str) -> CurseForgeMod {
@@ -745,27 +786,39 @@ mod tests {
   }
 
   impl CurseForgeModLookup for FakeCurseForge {
-    async fn mod_ids_by_fingerprint(&self, fingerprints: &[u32]) -> Option<HashMap<u32, u64>> {
+    async fn mod_ids_by_fingerprint(&self, fingerprints: &[u32]) -> LookupOutcome<u32, u64> {
       self
         .calls
         .lock()
         .unwrap()
         .push(("fingerprints", fingerprints.len()));
-      if self.fail_fingerprints {
-        return None;
-      }
-      Some(
-        fingerprints
+      self.fingerprints_in_flight.occupy_a_slot().await;
+      let mut outcome = LookupOutcome::default();
+      if self.fail_fingerprints
+        || fingerprints
           .iter()
-          .filter_map(|fp| Some((*fp, *self.mod_of_fingerprint.get(fp)?)))
-          .collect(),
-      )
+          .any(|fp| self.fail_fingerprint_batches_with.contains(fp))
+      {
+        return outcome;
+      }
+      for fingerprint in fingerprints {
+        match self.mod_of_fingerprint.get(fingerprint) {
+          Some(mod_id) => {
+            outcome.found.insert(*fingerprint, *mod_id);
+          }
+          None => {
+            outcome.not_found.insert(*fingerprint);
+          }
+        }
+      }
+      outcome
     }
 
     async fn mods(&self, ids: &[u64]) -> LookupOutcome<u64, CurseForgeMod> {
       self.calls.lock().unwrap().push(("mods", ids.len()));
+      self.mods_in_flight.occupy_a_slot().await;
       let mut outcome = LookupOutcome::default();
-      if self.mods_unanswered {
+      if self.mods_unanswered || ids.iter().any(|id| self.fail_mod_batches_with.contains(id)) {
         return outcome;
       }
       for id in ids {
@@ -882,6 +935,128 @@ mod tests {
       resolve_curseforge_mod_infos(&fake, &fingerprints(&[("h1", 11), ("gone", 99)])).await;
     assert!(result.is_empty());
     assert_eq!(*fake.calls.lock().unwrap(), vec![("fingerprints", 2)]);
+  }
+
+  /// `count` jars `h0..` with fingerprints `0..`, each of a mod of its own
+  /// (`1000..`) that exists.
+  fn one_mod_per_fingerprint(count: u32) -> (FakeCurseForge, HashMap<String, u32>) {
+    let mut fake = FakeCurseForge::default();
+    for n in 0..count {
+      let mod_id = 1000 + u64::from(n);
+      fake.mod_of_fingerprint.insert(n, mod_id);
+      fake.mods.insert(mod_id, cf_mod(mod_id, "jei"));
+    }
+    (fake, unknown_fingerprints(count))
+  }
+
+  /// `count` jars `h0..` with fingerprints `0..`.
+  fn unknown_fingerprints(count: u32) -> HashMap<String, u32> {
+    (0..count).map(|n| (format!("h{n}"), n)).collect()
+  }
+
+  fn call_sizes(fake: &FakeCurseForge, kind: &str) -> Vec<usize> {
+    let mut sizes: Vec<usize> = fake
+      .calls
+      .lock()
+      .unwrap()
+      .iter()
+      .filter(|(called, _)| *called == kind)
+      .map(|(_, size)| *size)
+      .collect();
+    sizes.sort_unstable();
+    sizes
+  }
+
+  #[tokio::test]
+  async fn large_fingerprint_lists_are_split_into_batches() {
+    let count = FINGERPRINTS_BATCH_SIZE as u32 * 2 + 1;
+    let fake = FakeCurseForge::default();
+    let result = resolve_curseforge_mod_infos(&fake, &unknown_fingerprints(count)).await;
+
+    assert_eq!(result.len(), count as usize);
+    assert_eq!(
+      call_sizes(&fake, "fingerprints"),
+      vec![1, FINGERPRINTS_BATCH_SIZE, FINGERPRINTS_BATCH_SIZE]
+    );
+    assert!(call_sizes(&fake, "mods").is_empty());
+  }
+
+  #[tokio::test]
+  async fn large_mod_lists_are_split_into_batches() {
+    let count = MODS_BATCH_SIZE as u32 * 2 + 1;
+    let (fake, all) = one_mod_per_fingerprint(count);
+    let result = resolve_curseforge_mod_infos(&fake, &all).await;
+
+    assert_eq!(result.len(), count as usize);
+    assert_eq!(
+      call_sizes(&fake, "mods"),
+      vec![1, MODS_BATCH_SIZE, MODS_BATCH_SIZE]
+    );
+  }
+
+  #[tokio::test]
+  async fn fingerprint_batches_run_in_parallel_within_the_limit() {
+    let fake = FakeCurseForge::default();
+    let all = unknown_fingerprints(FINGERPRINTS_BATCH_SIZE as u32 * 12);
+    resolve_curseforge_mod_infos(&fake, &all).await;
+
+    assert_eq!(call_sizes(&fake, "fingerprints").len(), 12);
+    assert!(fake.fingerprints_in_flight.peak() > 1);
+    assert!(fake.fingerprints_in_flight.peak() <= MAX_CONCURRENT_BATCHES);
+  }
+
+  #[tokio::test]
+  async fn mod_batches_run_in_parallel_within_the_limit() {
+    // The fingerprint batches are counted apart from the mod batches, so only
+    // the overlap of the mod requests is asserted here.
+    let (fake, all) = one_mod_per_fingerprint(MODS_BATCH_SIZE as u32 * 12);
+    let result = resolve_curseforge_mod_infos(&fake, &all).await;
+
+    assert_eq!(result.len(), all.len());
+    assert_eq!(call_sizes(&fake, "mods").len(), 12);
+    assert!(fake.mods_in_flight.peak() > 1);
+    assert!(fake.mods_in_flight.peak() <= MAX_CONCURRENT_BATCHES);
+  }
+
+  #[tokio::test]
+  async fn a_failed_fingerprint_batch_only_affects_its_own_jars() {
+    let count = FINGERPRINTS_BATCH_SIZE as u32 * 2 + 1;
+    let mut fake = FakeCurseForge::default();
+    // Fingerprint 60 is in the second batch (50..100).
+    fake.fail_fingerprint_batches_with.insert(60);
+    let result = resolve_curseforge_mod_infos(&fake, &unknown_fingerprints(count)).await;
+
+    for n in 0..count {
+      let in_failed_batch =
+        (FINGERPRINTS_BATCH_SIZE as u32..FINGERPRINTS_BATCH_SIZE as u32 * 2).contains(&n);
+      assert_eq!(
+        result.contains_key(&format!("h{n}")),
+        !in_failed_batch,
+        "h{n}"
+      );
+    }
+    assert!(result["h0"].cacheable);
+    // The failed batch is not retried per jar or in smaller pieces.
+    assert_eq!(call_sizes(&fake, "fingerprints").len(), 3);
+  }
+
+  #[tokio::test]
+  async fn a_failed_mod_batch_only_affects_the_jars_of_its_mods() {
+    let count = MODS_BATCH_SIZE as u32 * 2;
+    let (mut fake, all) = one_mod_per_fingerprint(count);
+    // Mod 1000 + 30 is in the second batch of mods (1025..1050).
+    fake.fail_mod_batches_with.insert(1030);
+    let result = resolve_curseforge_mod_infos(&fake, &all).await;
+
+    for n in 0..count {
+      let in_failed_batch = (MODS_BATCH_SIZE as u32..count).contains(&n);
+      let hash = format!("h{n}");
+      assert_eq!(result.contains_key(&hash), !in_failed_batch, "{hash}");
+      if !in_failed_batch {
+        assert_eq!(result[&hash].entry.origin, EntryOrigin::CurseForge);
+      }
+    }
+    assert_eq!(call_sizes(&fake, "mods").len(), 2);
   }
 
   #[tokio::test]
