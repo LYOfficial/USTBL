@@ -1327,6 +1327,7 @@ mod tests {
         files,
         rules: Vec::new(),
         rules_manifest: false,
+        disabled_authoritative: false,
         path_index: Arc::new(OnceLock::new()),
       },
       origin: origin("1"),
@@ -2236,6 +2237,30 @@ mod tests {
 
     assert_eq!(root.read("config/a.toml").as_deref(), Some("from-zip"));
     assert!(env.switched.lock().unwrap().is_empty());
+  }
+
+  #[tokio::test]
+  async fn a_disabled_ship_is_written_at_the_disabled_name() {
+    let root = setup();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let mut off = url_file("mods/off.jar", "off", &mut env);
+    off.disabled = true;
+    let on = url_file("mods/on.jar", "on", &mut env);
+    let mut operations = vec![write_op(&off), write_op(&on)];
+    operations[0].final_disabled = true;
+
+    let mut update = request(&root, vec![off, on], operations, "0.15.0");
+    update.remote.disabled_authoritative = true;
+
+    apply(&env, update).await.unwrap();
+
+    assert_eq!(root.read("mods/off.jar.disabled").as_deref(), Some("off"));
+    assert_eq!(root.read("mods/off.jar"), None);
+    assert_eq!(root.read("mods/on.jar").as_deref(), Some("on"));
+    assert_eq!(root.read("mods/on.jar.disabled"), None);
   }
 
   /// A platform whose single delta pack holds one stored file at offset 0.

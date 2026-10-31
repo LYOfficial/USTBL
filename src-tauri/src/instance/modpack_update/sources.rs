@@ -4,7 +4,7 @@
 //! the campus platform publishes a manifest whose files are either remote or
 //! stored in the platform's packs.
 
-use super::diff::FileKey;
+use super::diff::{FileKey, DISABLED_SUFFIX};
 use super::packs::{AppTransport, PackSession};
 use super::remote::{ComponentPack, FileSource, RemoteFile, RemoteModpack, UPDATE_DIR};
 use crate::error::{USTBLError, USTBLResult};
@@ -371,6 +371,7 @@ pub fn campus_remote(
     files,
     rules,
     rules_manifest: true,
+    disabled_authoritative: true,
     path_index: Arc::new(std::sync::OnceLock::new()),
   })
 }
@@ -512,6 +513,61 @@ pub fn merge_files(downloads: Vec<RemoteFile>, overrides: Vec<RemoteFile>) -> Ve
   by_path.into_values().collect()
 }
 
+/// Read the `.disabled` files of a platform archive. A mod under `mods/` named
+/// `x.jar.disabled` is the disabled mod `mods/x.jar`; where the pack carries
+/// both spellings the enabled one stays. A `.disabled` file anywhere else is
+/// dropped: the engine owns that suffix only for mods.
+fn read_disabled_mods(
+  downloads: Vec<RemoteFile>,
+  overrides: Vec<RemoteFile>,
+) -> (Vec<RemoteFile>, Vec<RemoteFile>) {
+  fn fold(files: Vec<RemoteFile>) -> Vec<RemoteFile> {
+    files
+      .into_iter()
+      .filter_map(|mut file| {
+        let lowered = file.path.to_lowercase();
+        if !lowered.ends_with(DISABLED_SUFFIX) {
+          return Some(file);
+        }
+        if lowered.starts_with("mods/") && lowered.len() > "mods/".len() + DISABLED_SUFFIX.len() {
+          file.path.truncate(file.path.len() - DISABLED_SUFFIX.len());
+          file.disabled = true;
+          Some(file)
+        } else {
+          log::warn!(
+            "skipping modpack file outside mods/ with a .disabled suffix: {}",
+            file.path
+          );
+          None
+        }
+      })
+      .collect()
+  }
+  let (downloads, overrides) = (fold(downloads), fold(overrides));
+  let enabled: std::collections::HashSet<String> = downloads
+    .iter()
+    .chain(&overrides)
+    .filter(|file| !file.disabled)
+    .map(|file| file.path.to_lowercase())
+    .collect();
+  let keep_enabled = |files: Vec<RemoteFile>| -> Vec<RemoteFile> {
+    files
+      .into_iter()
+      .filter(|file| {
+        let shadowed = file.disabled && enabled.contains(&file.path.to_lowercase());
+        if shadowed {
+          log::warn!(
+            "modpack carries both {0} and {0}{DISABLED_SUFFIX}; keeping the enabled one",
+            file.path
+          );
+        }
+        !shadowed
+      })
+      .collect()
+  };
+  (keep_enabled(downloads), keep_enabled(overrides))
+}
+
 /// Read a downloaded Modrinth or CurseForge archive.
 pub async fn remote_from_archive(
   app: &AppHandle,
@@ -578,6 +634,8 @@ pub async fn remote_from_archive(
   .await
   .map_err(|e| USTBLError(e.to_string()))??;
 
+  let (downloads, overrides) = read_disabled_mods(downloads, overrides);
+
   Ok(RemoteModpack {
     version_id: latest.version_id.clone(),
     label: latest.label.clone(),
@@ -591,6 +649,7 @@ pub async fn remote_from_archive(
     files: merge_files(downloads, overrides),
     rules: Vec::new(),
     rules_manifest: false,
+    disabled_authoritative: true,
     path_index: Arc::new(std::sync::OnceLock::new()),
   })
 }
@@ -1161,7 +1220,7 @@ mod tests {
 
     let remote = campus_remote(&version, &session()).unwrap();
 
-    assert!(remote.rules_manifest);
+    assert!(remote.rules_manifest && remote.disabled_authoritative);
     assert_eq!(remote.files[0].path, "mods/a.jar");
     assert!(remote.files[0].disabled && !remote.files[0].once);
     assert_eq!(remote.files[1].path, "config/first.toml");
@@ -1402,8 +1461,107 @@ mod tests {
       ],
       rules: Vec::new(),
       rules_manifest: false,
+      disabled_authoritative: false,
       path_index: Arc::new(std::sync::OnceLock::new()),
     }
+  }
+
+  fn archive_file(path: &str, content: &str, from_download: bool) -> RemoteFile {
+    RemoteFile {
+      path: path.into(),
+      key: FileKey {
+        sha1: hex::encode(Sha1::digest(content.as_bytes())),
+        size: content.len() as u64,
+      },
+      source: if from_download {
+        FileSource::Download(plain_download(&format!("https://cdn.example/{content}")).unwrap())
+      } else {
+        FileSource::ArchiveEntry {
+          archive: PathBuf::from("/tmp/pack.zip"),
+          entry: format!("overrides/{path}"),
+        }
+      },
+      disabled: false,
+      once: false,
+    }
+  }
+
+  fn platform_remote(downloads: Vec<RemoteFile>, overrides: Vec<RemoteFile>) -> RemoteModpack {
+    let (downloads, overrides) = read_disabled_mods(downloads, overrides);
+    RemoteModpack {
+      files: merge_files(downloads, overrides),
+      rules_manifest: false,
+      disabled_authoritative: true,
+      ..remote_for_test()
+    }
+  }
+
+  #[test]
+  fn disabled_mods_of_an_archive_are_read_as_disabled_mods() {
+    let remote = platform_remote(
+      vec![archive_file("mods/dl.jar.disabled", "dl", true)],
+      vec![
+        archive_file("mods/ov.JAR.DISABLED", "ov", false),
+        archive_file("mods/on.jar", "on", false),
+      ],
+    );
+
+    remote.validate("pack").unwrap();
+    let state = |path: &str| {
+      let file = remote.file_of(path).unwrap();
+      (file.path.clone(), remote.ship_of(path).unwrap().disabled)
+    };
+    assert_eq!(state("mods/dl.jar"), ("mods/dl.jar".into(), Some(true)));
+    assert_eq!(state("mods/ov.jar"), ("mods/ov.JAR".into(), Some(true)));
+    assert_eq!(state("mods/on.jar"), ("mods/on.jar".into(), Some(false)));
+    assert_eq!(remote.files.len(), 3);
+    // A download is still fetched, an override still read out of the archive.
+    assert!(matches!(
+      remote.file_of("mods/dl.jar").unwrap().source,
+      FileSource::Download(_)
+    ));
+    assert!(matches!(
+      remote.file_of("mods/ov.jar").unwrap().source,
+      FileSource::ArchiveEntry { .. }
+    ));
+  }
+
+  #[test]
+  fn an_archive_carrying_both_spellings_keeps_the_enabled_one() {
+    for (disabled_is_download, enabled_is_download) in
+      [(true, true), (true, false), (false, true), (false, false)]
+    {
+      let disabled = archive_file("mods/a.jar.disabled", "off", disabled_is_download);
+      let enabled = archive_file("mods/a.jar", "on", enabled_is_download);
+      let (downloads, overrides): (Vec<_>, Vec<_>) = [disabled, enabled]
+        .into_iter()
+        .partition(|file| matches!(file.source, FileSource::Download(_)));
+
+      let remote = platform_remote(downloads, overrides);
+
+      remote.validate("pack").unwrap();
+      assert_eq!(remote.files.len(), 1);
+      assert_eq!(remote.files[0].path, "mods/a.jar");
+      assert!(!remote.files[0].disabled);
+      assert_eq!(remote.files[0].key, archive_file("x", "on", true).key);
+    }
+  }
+
+  #[test]
+  fn a_disabled_suffix_outside_mods_is_skipped() {
+    let remote = platform_remote(
+      vec![archive_file("resourcepacks/p.zip.disabled", "p", true)],
+      vec![
+        archive_file("config/a.toml.disabled", "c", false),
+        archive_file("mods/.disabled", "e", false),
+        archive_file("modsx/b.jar.disabled", "m", false),
+        archive_file("mods/keep.jar", "k", false),
+      ],
+    );
+
+    remote.validate("pack").unwrap();
+    let paths: Vec<_> = remote.files.iter().map(|file| file.path.as_str()).collect();
+    assert_eq!(paths, ["mods/keep.jar"]);
   }
 
   #[test]

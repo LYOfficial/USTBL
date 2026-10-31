@@ -1166,6 +1166,7 @@ mod tests {
         .collect(),
       rules,
       rules_manifest: true,
+      disabled_authoritative: true,
       path_index: std::sync::Arc::new(std::sync::OnceLock::new()),
     }
   }
@@ -1857,6 +1858,98 @@ mod tests {
       .unwrap();
     assert!(entry.disabled);
     let _ = fs::remove_dir_all(root);
+  }
+
+  /// A Modrinth/CurseForge archive: not a `/3` manifest, but its `disabled`
+  /// flags are read from `.disabled` files and count.
+  fn platform_remote(files: &[(&str, &str)], disabled: &[&str]) -> RemoteModpack {
+    let mut remote = remote(files);
+    remote.rules_manifest = false;
+    for file in &mut remote.files {
+      file.disabled = disabled.contains(&file.path.as_str());
+    }
+    remote.validate("pack").unwrap();
+    remote
+  }
+
+  fn entry<'a>(prepared: &'a Prepared, path: &str) -> &'a BaselineFile {
+    prepared
+      .next_baseline
+      .iter()
+      .find(|entry| entry.path == path)
+      .unwrap()
+  }
+
+  #[tokio::test]
+  async fn a_platform_pack_installs_a_disabled_mod_at_the_disabled_name() {
+    let root = instance(&[]);
+    let installed = baseline(&[]);
+    let remote = platform_remote(
+      &[("mods/a.jar", "a1"), ("mods/b.jar", "b1")],
+      &["mods/a.jar"],
+    );
+    let prepared = prepare_with_contents(&root, &installed, &remote, &BTreeMap::new())
+      .await
+      .unwrap();
+
+    assert_eq!(prepared.variants["mods/a.jar"], true);
+    assert_eq!(prepared.variants["mods/b.jar"], false);
+    assert!(entry(&prepared, "mods/a.jar").disabled);
+    assert!(!entry(&prepared, "mods/b.jar").disabled);
+    let operations = resolve(&prepared, &BTreeMap::new());
+    let operation = |path: &str| operations.iter().find(|op| op.path == path).unwrap();
+    assert_eq!(operation("mods/a.jar").write, Some(key("a1")));
+    assert!(operation("mods/a.jar").final_disabled);
+    assert!(!operation("mods/b.jar").final_disabled);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn a_platform_update_enables_a_mod_the_player_left_alone() {
+    let root = instance(&[("mods/a.jar.disabled", "a1")]);
+    let installed = vec![BaselineFile::managed("mods/a.jar", key("a1"), true)];
+    let mut installed_pack = baseline(&[]);
+    installed_pack.files = installed;
+    let remote = platform_remote(&[("mods/a.jar", "a2")], &[]);
+    let prepared = prepare_with_contents(&root, &installed_pack, &remote, &BTreeMap::new())
+      .await
+      .unwrap();
+
+    assert_eq!(prepared.variants["mods/a.jar"], false);
+    assert!(!entry(&prepared, "mods/a.jar").disabled);
+    let operations = resolve(&prepared, &BTreeMap::new());
+    assert_eq!(operations.len(), 1);
+    assert_eq!(operations[0].write, Some(key("a2")));
+    assert!(!operations[0].final_disabled);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn a_platform_update_keeps_the_state_the_player_chose() {
+    // (file the player has, disabled in the pack's old version, disabled in the new one)
+    for (disk, was_disabled, now_disabled) in [
+      ("mods/a.jar", true, true),
+      ("mods/a.jar", true, false),
+      ("mods/a.jar.disabled", false, false),
+      ("mods/a.jar.disabled", false, true),
+    ] {
+      let root = instance(&[(disk, "a1")]);
+      let mut installed = baseline(&[]);
+      installed.files = vec![BaselineFile::managed("mods/a.jar", key("a1"), was_disabled)];
+      let new_disabled: &[&str] = if now_disabled { &["mods/a.jar"] } else { &[] };
+      let remote = platform_remote(&[("mods/a.jar", "a2")], new_disabled);
+      let prepared = prepare_with_contents(&root, &installed, &remote, &BTreeMap::new())
+        .await
+        .unwrap();
+
+      let player_disabled = disk.ends_with(".disabled");
+      assert_eq!(prepared.variants["mods/a.jar"], player_disabled, "{disk}");
+      let operations = resolve(&prepared, &BTreeMap::new());
+      assert_eq!(operations.len(), 1);
+      assert_eq!(operations[0].write, Some(key("a2")));
+      assert_eq!(operations[0].final_disabled, player_disabled, "{disk}");
+      let _ = fs::remove_dir_all(root);
+    }
   }
 
   /// §7.2: the local-change scan reads the hash cache; the update preview

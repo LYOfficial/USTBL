@@ -224,6 +224,7 @@ mod tests {
   #[test]
   fn remote_release_round_trips_attributes_and_rules_without_urls() {
     let remote = RemoteModpack {
+      disabled_authoritative: true,
       version_id: "12".into(),
       label: "v12".into(),
       game_version: "1.21.1".into(),

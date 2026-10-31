@@ -3683,6 +3683,7 @@ mod tests {
         files: Vec::new(),
         rules: Vec::new(),
         rules_manifest: false,
+        disabled_authoritative: false,
         path_index: std::sync::Arc::new(std::sync::OnceLock::new()),
       },
     };

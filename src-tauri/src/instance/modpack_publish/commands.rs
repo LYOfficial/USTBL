@@ -1559,6 +1559,7 @@ mod tests {
         .collect(),
       rules,
       rules_manifest: true,
+      disabled_authoritative: true,
       path_index: Default::default(),
     }
   }

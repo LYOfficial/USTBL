@@ -183,6 +183,10 @@ pub struct RemoteModpack {
   /// The manifest declared the `/3` format, so rules and the file attributes
   /// (`disabled`, `once`) are authoritative. Archives never have them.
   pub rules_manifest: bool,
+  /// `disabled` on the files is the pack's own statement, so it is compared
+  /// and applied. Set for `/3` manifests and for platform archives, where a
+  /// `.disabled` file is read as a disabled mod; a `/2` manifest never says.
+  pub disabled_authoritative: bool,
   /// Case-folded lookup over `files` and the `file` rules, built on first
   /// use and shared by every clone. Filled only by [`RemoteModpack::index`].
   pub(crate) path_index: Arc<OnceLock<PathIndex>>,
@@ -228,6 +232,8 @@ pub struct StoredRemoteModpack {
   pub rules: Vec<RemoteRule>,
   #[serde(default)]
   pub rules_manifest: bool,
+  #[serde(default)]
+  pub disabled_authoritative: bool,
 }
 
 impl From<&RemoteModpack> for StoredRemoteModpack {
@@ -256,6 +262,7 @@ impl From<&RemoteModpack> for StoredRemoteModpack {
       files: remote.files.iter().map(file).collect(),
       rules: remote.rules.clone(),
       rules_manifest: remote.rules_manifest,
+      disabled_authoritative: remote.disabled_authoritative,
     }
   }
 }
@@ -303,6 +310,9 @@ impl RemoteModpack {
       files,
       rules: stored.rules,
       rules_manifest: stored.rules_manifest,
+      // A cache written before the field existed holds a `/3` remote or an
+      // archive that never carried `disabled`; the former is authoritative.
+      disabled_authoritative: stored.disabled_authoritative || stored.rules_manifest,
       path_index: Arc::new(OnceLock::new()),
     }
   }
@@ -332,7 +342,8 @@ impl RemoteModpack {
         || lowered.ends_with(super::diff::DISABLED_SUFFIX)
         || !seen.insert(lowered.clone())
         || (file.disabled && !lowered.starts_with("mods/"))
-        || (!self.rules_manifest && (file.disabled || file.once))
+        || (!self.disabled_authoritative && file.disabled)
+        || (!self.rules_manifest && file.once)
       {
         return Err(InstanceError::ModpackUpdateRemoteInvalid.into());
       }
@@ -395,9 +406,9 @@ impl RemoteModpack {
   pub fn ship_of(&self, path: &str) -> Option<ShipInput> {
     self.file_of(path).map(|file| ShipInput {
       key: file.key.clone(),
-      // Only a `/3` manifest's attributes are authoritative; other remotes
-      // never disable and never ship once-only files.
-      disabled: self.rules_manifest.then_some(file.disabled),
+      // Only a `/3` manifest and a platform archive state the disabled flag;
+      // only `/3` ships once-only files.
+      disabled: self.disabled_authoritative.then_some(file.disabled),
       once: self.rules_manifest && file.once,
     })
   }
@@ -497,6 +508,7 @@ mod tests {
         .collect(),
       rules: Vec::new(),
       rules_manifest: false,
+      disabled_authoritative: false,
       path_index: Arc::new(OnceLock::new()),
     }
   }
@@ -639,6 +651,7 @@ mod tests {
   fn ship_and_file_lookups_fold_case_but_keep_the_manifest_spelling() {
     let mut pack = pack(&["Mods/A.JAR"]);
     pack.rules_manifest = true;
+    pack.disabled_authoritative = true;
     pack.files[0].disabled = true;
     let file = pack.file_of("mods/a.jar").unwrap();
     assert_eq!(file.path, "Mods/A.JAR");
@@ -648,6 +661,66 @@ mod tests {
     // Not a shipped file: nothing.
     assert!(pack.file_of("mods/b.jar").is_none());
     assert!(pack.ship_of("mods/b.jar").is_none());
+  }
+
+  #[test]
+  fn a_platform_archive_may_disable_mods_but_never_ships_once() {
+    let mut archive = pack(&["mods/a.jar", "mods/b.jar", "config/c.toml"]);
+    archive.disabled_authoritative = true;
+    archive.files[0].disabled = true;
+    assert!(archive.validate("pack").is_ok());
+    assert_eq!(archive.ship_of("mods/a.jar").unwrap().disabled, Some(true));
+    assert_eq!(archive.ship_of("mods/b.jar").unwrap().disabled, Some(false));
+    assert!(!archive.ship_of("mods/a.jar").unwrap().once);
+
+    let mut once = archive.clone();
+    once.files[1].once = true;
+    assert!(once.validate("pack").is_err());
+    let mut misplaced = archive.clone();
+    misplaced.files[2].disabled = true;
+    assert!(misplaced.validate("pack").is_err());
+
+    // A remote that does not state the flag says nothing about it.
+    let silent = pack(&["mods/a.jar"]);
+    assert_eq!(silent.ship_of("mods/a.jar").unwrap().disabled, None);
+  }
+
+  fn rebuilt(stored: StoredRemoteModpack) -> RemoteModpack {
+    RemoteModpack::from_stored(stored, |version_id| {
+      PackSession::new(Arc::new(NoTransport), version_id)
+    })
+  }
+
+  #[test]
+  fn the_authority_flag_survives_the_stored_form_and_old_caches_read_cleanly() {
+    let mut archive = pack(&["mods/a.jar"]);
+    archive.disabled_authoritative = true;
+    archive.files[0].disabled = true;
+    let json = serde_json::to_string(&StoredRemoteModpack::from(&archive)).unwrap();
+    let back = rebuilt(serde_json::from_str(&json).unwrap());
+    assert!(back.disabled_authoritative && !back.rules_manifest);
+    assert!(back.files[0].disabled);
+    assert!(back.validate("pack").is_ok());
+
+    // A cache written before the field existed.
+    let strip = |remote: &RemoteModpack| {
+      let mut value = serde_json::to_value(StoredRemoteModpack::from(remote)).unwrap();
+      value
+        .as_object_mut()
+        .unwrap()
+        .remove("disabledAuthoritative");
+      assert!(value.get("disabledAuthoritative").is_none());
+      rebuilt(serde_json::from_value(value).unwrap())
+    };
+    let mut manifest = pack(&["mods/a.jar"]);
+    manifest.rules_manifest = true;
+    manifest.files[0].disabled = true;
+    let old = strip(&manifest);
+    assert!(old.disabled_authoritative);
+    assert_eq!(old.ship_of("mods/a.jar").unwrap().disabled, Some(true));
+    let old_platform = strip(&pack(&["mods/a.jar"]));
+    assert!(!old_platform.disabled_authoritative);
+    assert_eq!(old_platform.ship_of("mods/a.jar").unwrap().disabled, None);
   }
 
   /// Sessions here are only compared, never asked for anything.
