@@ -5,6 +5,7 @@ import {
   ModpackCheckStatus,
   ModpackUpdateCheck,
 } from "@/models/modpack-update";
+import { isInstallingInstance } from "@/utils/installing-instance";
 
 /** The slug the platforms use for a loader type. */
 export const loaderSlug = (loader: ModLoaderType): string =>
@@ -55,11 +56,17 @@ export const ledgerBadge = (
   instance: InstanceSummary,
   check: ModpackUpdateCheck | undefined
 ): LedgerBadge => {
+  if (isInstallingInstance(instance)) return "installing";
   if (!check) return "notChecked";
   if (check.status === "notFollowing") return "unlinked";
   if (check.status === "localChanges") return "upToDate";
   return check.status;
 };
+
+export const ledgerUpdateDisabled = (
+  instance: InstanceSummary,
+  check?: ModpackUpdateCheck
+) => isInstallingInstance(instance) || check?.status === "installing";
 
 /** Managed files changed here, once the local scan has run; else 0. */
 export const ledgerLocalChanges = (

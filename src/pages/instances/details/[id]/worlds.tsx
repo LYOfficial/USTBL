@@ -18,6 +18,7 @@ import CountTag from "@/components/common/count-tag";
 import Empty from "@/components/common/empty";
 import { OptionItem, OptionItemGroup } from "@/components/common/option-item";
 import { Section } from "@/components/common/section";
+import { InstanceLaunchIconButton } from "@/components/instance-launch-button";
 import AddGameServerModal from "@/components/modals/add-game-server-modal";
 import WorldLevelDataModal from "@/components/modals/world-level-data-modal";
 import { useLauncherConfig } from "@/contexts/config";
@@ -333,14 +334,24 @@ const InstanceWorldsPage = () => {
                   }
                 >
                   <HStack spacing={0}>
-                    {worldItemMenuOperations(world).map((item, index) => (
-                      <CommonIconButton
-                        key={index}
-                        icon={item.icon}
-                        label={item.label}
-                        onClick={item.onClick}
-                      />
-                    ))}
+                    {worldItemMenuOperations(world).map((item, index) =>
+                      item.icon === "launch" ? (
+                        <InstanceLaunchIconButton
+                          instance={summary}
+                          key={index}
+                          icon={item.icon}
+                          label={item.label}
+                          onClick={item.onClick}
+                        />
+                      ) : (
+                        <CommonIconButton
+                          key={index}
+                          icon={item.icon}
+                          label={item.label}
+                          onClick={item.onClick}
+                        />
+                      )
+                    )}
                   </HStack>
                 </OptionItem>
               );
@@ -431,15 +442,26 @@ const InstanceWorldsPage = () => {
                       </Tag>
                     ))}
                   <HStack spacing={0}>
-                    {serverItemMenuOperations(server).map((item, index) => (
-                      <CommonIconButton
-                        key={index}
-                        icon={item.icon}
-                        label={item.label}
-                        colorScheme={item.danger ? "red" : "gray"}
-                        onClick={item.onClick}
-                      />
-                    ))}
+                    {serverItemMenuOperations(server).map((item, index) =>
+                      item.icon === "launch" ? (
+                        <InstanceLaunchIconButton
+                          instance={summary}
+                          key={index}
+                          icon={item.icon}
+                          label={item.label}
+                          colorScheme={item.danger ? "red" : "gray"}
+                          onClick={item.onClick}
+                        />
+                      ) : (
+                        <CommonIconButton
+                          key={index}
+                          icon={item.icon}
+                          label={item.label}
+                          colorScheme={item.danger ? "red" : "gray"}
+                          onClick={item.onClick}
+                        />
+                      )
+                    )}
                   </HStack>
                 </HStack>
               </OptionItem>

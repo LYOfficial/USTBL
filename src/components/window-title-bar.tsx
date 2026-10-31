@@ -49,7 +49,7 @@ const WindowTitleBar = () => {
   const router = useRouter();
   const { t } = useTranslation();
   const { config } = useLauncherConfig();
-  const { tasks, unfinishedPublishes } = useTaskContext();
+  const { tasks, unfinishedPublishes, unfinishedInstalls } = useTaskContext();
   const [isMaximized, setIsMaximized] = useState(false);
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
   const [rememberCloseChoice, setRememberCloseChoice] = useState(false);
@@ -57,7 +57,9 @@ const WindowTitleBar = () => {
   const isSimplified = config.appearance.theme.headNavStyle === "simplified";
   // 重启后保留的未完成发布也需要显示任务入口。
   const isDownloadIndicatorShown =
-    tasks.length > 0 || unfinishedPublishes.length > 0;
+    tasks.length > 0 ||
+    unfinishedPublishes.length > 0 ||
+    unfinishedInstalls.length > 0;
   const unselectTabColor = useColorModeValue("gray.600", "gray.400");
 
   const navList = useMemo<NavItem[]>(

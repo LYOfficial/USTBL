@@ -108,6 +108,7 @@ export interface CampusModpackRecommendation {
 }
 
 export type CampusInstallStage =
+  | "waitingClient"
   | "preparing"
   | "locating"
   | "fetching"
@@ -116,9 +117,33 @@ export type CampusInstallStage =
 
 export interface CampusInstallProgress {
   instanceId: string;
+  group?: string | null;
   stage: CampusInstallStage;
   done: number;
   total: number;
+  bytesDone: number;
+  bytesTotal: number;
+}
+
+export interface CampusInstallStarted {
+  group: string;
+}
+
+export interface CampusInstallFinished {
+  instanceId: string;
+  group: string;
+  error: string | null;
+}
+
+export interface CampusUnfinishedInstall {
+  instanceId: string;
+  instanceName: string;
+  label: string;
+  phase: "waitingClient" | "installing" | "failed";
+  error: string | null;
+  resumable: boolean;
+  group: string | null;
+  progress: Omit<CampusInstallProgress, "instanceId"> | null;
 }
 
 export interface CampusInstallOutcome {

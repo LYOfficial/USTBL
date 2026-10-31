@@ -1,4 +1,5 @@
 import {
+  Badge,
   Box,
   BoxProps,
   HStack,
@@ -7,6 +8,7 @@ import {
   Radio,
   RadioGroup,
 } from "@chakra-ui/react";
+import { useTranslation } from "react-i18next";
 import { FaStar } from "react-icons/fa6";
 import Empty from "@/components/common/empty";
 import {
@@ -18,6 +20,7 @@ import InstanceMenu from "@/components/instance-menu";
 import { useLauncherConfig } from "@/contexts/config";
 import { useGlobalData } from "@/contexts/global-data";
 import { InstanceSummary } from "@/models/instance/misc";
+import { isInstallingInstance } from "@/utils/installing-instance";
 import { generateInstanceDesc, getInstanceIconSrc } from "@/utils/instance";
 
 interface InstancesViewProps extends BoxProps {
@@ -35,6 +38,7 @@ const InstancesView: React.FC<InstancesViewProps> = ({
   ...boxProps
 }) => {
   const { config, update } = useLauncherConfig();
+  const { t } = useTranslation();
   const primaryColor = config.appearance.theme.primaryColor;
   const { selectedInstance } = useGlobalData();
 
@@ -48,8 +52,13 @@ const InstancesView: React.FC<InstancesViewProps> = ({
     description: [generateInstanceDesc(instance), instance.description]
       .filter(Boolean)
       .join(", "),
-    titleExtra: (instance.modpackVersion != null || instance.starred) && (
+    titleExtra: (isInstallingInstance(instance) ||
+      instance.modpackVersion != null ||
+      instance.starred) && (
       <HStack spacing={1}>
+        {isInstallingInstance(instance) && (
+          <Badge colorScheme="yellow">{t("AllInstancesPage.installing")}</Badge>
+        )}
         {instance.modpackVersion != null && (
           <Box as="span" fontSize="xs-sm" color="gray.500">
             {instance.modpackVersion.startsWith("v")
@@ -103,6 +112,11 @@ const InstancesView: React.FC<InstancesViewProps> = ({
       ),
       extraContent: (
         <HStack spacing={1} position="absolute" top={0.5} right={1}>
+          {isInstallingInstance(instance) && (
+            <Badge colorScheme="yellow">
+              {t("AllInstancesPage.installing")}
+            </Badge>
+          )}
           {instance.starred && <Icon as={FaStar} color="yellow.500" />}
           {withMenu && <InstanceMenu instance={instance} />}
         </HStack>

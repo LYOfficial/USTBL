@@ -13,6 +13,7 @@ import useKeyboardShortcut from "@/hooks/keyboard-shortcut";
 import { AccountService } from "@/services/account";
 import { appendFriendMessage } from "@/services/friend-message-cache";
 import { ModpackUpdateService } from "@/services/modpack-update";
+import { shouldCheckInstance } from "@/utils/installing-instance";
 import { buildUpdateNotificationMessage } from "@/utils/tray-notification";
 
 // Handle global keyboard shortcuts, DnD events, etc.
@@ -165,7 +166,12 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
     modpackNoticeAnnounced.current = true;
 
     const available = Object.entries(modpackChecks).filter(
-      ([, check]) => check.status === "available" && check.latestVersionId
+      ([id, check]) =>
+        check.status === "available" &&
+        check.latestVersionId &&
+        shouldCheckInstance(
+          getInstanceList()?.find((instance) => instance.id === id)
+        )
     );
     if (available.length === 0) return;
 
@@ -177,6 +183,12 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
         latestLabel?: string;
       }[] = [];
       for (const [instanceId, check] of available) {
+        if (
+          !shouldCheckInstance(
+            getInstanceList()?.find((instance) => instance.id === instanceId)
+          )
+        )
+          continue;
         const noticed =
           await ModpackUpdateService.getModpackUpdateNotice(instanceId);
         const noticedVersionId =

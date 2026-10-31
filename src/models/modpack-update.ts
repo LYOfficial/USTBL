@@ -5,6 +5,7 @@ export type ModpackCheckStatus =
   | "paused"
   | "needsRepair"
   | "waitingLoader"
+  | "installing"
   | "upToDate"
   | "localChanges"
   | "available"

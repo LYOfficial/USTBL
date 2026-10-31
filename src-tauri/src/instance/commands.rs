@@ -5,12 +5,16 @@ use crate::instance::helpers::client_json::{replace_native_libraries, McClientIn
 use crate::instance::helpers::deletion::{delete_instance_files, InstanceDeletionProgress};
 use crate::instance::helpers::game_version::{build_game_version_cmp_fn, compare_game_versions};
 use crate::instance::helpers::loader::common::{execute_processors, install_mod_loader};
+use crate::instance::helpers::loader::forge::download_forge_libraries;
 use crate::instance::helpers::loader::forge::InstallProfile;
+use crate::instance::helpers::loader::neoforge::download_neoforge_libraries;
+use crate::instance::helpers::loader::optifine::download_optifine_libraries;
 use crate::instance::helpers::loader::optifine::{
   download_optifine_installer, finish_optifine_install,
 };
 use crate::instance::helpers::loader_lifecycle::{
-  claim_install, complete_install, LOADER_LIFECYCLE,
+  claim_install, complete_install, loader_patch_ready, optifine_patch_ready, preparation_allowed,
+  LOADER_LIFECYCLE,
 };
 use crate::instance::helpers::misc::{
   get_instance_game_config, get_instance_subdir_path_by_id, get_instance_subdir_paths,
@@ -94,7 +98,10 @@ pub async fn retrieve_instance_list(app: AppHandle) -> USTBLResult<Vec<InstanceS
   let mut summary_list = Vec::new();
 
   let instance_binding = app.state::<Mutex<HashMap<String, Instance>>>();
-  let instances = instance_binding.lock().unwrap().clone();
+  let mut instances = instance_binding.lock().unwrap().clone();
+  for (id, instance) in crate::instance::modpack_update::commands::pending_campus_instances(&app) {
+    instances.entry(id).or_insert(instance);
+  }
   for (id, instance) in instances.iter() {
     // same as get_game_config(), but mannually here
     let is_version_isolated =
@@ -1389,13 +1396,17 @@ pub async fn create_instance(
 
   // A cached client can finish immediately. Publish all metadata first so its
   // completion refresh cannot read an unfinished instance (all import paths).
-  schedule_progressive_task_group(
+  let client_group = schedule_progressive_task_group(
     app.clone(),
     format!("game-client?{}", name),
     task_params,
     true,
   )
   .await?;
+  crate::instance::modpack_update::commands::register_created_campus_instance(
+    &instance,
+    client_group.task_group,
+  )?;
   dir_guard.commit(); // disarm the cleanup guard on success
   Ok(())
 }
@@ -1403,6 +1414,91 @@ pub async fn create_instance(
 #[tauri::command]
 pub async fn finish_mod_loader_install(app: AppHandle, instance_id: String) -> USTBLResult<bool> {
   finish_mod_loader_install_inner(&app, &instance_id).await
+}
+
+#[tauri::command]
+pub async fn prepare_mod_loader_install(
+  app: AppHandle,
+  instance_id: String,
+  component: String,
+) -> USTBLResult<bool> {
+  LOADER_LIFECYCLE
+    .run(async {
+      let instance = {
+        let state = app.state::<Mutex<HashMap<String, Instance>>>();
+        let instance = state
+          .lock()?
+          .get(&instance_id)
+          .cloned()
+          .ok_or(InstanceError::InstanceNotFoundByID)?;
+        instance
+      };
+      let optifine = component == "optifine";
+      let status = if optifine {
+        instance
+          .optifine
+          .as_ref()
+          .ok_or(InstanceError::ClientJsonParseError)?
+          .status
+          .clone()
+      } else {
+        instance.mod_loader.status.clone()
+      };
+      if !preparation_allowed(&status) {
+        return Ok(false);
+      }
+      let result = async {
+        let priority = {
+          let state = app.state::<Mutex<LauncherConfig>>();
+          let config = state.lock()?;
+          get_source_priority_list(&config)
+        };
+        let mut client = load_json_async::<McClientInfo>(
+          &instance
+            .version_path
+            .join(format!("{}.json", instance.name)),
+        )
+        .await?;
+        if optifine {
+          download_optifine_libraries(&app, &priority, &instance, &mut client).await
+        } else {
+          match instance.mod_loader.loader_type {
+            ModLoaderType::Forge | ModLoaderType::LegacyForge => {
+              download_forge_libraries(&app, &priority, &instance, &mut client).await
+            }
+            ModLoaderType::NeoForge => {
+              download_neoforge_libraries(&app, &priority, &instance, &mut client).await
+            }
+            _ => Ok(()),
+          }
+        }
+      }
+      .await;
+      if let Err(error) = result {
+        let mut failed = instance.clone();
+        if optifine {
+          if let Some(value) = &mut failed.optifine {
+            value.status = ModLoaderStatus::DownloadFailed;
+          }
+        } else {
+          failed.mod_loader.status = ModLoaderStatus::DownloadFailed;
+        }
+        failed.save_json_cfg().await?;
+        let state = app.state::<Mutex<HashMap<String, Instance>>>();
+        if let Some(current) = state.lock()?.get_mut(&instance_id) {
+          if optifine {
+            if let Some(value) = &mut current.optifine {
+              value.status = ModLoaderStatus::DownloadFailed;
+            }
+          } else {
+            current.mod_loader.status = ModLoaderStatus::DownloadFailed;
+          }
+        }
+        return Err(error);
+      }
+      Ok(true)
+    })
+    .await
 }
 
 async fn finish_mod_loader_install_inner(app: &AppHandle, instance_id: &str) -> USTBLResult<bool> {
@@ -1466,11 +1562,19 @@ async fn finish_mod_loader_install_inner(app: &AppHandle, instance_id: &str) -> 
       .join(format!("{}.json", instance.name));
     let client_info = load_json_async::<McClientInfo>(&client_info_dir).await?;
     let install_profile_dir = instance.version_path.join("install_profile.json");
-    if steps.loader && install_profile_dir.exists() {
-      let install_profile = load_json_async::<InstallProfile>(&install_profile_dir).await?;
-      execute_processors(app, &instance, &client_info, &install_profile).await?;
+    if steps.loader {
+      if !loader_patch_ready(&client_info, instance.mod_loader.loader_type) {
+        return Err(InstanceError::ProcessorExecutionFailed.into());
+      }
+      if install_profile_dir.exists() {
+        let install_profile = load_json_async::<InstallProfile>(&install_profile_dir).await?;
+        execute_processors(app, &instance, &client_info, &install_profile).await?;
+      }
     }
     if steps.optifine {
+      if !optifine_patch_ready(&client_info) {
+        return Err(InstanceError::ProcessorExecutionFailed.into());
+      }
       finish_optifine_install(app, &instance, &client_info).await?;
     }
     Ok(())

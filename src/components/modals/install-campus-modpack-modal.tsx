@@ -20,6 +20,7 @@ import {
   loaderTypesToIcon,
 } from "@/components/modals/create-instance-modal";
 import { useLauncherConfig } from "@/contexts/config";
+import { useGlobalData } from "@/contexts/global-data";
 import { useToast } from "@/contexts/toast";
 import { ModLoaderType } from "@/enums/instance";
 import {
@@ -30,9 +31,11 @@ import {
   ModLoaderResourceInfo,
   defaultModLoaderResourceInfo,
 } from "@/models/resource";
+import { CampusModpackService } from "@/services/campus-modpack";
 import { InstanceService } from "@/services/instance";
 import { ResourceService } from "@/services/resource";
-import { registerPendingCampusInstall } from "@/utils/campus-install";
+import { runCampusInstall } from "@/utils/campus-install";
+import { localizeCampusInstallError } from "@/utils/campus-install-task";
 import { isDirNameInvalid, sanitizeFileName } from "@/utils/string";
 
 interface InstallCampusModpackModalProps extends Omit<ModalProps, "children"> {
@@ -60,6 +63,7 @@ const InstallCampusModpackModal: React.FC<InstallCampusModpackModalProps> = ({
   const { config } = useLauncherConfig();
   const router = useRouter();
   const toast = useToast();
+  const { getInstanceList } = useGlobalData();
   const primaryColor = config.appearance.theme.primaryColor;
   const { onClose } = modalProps;
 
@@ -165,10 +169,28 @@ const InstallCampusModpackModal: React.FC<InstallCampusModpackModalProps> = ({
         }
       );
       if (createResp.status === "success") {
-        registerPendingCampusInstall(name, {
-          instanceId: `${gameDirectory.name}:${name}`,
-          label: project.name,
-        });
+        const registered =
+          await CampusModpackService.registerCampusModpackInstall(
+            `${gameDirectory.name}:${name}`,
+            project.name
+          );
+        if (registered.status !== "success") {
+          toast({
+            title: t("Services.instance.installCampusModpack.error.title"),
+            description: localizeCampusInstallError(
+              t,
+              String(registered.raw_error ?? registered.details ?? "")
+            ),
+            status: "error",
+          });
+          return;
+        }
+        getInstanceList(true);
+        runCampusInstall(
+          { instanceId: `${gameDirectory.name}:${name}`, label: project.name },
+          toast,
+          t
+        );
         onClose();
         router.push("/downloads");
       } else {
@@ -182,6 +204,7 @@ const InstallCampusModpackModal: React.FC<InstallCampusModpackModalProps> = ({
       setIsLoading(false);
     }
   }, [
+    getInstanceList,
     description,
     gameDirectory,
     iconSrc,

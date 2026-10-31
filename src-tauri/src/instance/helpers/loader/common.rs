@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
@@ -18,6 +18,41 @@ use crate::launch::helpers::jre_selector::select_java_runtime;
 use crate::launcher_config::models::JavaInfo;
 use crate::resource::models::SourceType;
 use crate::tasks::PTaskParam;
+
+/// Return whether an installer is a readable zip archive.
+///
+/// Installer downloads historically target their final path, so an interrupted
+/// download can leave a file that exists but cannot be opened by the processor.
+pub fn is_valid_installer(path: &Path) -> bool {
+  let Ok(file) = File::open(path) else {
+    return false;
+  };
+  ZipArchive::new(file).is_ok()
+}
+
+pub(crate) fn installer_task_group(instance_id: &str, optifine: bool) -> String {
+  let name = if optifine {
+    "optifine-installer"
+  } else {
+    "loader-installer"
+  };
+  format!("{name}?{instance_id}")
+}
+
+#[cfg(test)]
+mod installer_tests {
+  use super::is_valid_installer;
+  use std::io::Write;
+
+  #[test]
+  fn truncated_zip_is_not_a_valid_installer() {
+    let path = std::env::temp_dir().join(format!("ustbl-installer-{}.jar", uuid::Uuid::new_v4()));
+    let mut file = std::fs::File::create(&path).unwrap();
+    file.write_all(b"PK\x03\x04truncated").unwrap();
+    assert!(!is_valid_installer(&path));
+    std::fs::remove_file(path).unwrap();
+  }
+}
 
 pub fn add_library_entry(
   libraries: &mut Vec<LibrariesValue>,

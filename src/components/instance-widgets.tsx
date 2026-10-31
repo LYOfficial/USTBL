@@ -37,11 +37,13 @@ import {
 import { BeatLoader } from "react-spinners";
 import Empty from "@/components/common/empty";
 import { OptionItem } from "@/components/common/option-item";
+import { InstanceLaunchButton } from "@/components/instance-launch-button";
 import { useLauncherConfig } from "@/contexts/config";
 import { useInstanceSharedData } from "@/contexts/instance";
 import { useSharedModals } from "@/contexts/shared-modal";
 import { ModLoaderType } from "@/enums/instance";
 import { GetStateFlag } from "@/hooks/get-state";
+import { ModLoaderStatus } from "@/models/instance/misc";
 import { LocalModInfo } from "@/models/instance/misc";
 import { ScreenshotInfo } from "@/models/instance/misc";
 import { WorldInfo } from "@/models/instance/world";
@@ -130,6 +132,11 @@ export const InstanceBasicInfoWidget = () => {
                   noOfLines={1}
                 >{`${summary?.modLoader.loaderType} ${parseModLoaderVersion(summary?.modLoader.version || "")}`}</Text>
               )}
+            {summary?.modLoader.status === ModLoaderStatus.DownloadFailed && (
+              <Text noOfLines={1} color="orange.400">
+                {t("InstanceWidgets.basicInfo.loaderDownloadFailed")}
+              </Text>
+            )}
           </VStack>
         }
         prefixElement={
@@ -408,7 +415,8 @@ export const InstanceLastPlayedWidget = () => {
           </HStack>
           {summary?.supportQuickPlay && (
             <HStack spacing={1.5} position="absolute" left={2} bottom={2}>
-              <Button
+              <InstanceLaunchButton
+                instance={summary}
                 size="xs"
                 variant="ghost"
                 colorScheme={primaryColor}
@@ -426,7 +434,7 @@ export const InstanceLastPlayedWidget = () => {
                   <Icon as={LuArrowRight} />
                   <Text>{t("InstanceWidgets.lastPlayed.continuePlaying")}</Text>
                 </HStack>
-              </Button>
+              </InstanceLaunchButton>
             </HStack>
           )}
         </VStack>

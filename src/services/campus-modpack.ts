@@ -1,8 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
-  CampusInstallOutcome,
+  CampusInstallFinished,
   CampusInstallProgress,
+  CampusInstallStarted,
   CampusModpackProject,
   CampusModpackRecommendation,
   CampusNewProject,
@@ -12,6 +13,7 @@ import {
   CampusPublishProgress,
   CampusPublishRule,
   CampusPublishStarted,
+  CampusUnfinishedInstall,
   CampusUnfinishedPublish,
 } from "@/models/campus-modpack";
 import { InvokeResponse } from "@/models/response";
@@ -49,8 +51,40 @@ export class CampusModpackService {
   @responseHandler("instance")
   static async installCampusModpack(
     instanceId: string
-  ): Promise<InvokeResponse<CampusInstallOutcome>> {
+  ): Promise<InvokeResponse<CampusInstallStarted>> {
     return await invoke("install_campus_modpack", { instanceId });
+  }
+
+  @responseHandler("instance")
+  static async registerCampusModpackInstall(
+    instanceId: string,
+    label: string
+  ): Promise<InvokeResponse<null>> {
+    return await invoke("register_campus_modpack_install", {
+      instanceId,
+      label,
+    });
+  }
+
+  @responseHandler("instance")
+  static async listCampusModpackInstallJobs(): Promise<
+    InvokeResponse<CampusUnfinishedInstall[]>
+  > {
+    return await invoke("list_campus_modpack_install_jobs");
+  }
+
+  @responseHandler("instance")
+  static async resumeCampusModpackInstall(
+    instanceId: string
+  ): Promise<InvokeResponse<CampusInstallStarted>> {
+    return await invoke("resume_campus_modpack_install", { instanceId });
+  }
+
+  @responseHandler("instance")
+  static async discardCampusModpackInstall(
+    instanceId: string
+  ): Promise<InvokeResponse<null>> {
+    return await invoke("discard_campus_modpack_install", { instanceId });
   }
 
   static onInstallProgress(
@@ -58,6 +92,30 @@ export class CampusModpackService {
   ): () => void {
     const unlisten = getCurrentWebview().listen<CampusInstallProgress>(
       "modpack-update:progress",
+      (event) => callback(event.payload)
+    );
+    return () => {
+      unlisten.then((removeListener) => removeListener());
+    };
+  }
+
+  static onInstallFinished(
+    callback: (payload: CampusInstallFinished) => void
+  ): () => void {
+    const unlisten = getCurrentWebview().listen<CampusInstallFinished>(
+      "modpack-install:finished",
+      (event) => callback(event.payload)
+    );
+    return () => {
+      unlisten.then((removeListener) => removeListener());
+    };
+  }
+
+  static onInstallGroupsRemoved(
+    callback: (groups: string[]) => void
+  ): () => void {
+    const unlisten = getCurrentWebview().listen<string[]>(
+      "modpack-install:groups-removed",
       (event) => callback(event.payload)
     );
     return () => {

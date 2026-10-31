@@ -67,6 +67,7 @@ export interface InstanceSummary {
   isVersionIsolated: boolean;
   modpackVersion?: string;
   isComponentProfile: boolean;
+  campusInstallPending?: boolean;
   origin?: InstanceOrigin;
 }
 

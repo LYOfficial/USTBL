@@ -105,6 +105,17 @@ where
     }
   }
 
+  /// Set an absolute value for owner-driven tasks such as a modpack install.
+  pub fn set_current(&mut self, current: i64) {
+    self.desc.current = current;
+    self.desc.save(&self.path).unwrap();
+    self.reporter.report_progress(
+      self.desc.task_id,
+      self.desc.task_group.as_deref(),
+      self.desc.current,
+    );
+  }
+
   pub fn report_progress(&mut self, cx: &mut Context<'_>, incr: i64) {
     self.desc.increment_progress(incr);
     if self.interval.poll_tick(cx).is_ready() {

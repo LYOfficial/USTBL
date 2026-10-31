@@ -258,6 +258,7 @@
     }
   },
   "AllInstancesPage": {
+    "installing": "Installing",
     "button": {
       "addAndImport": "Add & Import",
       "installCampusModpack": "Install USTB Modpack",
@@ -657,6 +658,16 @@
       "resume": "Continue",
       "discard": "Discard"
     },
+    "unfinishedInstall": {
+      "title": "Unfinished installs",
+      "phase": {
+        "waitingClient": "Waiting for game client",
+        "installing": "Installation interrupted, can be continued",
+        "failed": "Installation failed"
+      },
+      "resume": "Continue",
+      "discard": "Discard"
+    },
     "button": {
       "settings": "Download Settings",
       "pause": "Pause",
@@ -685,9 +696,18 @@
       "retry": "Retry",
       "neoforge-libraries": "NeoForge Libraries",
       "forge-libraries": "Forge Libraries",
+      "loader-installer": "Loader Installer",
       "launcher-update": "Update Launcher",
       "mojang-java": "Java {{param}} Runtime",
-      "modpack-publish": "Publish modpack {{param}}"
+      "modpack-publish": "Publish modpack {{param}}",
+      "modpack-install": "Install modpack {{param}}"
+    },
+    "installStage": {
+      "waitingclient": "Waiting for game client",
+      "preparing": "Preparing",
+      "locating": "Locating",
+      "fetching": "Fetching",
+      "applying": "Applying"
     }
   },
   "Editable": {
@@ -1301,7 +1321,8 @@
       "settings": "Settings"
     },
     "button": {
-      "launch": "Launch Instance"
+      "launch": "Launch Instance",
+      "viewInstall": "View Installation"
     }
   },
   "InstanceIconSelector": {
@@ -1379,7 +1400,8 @@
     "basicInfo": {
       "title": "Basic Info",
       "gameVersion": "Version",
-      "playTime": "Playtime"
+      "playTime": "Playtime",
+      "loaderDownloadFailed": "Loader download failed. Refresh the instance list to retry."
     },
     "screenshots": {
       "title": "Screenshots"
@@ -2225,6 +2247,7 @@
         "error": {
           "title": "Failed to select suitable JRE",
           "description": {
+            "LAUNCH_INSTANCE_INSTALLING": "This instance has an unfinished campus installation and cannot be launched. Complete the installation in Download & Upload Tasks first.",
             "INSTANCE_NOT_FOUND_BY_ID": "Instance ID does not exist",
             "NO_SUITABLE_JAVA": "No suitable Java version found",
             "SELECTED_JAVA_UNAVAILABLE": "The manually selected Java runtime has been removed or is unavailable"
@@ -2655,7 +2678,13 @@
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "This version changes the modpack's component chain and cannot be applied in place; install it again",
             "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack",
             "MODPACK_UPDATE_PACK_UNAVAILABLE": "The files of this version are temporarily unavailable on the platform. Try again later",
-            "MODPACK_UPDATE_MERGE_INVALID": "The selected blocks produce an invalid configuration. Adjust your choices and try again"
+            "MODPACK_UPDATE_MERGE_INVALID": "The selected blocks produce an invalid configuration. Adjust your choices and try again",
+            "MODPACK_INSTALL_STAGING_MISMATCH": "The saved download belongs to another install plan and was cleared",
+            "MODPACK_INSTALL_INTERRUPTED": "The installation was interrupted; continue it from the task page",
+            "MODPACK_INSTALL_TASK_FAILED": "The installation task ended unexpectedly. Details are in the launcher log; continue or discard it from the task page",
+            "NETWORK_ERROR": "The network request failed after retries. Check your connection, then continue the installation",
+            "FILE_OPERATION_ERROR": "The installation could not read or write its files. Check free space and permissions, then continue",
+            "UNKNOWN_ERROR": "Installation failed; details are in the launcher log. Continue to retry or discard the installation"
           }
         }
       },
@@ -3355,6 +3384,7 @@
         "paused": "Paused",
         "needsRepair": "Needs repair",
         "waitingLoader": "Waiting for loader",
+        "installing": "Awaiting installation",
         "unknown": "Check failed",
         "notChecked": "Not checked",
         "unlinked": "Unlinked"

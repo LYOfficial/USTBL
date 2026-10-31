@@ -19,7 +19,8 @@ export const DownloadIndicator: React.FC = () => {
   const router = useRouter();
   const { t } = useTranslation();
   const { config } = useLauncherConfig();
-  const { tasks, generalPercent, unfinishedPublishes } = useTaskContext();
+  const { tasks, generalPercent, unfinishedPublishes, unfinishedInstalls } =
+    useTaskContext();
   const primaryColor = config.appearance.theme.primaryColor;
 
   const [showCheckIcon, setShowCheckIcon] = useState(false);
@@ -39,7 +40,7 @@ export const DownloadIndicator: React.FC = () => {
   // Publish records waiting on the user (an interrupted upload, a failure):
   // shown as "needs attention", never as spinning progress (10-23 addition).
   const needsAttention =
-    unfinishedPublishes.length > 0 &&
+    (unfinishedPublishes.length > 0 || unfinishedInstalls.length > 0) &&
     !tasks.some(
       (group) =>
         group.status === GTaskEventStatusEnums.Started ||

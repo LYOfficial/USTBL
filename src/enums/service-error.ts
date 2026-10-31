@@ -63,6 +63,9 @@ export enum InstanceError {
   ModpackUpdateUnlinkPending = "MODPACK_UPDATE_UNLINK_PENDING",
   ModpackUpdateBothVariants = "MODPACK_UPDATE_BOTH_VARIANTS",
   ModpackUpdateLocateLocating = "MODPACK_UPDATE_LOCATE_LOCATING",
+  ModpackInstallStagingMismatch = "MODPACK_INSTALL_STAGING_MISMATCH",
+  ModpackInstallInterrupted = "MODPACK_INSTALL_INTERRUPTED",
+  ModpackInstallTaskFailed = "MODPACK_INSTALL_TASK_FAILED",
   ModpackUploadRestarted = "MODPACK_UPLOAD_RESTARTED",
   ModpackUploadCloudUnavailable = "MODPACK_UPLOAD_CLOUD_UNAVAILABLE",
   ModpackUploadVerifyFailed = "MODPACK_UPLOAD_VERIFY_FAILED",
@@ -90,6 +93,7 @@ export enum ResourceServiceError {
 }
 
 export enum LaunchServiceError {
+  LaunchInstanceInstalling = "LAUNCH_INSTANCE_INSTALLING",
   ModLoaderNotInstalled = "MOD_LOADER_NOT_INSTALLED",
   NoSuitableJava = "NO_SUITABLE_JAVA",
   SelectedJavaUnavailable = "SELECTED_JAVA_UNAVAILABLE",

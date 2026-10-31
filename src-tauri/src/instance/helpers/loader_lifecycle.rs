@@ -1,5 +1,5 @@
 use crate::error::USTBLResult;
-use crate::instance::models::misc::{Instance, InstanceError, ModLoaderStatus};
+use crate::instance::models::misc::{Instance, InstanceError, ModLoaderStatus, ModLoaderType};
 
 /// Scans publish a whole instance map. Keep their read/modify/save/publish cycle
 /// serialized with loader claims and final state publication, but not processors.
@@ -36,10 +36,7 @@ pub(crate) async fn claim_download(instance: &mut Instance, optifine: bool) -> U
   } else {
     &instance.mod_loader.status
   };
-  if !matches!(
-    status,
-    ModLoaderStatus::NotDownloaded | ModLoaderStatus::DownloadFailed
-  ) {
+  if !pending_download(status) {
     return Ok(false);
   }
   if optifine {
@@ -55,6 +52,35 @@ pub(crate) async fn claim_download(instance: &mut Instance, optifine: bool) -> U
 pub(crate) struct InstallSteps {
   pub loader: bool,
   pub optifine: bool,
+}
+
+pub(crate) fn preparation_allowed(status: &ModLoaderStatus) -> bool {
+  matches!(status, ModLoaderStatus::Downloading)
+}
+
+fn pending_download(status: &ModLoaderStatus) -> bool {
+  matches!(
+    status,
+    ModLoaderStatus::NotDownloaded | ModLoaderStatus::DownloadFailed
+  )
+}
+
+pub(crate) fn loader_patch_ready(
+  client: &crate::instance::helpers::client_json::McClientInfo,
+  loader_type: ModLoaderType,
+) -> bool {
+  let patch_id = match loader_type {
+    ModLoaderType::Forge | ModLoaderType::LegacyForge => "forge",
+    ModLoaderType::NeoForge => "neoforge",
+    _ => return false,
+  };
+  client.patches.iter().any(|patch| patch.id == patch_id)
+}
+
+pub(crate) fn optifine_patch_ready(
+  client: &crate::instance::helpers::client_json::McClientInfo,
+) -> bool {
+  client.patches.iter().any(|patch| patch.id == "optifine")
 }
 
 /// Claim processor work while holding LOADER_LIFECYCLE. The Installing marker is
@@ -118,6 +144,7 @@ fn set_install_status(instance: &mut Instance, steps: InstallSteps, status: ModL
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::instance::helpers::client_json::McClientInfo;
   use crate::instance::models::misc::OptiFine;
   use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -139,6 +166,39 @@ mod tests {
       recover_interrupted(&mut status, true);
       assert_eq!(status, original);
     }
+  }
+
+  #[test]
+  fn legacy_forge_patch_allows_install_without_a_profile() {
+    let mut client = McClientInfo::default();
+    assert!(!loader_patch_ready(&client, ModLoaderType::Forge));
+    client.patches.push(McClientInfo {
+      id: "forge".into(),
+      ..Default::default()
+    });
+    assert!(loader_patch_ready(&client, ModLoaderType::LegacyForge));
+    // Legacy Forge writes this patch but does not leave install_profile.json.
+    assert!(loader_patch_ready(&client, ModLoaderType::Forge));
+    assert!(!optifine_patch_ready(&client));
+    client.patches.push(McClientInfo {
+      id: "optifine".into(),
+      ..Default::default()
+    });
+    assert!(optifine_patch_ready(&client));
+  }
+
+  #[test]
+  fn missing_loader_patch_rejects_installation_evidence() {
+    let client = McClientInfo::default();
+    assert!(!loader_patch_ready(&client, ModLoaderType::NeoForge));
+  }
+
+  #[test]
+  fn preparation_only_accepts_a_completed_installer_claim() {
+    assert!(preparation_allowed(&ModLoaderStatus::Downloading));
+    assert!(!preparation_allowed(&ModLoaderStatus::NotDownloaded));
+    assert!(!preparation_allowed(&ModLoaderStatus::DownloadFailed));
+    assert!(!preparation_allowed(&ModLoaderStatus::Installed));
   }
 
   struct Fixture(Instance);

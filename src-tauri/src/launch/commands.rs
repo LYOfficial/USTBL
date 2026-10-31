@@ -7,6 +7,7 @@ use crate::instance::helpers::client_json::{replace_native_libraries, McClientIn
 use crate::instance::helpers::misc::{get_instance_game_config, get_instance_subdir_paths};
 use crate::instance::models::misc::{Instance, InstanceError, InstanceSubdirType, ModLoaderStatus};
 use crate::instance::modpack_update::apply::UpdateGuard;
+use crate::instance::modpack_update::commands::{has_campus_install, pending_campus_instances};
 use crate::launch::helpers::command_generator::{
   export_full_launch_command, generate_launch_command, LaunchCommand,
 };
@@ -47,6 +48,19 @@ use tauri::{AppHandle, Manager, State};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
+fn launchable_instance(
+  instance: Option<Instance>,
+  pending_instance: impl FnOnce() -> Option<Instance>,
+) -> USTBLResult<Instance> {
+  let instance = instance
+    .or_else(pending_instance)
+    .ok_or(InstanceError::InstanceNotFoundByID)?;
+  if has_campus_install(&instance.version_path) {
+    return Err(LaunchError::LaunchInstanceInstalling.into());
+  }
+  Ok(instance)
+}
+
 // Step 1: select suitable java runtime environment.
 #[tauri::command]
 pub async fn select_suitable_jre(
@@ -56,11 +70,11 @@ pub async fn select_suitable_jre(
   javas_state: State<'_, Mutex<Vec<JavaInfo>>>,
   launching_queue_state: State<'_, Mutex<Vec<LaunchingState>>>,
 ) -> USTBLResult<JavaInfo> {
-  let instance = instances_state
-    .lock()?
-    .get(&instance_id)
-    .ok_or(InstanceError::InstanceNotFoundByID)?
-    .clone();
+  let instance = instances_state.lock()?.get(&instance_id).cloned();
+  // Pending clients may not have a jar and are absent from the normal launch map.
+  let instance = launchable_instance(instance, || {
+    pending_campus_instances(&app).remove(&instance_id)
+  })?;
   let game_config = get_instance_game_config(&app, &instance);
 
   let client_path = instance
@@ -530,4 +544,56 @@ pub fn export_game_crash_info(
 
   paths_to_zip.extend(crash_report_path);
   create_zip_from_dirs(paths_to_zip, zip_file_path.clone())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn unfinished_installs_are_rejected_before_client_or_java_access() {
+    let root = std::env::temp_dir().join(format!("ustbl-launch-install-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(root.join(".ustbl-update")).unwrap();
+    let record = root.join(".ustbl-update/campus-install.json");
+    for phase in ["pending", "waitingClient", "installing", "failed"] {
+      fs::write(
+        &record,
+        serde_json::to_vec(&serde_json::json!({
+          "instanceId": "test:pending", "instanceName": "pending",
+          "label": "Test", "phase": phase, "error": null
+        }))
+        .unwrap(),
+      )
+      .unwrap();
+      let instance = Instance {
+        version_path: root.to_path_buf(),
+        ..Instance::default()
+      };
+      assert_eq!(
+        launchable_instance(Some(instance.clone()), || panic!("unexpected scan"))
+          .unwrap_err()
+          .0,
+        "LAUNCH_INSTANCE_INSTALLING"
+      );
+      // A summary-only instance still reports installing, not missing instance/JSON.
+      assert_eq!(
+        launchable_instance(None, || Some(instance)).unwrap_err().0,
+        "LAUNCH_INSTANCE_INSTALLING"
+      );
+    }
+    fs::remove_file(record).unwrap();
+    assert!(launchable_instance(
+      Some(Instance {
+        version_path: root.to_path_buf(),
+        ..Instance::default()
+      }),
+      || panic!("unexpected scan")
+    )
+    .is_ok());
+    assert_eq!(
+      launchable_instance(None, || None).unwrap_err().0,
+      "INSTANCE_NOT_FOUND_BY_ID"
+    );
+    fs::remove_dir_all(root).unwrap();
+  }
 }

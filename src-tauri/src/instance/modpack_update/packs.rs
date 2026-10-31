@@ -32,6 +32,15 @@ const ATTEMPTS: usize = 3;
 /// for one file before giving up.
 const RELOCATIONS: usize = 2;
 
+fn retry_delay(attempt: usize) -> Duration {
+  Duration::from_millis(
+    500
+      * 2u64
+        .saturating_pow(attempt.saturating_sub(1) as u32)
+        .min(16),
+  )
+}
+
 /// Two entries in one pack are read with a single Range request when the gap
 /// between them is at most this many bytes. Set to 0 to read every entry on
 /// its own, the way the launcher always did, for a before/after comparison.
@@ -287,6 +296,7 @@ impl PackSession {
         }
         Err(TransportError::Expired) if relocations < RELOCATIONS => {
           relocations += 1;
+          tokio::time::sleep(retry_delay(relocations)).await;
           self.relocate(generation).await?;
         }
         Err(error) => {
@@ -460,6 +470,7 @@ impl PackSession {
         }
         Err(TransportError::Expired) if relocations < RELOCATIONS => {
           relocations += 1;
+          tokio::time::sleep(retry_delay(relocations)).await;
           self.relocate(generation).await?;
         }
         Err(error) => {
@@ -601,44 +612,56 @@ fn signed_request(
   Ok(request)
 }
 
-#[async_trait]
-impl PackTransport for AppTransport {
-  async fn locate(&self, version_id: i64, sha1s: &[String]) -> Result<Located, TransportError> {
-    // Locate is a campus JSON answer; the campus client accepts gzip for it.
-    // Range reads below must keep the shared client: reqwest skips
-    // Accept-Encoding when Range is set, but a Range answer must also keep
-    // its Content-Length, which gzip would strip.
-    let client = super::sources::campus_client(&self.app);
-    let url = format!("{CAMPUS_API}/versions/{version_id}/locate");
-    // Servers from before v3 reject a request without `mode`; they answer the
-    // "update" shape, which is the only one used. Newer ones ignore the field.
-    let body = serde_json::json!({ "mode": "update", "sha1s": sha1s });
-    let mut attempt = 0;
-    loop {
-      attempt += 1;
-      let response = match client.post(&url).json(&body).send().await {
-        Ok(response) => response,
-        Err(_) if attempt < ATTEMPTS => {
-          tokio::time::sleep(Duration::from_secs(2)).await;
+async fn locate_request(
+  client: &reqwest::Client,
+  url: &str,
+  body: &serde_json::Value,
+) -> Result<Located, TransportError> {
+  let mut attempt = 0;
+  loop {
+    attempt += 1;
+    let response = match client.post(url).json(body).send().await {
+      Ok(response) => response,
+      Err(_) if attempt < ATTEMPTS => {
+        tokio::time::sleep(retry_delay(attempt)).await;
+        continue;
+      }
+      Err(error) => return Err(failed(error)),
+    };
+    let status = response.status();
+    if status.is_success() {
+      match response.json().await {
+        Ok(located) => return Ok(located),
+        Err(error) if (error.is_body() || error.is_decode()) && attempt < ATTEMPTS => {
+          tokio::time::sleep(retry_delay(attempt)).await;
           continue;
         }
         Err(error) => return Err(failed(error)),
-      };
-      let status = response.status();
-      if status.is_success() {
-        return response.json().await.map_err(failed);
       }
-      if status == reqwest::StatusCode::CONFLICT {
-        let detail: serde_json::Value = response.json().await.unwrap_or_default();
-        let code = detail["detail"]["code"].as_str().unwrap_or_default();
-        return Err(TransportError::Conflict(code.to_string()));
-      }
-      if transient(status) && attempt < ATTEMPTS {
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        continue;
-      }
-      return Err(failed(response.error_for_status().unwrap_err()));
     }
+    if status == reqwest::StatusCode::CONFLICT {
+      let detail: serde_json::Value = response.json().await.unwrap_or_default();
+      let code = detail["detail"]["code"].as_str().unwrap_or_default();
+      return Err(TransportError::Conflict(code.to_string()));
+    }
+    if transient(status) && attempt < ATTEMPTS {
+      tokio::time::sleep(retry_delay(attempt)).await;
+      continue;
+    }
+    return Err(failed(response.error_for_status().unwrap_err()));
+  }
+}
+
+#[async_trait]
+impl PackTransport for AppTransport {
+  async fn locate(&self, version_id: i64, sha1s: &[String]) -> Result<Located, TransportError> {
+    // Only the campus JSON client accepts gzip; Range reads keep the shared
+    // no-gzip client so their Content-Length remains meaningful.
+    let client = super::sources::campus_client(&self.app);
+    let url = format!("{CAMPUS_API}/versions/{version_id}/locate");
+    // Older servers require `mode`; newer servers ignore it.
+    let body = serde_json::json!({ "mode": "update", "sha1s": sha1s });
+    locate_request(&client, &url, &body).await
   }
 
   async fn read_range(
@@ -697,7 +720,7 @@ impl PackTransport for AppTransport {
       .await;
       match outcome {
         Err(TransportError::Failed(_)) if attempt < ATTEMPTS => {
-          tokio::time::sleep(Duration::from_millis(500 * attempt as u64)).await;
+          tokio::time::sleep(retry_delay(attempt)).await;
         }
         other => return other,
       }
@@ -768,6 +791,55 @@ mod tests {
       assert!(decode_entry(&source, &bad, &dest).is_err());
       let _ = fs::remove_file(source);
     }
+  }
+
+  #[test]
+  fn transient_retry_delays_grow_and_are_bounded() {
+    assert_eq!(retry_delay(1), Duration::from_millis(500));
+    assert_eq!(retry_delay(2), Duration::from_secs(1));
+    assert_eq!(retry_delay(3), Duration::from_secs(2));
+    assert_eq!(retry_delay(100), Duration::from_secs(8));
+    assert!(transient(reqwest::StatusCode::INTERNAL_SERVER_ERROR));
+    assert!(transient(reqwest::StatusCode::BAD_GATEWAY));
+    assert!(transient(reqwest::StatusCode::SERVICE_UNAVAILABLE));
+    assert!(!transient(reqwest::StatusCode::NOT_FOUND));
+  }
+
+  #[tokio::test]
+  async fn locate_retries_connection_failure_and_5xx_with_backoff() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/locate", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+      let mut arrivals = Vec::new();
+      for attempt in 0..3 {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        arrivals.push(tokio::time::Instant::now());
+        let mut request = [0u8; 4096];
+        socket.read(&mut request).await.unwrap();
+        if attempt == 0 {
+          // Dropping the connection simulates a transport failure.
+          continue;
+        }
+        let (status, body) = if attempt == 1 {
+          ("503 Service Unavailable", "{}")
+        } else {
+          ("200 OK", "{\"packs\":[],\"entries\":{}}")
+        };
+        socket.write_all(format!(
+          "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()
+        ).as_bytes()).await.unwrap();
+      }
+      arrivals
+    });
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let located = locate_request(&client, &url, &serde_json::json!({ "sha1s": [] }))
+      .await
+      .unwrap();
+    assert!(located.packs.is_empty());
+    let arrivals = server.await.unwrap();
+    assert!(arrivals[1].duration_since(arrivals[0]) >= retry_delay(1));
+    assert!(arrivals[2].duration_since(arrivals[1]) >= retry_delay(2));
   }
 
   #[test]
@@ -904,7 +976,9 @@ mod tests {
       .unwrap();
 
     let dest = work.join("staging/mods/b.jar");
+    let started = tokio::time::Instant::now();
     session.fetch("bb", &dest).await.unwrap();
+    assert!(started.elapsed() >= retry_delay(1));
     assert_eq!(fs::read(&dest).unwrap(), b"second");
     assert!(!raw_path(&dest).exists());
 

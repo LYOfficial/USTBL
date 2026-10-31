@@ -191,6 +191,9 @@ pub struct InstanceSummary {
   /// Imported from a MultiMC component profile; such an instance can only be
   /// exported as MultiMC.
   pub is_component_profile: bool,
+  /// Derived from the persisted campus installation, not loader state.
+  #[serde(default)]
+  pub campus_install_pending: bool,
   /// The modpack this instance follows, if any.
   pub origin: Option<InstanceOrigin>,
 }
@@ -223,6 +226,9 @@ impl InstanceSummary {
       is_version_isolated,
       modpack_version: instance.modpack_version.clone(),
       is_component_profile: is_component_instance(&instance.version_path),
+      campus_install_pending: crate::instance::modpack_update::commands::has_campus_install(
+        &instance.version_path,
+      ),
       origin: instance.origin.clone(),
     }
   }
@@ -352,6 +358,9 @@ pub enum InstanceError {
   ModpackUpdateBothVariants,
   /// The pack locate of an early (pre-hashing) locate failed.
   ModpackUpdateLocateLocating,
+  ModpackInstallStagingMismatch,
+  ModpackInstallInterrupted,
+  ModpackInstallTaskFailed,
   ModpackUploadRestarted,
   ModpackUploadCloudUnavailable,
   ModpackUploadVerifyFailed,

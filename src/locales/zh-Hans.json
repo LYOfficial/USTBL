@@ -258,6 +258,7 @@
     }
   },
   "AllInstancesPage": {
+    "installing": "安装中",
     "button": {
       "addAndImport": "添加与导入",
       "installCampusModpack": "安装北科整合包",
@@ -657,6 +658,16 @@
       "resume": "继续",
       "discard": "放弃"
     },
+    "unfinishedInstall": {
+      "title": "未完成的安装",
+      "phase": {
+        "waitingClient": "等待游戏客户端",
+        "installing": "安装中断，可继续",
+        "failed": "安装失败"
+      },
+      "resume": "继续",
+      "discard": "放弃"
+    },
     "button": {
       "settings": "下载设置",
       "pause": "暂停",
@@ -685,9 +696,18 @@
       "retry": "重试",
       "neoforge-libraries": "NeoForge 运行库",
       "forge-libraries": "Forge 运行库",
+      "loader-installer": "加载器安装器",
       "launcher-update": "更新启动器",
       "mojang-java": "Java {{param}} 运行时",
-      "modpack-publish": "发布整合包 {{param}}"
+      "modpack-publish": "发布整合包 {{param}}",
+      "modpack-install": "安装整合包 {{param}}"
+    },
+    "installStage": {
+      "waitingclient": "等待游戏客户端",
+      "preparing": "准备中",
+      "locating": "定位文件",
+      "fetching": "获取文件",
+      "applying": "应用文件"
     }
   },
   "Editable": {
@@ -1301,7 +1321,8 @@
       "settings": "设置"
     },
     "button": {
-      "launch": "启动实例"
+      "launch": "启动实例",
+      "viewInstall": "查看安装"
     }
   },
   "InstanceIconSelector": {
@@ -1379,7 +1400,8 @@
     "basicInfo": {
       "title": "基本信息",
       "gameVersion": "游戏版本",
-      "playTime": "游戏时长"
+      "playTime": "游戏时长",
+      "loaderDownloadFailed": "加载器下载失败，刷新实例列表后将自动重试"
     },
     "screenshots": {
       "title": "截图"
@@ -2226,6 +2248,7 @@
           "title": "选择合适 Java 运行时失败",
           "description": {
             "INSTANCE_NOT_FOUND_BY_ID": "实例 ID 不存在",
+            "LAUNCH_INSTANCE_INSTALLING": "此实例的校内安装尚未完成，暂时无法启动。请先前往下载与上传任务完成安装。",
             "NO_SUITABLE_JAVA": "没有合适的 Java 运行时可供选择",
             "SELECTED_JAVA_UNAVAILABLE": "手动选择的 Java 运行时已移除或不可用"
           }
@@ -2655,7 +2678,13 @@
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的组件链，无法就地更新，请重新安装",
             "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线",
             "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试",
-            "MODPACK_UPDATE_MERGE_INVALID": "按块选择后配置文件的格式无效，请调整选择后重试"
+            "MODPACK_UPDATE_MERGE_INVALID": "按块选择后配置文件的格式无效，请调整选择后重试",
+            "MODPACK_INSTALL_STAGING_MISMATCH": "已保存的下载属于其他安装计划，已清理",
+            "MODPACK_INSTALL_INTERRUPTED": "安装已中断，请从任务页继续",
+            "MODPACK_INSTALL_TASK_FAILED": "安装任务意外终止，详情已记录到启动器日志；可从任务页继续或放弃",
+            "NETWORK_ERROR": "网络请求重试后仍失败，请检查网络后继续安装",
+            "FILE_OPERATION_ERROR": "安装时无法读写文件，请检查磁盘空间和权限后继续",
+            "UNKNOWN_ERROR": "安装失败，详情已记录到启动器日志；可以继续重试或放弃"
           }
         }
       },
@@ -3355,6 +3384,7 @@
         "paused": "已暂停",
         "needsRepair": "需修复",
         "waitingLoader": "等待加载器",
+        "installing": "等待安装",
         "unknown": "检查失败",
         "notChecked": "未检查",
         "unlinked": "已解除跟随"

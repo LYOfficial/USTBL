@@ -34,6 +34,14 @@ const JOURNAL_FILE: &str = "journal.json";
 const JOURNAL_SCHEMA: u32 = 1;
 const INSTANCE_CONFIG_FILE: &str = "ustblcfg.json";
 const FETCH_CONCURRENCY: usize = 8;
+const STAGING_META: &str = "manifest.json";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StagingMeta {
+  version_id: String,
+  plan_hash: String,
+}
 
 fn update_dir(root: &Path) -> PathBuf {
   root.join(UPDATE_DIR)
@@ -61,6 +69,32 @@ fn last_backup_dir(root: &Path) -> PathBuf {
 
 fn journal_path(root: &Path) -> PathBuf {
   update_dir(root).join(JOURNAL_FILE)
+}
+
+fn staging_meta_path(root: &Path) -> PathBuf {
+  // Keep bookkeeping outside the payload namespace (a pack may legitimately
+  // ship a root-level manifest.json).
+  update_dir(root).join(format!("staging-{STAGING_META}"))
+}
+
+fn read_staging_meta(root: &Path) -> io::Result<Option<StagingMeta>> {
+  match fs::read(staging_meta_path(root)) {
+    Ok(bytes) => {
+      Ok(Some(serde_json::from_slice(&bytes).map_err(|error| {
+        io::Error::new(io::ErrorKind::InvalidData, error)
+      })?))
+    }
+    Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+    Err(error) => Err(error),
+  }
+}
+
+fn write_staging_meta(root: &Path, meta: &StagingMeta) -> io::Result<()> {
+  fs::create_dir_all(staging_dir(root))?;
+  let path = staging_meta_path(root);
+  let temp = path.with_extension("json.tmp");
+  fs::write(&temp, serde_json::to_vec_pretty(meta)?)?;
+  fs::rename(temp, path)
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Deserialize, Serialize)]
@@ -109,9 +143,10 @@ struct Journal {
   meta_absent: Vec<String>,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Stage {
+  WaitingClient,
   /// Fetching the version detail and comparing it with the instance.
   Preparing,
   /// Asking the platform where the needed files sit in its packs.
@@ -121,12 +156,14 @@ pub enum Stage {
   Finalizing,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Progress {
   pub stage: Stage,
   pub done: usize,
   pub total: usize,
+  pub bytes_done: u64,
+  pub bytes_total: u64,
 }
 
 /// Everything the update needs from the outside world.
@@ -176,6 +213,8 @@ pub struct UpdateRequest {
   /// The local ignores as the plan saw them and as the update leaves them;
   /// `None` leaves the file alone. Written inside the transaction.
   pub ignores: Option<super::ignores::IgnoresUpdate>,
+  /// Identifies the plan whose staged files may be reused after a failure.
+  pub plan_hash: String,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -334,6 +373,7 @@ fn roll_back_from(root: &Path, backup: &Path, journal: &Journal) -> io::Result<(
 /// Drop the staging area and keep this update's backup for the next one.
 fn finish_cleanup(root: &Path, keep_backup: bool) {
   let _ = fs::remove_dir_all(staging_dir(root));
+  let _ = fs::remove_file(staging_meta_path(root));
   let _ = fs::remove_dir_all(components_dir(root));
   let _ = fs::remove_dir_all(update_dir(root).join("remote"));
   if keep_backup && backup_dir(root).exists() {
@@ -410,8 +450,9 @@ pub fn recover_checked(
 
 fn recover_locked(root: &Path) -> USTBLResult<Recovery> {
   let Some(journal) = read_journal(root).map_err(io_error)? else {
-    let _ = fs::remove_dir_all(staging_dir(root));
-    let _ = fs::remove_dir_all(components_dir(root));
+    // Pre-transaction downloads belong to the next apply attempt. `run`
+    // checks their target and hashes before using them; recovery must not
+    // erase them merely because no transaction has started yet.
     return Ok(Recovery::Nothing);
   };
   match journal.state {
@@ -664,10 +705,9 @@ pub async fn apply(env: &dyn UpdateEnv, request: UpdateRequest) -> USTBLResult<(
   match run(env, &request).await {
     Ok(()) => Ok(()),
     Err(error) => {
-      // `run` rolls back after the journal exists; before that only staging
-      // has to go.
+      // `run` rolls back after the journal exists. Before that the verified
+      // staging files remain available for a retry.
       if read_journal(&root).ok().flatten().is_none() {
-        let _ = fs::remove_dir_all(staging_dir(&root));
         let _ = fs::remove_dir_all(backup_dir(&root));
       }
       Err(error)
@@ -690,9 +730,36 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
     .map(|file| (file.path.as_str(), file))
     .collect();
 
-  // Phase 1: fetch and verify everything into staging.
-  let _ = fs::remove_dir_all(staging_dir(root));
-  let _ = fs::remove_dir_all(components_dir(root));
+  // Phase 1: fetch and verify everything into staging. A matching manifest is
+  // deliberately kept across pre-journal failures so a retry can reuse files.
+  let reusable = match read_staging_meta(root).ok().flatten() {
+    Some(meta)
+      if meta.version_id == request.remote.version_id && meta.plan_hash == request.plan_hash =>
+    {
+      true
+    }
+    Some(meta) => {
+      log::info!(
+        "modpack install staging mismatch: version={} plan_hash={} expected_version={} expected_plan_hash={} code={}",
+        meta.version_id,
+        meta.plan_hash,
+        request.remote.version_id,
+        request.plan_hash,
+        InstanceError::ModpackInstallStagingMismatch,
+      );
+      false
+    }
+    None => false,
+  };
+  if !reusable {
+    for path in [staging_dir(root), components_dir(root)] {
+      match fs::remove_dir_all(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(io_error(error)),
+      }
+    }
+  }
   let to_fetch: Vec<&RemoteFile> = request
     .operations
     .iter()
@@ -738,11 +805,52 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
         .map(|file| (file, components_dir(root).join(&file.path))),
     );
   }
+  let total = to_fetch.len();
+  let bytes_total = to_fetch.iter().map(|(file, _)| file.key.size).sum();
+  let mut done = 0;
+  let mut bytes_done = 0;
+  if reusable {
+    let checks: Vec<_> = to_fetch
+      .iter()
+      .map(|(file, dest)| (file.key.clone(), dest.clone()))
+      .collect();
+    let verified = tokio::task::spawn_blocking(move || {
+      checks
+        .into_iter()
+        .map(|(key, dest)| {
+          hash_file(&dest).is_ok_and(|(sha1, size)| sha1 == key.sha1 && size == key.size)
+        })
+        .collect::<Vec<_>>()
+    })
+    .await
+    .map_err(|error| crate::error::USTBLError(error.to_string()))?;
+    let mut verified = verified.into_iter();
+    to_fetch.retain(|(file, dest)| {
+      if verified.next().unwrap_or(false) {
+        done += 1;
+        bytes_done += file.key.size;
+        false
+      } else {
+        let _ = fs::remove_file(dest);
+        true
+      }
+    });
+  }
+  write_staging_meta(
+    root,
+    &StagingMeta {
+      version_id: request.remote.version_id.clone(),
+      plan_hash: request.plan_hash.clone(),
+    },
+  )
+  .map_err(io_error)?;
   let wanted: Vec<&RemoteFile> = to_fetch.iter().map(|(file, _)| *file).collect();
   env.report(Progress {
     stage: Stage::Locating,
     done: 0,
     total: 1,
+    bytes_done: 0,
+    bytes_total: 0,
   });
   prepare_packs(&wanted).await?;
   // Plan every session's merged groups up front: all of its files, wherever
@@ -778,45 +886,74 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
   }
   let sessions: Vec<Arc<PackSession>> =
     planned.iter().map(|(session, _)| session.clone()).collect();
-  let total = to_fetch.len();
   env.report(Progress {
     stage: Stage::Fetching,
-    done: 0,
+    done,
     total,
+    bytes_done,
+    bytes_total,
   });
-  let mut done = 0;
   let fetching = Instant::now();
   // Driven by hand rather than with `buffer_unordered`: the combinator's
   // closure makes the future fail the `Send` check of the command handler.
   let mut pending = fetch_units(&to_fetch, planned).into_iter();
   let mut running = FuturesUnordered::new();
+  let mut first_error = None;
   let fetching_result: USTBLResult<()> = loop {
-    while running.len() < FETCH_CONCURRENCY {
+    while first_error.is_none() && running.len() < FETCH_CONCURRENCY {
       let Some(unit) = pending.next() else {
         break;
       };
       let files = unit.file_count();
+      let bytes = match &unit {
+        FetchUnit::Single(file, _) => file.key.size,
+        FetchUnit::Group(_, group) => group.entries.iter().map(|file| file.entry.size).sum(),
+      };
       running.push(async move {
         let result = match &unit {
           FetchUnit::Single(file, dest) => stage_file(env, dest.clone(), file).await,
-          FetchUnit::Group(session, group) => session.fetch_group(group).await,
+          FetchUnit::Group(session, group) => {
+            session.fetch_group(group).await?;
+            let entries = group.entries.clone();
+            tokio::task::spawn_blocking(move || {
+              for entry in entries {
+                let (sha1, size) = hash_file(&entry.dest).map_err(io_error)?;
+                if sha1 != entry.sha1 || size != entry.entry.size {
+                  let _ = fs::remove_file(&entry.dest);
+                  return Err(InstanceError::ModpackUpdateVerifyFailed.into());
+                }
+              }
+              Ok(())
+            })
+            .await
+            .map_err(|error| crate::error::USTBLError(error.to_string()))?
+          }
         };
-        result.map(|()| files)
+        result.map(|()| (files, bytes))
       });
     }
     let Some(result) = running.next().await else {
-      break Ok(());
+      break first_error.map_or(Ok(()), Err);
     };
     match result {
-      Ok(files) => {
+      Ok((files, bytes)) => {
         done += files;
+        bytes_done += bytes;
         env.report(Progress {
           stage: Stage::Fetching,
           done,
           total,
+          bytes_done,
+          bytes_total,
         });
       }
-      Err(error) => break Err(error),
+      Err(error) => {
+        // Stop scheduling, but drain in-flight work: blocking extractors cannot
+        // be aborted safely while a retry or discard starts using the staging.
+        if first_error.is_none() {
+          first_error = Some(error);
+        }
+      }
     }
   };
   // The measurement behind the "merged or not" comparison, per pack session.
@@ -849,6 +986,8 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
     stage: Stage::Applying,
     done: 0,
     total: request.operations.len(),
+    bytes_done: 0,
+    bytes_total: 0,
   });
   let ops: Vec<JournalOp> = request
     .operations
@@ -920,6 +1059,8 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
       stage: Stage::Finalizing,
       done: 0,
       total: 1,
+      bytes_done: 0,
+      bytes_total: 0,
     });
     let mut origin = request.origin.clone();
     origin.version_id = request.remote.version_id.clone();
@@ -967,6 +1108,8 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
         stage: Stage::Finalizing,
         done: 1,
         total: 1,
+        bytes_done: 0,
+        bytes_total: 0,
       });
       Ok(())
     }
@@ -1051,6 +1194,9 @@ mod tests {
   struct FakeEnv {
     contents: BTreeMap<String, Vec<u8>>,
     fail_url: Option<String>,
+    delay_url: Option<String>,
+    fetched: Mutex<Vec<String>>,
+    progress: Mutex<Vec<Progress>>,
     fail_commit: bool,
     switched: Mutex<Vec<String>>,
     restored: Mutex<Vec<String>>,
@@ -1065,6 +1211,10 @@ mod tests {
       if self.fail_url.as_deref() == Some(url) {
         return Err(crate::error::USTBLError("network".into()));
       }
+      if self.delay_url.as_deref() == Some(url) {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+      }
+      self.fetched.lock().unwrap().push(url.to_string());
       fs::create_dir_all(dest.parent().unwrap()).unwrap();
       fs::write(dest, &self.contents[url]).unwrap();
       Ok(())
@@ -1094,7 +1244,9 @@ mod tests {
       self.committed.lock().unwrap().push(version_id.into());
       Ok(())
     }
-    fn report(&self, _progress: Progress) {}
+    fn report(&self, progress: Progress) {
+      self.progress.lock().unwrap().push(progress);
+    }
   }
 
   /// Instance at version 1: keep.jar and old.jar are managed, edited.cfg too.
@@ -1168,6 +1320,7 @@ mod tests {
       merged_contents: BTreeMap::new(),
       base_texts: BTreeMap::new(),
       next_baseline,
+      plan_hash: "test-plan".into(),
     }
   }
 
@@ -1435,8 +1588,122 @@ mod tests {
     assert_eq!(root.read("mods/gone.jar").as_deref(), Some("gone"));
     assert_eq!(root.read("mods/a.jar"), None);
     assert!(!journal_path(&root.0).exists());
-    assert!(!staging_dir(&root.0).exists());
+    // A failure before the journal keeps verified files for the next attempt.
+    assert!(staging_dir(&root.0).exists());
     assert!(env.switched.lock().unwrap().is_empty());
+  }
+
+  #[tokio::test]
+  async fn a_retry_reuses_verified_staging_files_for_the_same_plan() {
+    let root = setup();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let good = url_file("mods/a.jar", "a", &mut env);
+    let bad = url_file("mods/b.jar", "b", &mut env);
+    env.fail_url = Some("https://example.com/mods/b.jar".into());
+    let operations = vec![write_op(&good), write_op(&bad)];
+
+    assert!(apply(
+      &env,
+      request(
+        &root,
+        vec![good.clone(), bad.clone()],
+        operations.clone(),
+        "0.16.0"
+      )
+    )
+    .await
+    .is_err());
+    assert_eq!(
+      env.fetched.lock().unwrap().as_slice(),
+      ["https://example.com/mods/a.jar"]
+    );
+
+    env.fail_url = None;
+    env.progress.lock().unwrap().clear();
+    apply(&env, request(&root, vec![good, bad], operations, "0.16.0"))
+      .await
+      .unwrap();
+    let fetching: Vec<_> = env
+      .progress
+      .lock()
+      .unwrap()
+      .iter()
+      .copied()
+      .filter(|progress| progress.stage == Stage::Fetching)
+      .collect();
+    assert_eq!((fetching[0].done, fetching[0].bytes_done), (1, 1));
+    assert_eq!((fetching[0].total, fetching[0].bytes_total), (2, 2));
+    let last = fetching.last().unwrap();
+    assert_eq!((last.done, last.bytes_done), (2, 2));
+    assert_eq!(
+      env.fetched.lock().unwrap().as_slice(),
+      [
+        "https://example.com/mods/a.jar",
+        "https://example.com/mods/b.jar"
+      ]
+    );
+  }
+
+  #[tokio::test]
+  async fn a_failed_fetch_drains_in_flight_writes_before_releasing_the_lock() {
+    let root = setup();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      fail_url: Some("https://example.com/mods/bad.jar".into()),
+      delay_url: Some("https://example.com/mods/slow.jar".into()),
+      ..Default::default()
+    };
+    let bad = url_file("mods/bad.jar", "bad", &mut env);
+    let slow = url_file("mods/slow.jar", "slow", &mut env);
+    let operations = vec![write_op(&bad), write_op(&slow)];
+    assert!(
+      apply(&env, request(&root, vec![bad, slow], operations, "0.15.0"))
+        .await
+        .is_err()
+    );
+    assert_eq!(
+      fs::read(staging_dir(&root.0).join("mods/slow.jar")).unwrap(),
+      b"slow"
+    );
+    assert!(UpdateGuard::acquire(&root.0).is_ok());
+    assert_eq!(root.read("mods/slow.jar"), None);
+  }
+
+  #[tokio::test]
+  async fn a_changed_plan_clears_old_staging_before_fetching() {
+    let root = setup();
+    fs::create_dir_all(staging_dir(&root.0).join("mods")).unwrap();
+    fs::write(staging_dir(&root.0).join("mods/old.jar"), "old").unwrap();
+    write_staging_meta(
+      &root.0,
+      &StagingMeta {
+        version_id: "old-version".into(),
+        plan_hash: "old-plan".into(),
+      },
+    )
+    .unwrap();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      fail_url: Some("https://example.com/mods/new.jar".into()),
+      ..Default::default()
+    };
+    let new = url_file("mods/new.jar", "new", &mut env);
+
+    let operations = vec![write_op(&new)];
+    assert!(apply(&env, request(&root, vec![new], operations, "0.16.0"))
+      .await
+      .is_err());
+    assert!(!staging_dir(&root.0).join("mods/old.jar").exists());
+    assert_eq!(
+      read_staging_meta(&root.0).unwrap().unwrap(),
+      StagingMeta {
+        version_id: "2".into(),
+        plan_hash: "test-plan".into(),
+      }
+    );
   }
 
   #[tokio::test]
@@ -1460,6 +1727,149 @@ mod tests {
     );
     assert_eq!(root.read("mods/gone.jar").as_deref(), Some("gone"));
     assert_eq!(root.read("mods/a.jar"), None);
+  }
+
+  #[tokio::test]
+  async fn retry_rechecks_sha1_and_size_and_fetches_only_missing_or_bad_files() {
+    let root = setup();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let files = vec![
+      url_file("mods/good.jar", "good", &mut env),
+      url_file("mods/hash.jar", "hash", &mut env),
+      url_file("mods/size.jar", "size", &mut env),
+      url_file("mods/missing.jar", "missing", &mut env),
+      url_file("manifest.json", "{}", &mut env),
+    ];
+    write_staging_meta(
+      &root.0,
+      &StagingMeta {
+        version_id: "2".into(),
+        plan_hash: "test-plan".into(),
+      },
+    )
+    .unwrap();
+    root.write(".ustbl-update/staging/mods/good.jar", "good");
+    root.write(".ustbl-update/staging/mods/hash.jar", "evil");
+    root.write(".ustbl-update/staging/mods/size.jar", "s");
+    root.write(".ustbl-update/staging/manifest.json", "{}");
+    let operations = files.iter().map(write_op).collect();
+    apply(&env, request(&root, files, operations, "0.15.0"))
+      .await
+      .unwrap();
+    let mut fetched = env.fetched.lock().unwrap().clone();
+    fetched.sort();
+    assert_eq!(
+      fetched,
+      [
+        "https://example.com/mods/hash.jar",
+        "https://example.com/mods/missing.jar",
+        "https://example.com/mods/size.jar",
+      ]
+    );
+    assert_eq!(root.read("manifest.json").as_deref(), Some("{}"));
+  }
+
+  #[tokio::test]
+  async fn changing_either_version_or_plan_discards_staged_components_and_files() {
+    for (version, plan) in [("1", "test-plan"), ("2", "old-plan")] {
+      let root = setup();
+      let mut env = FakeEnv {
+        root: root.0.clone(),
+        ..Default::default()
+      };
+      let file = url_file("mods/a.jar", "a", &mut env);
+      write_staging_meta(
+        &root.0,
+        &StagingMeta {
+          version_id: version.into(),
+          plan_hash: plan.into(),
+        },
+      )
+      .unwrap();
+      root.write(".ustbl-update/staging/mods/a.jar", "a");
+      root.write(".ustbl-update/components/old.json", "old");
+      apply(
+        &env,
+        request(&root, vec![file.clone()], vec![write_op(&file)], "0.15.0"),
+      )
+      .await
+      .unwrap();
+      assert_eq!(env.fetched.lock().unwrap().len(), 1);
+      assert!(!components_dir(&root.0).exists());
+    }
+  }
+
+  #[tokio::test]
+  async fn component_staging_survives_a_pre_journal_failure_and_is_verified_on_retry() {
+    let root = setup();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let mut update = request(&root, Vec::new(), Vec::new(), "0.15.0");
+    with_component_pack(&mut update, &mut env);
+    let bad = url_file("patches/other.json", "other", &mut env);
+    update
+      .remote
+      .component_pack
+      .as_mut()
+      .unwrap()
+      .files
+      .push(bad);
+    env.fail_url = Some("https://example.com/patches/other.json".into());
+    assert!(apply(&env, update).await.is_err());
+    assert_eq!(recover(&root.0).unwrap(), Recovery::Nothing);
+    assert!(components_dir(&root.0)
+      .join("patches/com.example.json")
+      .exists());
+    env.fail_url = None;
+    let mut update = request(&root, Vec::new(), Vec::new(), "0.15.0");
+    with_component_pack(&mut update, &mut env);
+    let other = url_file("patches/other.json", "other", &mut env);
+    update
+      .remote
+      .component_pack
+      .as_mut()
+      .unwrap()
+      .files
+      .push(other);
+    apply(&env, update).await.unwrap();
+    assert_eq!(
+      env
+        .fetched
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|url| url.ends_with("com.example.json"))
+        .count(),
+      1
+    );
+    assert_eq!(env.restored.lock().unwrap().len(), 2);
+  }
+
+  #[test]
+  fn journal_recovery_clears_staging_for_both_rollback_and_committed_transactions() {
+    for state in [JournalState::Committing, JournalState::Committed] {
+      let root = setup();
+      write_staging_meta(
+        &root.0,
+        &StagingMeta {
+          version_id: "2".into(),
+          plan_hash: "test-plan".into(),
+        },
+      )
+      .unwrap();
+      root.write(".ustbl-update/staging/mods/a.jar", "a");
+      root.write(".ustbl-update/components/a.json", "a");
+      interrupted(&root, state);
+      assert_ne!(recover(&root.0).unwrap(), Recovery::Nothing);
+      assert!(!staging_dir(&root.0).exists());
+      assert!(!staging_meta_path(&root.0).exists());
+      assert!(!components_dir(&root.0).exists());
+    }
   }
 
   #[tokio::test]
