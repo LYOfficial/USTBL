@@ -1,27 +1,29 @@
 use crate::error::{USTBLError, USTBLResult};
 use crate::launcher_config::commands::retrieve_launcher_config;
 use crate::resource::helpers::mcim::{
-  acquire_mcim_download_permit_for, content_file_source_candidates,
-  get_content_source_priority_list, ContentSource,
+  content_file_source_candidates, get_content_source_priority_list, is_mcim_url,
+  mcim_download_semaphore, ContentSource,
 };
 use crate::tasks::streams::desc::{PDesc, PStatus};
 use crate::tasks::streams::reporter::Reporter;
 use crate::tasks::streams::ProgressStream;
 use crate::tasks::*;
 use crate::utils::fs::validate_sha1;
+use crate::utils::web::NoRedirectClient;
 use async_speed_limit::Limiter;
 use futures::stream::{BoxStream, TryStreamExt};
 use futures::StreamExt;
-use log::warn;
+use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, Url};
 use tauri_plugin_http::reqwest;
-use tauri_plugin_http::reqwest::header::{CONTENT_RANGE, RANGE};
+use tauri_plugin_http::reqwest::header::{CONTENT_RANGE, LOCATION, RANGE, REFERER};
 use tokio::io::{AsyncRead, AsyncSeekExt, AsyncWriteExt};
+use tokio::sync::{Semaphore, SemaphorePermit};
 use tokio_util::bytes;
 use tokio_util::compat::FuturesAsyncReadCompatExt;
 
@@ -396,16 +398,23 @@ impl DownloadTask {
     if task_handle.read().unwrap().status().is_cancelled() {
       return Ok(());
     }
-    // Hold a mirror slot for the whole transfer so queued modpack files do not
-    // open more parallel connections than the mirror budget allows.
-    let _permit = acquire_mcim_download_permit_for(source.as_str()).await;
     let client = app_handle.state::<reqwest::Client>().inner().clone();
+    let manual_client = app_handle.state::<NoRedirectClient>();
+    // Mirror slots are taken inside `transfer`, only while the mirror itself is
+    // being asked, so queued modpack files do not open more parallel mirror
+    // connections than the budget allows while the CDN does the heavy lifting.
+    let hops = MirrorHops {
+      follow: &client,
+      manual: &manual_client.inner().0,
+      is_mirror: |url| is_mcim_url(url.as_str()),
+      slots: mcim_download_semaphore(),
+    };
     let recorded = task_handle.read().unwrap().desc.current;
     let current = resume_offset(dest_path, recorded).await;
 
     let progress_handle = task_handle.clone();
     let (on_disk, outcome) = transfer(
-      &client,
+      &hops,
       param,
       source,
       dest_path,
@@ -519,13 +528,40 @@ async fn resume_offset(dest: &Path, recorded: i64) -> i64 {
 }
 
 /// A response whose body is ready to be written to disk.
-struct Opened {
+struct Opened<'a> {
   stream: BoxStream<'static, Result<bytes::Bytes, std::io::Error>>,
   /// Offset of the first body byte in the file.
   start: i64,
   /// Size of the whole file, or -1 when the server did not say.
   total: i64,
+  /// Mirror slot, set only when the mirror itself serves the body.
+  permit: Option<SemaphorePermit<'a>>,
 }
+
+/// How a transfer reaches the server.
+///
+/// A URL for which `is_mirror` holds is requested with `manual` (a client that
+/// does not follow redirects) while holding a slot of `slots`. The slot is
+/// released as soon as the answer redirects somewhere that is not a mirror, so
+/// the body transfer from the real CDN does not count against the mirror
+/// budget. Every other URL is requested with `follow`.
+struct MirrorHops<'a> {
+  follow: &'a reqwest::Client,
+  manual: &'a reqwest::Client,
+  is_mirror: fn(&Url) -> bool,
+  slots: &'a Semaphore,
+}
+
+/// Same limit as reqwest's default redirect policy.
+const MAX_REDIRECTS: usize = 10;
+
+/// Headers reqwest drops when a redirect leaves the origin.
+const SENSITIVE_HEADERS: [&str; 4] = [
+  "authorization",
+  "cookie",
+  "www-authenticate",
+  "proxy-authorization",
+];
 
 /// Start of a `Content-Range: bytes <start>-<end>/<size>` header.
 fn content_range_start(response: &reqwest::Response) -> Option<i64> {
@@ -539,19 +575,27 @@ fn content_range_start(response: &reqwest::Response) -> Option<i64> {
     .ok()
 }
 
-/// Send the request and check that the answer can be written to the file.
-async fn open_response(
+/// A GET request for `url` with the range and custom headers of the download.
+///
+/// `referer` and `strip_sensitive` reproduce what reqwest does when it follows a
+/// redirect itself.
+fn build_request(
   client: &reqwest::Client,
+  url: &Url,
   current: i64,
   param: &DownloadParam,
-  source: &Url,
-) -> Result<Opened, AttemptError> {
-  let mut request = client.get(source.clone());
+  referer: Option<&Url>,
+  strip_sensitive: bool,
+) -> reqwest::RequestBuilder {
+  let mut request = client.get(url.clone());
   if current > 0 {
     request = request.header(RANGE, format!("bytes={current}-"));
   }
   if let Some(headers) = &param.custom_headers {
     for (key, value) in headers {
+      if strip_sensitive && SENSITIVE_HEADERS.contains(&key.to_ascii_lowercase().as_str()) {
+        continue;
+      }
       if let (Ok(name), Ok(value)) = (
         key.parse::<reqwest::header::HeaderName>(),
         value.parse::<reqwest::header::HeaderValue>(),
@@ -560,15 +604,131 @@ async fn open_response(
       }
     }
   }
+  if let Some(previous) = referer {
+    if !(previous.scheme() == "https" && url.scheme() == "http") {
+      let mut referer = previous.clone();
+      let _ = referer.set_username("");
+      let _ = referer.set_password(None);
+      referer.set_fragment(None);
+      request = request.header(REFERER, referer.as_str());
+    }
+  }
+  request
+}
 
-  let response = request.send().await.map_err(|error| {
+async fn send_request(request: reqwest::RequestBuilder) -> Result<reqwest::Response, AttemptError> {
+  request.send().await.map_err(|error| {
     let message = format_download_error(&error);
     if error.is_builder() {
       AttemptError::new(Verdict::Abort, message)
     } else {
       AttemptError::retry(message)
     }
-  })?;
+  })
+}
+
+/// Where a redirect response points, resolved against the URL that was asked.
+/// `None` for any other response, and for a redirect that cannot be followed
+/// (no usable `Location`), which is then judged like any other status.
+fn redirect_target(response: &reqwest::Response, base: &Url) -> Option<Url> {
+  if !matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308) {
+    return None;
+  }
+  let location = response.headers().get(LOCATION)?.to_str().ok()?;
+  let target = base.join(location).ok()?;
+  matches!(target.scheme(), "http" | "https").then_some(target)
+}
+
+/// Request a mirror URL and follow its redirects by hand.
+///
+/// The mirror slot is taken before the first request and kept while the chain
+/// stays on mirror hosts. It is released before the first request to any other
+/// host, which is where the file body normally comes from. When the final
+/// response is served by a mirror host the slot is handed back to the caller,
+/// to be held until the body is written.
+async fn follow_mirror_hops<'a>(
+  hops: &MirrorHops<'a>,
+  current: i64,
+  param: &DownloadParam,
+  source: &Url,
+) -> Result<(reqwest::Response, Option<SemaphorePermit<'a>>), AttemptError> {
+  let mut url = source.clone();
+  let mut previous: Option<Url> = None;
+  let mut strip_sensitive = false;
+  let mut permit: Option<SemaphorePermit<'a>> = None;
+  let mut held_since = Instant::now();
+  let mut hop = 0;
+
+  loop {
+    if (hops.is_mirror)(&url) {
+      if permit.is_none() {
+        permit = hops.slots.acquire().await.ok();
+        held_since = Instant::now();
+      }
+    } else if permit.take().is_some() {
+      debug!(
+        "Released the mirror download slot after {:?}; continuing at {}",
+        held_since.elapsed(),
+        url
+      );
+    }
+    if previous
+      .as_ref()
+      .is_some_and(|previous| !same_origin(previous, &url))
+    {
+      strip_sensitive = true;
+    }
+
+    let asked = Instant::now();
+    let response = send_request(build_request(
+      hops.manual,
+      &url,
+      current,
+      param,
+      previous.as_ref(),
+      strip_sensitive,
+    ))
+    .await?;
+    debug!(
+      "Hop {} {} answered {} in {:?}",
+      hop,
+      url,
+      response.status(),
+      asked.elapsed()
+    );
+
+    let Some(next) = redirect_target(&response, &url) else {
+      if permit.is_some() {
+        debug!(
+          "Mirror {} serves the body itself; keeping the download slot",
+          url
+        );
+      }
+      return Ok((response, permit));
+    };
+    if hop >= MAX_REDIRECTS {
+      return Err(AttemptError::retry(format!(
+        "too many redirects for url ({source})"
+      )));
+    }
+    hop += 1;
+    previous = Some(std::mem::replace(&mut url, next));
+  }
+}
+
+/// Send the request and check that the answer can be written to the file.
+async fn open_response<'a>(
+  hops: &MirrorHops<'a>,
+  current: i64,
+  param: &DownloadParam,
+  source: &Url,
+) -> Result<Opened<'a>, AttemptError> {
+  let (response, permit) = if (hops.is_mirror)(source) {
+    follow_mirror_hops(hops, current, param, source).await?
+  } else {
+    let request = build_request(hops.follow, source, current, param, None, false);
+    (send_request(request).await?, None)
+  };
 
   let status = response.status();
   if status.is_client_error() || status.is_server_error() {
@@ -622,6 +782,7 @@ async fn open_response(
       .boxed(),
     start,
     total,
+    permit,
   })
 }
 
@@ -669,7 +830,7 @@ where
 /// expected file size. Returns the number of bytes on disk and, on success, the
 /// expected file size.
 async fn transfer(
-  client: &reqwest::Client,
+  hops: &MirrorHops<'_>,
   param: &DownloadParam,
   source: &Url,
   dest: &Path,
@@ -682,7 +843,7 @@ async fn transfer(
     ) -> BoxStream<'static, Result<bytes::Bytes, std::io::Error>>
     + Send,
 ) -> (i64, Result<i64, AttemptError>) {
-  let opened = match open_response(client, current, param, source).await {
+  let opened = match open_response(hops, current, param, source).await {
     Ok(opened) => opened,
     Err(error) => return (current, Err(error)),
   };
@@ -690,6 +851,7 @@ async fn transfer(
     stream,
     start,
     total,
+    permit: _permit,
   } = opened;
   let reader = wrap(stream, start, total).into_async_read();
   let (on_disk, result) = match limiter {
@@ -1147,6 +1309,14 @@ mod resilience_tests {
   /// Serve the payload; connection number `n` follows `faults[n]`, later
   /// connections are served normally.
   async fn spawn_server(faults: Vec<Fault>) -> TestServer {
+    spawn_observed_server(faults, Arc::new(|| {})).await
+  }
+
+  /// Like [`spawn_server`], and `observe` runs whenever a request head arrives.
+  async fn spawn_observed_server(
+    faults: Vec<Fault>,
+    observe: Arc<dyn Fn() + Send + Sync>,
+  ) -> TestServer {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let requests = Arc::new(Mutex::new(Vec::new()));
@@ -1156,7 +1326,13 @@ mod resilience_tests {
     tokio::spawn(async move {
       while let Ok((stream, _)) = listener.accept().await {
         let fault = script.lock().unwrap().pop_front().unwrap_or(Fault::Serve);
-        tokio::spawn(handle(stream, fault, data.clone(), log.clone()));
+        tokio::spawn(handle(
+          stream,
+          fault,
+          data.clone(),
+          log.clone(),
+          observe.clone(),
+        ));
       }
     });
     TestServer { addr, requests }
@@ -1167,6 +1343,7 @@ mod resilience_tests {
     fault: Fault,
     data: Arc<Vec<u8>>,
     requests: Arc<Mutex<Vec<Option<i64>>>>,
+    observe: Arc<dyn Fn() + Send + Sync>,
   ) {
     if matches!(fault, Fault::Drop) {
       return;
@@ -1185,6 +1362,7 @@ mod resilience_tests {
       .find_map(|line| line.strip_prefix("range: bytes="))
       .and_then(|value| value.trim().trim_end_matches('-').parse::<i64>().ok());
     requests.lock().unwrap().push(range);
+    observe();
 
     let simple =
       |line: String| format!("HTTP/1.1 {line}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
@@ -1236,20 +1414,55 @@ mod resilience_tests {
     }
   }
 
-  fn test_client() -> reqwest::Client {
+  fn test_client_builder() -> reqwest::ClientBuilder {
     reqwest::Client::builder()
       .no_proxy()
       .connect_timeout(Duration::from_secs(2))
       // Short on purpose: this is what ends a connection that went silent.
       .read_timeout(Duration::from_millis(500))
-      .build()
-      .unwrap()
+  }
+
+  fn test_client() -> reqwest::Client {
+    test_client_builder().build().unwrap()
+  }
+
+  fn not_a_mirror(_: &Url) -> bool {
+    false
+  }
+
+  /// The test "mirror" is every server reached through `127.0.0.1`; the
+  /// "CDN" it redirects to is addressed as `localhost`.
+  fn loopback_mirror(url: &Url) -> bool {
+    url.host_str() == Some("127.0.0.1")
   }
 
   /// The attempt loop of a download without the task bookkeeping: the same
   /// functions `DownloadTask` uses, driven the way `download_once` drives them.
   async fn fetch(sources: &[Url], max_attempts: usize, dest: &Path) -> USTBLResult<()> {
+    fetch_via(
+      sources,
+      max_attempts,
+      dest,
+      not_a_mirror,
+      &Semaphore::new(MCIM_SLOTS),
+    )
+    .await
+  }
+
+  const MCIM_SLOTS: usize = 4;
+
+  async fn fetch_via(
+    sources: &[Url],
+    max_attempts: usize,
+    dest: &Path,
+    is_mirror: fn(&Url) -> bool,
+    slots: &Semaphore,
+  ) -> USTBLResult<()> {
     let client = test_client();
+    let manual_client = test_client_builder()
+      .redirect(reqwest::redirect::Policy::none())
+      .build()
+      .unwrap();
     let param = DownloadParam {
       src: sources[0].clone(),
       dest: dest.to_path_buf(),
@@ -1265,11 +1478,18 @@ mod resilience_tests {
       |_| Duration::ZERO,
       |source| {
         let (client, param, recorded) = (client.clone(), param.clone(), recorded.clone());
+        let manual_client = manual_client.clone();
         async move {
           let known = *recorded.lock().unwrap();
           let current = resume_offset(&param.dest, known).await;
+          let hops = MirrorHops {
+            follow: &client,
+            manual: &manual_client,
+            is_mirror,
+            slots,
+          };
           let (on_disk, outcome) = transfer(
-            &client,
+            &hops,
             &param,
             &source,
             &param.dest,
@@ -1441,5 +1661,225 @@ mod resilience_tests {
 
     assert!(result.is_err());
     assert_eq!(server.requests().len(), 3);
+  }
+
+  // ---- the mirror slot -------------------------------------------------------
+
+  /// A server that records how many slots were free whenever a request came in.
+  async fn spawn_watched_server(
+    faults: Vec<Fault>,
+    slots: &Arc<Semaphore>,
+  ) -> (TestServer, Arc<Mutex<Vec<usize>>>) {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let observe = {
+      let (slots, seen) = (slots.clone(), seen.clone());
+      Arc::new(move || seen.lock().unwrap().push(slots.available_permits()))
+    };
+    (spawn_observed_server(faults, observe).await, seen)
+  }
+
+  fn cdn_url(server: &TestServer) -> String {
+    format!("http://localhost:{}/file.bin", server.addr.port())
+  }
+
+  fn seen(seen: &Arc<Mutex<Vec<usize>>>) -> Vec<usize> {
+    seen.lock().unwrap().clone()
+  }
+
+  #[tokio::test]
+  async fn the_slot_is_free_while_the_cdn_sends_the_body() {
+    let dir = TempDir::new();
+    let slots = Arc::new(Semaphore::new(1));
+    let (cdn, cdn_seen) = spawn_watched_server(vec![], &slots).await;
+    let (mirror, mirror_seen) =
+      spawn_watched_server(vec![Fault::Redirect(cdn_url(&cdn))], &slots).await;
+    let dest = dir.file("a.bin");
+
+    fetch_via(&[mirror.url()], 8, &dest, loopback_mirror, &slots)
+      .await
+      .unwrap();
+
+    assert_downloaded(&dest).await;
+    assert_eq!(
+      seen(&mirror_seen),
+      vec![0],
+      "the mirror was asked with a slot"
+    );
+    assert_eq!(seen(&cdn_seen), vec![1], "the CDN was asked without one");
+    assert_eq!(mirror.requests().len(), 1);
+    assert_eq!(slots.available_permits(), 1);
+  }
+
+  #[tokio::test]
+  async fn a_mirror_that_serves_the_body_keeps_the_slot_for_the_request() {
+    let dir = TempDir::new();
+    let slots = Arc::new(Semaphore::new(1));
+    let (mirror, mirror_seen) = spawn_watched_server(vec![], &slots).await;
+    let dest = dir.file("a.bin");
+
+    fetch_via(&[mirror.url()], 8, &dest, loopback_mirror, &slots)
+      .await
+      .unwrap();
+
+    assert_downloaded(&dest).await;
+    assert_eq!(seen(&mirror_seen), vec![0]);
+    assert_eq!(mirror.requests().len(), 1);
+    assert_eq!(slots.available_permits(), 1, "released after the transfer");
+  }
+
+  #[tokio::test]
+  async fn the_slot_is_kept_over_mirror_hops_and_released_at_the_cdn() {
+    let dir = TempDir::new();
+    let slots = Arc::new(Semaphore::new(1));
+    let (cdn, cdn_seen) = spawn_watched_server(vec![], &slots).await;
+    // A relative Location first, then the CDN.
+    let (mirror, mirror_seen) = spawn_watched_server(
+      vec![
+        Fault::Redirect("/elsewhere/file.bin".to_string()),
+        Fault::Redirect(cdn_url(&cdn)),
+      ],
+      &slots,
+    )
+    .await;
+    let dest = dir.file("a.bin");
+
+    fetch_via(&[mirror.url()], 8, &dest, loopback_mirror, &slots)
+      .await
+      .unwrap();
+
+    assert_downloaded(&dest).await;
+    assert_eq!(seen(&mirror_seen), vec![0, 0]);
+    assert_eq!(seen(&cdn_seen), vec![1]);
+    assert_eq!(slots.available_permits(), 1);
+  }
+
+  #[tokio::test]
+  async fn a_cdn_transfer_cut_short_resumes_with_a_range_request_to_the_cdn() {
+    let dir = TempDir::new();
+    let slots = Arc::new(Semaphore::new(1));
+    let (cdn, cdn_seen) = spawn_watched_server(vec![Fault::Cut(50_000)], &slots).await;
+    let location = cdn_url(&cdn);
+    let mirror = spawn_server(vec![
+      Fault::Redirect(location.clone()),
+      Fault::Redirect(location),
+    ])
+    .await;
+    let dest = dir.file("a.bin");
+
+    fetch_via(&[mirror.url()], 8, &dest, loopback_mirror, &slots)
+      .await
+      .unwrap();
+
+    assert_downloaded(&dest).await;
+    let cdn_requests = cdn.requests();
+    assert_eq!(cdn_requests.len(), 2);
+    assert_eq!(cdn_requests[0], None);
+    assert!(
+      cdn_requests[1].is_some_and(|start| start > 0),
+      "{cdn_requests:?}"
+    );
+    assert_eq!(mirror.requests().len(), 2, "one mirror request per attempt");
+    assert_eq!(seen(&cdn_seen), vec![1, 1]);
+  }
+
+  #[tokio::test]
+  async fn a_cdn_that_ignores_range_restarts_from_zero() {
+    let dir = TempDir::new();
+    let slots = Arc::new(Semaphore::new(1));
+    let cdn = spawn_server(vec![Fault::Cut(30_000), Fault::IgnoreRange]).await;
+    let location = cdn_url(&cdn);
+    let mirror = spawn_server(vec![
+      Fault::Redirect(location.clone()),
+      Fault::Redirect(location),
+    ])
+    .await;
+    let dest = dir.file("a.bin");
+
+    fetch_via(&[mirror.url()], 8, &dest, loopback_mirror, &slots)
+      .await
+      .unwrap();
+
+    assert_downloaded(&dest).await;
+    assert_eq!(cdn.requests().len(), 2);
+  }
+
+  #[tokio::test]
+  async fn a_rejected_offset_at_the_cdn_restarts_from_zero() {
+    let dir = TempDir::new();
+    let slots = Arc::new(Semaphore::new(1));
+    let cdn = spawn_server(vec![Fault::Cut(30_000), Fault::Status(416)]).await;
+    let location = cdn_url(&cdn);
+    let mirror = spawn_server(vec![Fault::Redirect(location); 3]).await;
+    let dest = dir.file("a.bin");
+
+    fetch_via(&[mirror.url()], 8, &dest, loopback_mirror, &slots)
+      .await
+      .unwrap();
+
+    assert_downloaded(&dest).await;
+    let requests = cdn.requests();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[2], None);
+  }
+
+  #[tokio::test]
+  async fn a_missing_file_behind_the_redirect_is_retried_within_the_budget() {
+    let dir = TempDir::new();
+    let slots = Arc::new(Semaphore::new(1));
+    let (cdn, _) = spawn_watched_server(vec![Fault::Status(404); 20], &slots).await;
+    let mirror = spawn_server(vec![Fault::Redirect(cdn_url(&cdn)); 20]).await;
+    let dest = dir.file("a.bin");
+
+    let error = fetch_via(&[mirror.url()], 3, &dest, loopback_mirror, &slots)
+      .await
+      .unwrap_err();
+
+    assert!(error.0.contains("404"), "{}", error.0);
+    // The same classification as before: 404 behind a redirect asks again.
+    assert_eq!(mirror.requests().len(), 3);
+    assert_eq!(cdn.requests().len(), 3);
+    assert_eq!(slots.available_permits(), 1);
+  }
+
+  #[tokio::test]
+  async fn a_missing_file_on_the_mirror_itself_hands_over_to_the_next_source() {
+    let dir = TempDir::new();
+    let slots = Arc::new(Semaphore::new(1));
+    let missing = spawn_server(vec![Fault::Status(404); 8]).await;
+    let good = spawn_server(vec![]).await;
+    let dest = dir.file("a.bin");
+
+    // `good` is addressed as `localhost`, so it is not a mirror host.
+    let good_url = url(&cdn_url(&good));
+    fetch_via(
+      &[missing.url(), good_url],
+      8,
+      &dest,
+      loopback_mirror,
+      &slots,
+    )
+    .await
+    .unwrap();
+
+    assert_downloaded(&dest).await;
+    assert_eq!(missing.requests().len(), 1);
+    assert_eq!(good.requests().len(), 1);
+    assert_eq!(slots.available_permits(), 1);
+  }
+
+  #[tokio::test]
+  async fn a_redirect_loop_ends_with_an_error_and_frees_the_slot() {
+    let dir = TempDir::new();
+    let slots = Arc::new(Semaphore::new(1));
+    let mirror = spawn_server(vec![Fault::Redirect("/file.bin".to_string()); 30]).await;
+    let dest = dir.file("a.bin");
+
+    let error = fetch_via(&[mirror.url()], 1, &dest, loopback_mirror, &slots)
+      .await
+      .unwrap_err();
+
+    assert!(error.0.contains("too many redirects"), "{}", error.0);
+    assert_eq!(mirror.requests().len(), MAX_REDIRECTS + 1);
+    assert_eq!(slots.available_permits(), 1);
   }
 }
