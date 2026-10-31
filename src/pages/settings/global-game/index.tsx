@@ -24,7 +24,11 @@ import { useGlobalData } from "@/contexts/global-data";
 import { useRoutingHistory } from "@/contexts/routing-history";
 import { useSharedModals } from "@/contexts/shared-modal";
 import { GameDirectory } from "@/models/config";
-import { getGameDirName, isSpecialGameDir } from "@/utils/instance";
+import {
+  getGameDirName,
+  isSpecialGameDir,
+  ownsInstanceFiles,
+} from "@/utils/instance";
 
 const GlobalGameSettingsPage = () => {
   const { t } = useTranslation();
@@ -34,6 +38,50 @@ const GlobalGameSettingsPage = () => {
   const { getInstanceList } = useGlobalData();
   const { removeHistory } = useRoutingHistory();
   const { closeSharedModal, openGenericConfirmDialog } = useSharedModals();
+
+  const getSharedGameDirectory = (versionPath: string) =>
+    versionPath.replace(/[\\/][^\\/]+[\\/][^\\/]+$/, "");
+
+  const handleVersionIsolationChange = (nextIsolated: boolean) => {
+    if (nextIsolated === globalGameConfigs.versionIsolation) return;
+    const affectedInstances = (getInstanceList() || []).filter(
+      (instance) => instance.isolationSource === "global"
+    );
+    const changes = affectedInstances
+      .map((instance) => {
+        const sharedDirectory = getSharedGameDirectory(instance.versionPath);
+        const from = globalGameConfigs.versionIsolation
+          ? instance.versionPath
+          : sharedDirectory;
+        const to = nextIsolated ? instance.versionPath : sharedDirectory;
+        const lockSuffix =
+          nextIsolated && ownsInstanceFiles(instance)
+            ? t("VersionIsolationConfirmDialog.willLockSuffix")
+            : "";
+        return `${instance.name}${lockSuffix}: ${from} → ${to}`;
+      })
+      .join("\n");
+    const save = async () => {
+      if (await update("globalGameConfig.versionIsolation", nextIsolated)) {
+        getInstanceList(true);
+      }
+    };
+    if (affectedInstances.length === 0) {
+      void save();
+      return;
+    }
+    openGenericConfirmDialog({
+      title: t("VersionIsolationConfirmDialog.title"),
+      body: (
+        <Text whiteSpace="pre-line">
+          {t("VersionIsolationConfirmDialog.globalBody", {
+            instances: changes,
+          })}
+        </Text>
+      ),
+      onOKCallback: save,
+    });
+  };
 
   const [selectedDir, setSelectedDir] = useState<GameDirectory>({
     name: "",
@@ -195,16 +243,16 @@ const GlobalGameSettingsPage = () => {
         ),
         {
           title: t("GlobalGameSettingsPage.versionIsolation.settings.title"),
+          description: t(
+            "GlobalGameSettingsPage.versionIsolation.settings.description"
+          ),
           children: (
             <Switch
               colorScheme={primaryColor}
               isChecked={globalGameConfigs.versionIsolation}
-              onChange={(event) => {
-                update(
-                  "globalGameConfig.versionIsolation",
-                  event.target.checked
-                );
-              }}
+              onChange={(event) =>
+                handleVersionIsolationChange(event.target.checked)
+              }
             />
           ),
         },

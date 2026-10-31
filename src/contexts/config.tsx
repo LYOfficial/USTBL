@@ -23,7 +23,7 @@ import { updateByKeyPath } from "@/utils/partial";
 interface LauncherConfigContextType {
   config: LauncherConfig;
   setConfig: React.Dispatch<React.SetStateAction<LauncherConfig>>;
-  update: (path: string, value: any) => void;
+  update: (path: string, value: any) => Promise<boolean>;
   newerVersion: VersionMetaInfo;
   // other shared data associated with the launcher config.
   getJavaInfos: (sync?: boolean) => JavaInfo[] | undefined;
@@ -100,18 +100,21 @@ export const LauncherConfigContextProvider: React.FC<{
   }, [userSelectedColorMode, colorMode, toggleColorMode]);
 
   // from frontend to call backend update
-  const handleUpdateLauncherConfig = (path: string, value: any) => {
+  const handleUpdateLauncherConfig = async (
+    path: string,
+    value: any
+  ): Promise<boolean> => {
     // Save to the backend
-    ConfigService.updateLauncherConfig(path, value).then((response) => {
-      // if success, backend will emit signal, the logic below will be executed
-      if (response.status !== "success") {
-        toast({
-          title: response.message,
-          description: response.details,
-          status: "error",
-        });
-      }
-    });
+    const response = await ConfigService.updateLauncherConfig(path, value);
+    // if success, backend will emit signal, the logic below will be executed
+    if (response.status !== "success") {
+      toast({
+        title: response.message,
+        description: response.details,
+        status: "error",
+      });
+    }
+    return response.status === "success";
   };
 
   // listen from backend to update frontend's config state

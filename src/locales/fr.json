@@ -1186,7 +1186,8 @@
     },
     "versionIsolation": {
       "settings": {
-        "title": "Activer l'isolation des versions"
+        "title": "Activer l'isolation des versions",
+        "description": "Les instances de modpack et modifiées verrouillées ne sont pas affectées par ce réglage"
       }
     },
     "moreOptions": {
@@ -1309,6 +1310,7 @@
     "secMenu": {
       "createShortcut": "Créer un raccourci de lancement",
       "exportModPack": "Exporter en tant que modpack",
+      "exportModPackDisabled": "Cette instance utilise un répertoire de jeu partagé et ne peut pas être exportée",
       "star": "Mettre en favori cette instance",
       "unstar": "Retirer des favoris",
       "publishModPack": "Publier dans les modpacks du campus"
@@ -1367,6 +1369,13 @@
       "details": "Détails"
     }
   },
+  "VersionIsolationConfirmDialog": {
+    "title": "Modifier l'isolation des versions",
+    "body": "L'instance passera de « {{from}} » à « {{to}} ». Les mondes, mods et configurations existants ne seront pas déplacés.",
+    "globalBody": "Les instances suivantes changeront de répertoire de jeu. Les mondes, mods et configurations existants ne seront pas déplacés :\n{{instances}}",
+    "lockWarning": "Cette instance possède un chargeur ou provient d'un modpack. Le passage en isolation la verrouillera et elle ne pourra plus revenir à un répertoire partagé.",
+    "willLockSuffix": " (sera verrouillée)"
+  },
   "InstanceSettingsPage": {
     "name": "Nom de l'instance",
     "description": "Description de l'instance",
@@ -1375,6 +1384,15 @@
     "restoreSettings": "Réinitialiser les paramètres spécifiques ci-dessous",
     "restoreSettingsDesc": "Réinitialiser les paramètres spécifiques ci-dessous aux paramètres globaux du jeu",
     "restore": "Réinitialiser",
+    "versionIsolation": {
+      "title": "Isolation des versions",
+      "on": "Activée",
+      "off": "Désactivée",
+      "locked": "Activée · Instance de modpack ou modifiée, toujours isolée",
+      "instance": "{{state}} · Paramètre de cette instance",
+      "global": "{{state}} · Suit les paramètres globaux",
+      "goGlobal": "Aller aux paramètres globaux du jeu"
+    },
     "errorMessage": {
       "error-1": "Le nom de l'instance ne peut pas être vide",
       "error-2": "Le nom de l'instance contient des caractères illégaux",

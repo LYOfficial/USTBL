@@ -17,8 +17,8 @@ use crate::instance::helpers::loader_lifecycle::{
   LOADER_LIFECYCLE,
 };
 use crate::instance::helpers::misc::{
-  get_instance_game_config, get_instance_subdir_path_by_id, get_instance_subdir_paths,
-  refresh_and_update_instances, unify_instance_name,
+  get_instance_game_config, get_instance_subdir_path_by_id, get_instance_subdir_paths, owns_files,
+  refresh_and_update_instances, resolve_isolation, unify_instance_name,
 };
 use crate::instance::helpers::modpack::base_store;
 use crate::instance::helpers::modpack::baseline::{
@@ -94,7 +94,7 @@ use zip::read::ZipArchive;
 #[tauri::command]
 pub async fn retrieve_instance_list(app: AppHandle) -> USTBLResult<Vec<InstanceSummary>> {
   refresh_and_update_instances(&app, false).await; // firstly refresh and update
-  let global_version_isolation = get_global_game_config(&app).version_isolation;
+  let global_game_config = get_global_game_config(&app);
   let mut summary_list = Vec::new();
 
   let instance_binding = app.state::<Mutex<HashMap<String, Instance>>>();
@@ -103,20 +103,18 @@ pub async fn retrieve_instance_list(app: AppHandle) -> USTBLResult<Vec<InstanceS
     instances.entry(id).or_insert(instance);
   }
   for (id, instance) in instances.iter() {
-    // same as get_game_config(), but mannually here
-    let is_version_isolated =
-      if instance.use_spec_game_config && instance.spec_game_config.is_some() {
-        instance
-          .spec_game_config
-          .as_ref()
-          .unwrap()
-          .version_isolation
-      } else {
-        global_version_isolation
-      };
+    let (is_version_isolated, isolation_source) = resolve_isolation(instance, &global_game_config);
 
-    summary_list
-      .push(InstanceSummary::from_instance(&app, id.clone(), instance, is_version_isolated).await);
+    summary_list.push(
+      InstanceSummary::from_instance(
+        &app,
+        id.clone(),
+        instance,
+        is_version_isolated,
+        isolation_source.as_str(),
+      )
+      .await,
+    );
   }
 
   let config_binding = app.state::<Mutex<LauncherConfig>>();
@@ -1017,6 +1015,16 @@ async fn verify_origin(
   })
 }
 
+fn should_lock_on_create(instance: &Instance, component_import: bool) -> bool {
+  component_import || owns_files(instance)
+}
+
+fn apply_creation_isolation(instance: &mut Instance, component_import: bool) {
+  if should_lock_on_create(instance, component_import) {
+    instance.isolation_locked = true;
+  }
+}
+
 #[tauri::command]
 pub async fn create_instance(
   app: AppHandle,
@@ -1111,20 +1119,13 @@ pub async fn create_instance(
     spec_game_config: None,
     modpack_version,
     origin,
+    isolation_locked: false,
   };
 
   if component_import.is_some() {
     instance.mod_loader.status = ModLoaderStatus::Installed;
   }
-  // A followable instance owns its files, so it must not share a game directory.
-  if component_import.is_some() || instance.origin.is_some() {
-    let mut config = get_global_game_config(&app);
-    if component_import.is_some() || !config.version_isolation {
-      config.version_isolation = true;
-      instance.use_spec_game_config = true;
-      instance.spec_game_config = Some(config);
-    }
-  }
+  apply_creation_isolation(&mut instance, component_import.is_some());
 
   // Download version info, retrying through both official and mirror routes.
   let official_version_url =
@@ -1962,5 +1963,48 @@ mod origin_tests {
         .await
         .is_none()
     );
+  }
+}
+
+#[cfg(test)]
+mod isolation_tests {
+  use super::*;
+
+  #[test]
+  fn create_lock_detects_pack_loader_optifine_and_component_instances() {
+    let mut instance = Instance::default();
+    assert!(!should_lock_on_create(&instance, false));
+    assert!(should_lock_on_create(&instance, true));
+
+    instance.origin = Some(InstanceOrigin {
+      platform: OriginPlatform::Campus,
+      project_id: "project".into(),
+      version_id: "version".into(),
+      game_version: "1.21.1".into(),
+      loader_type: ModLoaderType::Unknown,
+      follow: true,
+    });
+    assert!(should_lock_on_create(&instance, false));
+
+    instance.origin = None;
+    instance.modpack_version = Some("1.0.0".into());
+    assert!(should_lock_on_create(&instance, false));
+
+    instance.modpack_version = None;
+    instance.mod_loader.loader_type = ModLoaderType::Fabric;
+    assert!(should_lock_on_create(&instance, false));
+
+    instance.mod_loader.loader_type = ModLoaderType::Unknown;
+    instance.optifine = Some(OptiFine::default());
+    assert!(should_lock_on_create(&instance, false));
+  }
+
+  #[test]
+  fn creation_isolation_does_not_enable_specific_game_settings() {
+    let mut instance = Instance::default();
+    apply_creation_isolation(&mut instance, true);
+    assert!(instance.isolation_locked);
+    assert!(!instance.use_spec_game_config);
+    assert!(instance.spec_game_config.is_none());
   }
 }

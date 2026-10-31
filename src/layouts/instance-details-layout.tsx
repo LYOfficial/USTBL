@@ -128,8 +128,11 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
     },
     {
       icon: LuPackagePlus,
-      label: t("InstanceDetailsLayout.secMenu.exportModPack"),
+      label: summary?.isVersionIsolated
+        ? t("InstanceDetailsLayout.secMenu.exportModPack")
+        : t("InstanceDetailsLayout.secMenu.exportModPackDisabled"),
       danger: false,
+      disabled: !summary?.isVersionIsolated,
       onClick: () => {
         if (summary) {
           openSharedModal("export-modpack", {
@@ -212,6 +215,7 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
               label={btn.label}
               colorScheme={btn.danger ? "red" : "gray"}
               onClick={btn.onClick}
+              disabled={btn.disabled}
               size="xs"
               fontSize="sm"
               h={21}

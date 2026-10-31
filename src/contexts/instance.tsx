@@ -462,15 +462,15 @@ export const InstanceContextProvider: React.FC<{
                   value
                 );
                 setInstanceGameConfig(newConfig as GameConfig);
-                // version isolation is shared by summary and game config struct.
-                if (path === "specGameConfig.versionIsolation")
-                  updateSummaryInContext("isVersionIsolated", value);
                 clearAllResState();
+                if (path === "specGameConfig.versionIsolation") {
+                  getInstanceList(true);
+                }
               } else if (path === "useSpecGameConfig") {
-                updateSummaryInContext(path, value);
                 if (value) handleRetrieveInstanceGameConfig(instanceId);
                 // clear all cached resource state due to version isolation may change.
                 clearAllResState();
+                getInstanceList(true);
               } else {
                 updateSummaryInContext(path, value);
               }
@@ -482,6 +482,7 @@ export const InstanceContextProvider: React.FC<{
     [
       instanceId,
       instanceGameConfig,
+      getInstanceList,
       handleRetrieveInstanceGameConfig,
       setInstanceGameConfig,
       toast,
