@@ -1,5 +1,5 @@
-// Pure logic behind the local-changes dialog (plan 《整合包本地改动明细》§5):
-// counts per class, the filter, and the directory tree the entries show in.
+// Pure logic behind the local-changes dialog (plan 《整合包本地改动明细》§11.2):
+// what the body lists, the counts and filter over it, and the directory tree.
 import {
   ModpackChangeClass,
   ModpackChangeDetailEntry,
@@ -8,42 +8,57 @@ import {
 /** Up to this many entries, the whole tree starts expanded. */
 export const OPEN_LIMIT = 5;
 
-/** The order of the class counts in the header. */
+/** The classes the dialog shows and counts, in header order. */
 export const CLASS_ORDER: ModpackChangeClass[] = [
   "modified",
   "deleted",
   "toggled",
   "added",
+];
+
+const ALL_CLASSES: ModpackChangeClass[] = [
+  ...CLASS_ORDER,
   "onceChanged",
   "addedExcluded",
 ];
+
+const isAdded = (entry: ModpackChangeDetailEntry): boolean =>
+  entry.class === "added" || entry.class === "addedExcluded";
+
+/** A file the previous release's delete rule covers; the next update removes it. */
+export const isRuleDeleted = (entry: ModpackChangeDetailEntry): boolean =>
+  isAdded(entry) && entry.rule === "delete";
 
 export const countByClass = (
   entries: ModpackChangeDetailEntry[]
 ): Record<ModpackChangeClass, number> => {
   const counts = Object.fromEntries(
-    CLASS_ORDER.map((name) => [name, 0])
+    ALL_CLASSES.map((name) => [name, 0])
   ) as Record<ModpackChangeClass, number>;
   for (const entry of entries) counts[entry.class] += 1;
   return counts;
 };
 
-/** The number the status and the ledger show. */
-export const countedTotal = (entries: ModpackChangeDetailEntry[]): number =>
-  entries.filter((entry) => entry.counted).length;
+/**
+ * The body lists the counted entries; files a delete rule covers get their own
+ * group; first-install changes and uncounted additions are not shown, since an
+ * update leaves them alone.
+ */
+export const splitByGroup = (entries: ModpackChangeDetailEntry[]) => ({
+  main: entries.filter(
+    (entry) =>
+      entry.counted &&
+      CLASS_ORDER.includes(entry.class) &&
+      !isRuleDeleted(entry)
+  ),
+  willDelete: entries.filter(isRuleDeleted),
+});
 
 export const filterEntries = (
   entries: ModpackChangeDetailEntry[],
   filter: ModpackChangeClass | null
 ): ModpackChangeDetailEntry[] =>
   filter ? entries.filter((entry) => entry.class === filter) : entries;
-
-/** The tree shows every class but one; added files that will not publish get their own group. */
-export const splitByGroup = (entries: ModpackChangeDetailEntry[]) => ({
-  main: entries.filter((entry) => entry.class !== "addedExcluded"),
-  excluded: entries.filter((entry) => entry.class === "addedExcluded"),
-});
-
 export interface ChangeTreeNode {
   /** The path as the first entry under it spells it. */
   path: string;

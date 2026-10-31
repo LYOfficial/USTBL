@@ -48,9 +48,9 @@ import {
   OPEN_LIMIT,
   buildChangeTree,
   countByClass,
-  countedTotal,
   expandedDepth,
   filterEntries,
+  isRuleDeleted,
   revealPath,
   splitByGroup,
 } from "@/utils/modpack-change-detail";
@@ -73,11 +73,10 @@ const CLASS_COLORS: Record<ModpackChangeClass, string> = {
 /** A titled section that folds, for the groups under the tree. */
 const ChangeGroup: React.FC<{
   title: string;
-  tags?: React.ReactNode;
   description: string;
   defaultOpen?: boolean;
   children: React.ReactNode;
-}> = ({ title, tags, description, defaultOpen = false, children }) => {
+}> = ({ title, description, defaultOpen = false, children }) => {
   const { isOpen, onToggle } = useDisclosure({ defaultIsOpen: defaultOpen });
   return (
     <VStack align="stretch" spacing={2}>
@@ -94,7 +93,6 @@ const ChangeGroup: React.FC<{
             {title}
           </Text>
         </HStack>
-        {tags}
       </HStack>
       <Collapse in={isOpen} animateOpacity={false}>
         <VStack align="stretch" spacing={2}>
@@ -210,10 +208,12 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
   );
 
   const entries = useMemo(() => detail?.entries ?? [], [detail]);
-  const counts = useMemo(() => countByClass(entries), [entries]);
-  const shown = useMemo(
-    () => splitByGroup(filterEntries(entries, filter)),
-    [entries, filter]
+  const groups = useMemo(() => splitByGroup(entries), [entries]);
+  // The counts and the filter cover the body only.
+  const counts = useMemo(() => countByClass(groups.main), [groups.main]);
+  const shownMain = useMemo(
+    () => filterEntries(groups.main, filter),
+    [groups.main, filter]
   );
   // TreeView resets its expansion whenever `nodes` changes identity.
   const tree = useMemo(() => {
@@ -223,19 +223,23 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
         data: node,
         children: convert(node.children),
       }));
-    return convert(buildChangeTree(shown.main));
-  }, [shown.main]);
-  const openFiles = shown.main.length <= OPEN_LIMIT;
+    return convert(buildChangeTree(shownMain));
+  }, [shownMain]);
+  const openFiles = shownMain.length <= OPEN_LIMIT;
 
   const isManager = isVustbManager(vustbAccount);
   // Publishing goes on top of the latest version; behind it the platform
   // refuses, so the player updates first.
   const behind = modpackChecks[instanceId]?.status === "available";
-  const publishBlocker = !isManager
-    ? t("ModpackLocalChangesModal.publishHint.noPermission")
-    : behind
-      ? t("ModpackLocalChangesModal.publishHint.updateFirst")
-      : null;
+  const publishBlocker = behind
+    ? t("ModpackLocalChangesModal.publishHint.updateFirst")
+    : null;
+
+  // A publisher also learns that ignoring leaves publishing alone.
+  const hoverText = (key: string) =>
+    isManager
+      ? `${t(key)} ${t("ModpackLocalChangesModal.ignore.publishUnaffected")}`
+      : t(key);
 
   const openPublish = () => {
     modalProps.onClose();
@@ -243,11 +247,11 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
   };
 
   const ignoreFileButton = (entry: ModpackChangeDetailEntry) => {
-    const added = entry.class === "added" || entry.class === "addedExcluded";
+    const added = entry.class === "added";
     const baseSha1 = entry.baseline?.sha1;
     return (
       <Tooltip
-        label={t(
+        label={hoverText(
           added
             ? "ModpackLocalChangesModal.ignore.addedHint"
             : "ModpackLocalChangesModal.ignore.fileHint"
@@ -282,7 +286,7 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
     );
   };
 
-  const renderBody = (entry: ModpackChangeDetailEntry) => {
+  const renderDiff = (entry: ModpackChangeDetailEntry) => {
     const note = (text: string) => (
       <Text fontSize="xs" className="secondary-text" px={3} py={2}>
         {text}
@@ -296,7 +300,9 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
             <DiffHunks
               hunks={entry.hunks}
               renderEditAction={(edit) => (
-                <Tooltip label={t("ModpackLocalChangesModal.ignore.spotHint")}>
+                <Tooltip
+                  label={hoverText("ModpackLocalChangesModal.ignore.spotHint")}
+                >
                   <Button
                     size="xs"
                     variant="outline"
@@ -322,24 +328,36 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
         return note(
           t(`ModpackLocalChangesModal.noDiff.${entry.noDiff ?? "notText"}`)
         );
-      case "added":
-      case "addedExcluded":
-        return entry.size !== undefined
-          ? note(
-              t("ModpackLocalChangesModal.hint.added", {
-                size: formatByteSize(entry.size),
-              })
-            )
-          : null;
       default:
-        return note(t(`ModpackLocalChangesModal.hint.${entry.class}`));
+        return null;
     }
   };
 
-  const renderEntry = (entry: ModpackChangeDetailEntry, label: string) => {
+  const renderBody = (entry: ModpackChangeDetailEntry) => (
+    <>
+      {/* What the next update does with this entry. */}
+      <Text fontSize="xs" className="secondary-text" px={3} py={2}>
+        {t(
+          isRuleDeleted(entry)
+            ? "ModpackLocalChangesModal.willDelete.note"
+            : `ModpackLocalChangesModal.next.${entry.class}`
+        )}
+        {entry.size !== undefined &&
+          entry.class === "added" &&
+          ` (${formatByteSize(entry.size)})`}
+      </Text>
+      {renderDiff(entry)}
+    </>
+  );
+
+  const renderEntry = (
+    entry: ModpackChangeDetailEntry,
+    label: string,
+    withIgnore = true
+  ) => {
     const reveal = revealPath(entry);
     return (
-      <Box opacity={entry.counted ? 1 : 0.75}>
+      <Box>
         <DiffFile
           path={label}
           hunks={entry.hunks}
@@ -347,7 +365,9 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
           tags={
             <>
               <Badge colorScheme={CLASS_COLORS[entry.class]} flexShrink={0}>
-                {t(`ModpackLocalChangesModal.class.${entry.class}`)}
+                {t(
+                  `ModpackLocalChangesModal.class.${entry.class === "addedExcluded" ? "added" : entry.class}`
+                )}
               </Badge>
               {entry.class === "modified" && entry.toggled && (
                 <Badge flexShrink={0}>
@@ -357,11 +377,6 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
               {entry.disabled && (
                 <Badge flexShrink={0}>
                   {t("ModpackLocalChangesModal.disabled")}
-                </Badge>
-              )}
-              {!entry.counted && (
-                <Badge variant="outline" flexShrink={0}>
-                  {t("ModpackLocalChangesModal.notCounted")}
                 </Badge>
               )}
             </>
@@ -377,7 +392,7 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
                   {t("UpdateModpackModal.choice.revealFile")}
                 </Button>
               )}
-              {entry.class !== "onceChanged" && ignoreFileButton(entry)}
+              {withIgnore && ignoreFileButton(entry)}
             </>
           }
         >
@@ -404,13 +419,7 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
         </Badge>
       }
       actions={
-        <Tooltip
-          label={t(
-            item.added
-              ? "ModpackLocalChangesModal.ignored.undoAddedHint"
-              : "ModpackLocalChangesModal.ignored.undoAllHint"
-          )}
-        >
+        <Tooltip label={hoverText("ModpackLocalChangesModal.ignored.undoHint")}>
           <Button
             size="xs"
             variant="ghost"
@@ -433,6 +442,15 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
         </Tooltip>
       }
     >
+      <Text fontSize="xs" className="secondary-text" px={3} py={2}>
+        {t(
+          item.added
+            ? "ModpackLocalChangesModal.ignored.next.added"
+            : item.whole
+              ? "ModpackLocalChangesModal.ignored.next.whole"
+              : "ModpackLocalChangesModal.ignored.next.spots"
+        )}
+      </Text>
       {!item.whole && item.regions.length > 0 && (
         <VStack align="stretch" spacing={0}>
           {item.regions.map((region, index) => (
@@ -447,7 +465,9 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
                     to: Math.max(region.end, region.start + 1),
                   })}
                 </Text>
-                <Tooltip label={t("ModpackLocalChangesModal.ignored.undoHint")}>
+                <Tooltip
+                  label={hoverText("ModpackLocalChangesModal.ignored.undoHint")}
+                >
                   <Button
                     size="xs"
                     variant="outline"
@@ -482,10 +502,6 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
       )}
     </DiffFile>
   );
-
-  const showExcluded =
-    shown.excluded.length > 0 &&
-    (filter === null || filter === "addedExcluded");
 
   return (
     <Modal
@@ -524,17 +540,14 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
                     {t("ModpackLocalChangesModal.incomplete")}
                   </Alert>
                 )}
-                {entries.length === 0 ? (
-                  <Text className="secondary-text">
-                    {t("ModpackLocalChangesModal.empty")}
-                  </Text>
+                {groups.main.length === 0 ? (
+                  groups.willDelete.length === 0 && (
+                    <Text className="secondary-text">
+                      {t("ModpackLocalChangesModal.empty")}
+                    </Text>
+                  )
                 ) : (
                   <>
-                    <Text fontSize="xs-sm">
-                      {t("ModpackLocalChangesModal.summary", {
-                        count: countedTotal(entries),
-                      })}
-                    </Text>
                     <Wrap spacing={1.5} pt={1}>
                       {CLASS_ORDER.filter((name) => counts[name] > 0).map(
                         (name) => (
@@ -567,7 +580,7 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
               {tree.length > 0 && (
                 <TreeView
                   nodes={tree}
-                  defaultExpandedDepth={expandedDepth(shown.main.length)}
+                  defaultExpandedDepth={expandedDepth(shownMain.length)}
                   renderNode={({ node: { data } }) =>
                     data.entry ? (
                       renderEntry(data.entry, data.name)
@@ -582,19 +595,20 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
                   }
                 />
               )}
-              {showExcluded && (
+              {groups.willDelete.length > 0 && (
                 <ChangeGroup
-                  key={`excluded-${filter}`}
-                  title={t("ModpackLocalChangesModal.excluded.title", {
-                    count: shown.excluded.length,
+                  title={t("ModpackLocalChangesModal.willDelete.title", {
+                    count: groups.willDelete.length,
                   })}
                   description={t(
-                    "ModpackLocalChangesModal.excluded.description"
+                    "ModpackLocalChangesModal.willDelete.description"
                   )}
-                  defaultOpen={filter === "addedExcluded"}
+                  defaultOpen
                 >
-                  {shown.excluded.map((entry) => (
-                    <Box key={entry.path}>{renderEntry(entry, entry.path)}</Box>
+                  {groups.willDelete.map((entry) => (
+                    <Box key={entry.path}>
+                      {renderEntry(entry, entry.path, false)}
+                    </Box>
                   ))}
                 </ChangeGroup>
               )}
@@ -606,19 +620,6 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
                 title={t("ModpackLocalChangesModal.ignored.title", {
                   count: ignored.length,
                 })}
-                tags={
-                  isManager && (
-                    <Tooltip
-                      label={t(
-                        "ModpackLocalChangesModal.ignored.stillPublishedHint"
-                      )}
-                    >
-                      <Badge colorScheme="orange" flexShrink={0}>
-                        {t("ModpackLocalChangesModal.ignored.stillPublished")}
-                      </Badge>
-                    </Tooltip>
-                  )
-                }
                 description={t("ModpackLocalChangesModal.ignored.description")}
               >
                 {ignored.map(renderIgnored)}
@@ -636,18 +637,20 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
           <Button variant="ghost" mr={2} onClick={modalProps.onClose}>
             {t("General.close")}
           </Button>
-          <Tooltip label={publishBlocker} isDisabled={!publishBlocker}>
-            {/* A disabled button fires no hover, so the box carries the tooltip. */}
-            <Box>
-              <Button
-                colorScheme={primaryColor}
-                isDisabled={!!publishBlocker || entries.length === 0}
-                onClick={openPublish}
-              >
-                {t("ModpackLocalChangesModal.button.publish")}
-              </Button>
-            </Box>
-          </Tooltip>
+          {isManager && (
+            <Tooltip label={publishBlocker} isDisabled={!publishBlocker}>
+              {/* A disabled button fires no hover, so the box carries the tooltip. */}
+              <Box>
+                <Button
+                  colorScheme={primaryColor}
+                  isDisabled={!!publishBlocker || entries.length === 0}
+                  onClick={openPublish}
+                >
+                  {t("ModpackLocalChangesModal.button.publish")}
+                </Button>
+              </Box>
+            </Tooltip>
+          )}
         </ModalFooter>
       </ModalContent>
     </Modal>

@@ -3338,11 +3338,6 @@
     "header": {
       "title": "Mettre à jour le pack : {{name}}"
     },
-    "ignored": {
-      "hunk": "Vous avez ignoré cet endroit",
-      "file": "Vous avez ignoré les modifications de ce fichier. Votre version est conservée par défaut.",
-      "takeAllNote": "Les endroits que vous avez ignorés gardent votre version, même avec « Tout prendre de la nouvelle version »."
-    },
     "status": {
       "checking": "Recherche de mises à jour…",
       "planning": "Comparaison de la nouvelle version avec les fichiers locaux…",
@@ -3372,7 +3367,17 @@
       "conflicts": "{{count}} fichiers entrent en conflit avec vos modifications. Choisissez (le local est conservé par défaut)",
       "autoMerged": "{{count}} fusionnés automatiquement",
       "showAll": "Tout afficher (encore {{count}})",
-      "reinstallRequired": "{{latest}} modifie la chaîne de composants du pack et ne peut pas être appliquée sur place. Réinstallez le pack"
+      "reinstallRequired": "{{latest}} modifie la chaîne de composants du pack et ne peut pas être appliquée sur place. Réinstallez le pack",
+      "restored": "Restaurer les modifications ignorées {{count}}",
+      "restoredDescription": "Ce sont des modifications que vous avez ignorées. Cette mise à jour remet le contenu du modpack (sauvegarde préalable). Les nouveaux fichiers remplacés par un fichier de même chemin de la nouvelle version sont aussi ici.",
+      "restoredKind": {
+        "add": "Ajout",
+        "update": "Mise à jour",
+        "delete": "Suppression",
+        "disable": "Désactivation",
+        "enable": "Activation",
+        "retire": "Fin de gestion"
+      }
     },
     "conflictKind": {
       "modifiedLocallyChangedRemotely": "Vous l'avez modifié et la nouvelle version aussi",
@@ -3433,27 +3438,17 @@
     "loading": "Comparaison des fichiers locaux…",
     "empty": "Aucune modification depuis la version précédente",
     "comparedTo": "Comparé à : {{label}}",
-    "summary": "Modifications locales : {{count}}",
-    "countingRule": "Comptent comme modifications locales : les fichiers modifiés ou supprimés, ceux dont l'état activé diffère, et les nouveaux fichiers dans mods, resourcepacks et shaderpacks. Les nouveaux fichiers ailleurs, les modifications des fichiers « première installation seulement » et les nouveaux fichiers qui ne seront pas publiés sont listés mais non comptés. Le contenu est comparé après normalisation ; les différences de fins de ligne ou d'horodatage ne comptent pas.",
+    "countingRule": "Seules les modifications locales concernées par la prochaine mise à jour sont listées : fichiers modifiés, supprimés ou dont l'activation change, et nouveaux fichiers sous mods, resourcepacks et shaderpacks. Seul le contenu normalisé est comparé : une différence de fin de ligne ou d'horodatage n'est pas une modification.",
     "filterHint": "Cliquez sur une catégorie pour n'afficher qu'elle ; cliquez à nouveau pour annuler.",
-    "incomplete": "Détail incomplet : la liste des fichiers de la version précédente n'a pas pu être chargée, la comparaison se fait uniquement avec l'installation. Des nouveaux fichiers et des changements d'activation peuvent manquer.",
+    "incomplete": "Les règles de la version précédente sont indisponibles pour le moment : des fichiers qui seront supprimés peuvent manquer dans cette liste. Rouvrez cette fenêtre en ligne pour la compléter.",
     "class": {
       "modified": "Modifié",
       "deleted": "Supprimé",
       "toggled": "Activation changée",
-      "onceChanged": "Modification « première installation »",
-      "added": "Nouveau",
-      "addedExcluded": "Nouveau (non publié)"
+      "added": "Nouveau"
     },
-    "notCounted": "Non compté",
     "disabled": "Désactivé",
     "toggledTag": "Activation différente aussi",
-    "hint": {
-      "deleted": "Ce fichier a été supprimé localement",
-      "toggled": "Activé ou désactivé autrement que dans la version précédente",
-      "onceChanged": "Fichier « première installation seulement » : la modification ne concerne que les nouvelles installations et ne compte pas comme modification locale",
-      "added": "Absent de la version précédente. Taille : {{size}}"
-    },
     "noDiff": {
       "notText": "Fichier non texte ou trop volumineux ; contenu non comparé",
       "baseMissing": "Le contenu installé n'a pas été conservé, aucune différence ne peut être affichée",
@@ -3466,32 +3461,40 @@
       "spot": "Ignorer cet endroit",
       "file": "Ignorer tout le fichier",
       "added": "Ignorer",
-      "spotHint": "Cette modification n'est plus affichée ni comptée comme modification locale. Les mises à jour conservent votre contenu ici ; si la nouvelle version modifie aussi cet endroit, un choix vous est toujours demandé (le vôtre est conservé par défaut). Sans effet sur la publication.",
-      "fileHint": "Les modifications de ce fichier ne sont plus affichées ni comptées comme modifications locales. Les mises à jour se font normalement et les conflits restent signalés ; si une nouvelle version ne contient plus ce fichier, il est supprimé sans demander. Sans effet sur la publication.",
-      "addedHint": "Ce fichier n'est plus affiché comme nouveau ni compté comme modification locale. Les mises à jour se font normalement, cet ignoré n'y change rien. Sans effet sur la publication : son inclusion se choisit toujours dans la fenêtre de publication."
-    },
-    "excluded": {
-      "title": "Nouveaux, non publiés ({{count}})",
-      "description": "Ces fichiers sont absents de la version précédente et une règle de publication ou la liste noire suggérée les exclut : la publication les laisse de côté par défaut. Ils ne comptent pas comme modifications locales."
+      "spotHint": "Cet endroit n'est plus affiché ni compté comme modification locale. À la prochaine mise à jour, le lanceur s'en charge : cet endroit revient au contenu du modpack (sauvegarde préalable). D'ici là, votre contenu reste inchangé.",
+      "fileHint": "Ce fichier n'est plus affiché ni compté comme modification locale. À la prochaine mise à jour, le lanceur s'en charge : le fichier revient au contenu du modpack, un fichier supprimé est réinstallé et l'activation suit le modpack (sauvegarde préalable).",
+      "addedHint": "Ce fichier n'est plus affiché ni compté comme modification locale. Les mises à jour n'y touchent pas ; seulement si la nouvelle version contient un fichier au même chemin, il est remplacé par le nouveau sans demander (sauvegarde préalable).",
+      "publishUnaffected": "Sans effet sur la publication."
     },
     "ignored": {
       "title": "Ignorés ({{count}})",
-      "description": "Les éléments ignorés ne sont pas affichés plus haut et ne comptent pas comme modifications locales. Les mises à jour conservent votre contenu dans les modifications ignorées ; si la nouvelle version modifie aussi le même endroit, un choix vous est tout de même demandé (votre version est conservée par défaut). Ignorer un nouveau fichier n'agit que sur l'affichage et le décompte.",
+      "description": "Les éléments ignorés ne sont pas affichés plus haut et ne comptent pas comme modifications locales. À la prochaine mise à jour, le lanceur les traite ; le résultat est indiqué sur chaque élément. Vous pouvez annuler à tout moment.",
       "wholeFile": "Fichier entier",
       "spots": "Endroits : {{count}}",
       "lines": "Lignes {{from}}–{{to}}",
       "undo": "Annuler",
       "undoAll": "Tout annuler",
-      "stillPublished": "Toujours publiés",
-      "stillPublishedHint": "Ignorer n'a pas d'effet sur la publication : ces fichiers et modifications sont publiés selon leur état dans la fenêtre de publication, où vous choisissez ce qui est inclus.",
       "addedFile": "Nouveau fichier",
-      "undoHint": "Annuler cet ignoré : de nouveau affiché et compté (sauf si sa catégorie n'est pas comptée) ; les mises à jour ne le traitent plus comme ignoré.",
-      "undoAllHint": "Annuler tous les ignorés de ce fichier : de nouveau affiché et compté (sauf si sa catégorie n'est pas comptée) ; les mises à jour ne le traitent plus comme ignoré.",
-      "undoAddedHint": "Annuler l'ignoré : de nouveau affiché comme nouveau, et compté s'il se trouve dans mods, resourcepacks ou shaderpacks."
+      "undoHint": "Il est de nouveau affiché et compté. La prochaine mise à jour conserve vos modifications comme d'habitude.",
+      "next": {
+        "whole": "À la prochaine mise à jour : le fichier revient au contenu du modpack, un fichier supprimé est réinstallé et l'activation suit le modpack (sauvegarde préalable).",
+        "spots": "À la prochaine mise à jour : ces endroits reviennent au contenu du modpack, puis sont fusionnés normalement avec la nouvelle version ; les modifications non ignorées sont conservées (sauvegarde préalable).",
+        "added": "Les mises à jour n'y touchent pas ; si la nouvelle version contient un fichier au même chemin, le nouveau le remplace (sauvegarde préalable)."
+      }
     },
     "publishHint": {
-      "noPermission": "La publication nécessite la permission de gestion des modpacks du campus",
       "updateFirst": "Une version plus récente est en ligne. Mettez à jour avant de publier"
+    },
+    "next": {
+      "modified": "Si la nouvelle version ne touche pas ce fichier, votre contenu est conservé. Si elle le modifie, le texte est fusionné automatiquement et un choix vous est demandé quand les deux côtés ont changé le même endroit ; pour les autres fichiers, la question est posée directement. Si la nouvelle version ne le contient plus, il vous est demandé de le garder ou de le supprimer.",
+      "deleted": "Si la nouvelle version n'y touche pas, il reste supprimé. Si elle le modifie, un choix vous est demandé.",
+      "toggled": "Votre état est conservé.",
+      "added": "La mise à jour n'y touche pas. Si la nouvelle version contient un fichier au même chemin, un choix vous est demandé."
+    },
+    "willDelete": {
+      "title": "Supprimés à la prochaine mise à jour ({{count}})",
+      "description": "Ces fichiers ne sont pas dans le modpack mais sont couverts par une règle de suppression de la version précédente : si la nouvelle version garde cette règle, ils sont supprimés (sauvegarde préalable).",
+      "note": "Si la nouvelle version garde cette règle de suppression, la mise à jour supprime ce fichier (sauvegarde préalable)."
     }
   },
   "InstanceSyncPage": {

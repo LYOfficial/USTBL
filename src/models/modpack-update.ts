@@ -47,6 +47,8 @@ export interface ModpackFileChange {
   kind: ModpackChangeKind;
   remote?: ModpackFileKey;
   localSize?: number;
+  /** The player ignored the local change; this update puts the modpack's content back. */
+  restored?: boolean;
 }
 
 export type ModpackConflictKind =
@@ -64,10 +66,6 @@ export interface ModpackConflict {
   local?: ModpackFileKey;
   remote?: ModpackFileKey;
   hunks: ModpackMergeConflict[];
-  /** The player ignored the local change here: the file, or every block. */
-  ignored?: boolean;
-  /** Blocks (indexes into `hunks`) whose local changes are all ignored. */
-  ignoredHunks?: number[];
 }
 
 export interface ModpackMergeConflict {
@@ -129,6 +127,8 @@ export interface ModpackChangeDetailEntry {
   class: ModpackChangeClass;
   /** Counts toward the instance's local-change number. */
   counted: boolean;
+  /** The previous release's rule covering an added file; only set on added entries. */
+  rule?: "ignore" | "delete";
   size?: number;
   /** The managed baseline entry (else the release's key) an ignore anchors on. */
   baseline?: ModpackFileKey;

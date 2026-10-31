@@ -25,8 +25,8 @@ const {
   OPEN_LIMIT,
   buildChangeTree,
   countByClass,
-  countedTotal,
   expandedDepth,
+  isRuleDeleted,
   filterEntries,
   revealPath,
   splitByGroup,
@@ -51,34 +51,74 @@ const sample = [
   entry("config/gen.json", "added", { size: 3 }),
   entry("config/once.toml", "onceChanged", { size: 5 }),
   entry("logs/latest.log", "addedExcluded", { size: 1 }),
+  // Covered by the previous release's rules.
+  entry("mods/old.jar", "added", { counted: true, rule: "delete", size: 9 }),
+  entry("saves/w/level.dat", "addedExcluded", { rule: "delete", size: 2 }),
+  entry("config/skip.toml", "added", { rule: "ignore", size: 4 }),
+  entry("mods/kept.jar", "added", { counted: true, rule: "ignore", size: 8 }),
 ];
 
-test("countByClass counts every class, zero for the absent ones", () => {
-  const counts = countByClass(sample);
-  assert.deepEqual(Object.keys(counts).sort(), CLASS_ORDER.slice().sort());
-  assert.equal(counts.modified, 1);
-  assert.equal(counts.added, 2);
-  assert.equal(counts.addedExcluded, 1);
-  assert.deepEqual(countByClass([]).modified, 0);
+test("the body lists only the counted entries", () => {
+  const { main } = splitByGroup(sample);
+  assert.ok(main.every((e) => e.counted));
+  assert.deepEqual(main.map((e) => e.path).sort(), [
+    "config/a.toml",
+    "config/b.toml",
+    "mods/kept.jar",
+    "mods/new.jar",
+    "mods/x.jar",
+  ]);
 });
 
-test("countedTotal only counts the entries the backend marks counted", () => {
-  assert.equal(countedTotal(sample), 4);
+test("added files under a delete rule go to the will-delete group, counted or not", () => {
+  const { main, willDelete } = splitByGroup(sample);
+  assert.deepEqual(willDelete.map((e) => e.path), [
+    "mods/old.jar",
+    "saves/w/level.dat",
+  ]);
+  assert.ok(willDelete.every(isRuleDeleted));
+  assert.ok(main.every((e) => !isRuleDeleted(e)));
 });
 
-test("filterEntries keeps one class, or everything without a filter", () => {
+test("first-install changes and uncounted additions are not shown anywhere", () => {
+  const { main, willDelete } = splitByGroup(sample);
+  const shown = [...main, ...willDelete].map((e) => e.path);
+  for (const hidden of [
+    "config/once.toml",
+    "config/gen.json",
+    "logs/latest.log",
+    "config/skip.toml",
+  ]) {
+    assert.ok(!shown.includes(hidden), hidden);
+  }
+});
+
+test("a delete rule on a modified entry does not move it", () => {
+  const { main, willDelete } = splitByGroup([
+    entry("config/a.toml", "modified", { rule: "delete" }),
+  ]);
+  assert.equal(main.length, 1);
+  assert.equal(willDelete.length, 0);
+});
+
+test("the counts cover the body only", () => {
+  const counts = countByClass(splitByGroup(sample).main);
   assert.deepEqual(
-    filterEntries(sample, "added").map((e) => e.path),
-    ["mods/new.jar", "config/gen.json"]
+    CLASS_ORDER.map((name) => counts[name]),
+    [1, 1, 1, 2]
   );
-  assert.equal(filterEntries(sample, null), sample);
+  assert.equal(counts.onceChanged, 0);
+  assert.equal(counts.addedExcluded, 0);
+  assert.equal(countByClass([]).modified, 0);
 });
 
-test("splitByGroup moves the added files that will not publish out of the tree", () => {
-  const { main, excluded } = splitByGroup(sample);
-  assert.equal(main.length, sample.length - 1);
-  assert.ok(main.every((e) => e.class !== "addedExcluded"));
-  assert.deepEqual(excluded.map((e) => e.path), ["logs/latest.log"]);
+test("filterEntries keeps one class of the body, or everything without a filter", () => {
+  const { main } = splitByGroup(sample);
+  assert.deepEqual(
+    filterEntries(main, "added").map((e) => e.path),
+    ["mods/new.jar", "mods/kept.jar"]
+  );
+  assert.equal(filterEntries(main, null), main);
 });
 
 test("buildChangeTree groups by directory and counts the entries below each", () => {
@@ -86,11 +126,11 @@ test("buildChangeTree groups by directory and counts the entries below each", ()
   assert.deepEqual(tree.map((n) => n.name), ["config", "mods"]);
   const [config, mods] = tree;
   assert.equal(config.kind, "dir");
-  assert.equal(config.count, 4);
-  assert.equal(mods.count, 2);
+  assert.equal(config.count, 2);
+  assert.equal(mods.count, 3);
   assert.deepEqual(
     config.children.map((n) => n.name),
-    ["a.toml", "b.toml", "gen.json", "once.toml"]
+    ["a.toml", "b.toml"]
   );
   assert.equal(config.children[0].entry.class, "modified");
   assert.equal(config.children[0].count, 1);
