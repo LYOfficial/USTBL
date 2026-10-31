@@ -36,10 +36,28 @@ use url::Url;
 /// let client = build_ustbl_client(&app, true);
 /// ```
 pub fn build_ustbl_client(app: &AppHandle, use_proxy: bool) -> Client {
+  // The shared client never asks for gzip: it also serves downloads and pack
+  // Range reads, which count on Content-Length and on receiving the exact
+  // byte range they asked for. Only build_campus_client, made just for the
+  // campus JSON API, accepts a compressed response.
   build_client(app, use_proxy, Some(Duration::from_secs(30)))
+    .no_gzip()
+    .build()
+    .unwrap_or_else(|_| Client::new())
 }
 
-fn build_client(app: &AppHandle, use_proxy: bool, read_timeout: Option<Duration>) -> Client {
+/// Builds the client for the campus modpack API (`CAMPUS_API`), the only
+/// client that accepts gzip. The version detail answers with several
+/// megabytes of JSON over a slow link, and the platform compresses it; the
+/// shared client (downloads, pack Range reads) must keep seeing raw bytes.
+pub fn build_campus_client(app: &AppHandle) -> Client {
+  build_client(app, true, Some(Duration::from_secs(30)))
+    .gzip(true)
+    .build()
+    .unwrap_or_else(|_| Client::new())
+}
+
+fn build_client(app: &AppHandle, use_proxy: bool, read_timeout: Option<Duration>) -> ClientBuilder {
   let mut builder = ClientBuilder::new()
     .connect_timeout(Duration::from_secs(10))
     .tcp_keepalive(Duration::from_secs(10));
@@ -70,7 +88,7 @@ fn build_client(app: &AppHandle, use_proxy: bool, read_timeout: Option<Duration>
     }
   }
 
-  builder.build().unwrap_or_else(|_| Client::new())
+  builder
 }
 
 /// Builds the client that PUTs pack parts straight to the cloud drive's signed
@@ -251,6 +269,75 @@ pub async fn is_china_mainland_ip(app: &AppHandle) -> Option<bool> {
 ///
 /// A normalized URL string suitable for direct string comparison.
 /// If parsing fails, the original input string is returned unchanged.
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use std::io::{BufRead, BufReader, Read, Write};
+  use std::net::TcpListener;
+
+  /// Answer one request per connection, remembering the request headers.
+  fn serve() -> (String, std::sync::mpsc::Receiver<Vec<String>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let (seen, requests) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+      for _ in 0..3 {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut headers = Vec::new();
+        for line in reader.by_ref().lines() {
+          let line = line.unwrap();
+          if line.is_empty() {
+            break;
+          }
+          headers.push(line.to_lowercase());
+        }
+        seen.send(headers).unwrap();
+        let body = b"hello";
+        write!(
+          stream,
+          "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+          body.len()
+        )
+        .unwrap();
+        stream.write_all(body).unwrap();
+      }
+    });
+    (url, requests)
+  }
+
+  /// The client the launcher shares: the gzip feature is on for the campus
+  /// client, so this one has to opt out explicitly or downloads and pack
+  /// Range reads would see compressed bodies and stripped Content-Length.
+  /// A Range request never asks for an encoding, whatever the client accepts.
+  #[tokio::test]
+  async fn the_shared_client_never_asks_for_gzip() {
+    let (url, requests) = serve();
+    let shared = ClientBuilder::new().no_gzip().build().unwrap();
+    shared.get(&url).send().await.unwrap();
+    let headers = requests.recv().unwrap();
+    assert!(!headers
+      .iter()
+      .any(|line| line.starts_with("accept-encoding")));
+
+    let campus = ClientBuilder::new().gzip(true).build().unwrap();
+    campus.get(&url).send().await.unwrap();
+    let headers = requests.recv().unwrap();
+    assert!(headers.iter().any(|line| line == "accept-encoding: gzip"));
+
+    campus
+      .get(&url)
+      .header(reqwest::header::RANGE, "bytes=0-2")
+      .send()
+      .await
+      .unwrap();
+    let headers = requests.recv().unwrap();
+    assert!(!headers
+      .iter()
+      .any(|line| line.starts_with("accept-encoding")));
+  }
+}
+
 pub fn normalize_url(input: &str) -> String {
   let url = match Url::parse(input) {
     Ok(url) if !url.cannot_be_a_base() && url.host_str().is_some() => url,

@@ -588,7 +588,11 @@ fn signed_request(
 #[async_trait]
 impl PackTransport for AppTransport {
   async fn locate(&self, version_id: i64, sha1s: &[String]) -> Result<Located, TransportError> {
-    let client = self.app.state::<reqwest::Client>();
+    // Locate is a campus JSON answer; the campus client accepts gzip for it.
+    // Range reads below must keep the shared client: reqwest skips
+    // Accept-Encoding when Range is set, but a Range answer must also keep
+    // its Content-Length, which gzip would strip.
+    let client = super::sources::campus_client(&self.app);
     let url = format!("{CAMPUS_API}/versions/{version_id}/locate");
     // Servers from before v3 reject a request without `mode`; they answer the
     // "update" shape, which is the only one used. Newer ones ignore the field.
