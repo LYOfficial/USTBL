@@ -1,72 +1,31 @@
 import { TFunction } from "i18next";
 import { useToast } from "@/contexts/toast";
 import { CampusModpackService } from "@/services/campus-modpack";
+import { localizeCampusInstallError } from "@/utils/campus-install-task";
 
-/**
- * Campus installs that created their empty instance and are waiting for the
- * game client to finish downloading, keyed by instance name. Kept in memory
- * only: if the launcher restarts first, the instance stays empty and follows
- * the modpack, so the update check offers the install again.
- */
-export interface PendingCampusInstall {
-  instanceId: string;
-  label: string;
-}
-
-const pending = new Map<string, PendingCampusInstall>();
-
-export const registerPendingCampusInstall = (
-  instanceName: string,
-  install: PendingCampusInstall
-) => {
-  pending.set(instanceName, install);
-};
-
-export const takePendingCampusInstall = (
-  instanceName: string
-): PendingCampusInstall | undefined => {
-  const install = pending.get(instanceName);
-  pending.delete(instanceName);
-  return install;
-};
-
-/** Put the modpack files into the instance and report progress in one toast. */
+/** Submit once; the backend persists the wait for the client and the install. */
 export const runCampusInstall = (
-  install: PendingCampusInstall,
+  install: { instanceId: string; label: string },
   toast: ReturnType<typeof useToast>,
-  t: TFunction,
-  onFinished: () => void
+  t: TFunction
 ) => {
-  const toastId = toast({
-    status: "loading",
+  toast({
+    status: "info",
     title: t("Services.campusInstall.installing", { name: install.label }),
   });
-  const stopListening = CampusModpackService.onInstallProgress((payload) => {
-    if (payload.instanceId !== install.instanceId) return;
-    const { stage, done, total } = payload;
-    toast.update(toastId, {
-      description: t(`Services.campusInstall.stage.${stage}`, { done, total }),
-    });
-  });
-  CampusModpackService.installCampusModpack(install.instanceId)
-    .then((response) => {
-      toast.close(toastId);
-      if (response.status === "success") {
-        toast({
-          status: "success",
-          title: response.message,
-          description: install.label,
-        });
-      } else {
+  return CampusModpackService.installCampusModpack(install.instanceId).then(
+    (response) => {
+      if (response.status !== "success") {
         toast({
           status: "error",
-          title: response.message,
-          description: response.details,
+          title: t("Services.instance.installCampusModpack.error.title"),
+          description: localizeCampusInstallError(
+            t,
+            String(response.raw_error ?? response.details ?? "")
+          ),
         });
       }
-    })
-    .finally(() => {
-      stopListening();
-      onFinished();
-    });
+      return response;
+    }
+  );
 };

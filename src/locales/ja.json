@@ -657,6 +657,16 @@
       "resume": "続行",
       "discard": "破棄"
     },
+    "unfinishedInstall": {
+      "title": "未完了のインストール",
+      "phase": {
+        "waitingClient": "ゲームクライアント待ち",
+        "installing": "インストールが中断されました",
+        "failed": "インストールに失敗しました"
+      },
+      "resume": "続行",
+      "discard": "破棄"
+    },
     "button": {
       "settings": "ダウンロード設定",
       "pause": "一時停止",
@@ -687,7 +697,15 @@
       "forge-libraries": "Forge ランタイムライブラリ",
       "launcher-update": "ランチャーを更新",
       "mojang-java": "Java {{param}} ランタイム",
-      "modpack-publish": "モッドパックを公開 {{param}}"
+      "modpack-publish": "モッドパックを公開 {{param}}",
+      "modpack-install": "モッドパックをインストール {{param}}"
+    },
+    "installStage": {
+      "waitingclient": "ゲームクライアントを待機中",
+      "preparing": "準備中",
+      "locating": "ファイルを検索中",
+      "fetching": "ファイルを取得中",
+      "applying": "ファイルを適用中"
     }
   },
   "Editable": {
@@ -2655,7 +2673,13 @@
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "新しいバージョンはコンポーネント構成を変更するため、そのまま更新できません。再インストールしてください",
             "MODPACK_UPDATE_LINE_GONE": "プラットフォームにこのモッドパックのラインはもうありません",
             "MODPACK_UPDATE_PACK_UNAVAILABLE": "このバージョンのファイルはプラットフォーム上で一時的に利用できません。しばらくしてからやり直してください",
-            "MODPACK_UPDATE_MERGE_INVALID": "選択したブロックでは設定形式が無効になります。選択を変更して再試行してください"
+            "MODPACK_UPDATE_MERGE_INVALID": "選択したブロックでは設定形式が無効になります。選択を変更して再試行してください",
+            "MODPACK_INSTALL_STAGING_MISMATCH": "保存されたダウンロードは別のインストール計画のため、削除されました",
+            "MODPACK_INSTALL_INTERRUPTED": "インストールが中断されました。タスクページから続行してください",
+            "MODPACK_INSTALL_TASK_FAILED": "インストールタスクが予期せず終了しました。詳細はランチャーログを確認し、タスクページから続行または破棄してください",
+            "NETWORK_ERROR": "再試行後も通信に失敗しました。接続を確認してインストールを続行してください",
+            "FILE_OPERATION_ERROR": "ファイルの読み書きに失敗しました。空き容量と権限を確認して続行してください",
+            "UNKNOWN_ERROR": "インストールに失敗しました。詳細はランチャーログに記録されています。再試行するか破棄してください"
           }
         }
       },

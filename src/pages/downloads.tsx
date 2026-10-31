@@ -23,6 +23,7 @@ import { CommonIconButton } from "@/components/common/common-icon-button";
 import Empty from "@/components/common/empty";
 import { OptionItem, OptionItemGroup } from "@/components/common/option-item";
 import { Section } from "@/components/common/section";
+import { UnfinishedInstalls } from "@/components/unfinished-installs";
 import { UnfinishedPublishes } from "@/components/unfinished-publishes";
 import { useLauncherConfig } from "@/contexts/config";
 import { destOf, parseTaskGroup, useTaskContext } from "@/contexts/task";
@@ -34,6 +35,15 @@ import {
   TaskParam,
   TaskTypeEnums,
 } from "@/models/task";
+import {
+  campusInstallCardState,
+  campusInstallGroupLabel,
+  campusInstallProgressView,
+  campusInstallStageKey,
+  campusInstallTaskIndeterminate,
+  isCampusInstallGroup,
+  localizeCampusInstallError,
+} from "@/utils/campus-install-task";
 import { formatTimeInterval } from "@/utils/datetime";
 import { formatByteSize } from "@/utils/string";
 
@@ -45,6 +55,8 @@ export const DownloadTasksPage = () => {
 
   const {
     tasks,
+    installProgress,
+    unfinishedInstalls,
     handleScheduleProgressiveTaskGroup,
     handleCancelProgressiveTaskGroup,
     handleStopProgressiveTaskGroup,
@@ -100,10 +112,45 @@ export const DownloadTasksPage = () => {
     return `${isRetry ? `${t(`DownloadTasksPage.task.retry`)} ` : ""}${t(
       `DownloadTasksPage.task.${name}`,
       {
-        param: version || "",
+        param: isCampusInstallGroup(taskGroup)
+          ? campusInstallGroupLabel(taskGroup)
+          : version || "",
       }
     )}`;
   };
+
+  const localizeReason = (group: TaskGroupDesc, reason?: string) =>
+    isCampusInstallGroup(group.taskGroup)
+      ? localizeCampusInstallError(t, reason)
+      : reason || t("DownloadTasksPage.label.error");
+
+  const showInstallProgress = (group: string) => {
+    const progress = campusInstallProgressView(
+      installProgress[group] ??
+        unfinishedInstalls.find((job) => job.group === group)?.progress
+    );
+    if (!progress) return null;
+    return (
+      <Text fontSize="xs" className="secondary-text">
+        {t(`DownloadTasksPage.installStage.${progress.stage}`)}
+        {progress.total > 0 && ` · ${progress.done} / ${progress.total}`}
+        {progress.bytes &&
+          ` · ${formatByteSize(progress.bytes.done)} / ${formatByteSize(progress.bytes.total)}`}
+      </Text>
+    );
+  };
+
+  const localizeTaskTitle = (group: TaskGroupDesc, task: TaskDesc) => {
+    const { name } = parseTaskGroup(group.taskGroup);
+    if (name !== "modpack-install") return task.payload.filename;
+    const stage = campusInstallStageKey(task.payload.filename);
+    return t(`DownloadTasksPage.installStage.${stage}`, {
+      defaultValue: task.payload.filename,
+    });
+  };
+
+  const canPause = (group: TaskGroupDesc) =>
+    !isCampusInstallGroup(group.taskGroup);
 
   return (
     <Section
@@ -140,6 +187,7 @@ export const DownloadTasksPage = () => {
     >
       <VStack align="stretch" px="10%" spacing={4}>
         <UnfinishedPublishes />
+        <UnfinishedInstalls />
         {taskGroupList.length === 0 && <Empty withIcon={false} size="sm" />}
         {taskGroupList.map(([group, expanded]) => (
           <OptionItemGroup
@@ -174,10 +222,17 @@ export const DownloadTasksPage = () => {
                       </Text>
                     )}
 
-                    {(group.status === GTaskEventStatusEnums.Failed ||
-                      group.reason) && (
+                    {campusInstallCardState(group.status, group.reason) ===
+                      "failed" && (
                       <Text fontSize="xs" color="red.600">
-                        {group.reason || t("DownloadTasksPage.label.error")}
+                        {localizeReason(
+                          group,
+                          group.reason ||
+                            group.taskDescs.find(
+                              (task) =>
+                                task.status === TaskDescStatusEnums.Failed
+                            )?.reason
+                        )}
                       </Text>
                     )}
 
@@ -187,41 +242,44 @@ export const DownloadTasksPage = () => {
                       </Text>
                     )}
 
-                    {(group.status === GTaskEventStatusEnums.Stopped ||
-                      group.status === GTaskEventStatusEnums.Started) && (
-                      <Tooltip
-                        label={t(
-                          `DownloadTasksPage.button.${
-                            group.status === GTaskEventStatusEnums.Started
-                              ? "pause"
-                              : "begin"
-                          }`
-                        )}
-                      >
-                        <IconButton
-                          aria-label="pause / download"
-                          icon={
-                            group.status === GTaskEventStatusEnums.Started ? (
-                              <LuPause />
-                            ) : (
-                              <LuPlay />
-                            )
-                          }
-                          size="xs"
-                          fontSize="sm"
-                          h={21}
-                          ml={1}
-                          variant="ghost"
-                          onClick={() => {
-                            group.status === GTaskEventStatusEnums.Started
-                              ? handleStopProgressiveTaskGroup(group.taskGroup)
-                              : handleResumeProgressiveTaskGroup(
-                                  group.taskGroup
-                                );
-                          }}
-                        />
-                      </Tooltip>
-                    )}
+                    {canPause(group) &&
+                      (group.status === GTaskEventStatusEnums.Stopped ||
+                        group.status === GTaskEventStatusEnums.Started) && (
+                        <Tooltip
+                          label={t(
+                            `DownloadTasksPage.button.${
+                              group.status === GTaskEventStatusEnums.Started
+                                ? "pause"
+                                : "begin"
+                            }`
+                          )}
+                        >
+                          <IconButton
+                            aria-label="pause / download"
+                            icon={
+                              group.status === GTaskEventStatusEnums.Started ? (
+                                <LuPause />
+                              ) : (
+                                <LuPlay />
+                              )
+                            }
+                            size="xs"
+                            fontSize="sm"
+                            h={21}
+                            ml={1}
+                            variant="ghost"
+                            onClick={() => {
+                              group.status === GTaskEventStatusEnums.Started
+                                ? handleStopProgressiveTaskGroup(
+                                    group.taskGroup
+                                  )
+                                : handleResumeProgressiveTaskGroup(
+                                    group.taskGroup
+                                  );
+                            }}
+                          />
+                        </Tooltip>
+                      )}
 
                     {(group.status === GTaskEventStatusEnums.Failed ||
                       group.status === GTaskEventStatusEnums.Cancelled) &&
@@ -253,7 +311,8 @@ export const DownloadTasksPage = () => {
                         </Tooltip>
                       )}
 
-                    {group.status !== GTaskEventStatusEnums.Cancelled &&
+                    {!isCampusInstallGroup(group.taskGroup) &&
+                      group.status !== GTaskEventStatusEnums.Cancelled &&
                       group.status !== GTaskEventStatusEnums.Completed && (
                         <Tooltip label={t("General.cancel")}>
                           <IconButton
@@ -304,15 +363,21 @@ export const DownloadTasksPage = () => {
                     mb={1}
                   />
                 )}
+                {isCampusInstallGroup(group.taskGroup) &&
+                  showInstallProgress(group.taskGroup)}
               </VStack>,
 
               ...(expanded
                 ? group.taskDescs.map((task) => (
                     <OptionItem
                       key={`${task.taskId}-detail`}
-                      title={task.payload.filename}
+                      title={localizeTaskTitle(group, task)}
                       description={
-                        task.status === TaskDescStatusEnums.InProgress && (
+                        (task.status === TaskDescStatusEnums.InProgress ||
+                          (isCampusInstallGroup(group.taskGroup) &&
+                            task.status === TaskDescStatusEnums.Failed)) &&
+                        (!isCampusInstallGroup(group.taskGroup) ||
+                          task.payload.filename === "Fetching") && (
                           <Text
                             fontSize="xs"
                             className="secondary-text"
@@ -333,17 +398,20 @@ export const DownloadTasksPage = () => {
                             // In progress without a total (e.g. the platform
                             // stage of a publish) is indeterminate too.
                             isIndeterminate={
-                              task.status === TaskDescStatusEnums.Waiting ||
-                              (task.status === TaskDescStatusEnums.InProgress &&
-                                !task.total)
+                              isCampusInstallGroup(group.taskGroup)
+                                ? campusInstallTaskIndeterminate(task)
+                                : task.status === TaskDescStatusEnums.Waiting ||
+                                  (task.status ===
+                                    TaskDescStatusEnums.InProgress &&
+                                    !task.total)
                             }
                             borderRadius="sm"
                           />
                         )}
                       {task.status === TaskDescStatusEnums.Failed && (
-                        <Tooltip label={task.reason}>
+                        <Tooltip label={localizeReason(group, task.reason)}>
                           <Text color="red.600" fontSize="xs">
-                            {t("DownloadTasksPage.label.error")}
+                            {localizeReason(group, task.reason)}
                           </Text>
                         </Tooltip>
                       )}

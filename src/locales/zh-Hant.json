@@ -657,6 +657,16 @@
       "resume": "繼續",
       "discard": "放棄"
     },
+    "unfinishedInstall": {
+      "title": "未完成的安裝",
+      "phase": {
+        "waitingClient": "等待遊戲客戶端",
+        "installing": "安裝中斷，可繼續",
+        "failed": "安裝失敗"
+      },
+      "resume": "繼續",
+      "discard": "放棄"
+    },
     "button": {
       "settings": "下載設定",
       "pause": "暫停",
@@ -687,7 +697,15 @@
       "forge-libraries": "Forge 執行庫",
       "launcher-update": "更新啟動器",
       "mojang-java": "Java {{param}} 執行時",
-      "modpack-publish": "發布整合包 {{param}}"
+      "modpack-publish": "發布整合包 {{param}}",
+      "modpack-install": "安裝整合包 {{param}}"
+    },
+    "installStage": {
+      "waitingclient": "等待遊戲用戶端",
+      "preparing": "準備中",
+      "locating": "定位檔案",
+      "fetching": "取得檔案",
+      "applying": "套用檔案"
     }
   },
   "Editable": {
@@ -2655,7 +2673,13 @@
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的組件鏈，無法就地更新，請重新安裝",
             "MODPACK_UPDATE_LINE_GONE": "平台上已不存在該整合包的這條線",
             "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暫時取不到此版本所需的檔案，請稍後重試",
-            "MODPACK_UPDATE_MERGE_INVALID": "按區塊選擇後設定檔的格式無效，請調整選擇後重試"
+            "MODPACK_UPDATE_MERGE_INVALID": "按區塊選擇後設定檔的格式無效，請調整選擇後重試",
+            "MODPACK_INSTALL_STAGING_MISMATCH": "已儲存的下載屬於其他安裝計畫，已清理",
+            "MODPACK_INSTALL_INTERRUPTED": "安裝已中斷，請從任務頁繼續",
+            "MODPACK_INSTALL_TASK_FAILED": "安裝任務意外終止，詳情已記錄至啟動器日誌；可從任務頁繼續或放棄",
+            "NETWORK_ERROR": "網路請求重試後仍失敗，請檢查網路後繼續安裝",
+            "FILE_OPERATION_ERROR": "安裝時無法讀寫檔案，請檢查磁碟空間和權限後繼續",
+            "UNKNOWN_ERROR": "安裝失敗，詳情已記錄到啟動器日誌；可以繼續重試或放棄"
           }
         }
       },

@@ -657,6 +657,16 @@
       "resume": "Reprendre",
       "discard": "Abandonner"
     },
+    "unfinishedInstall": {
+      "title": "Installations inachevées",
+      "phase": {
+        "waitingClient": "En attente du client de jeu",
+        "installing": "Installation interrompue, reprise possible",
+        "failed": "Échec de l’installation"
+      },
+      "resume": "Continuer",
+      "discard": "Abandonner"
+    },
     "button": {
       "settings": "Paramètres de téléchargement",
       "pause": "Pause",
@@ -687,7 +697,15 @@
       "forge-libraries": "Bibliothèques d'exécution de Forge",
       "launcher-update": "Mettre à jour le lanceur",
       "mojang-java": "Java {{param}} fonctionne",
-      "modpack-publish": "Publication du modpack {{param}}"
+      "modpack-publish": "Publication du modpack {{param}}",
+      "modpack-install": "Installation du modpack {{param}}"
+    },
+    "installStage": {
+      "waitingclient": "En attente du client du jeu",
+      "preparing": "Préparation",
+      "locating": "Recherche des fichiers",
+      "fetching": "Récupération des fichiers",
+      "applying": "Application des fichiers"
     }
   },
   "Editable": {
@@ -2655,7 +2673,13 @@
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "Cette version modifie la chaîne de composants du pack et ne peut pas être appliquée sur place ; réinstallez-la",
             "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack",
             "MODPACK_UPDATE_PACK_UNAVAILABLE": "Les fichiers de cette version sont momentanément indisponibles sur la plateforme. Réessayez plus tard",
-            "MODPACK_UPDATE_MERGE_INVALID": "Les blocs sélectionnés produisent une configuration invalide. Modifiez vos choix et réessayez"
+            "MODPACK_UPDATE_MERGE_INVALID": "Les blocs sélectionnés produisent une configuration invalide. Modifiez vos choix et réessayez",
+            "MODPACK_INSTALL_STAGING_MISMATCH": "Le téléchargement enregistré appartient à un autre plan d'installation et a été supprimé",
+            "MODPACK_INSTALL_INTERRUPTED": "L'installation a été interrompue ; continuez-la depuis la page des tâches",
+            "MODPACK_INSTALL_TASK_FAILED": "La tâche d'installation s'est arrêtée de façon inattendue. Consultez le journal du lanceur, puis continuez ou abandonnez depuis la page des tâches",
+            "NETWORK_ERROR": "La requête réseau a échoué après plusieurs tentatives. Vérifiez la connexion, puis continuez",
+            "FILE_OPERATION_ERROR": "Impossible de lire ou écrire les fichiers. Vérifiez l'espace libre et les permissions, puis continuez",
+            "UNKNOWN_ERROR": "L'installation a échoué ; les détails figurent dans le journal du lanceur. Réessayez ou abandonnez l'installation"
           }
         }
       },
