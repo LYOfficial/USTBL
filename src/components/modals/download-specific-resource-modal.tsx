@@ -245,7 +245,6 @@ const DownloadSpecificResourceModal: React.FC<
 
     if (resource.type === OtherResourceType.ModPack) {
       closeSharedModal("download-specific-resource");
-      closeSharedModal("download-modpack");
       router.push("/downloads");
     }
   };

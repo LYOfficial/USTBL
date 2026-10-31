@@ -107,7 +107,7 @@
       },
       "modpack": {
         "title": "モッドパックインポート",
-        "description": "ローカルファイル或はインタネットからモッドパックをインポート（ CurseForge、 Modrinth あるいは HMCL フォーマット）"
+        "description": "ローカルファイルからモッドパックをインポート（CurseForge、Modrinth あるいは HMCL フォーマット）"
       },
       "campusModpack": {
         "title": "北京科技大学モッドパックをインストール",
@@ -117,10 +117,6 @@
         "title": "ゲームディレクトリ管理",
         "description": "ローカルゲーム保存ディレクトリを設定し、インストール済のインスタンスを追加"
       }
-    },
-    "modpackOperations": {
-      "fromdisk": "ローカルファイルからインポート",
-      "download": "モッドパックをダウンロード"
     },
     "moreOptions": {
       "title": "その他のオプション",
@@ -510,10 +506,20 @@
       }
     }
   },
+  "DiscoverModpacksPage": {
+    "title": "Modpack",
+    "description": "Modrinth と CurseForge の Modpack を検索してインストール"
+  },
+  "DiscoverCampusModpacksPage": {
+    "title": "学内 Modpack",
+    "description": "Pixel Beike プラットフォームで公開された学内 Modpack を閲覧してインストール"
+  },
   "DiscoverLayout": {
     "discoverDomainList": {
       "search": "検索",
       "home": "ホーム",
+      "modpacks": "Modpack",
+      "campus-modpacks": "学内 Modpack",
       "community-news": "コミュニティ",
       "minecraft-news": "Minecraft ニュース",
       "modpack": "Modpack",
@@ -546,11 +552,6 @@
     "warning": {
       "mojang": "Mojang によって配布される Java ランタイムは USTBL によって特定のディレクトリにインストールされます",
       "oracle": "Oracle ソースからのダウンロードにはログインの必要な場合があります"
-    }
-  },
-  "DownloadModpackModal": {
-    "header": {
-      "title": "モッドパックをダウンロード"
     }
   },
   "DownloadResourceModal": {

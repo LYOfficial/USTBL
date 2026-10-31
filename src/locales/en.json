@@ -107,7 +107,7 @@
       },
       "modpack": {
         "title": "Import Modpack",
-        "description": "Import a modpack (CurseForge, Modrinth or MultiMC formats) from local files or the internet"
+        "description": "Import a modpack (CurseForge, Modrinth or MultiMC formats) from local files"
       },
       "campusModpack": {
         "title": "Install USTB Modpack",
@@ -117,10 +117,6 @@
         "title": "Manage Game Directories",
         "description": "Manage local game storage directories to add installed instances"
       }
-    },
-    "modpackOperations": {
-      "fromdisk": "Import from Disk",
-      "download": "Download Modpack"
     },
     "moreOptions": {
       "title": "More",
@@ -510,10 +506,20 @@
       }
     }
   },
+  "DiscoverModpacksPage": {
+    "title": "Modpacks",
+    "description": "Search and install modpacks from Modrinth and CurseForge"
+  },
+  "DiscoverCampusModpacksPage": {
+    "title": "Campus Modpacks",
+    "description": "Browse and install modpacks published on the Pixel Beike platform"
+  },
   "DiscoverLayout": {
     "discoverDomainList": {
       "search": "Search",
       "home": "Home",
+      "modpacks": "Modpacks",
+      "campus-modpacks": "Campus Modpacks",
       "community-news": "Community",
       "minecraft-news": "Minecraft News",
       "modpack": "Modpacks",
@@ -546,11 +552,6 @@
     "warning": {
       "mojang": "Java runtime from Mojang will be installed by USTBL into a specific directory.",
       "oracle": "Downloading from Oracle may require login."
-    }
-  },
-  "DownloadModpackModal": {
-    "header": {
-      "title": "Download Modpack"
     }
   },
   "DownloadResourceModal": {

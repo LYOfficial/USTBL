@@ -15,6 +15,8 @@ import {
   LuHouse,
   LuMessagesSquare,
   LuNewspaper,
+  LuPackage,
+  LuSchool,
   LuSearch,
 } from "react-icons/lu";
 import NavMenu, { MenuItem } from "@/components/common/nav-menu";
@@ -47,6 +49,16 @@ const DiscoverLayout: React.FC<{ children: React.ReactNode }> = ({
         key: "home",
         icon: LuHouse,
         route: "/discover/home",
+      },
+      {
+        key: "modpacks",
+        icon: LuPackage,
+        route: "/discover/modpacks",
+      },
+      {
+        key: "campus-modpacks",
+        icon: LuSchool,
+        route: "/discover/campus-modpacks",
       },
     ],
     [
@@ -117,7 +129,7 @@ const DiscoverLayout: React.FC<{ children: React.ReactNode }> = ({
             return (
               <NavMenu
                 key={index}
-                selectedKeys={[router.asPath]}
+                selectedKeys={[router.asPath.split("?")[0]]}
                 onClick={(value) => {
                   const item = itemsWithMetadata.find((i) => i.value === value);
                   if (item) {

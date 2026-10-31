@@ -1,25 +1,13 @@
-import {
-  HStack,
-  Icon,
-  Menu,
-  MenuButton,
-  MenuItem,
-  MenuList,
-  Portal,
-  Text,
-  VStack,
-  useDisclosure,
-} from "@chakra-ui/react";
+import { Icon, VStack, useDisclosure } from "@chakra-ui/react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useRouter } from "next/router";
 import { useTranslation } from "react-i18next";
-import { LuArrowRight, LuCloudDownload, LuFolderPlus } from "react-icons/lu";
+import { LuArrowRight } from "react-icons/lu";
 import {
   OptionItemGroup,
   OptionItemGroupProps,
 } from "@/components/common/option-item";
 import { CreateInstanceModal } from "@/components/modals/create-instance-modal";
-import DownloadModpackModal from "@/components/modals/download-modpack-modal";
 import { useSharedModals } from "@/contexts/shared-modal";
 
 const AddAndImportInstancePage = () => {
@@ -31,16 +19,6 @@ const AddAndImportInstancePage = () => {
     isOpen: isCreateInstanceModalOpen,
     onOpen: onOpenCreateInstanceModal,
     onClose: onCloseCreateInstanceModal,
-  } = useDisclosure();
-  const {
-    isOpen: isModpackMenuOpen,
-    onOpen: onOpenModpackMenu,
-    onClose: onCloseModpackMenu,
-  } = useDisclosure();
-  const {
-    isOpen: isDownloadModpackModalOpen,
-    onOpen: onOpenDownloadModpackModal,
-    onClose: onCloseDownloadModpackModal,
   } = useDisclosure();
   const handleImportModpackFromDisk = async () => {
     requireVustbAccount(async () => {
@@ -59,48 +37,9 @@ const AddAndImportInstancePage = () => {
 
   const addAndImportOptions: Record<string, () => void> = {
     new: () => requireVustbAccount(onOpenCreateInstanceModal),
-    modpack: onOpenModpackMenu,
+    modpack: handleImportModpackFromDisk,
     campusModpack: () => router.push("/instances/sync"),
     manageDirs: () => router.push("/settings/global-game"),
-  };
-
-  const modpackOperations = [
-    {
-      icon: LuFolderPlus,
-      label: t("AddAndImportInstancePage.modpackOperations.fromdisk"),
-      onClick: () => {
-        handleImportModpackFromDisk();
-      },
-    },
-    {
-      icon: LuCloudDownload,
-      label: t("AddAndImportInstancePage.modpackOperations.download"),
-      onClick: () => {
-        requireVustbAccount(onOpenDownloadModpackModal);
-      },
-    },
-  ];
-
-  const ModpackMenu = () => {
-    return (
-      <Menu isOpen={isModpackMenuOpen} onClose={onCloseModpackMenu}>
-        <MenuButton>
-          <Icon as={LuArrowRight} boxSize={3.5} mr="5px" />
-        </MenuButton>
-        <Portal>
-          <MenuList>
-            {modpackOperations.map((item) => (
-              <MenuItem key={item.label} fontSize="xs" onClick={item.onClick}>
-                <HStack>
-                  <item.icon />
-                  <Text>{item.label}</Text>
-                </HStack>
-              </MenuItem>
-            ))}
-          </MenuList>
-        </Portal>
-      </Menu>
-    );
   };
 
   const optionGroups: OptionItemGroupProps[] = [
@@ -111,12 +50,7 @@ const AddAndImportInstancePage = () => {
         description: t(
           `AddAndImportInstancePage.addAndImportOptions.${key}.description`
         ),
-        children:
-          key === "modpack" ? (
-            <ModpackMenu />
-          ) : (
-            <Icon as={LuArrowRight} boxSize={3.5} mr="5px" />
-          ),
+        children: <Icon as={LuArrowRight} boxSize={3.5} mr="5px" />,
         isFullClickZone: true,
         onClick: addAndImportOptions[key],
       })),
@@ -133,10 +67,6 @@ const AddAndImportInstancePage = () => {
       <CreateInstanceModal
         isOpen={isCreateInstanceModalOpen}
         onClose={onCloseCreateInstanceModal}
-      />
-      <DownloadModpackModal
-        isOpen={isDownloadModpackModalOpen}
-        onClose={onCloseDownloadModpackModal}
       />
     </>
   );

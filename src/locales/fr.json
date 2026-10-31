@@ -107,7 +107,7 @@
       },
       "modpack": {
         "title": "Importer un modpack",
-        "description": "Importer un modpack depuis un fichier local ou Internet (formats CurseForge, Modrinth ou HMCL)"
+        "description": "Importer un modpack depuis un fichier local (formats CurseForge, Modrinth ou HMCL)"
       },
       "campusModpack": {
         "title": "Installer le modpack USTB",
@@ -117,10 +117,6 @@
         "title": "Gérer les répertoires du jeu",
         "description": "Gérer les répertoires de stockage locaux pour ajouter des instances déjà installées"
       }
-    },
-    "modpackOperations": {
-      "fromdisk": "Importer depuis un fichier local",
-      "download": "Télécharger le modpack"
     },
     "moreOptions": {
       "title": "Plus",
@@ -510,10 +506,20 @@
       }
     }
   },
+  "DiscoverModpacksPage": {
+    "title": "Modpacks",
+    "description": "Rechercher et installer des modpacks depuis Modrinth et CurseForge"
+  },
+  "DiscoverCampusModpacksPage": {
+    "title": "Modpacks du campus",
+    "description": "Parcourir et installer les modpacks publiés sur la plateforme Pixel Beike"
+  },
   "DiscoverLayout": {
     "discoverDomainList": {
       "search": "Recherche",
       "home": "Accueil",
+      "modpacks": "Modpacks",
+      "campus-modpacks": "Modpacks du campus",
       "community-news": "Communauté",
       "minecraft-news": "Actualités Minecraft",
       "modpack": "Modpacks",
@@ -546,11 +552,6 @@
     "warning": {
       "mojang": "Le runtime Java distribué par Mojang sera installé par USTBL dans un répertoire spécifique.",
       "oracle": "Le téléchargement à partir de la source Oracle peut nécessiter une connexion."
-    }
-  },
-  "DownloadModpackModal": {
-    "header": {
-      "title": "Télécharger le modpack"
     }
   },
   "DownloadResourceModal": {

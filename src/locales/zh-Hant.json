@@ -107,7 +107,7 @@
       },
       "modpack": {
         "title": "匯入模組包",
-        "description": "從本機檔案或網際網路匯入模組包（CurseForge, Modrinth 或 MultiMC 格式）"
+        "description": "從本機檔案匯入模組包（CurseForge、Modrinth 或 MultiMC 格式）"
       },
       "campusModpack": {
         "title": "安裝北科模組包",
@@ -117,10 +117,6 @@
         "title": "管理遊戲目錄",
         "description": "管理本機遊戲儲存目錄，以新增已安裝實例"
       }
-    },
-    "modpackOperations": {
-      "fromdisk": "從本機檔案匯入",
-      "download": "下載模組包"
     },
     "moreOptions": {
       "title": "更多",
@@ -510,10 +506,20 @@
       }
     }
   },
+  "DiscoverModpacksPage": {
+    "title": "整合包",
+    "description": "搜尋並安裝來自 Modrinth 和 CurseForge 的整合包"
+  },
+  "DiscoverCampusModpacksPage": {
+    "title": "校園整合包",
+    "description": "瀏覽並安裝像素北科平台發布的校內整合包"
+  },
   "DiscoverLayout": {
     "discoverDomainList": {
       "search": "搜尋",
       "home": "首頁",
+      "modpacks": "整合包",
+      "campus-modpacks": "校園整合包",
       "community-news": "社群",
       "minecraft-news": "Minecraft 新聞",
       "modpack": "整合包",
@@ -546,11 +552,6 @@
     "warning": {
       "mojang": "由 Mojang 分發的 Java 執行時將由 USTBL 安裝到特定目錄",
       "oracle": "從 Oracle 源下載可能需要登入"
-    }
-  },
-  "DownloadModpackModal": {
-    "header": {
-      "title": "下載模組包"
     }
   },
   "DownloadResourceModal": {

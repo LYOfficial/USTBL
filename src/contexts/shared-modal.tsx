@@ -4,7 +4,6 @@ import { AccountService } from "@/services/account";
 
 const ACCOUNT_REQUIRED_MODAL_KEYS = new Set([
   "launch",
-  "download-modpack",
   "download-resource",
   "download-specific-resource",
   "import-modpack",
