@@ -4,10 +4,11 @@
 //! the campus platform publishes a manifest whose files are either remote or
 //! stored in the platform's packs.
 
-use super::diff::FileKey;
+use super::diff::{FileKey, DISABLED_SUFFIX};
 use super::packs::{AppTransport, PackSession};
 use super::remote::{ComponentPack, FileSource, RemoteFile, RemoteModpack, UPDATE_DIR};
 use crate::error::{USTBLError, USTBLResult};
+use crate::file_error::AtPath;
 use crate::instance::helpers::modpack::baseline::{
   components_of_mmc_pack, hash_file, normalize_relative_path, BaselineLoader,
 };
@@ -371,6 +372,7 @@ pub fn campus_remote(
     files,
     rules,
     rules_manifest: true,
+    disabled_authoritative: true,
     path_index: Arc::new(std::sync::OnceLock::new()),
   })
 }
@@ -481,15 +483,18 @@ pub fn write_remote_cache(root: &Path, cache: &RemoteCache) -> std::io::Result<(
   fs::rename(temp, path)
 }
 
-/// SHA-1 and size of one archive entry, streamed.
-pub fn hash_archive_entry(archive: &Path, entry: &str) -> USTBLResult<FileKey> {
-  let mut zip = zip::ZipArchive::new(File::open(archive)?)?;
+/// SHA-1 and size of one entry of an open archive, streamed.
+fn hash_zip_entry(
+  zip: &mut zip::ZipArchive<File>,
+  archive: &Path,
+  entry: &str,
+) -> USTBLResult<FileKey> {
   let mut source = zip.by_name(entry)?;
   let mut hasher = Sha1::new();
   let mut buffer = vec![0u8; 64 * 1024];
   let mut size = 0u64;
   loop {
-    let read = source.read(&mut buffer)?;
+    let read = source.read(&mut buffer).at(archive)?;
     if read == 0 {
       break;
     }
@@ -512,6 +517,61 @@ pub fn merge_files(downloads: Vec<RemoteFile>, overrides: Vec<RemoteFile>) -> Ve
   by_path.into_values().collect()
 }
 
+/// Read the `.disabled` files of a platform archive. A mod under `mods/` named
+/// `x.jar.disabled` is the disabled mod `mods/x.jar`; where the pack carries
+/// both spellings the enabled one stays. A `.disabled` file anywhere else is
+/// dropped: the engine owns that suffix only for mods.
+fn read_disabled_mods(
+  downloads: Vec<RemoteFile>,
+  overrides: Vec<RemoteFile>,
+) -> (Vec<RemoteFile>, Vec<RemoteFile>) {
+  fn fold(files: Vec<RemoteFile>) -> Vec<RemoteFile> {
+    files
+      .into_iter()
+      .filter_map(|mut file| {
+        let lowered = file.path.to_lowercase();
+        if !lowered.ends_with(DISABLED_SUFFIX) {
+          return Some(file);
+        }
+        if lowered.starts_with("mods/") && lowered.len() > "mods/".len() + DISABLED_SUFFIX.len() {
+          file.path.truncate(file.path.len() - DISABLED_SUFFIX.len());
+          file.disabled = true;
+          Some(file)
+        } else {
+          log::warn!(
+            "skipping modpack file outside mods/ with a .disabled suffix: {}",
+            file.path
+          );
+          None
+        }
+      })
+      .collect()
+  }
+  let (downloads, overrides) = (fold(downloads), fold(overrides));
+  let enabled: std::collections::HashSet<String> = downloads
+    .iter()
+    .chain(&overrides)
+    .filter(|file| !file.disabled)
+    .map(|file| file.path.to_lowercase())
+    .collect();
+  let keep_enabled = |files: Vec<RemoteFile>| -> Vec<RemoteFile> {
+    files
+      .into_iter()
+      .filter(|file| {
+        let shadowed = file.disabled && enabled.contains(&file.path.to_lowercase());
+        if shadowed {
+          log::warn!(
+            "modpack carries both {0} and {0}{DISABLED_SUFFIX}; keeping the enabled one",
+            file.path
+          );
+        }
+        !shadowed
+      })
+      .collect()
+  };
+  (keep_enabled(downloads), keep_enabled(overrides))
+}
+
 /// Read a downloaded Modrinth or CurseForge archive.
 pub async fn remote_from_archive(
   app: &AppHandle,
@@ -531,6 +591,7 @@ pub async fn remote_from_archive(
     return Err(InstanceError::ModpackUpdateLineMismatch.into());
   }
 
+  let params_started = std::time::Instant::now();
   let mut downloads = Vec::new();
   for download in manifest.get_download_params(app, root).await? {
     // Without a hash and size a file cannot be compared; a fresh install does
@@ -554,16 +615,25 @@ pub async fn remote_from_archive(
     });
   }
 
+  log::info!(
+    "modpack archive files: {} downloads, platform lookup elapsed_ms={}",
+    downloads.len(),
+    params_started.elapsed().as_millis()
+  );
+
+  let hashing_started = std::time::Instant::now();
   let overrides_paths = manifest.get_overrides_paths();
   let (archive_path, name) = (archive.to_path_buf(), instance_name.to_string());
   let overrides = tokio::task::spawn_blocking(move || -> USTBLResult<Vec<RemoteFile>> {
     let file = File::open(&archive_path)?;
     let entries = list_override_entries(&file, &overrides_paths, &name)?;
+    // One open archive for every entry, not one per entry.
+    let mut zip = zip::ZipArchive::new(file)?;
     entries
       .into_iter()
       .map(|(path, entry)| {
         Ok(RemoteFile {
-          key: hash_archive_entry(&archive_path, &entry)?,
+          key: hash_zip_entry(&mut zip, &archive_path, &entry)?,
           path,
           source: FileSource::ArchiveEntry {
             archive: archive_path.clone(),
@@ -577,6 +647,13 @@ pub async fn remote_from_archive(
   })
   .await
   .map_err(|e| USTBLError(e.to_string()))??;
+  log::info!(
+    "modpack archive overrides: {} files hashed elapsed_ms={}",
+    overrides.len(),
+    hashing_started.elapsed().as_millis()
+  );
+
+  let (downloads, overrides) = read_disabled_mods(downloads, overrides);
 
   Ok(RemoteModpack {
     version_id: latest.version_id.clone(),
@@ -591,6 +668,7 @@ pub async fn remote_from_archive(
     files: merge_files(downloads, overrides),
     rules: Vec::new(),
     rules_manifest: false,
+    disabled_authoritative: true,
     path_index: Arc::new(std::sync::OnceLock::new()),
   })
 }
@@ -701,8 +779,9 @@ pub async fn download_param(app: &AppHandle, mut param: DownloadParam) -> USTBLR
       .map(|name| name.to_string_lossy().into_owned());
   }
   if let Some(parent) = param.dest.parent() {
-    fs::create_dir_all(parent)?;
+    fs::create_dir_all(parent).at(parent)?;
   }
+  let dest = param.dest.clone();
   let monitor = app.state::<Pin<Box<TaskMonitor>>>();
   let task = DownloadTask::new(
     app.clone(),
@@ -714,7 +793,11 @@ pub async fn download_param(app: &AppHandle, mut param: DownloadParam) -> USTBLR
   let (future, _handle) = task
     .future(app.clone(), monitor.download_rate_limiter.clone())
     .await?;
-  future.await
+  // The task reports a failed write as text; name the file for the known
+  // file problems (a scanner removing it, no space) instead of the bare code.
+  future
+    .await
+    .map_err(|error| USTBLError(crate::file_error::from_os_text(&error.0, &dest, None)))
 }
 
 async fn download_url(
@@ -1004,7 +1087,7 @@ pub async fn resolve_remote(
   latest: &LatestVersion,
 ) -> USTBLResult<RemoteModpack> {
   let dir = remote_dir(root);
-  fs::create_dir_all(&dir)?;
+  fs::create_dir_all(&dir).at_in(&dir, root)?;
   let remote = if let Some(remote) = load_remote_cache(app, origin, root, latest) {
     remote
   } else {
@@ -1022,9 +1105,14 @@ pub async fn resolve_remote(
         })
         .await
         .map_err(|e| USTBLError(e.to_string()))?;
+        let download_started = std::time::Instant::now();
         if !cached {
           download_url(app, url, &path, Some(sha1)).await?;
         }
+        log::info!(
+          "modpack archive ready: cached={cached} elapsed_ms={}",
+          download_started.elapsed().as_millis()
+        );
         let size = fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
         (
           remote_from_archive(app, &path, root, instance_name, origin, latest).await?,
@@ -1161,7 +1249,7 @@ mod tests {
 
     let remote = campus_remote(&version, &session()).unwrap();
 
-    assert!(remote.rules_manifest);
+    assert!(remote.rules_manifest && remote.disabled_authoritative);
     assert_eq!(remote.files[0].path, "mods/a.jar");
     assert!(remote.files[0].disabled && !remote.files[0].once);
     assert_eq!(remote.files[1].path, "config/first.toml");
@@ -1402,8 +1490,107 @@ mod tests {
       ],
       rules: Vec::new(),
       rules_manifest: false,
+      disabled_authoritative: false,
       path_index: Arc::new(std::sync::OnceLock::new()),
     }
+  }
+
+  fn archive_file(path: &str, content: &str, from_download: bool) -> RemoteFile {
+    RemoteFile {
+      path: path.into(),
+      key: FileKey {
+        sha1: hex::encode(Sha1::digest(content.as_bytes())),
+        size: content.len() as u64,
+      },
+      source: if from_download {
+        FileSource::Download(plain_download(&format!("https://cdn.example/{content}")).unwrap())
+      } else {
+        FileSource::ArchiveEntry {
+          archive: PathBuf::from("/tmp/pack.zip"),
+          entry: format!("overrides/{path}"),
+        }
+      },
+      disabled: false,
+      once: false,
+    }
+  }
+
+  fn platform_remote(downloads: Vec<RemoteFile>, overrides: Vec<RemoteFile>) -> RemoteModpack {
+    let (downloads, overrides) = read_disabled_mods(downloads, overrides);
+    RemoteModpack {
+      files: merge_files(downloads, overrides),
+      rules_manifest: false,
+      disabled_authoritative: true,
+      ..remote_for_test()
+    }
+  }
+
+  #[test]
+  fn disabled_mods_of_an_archive_are_read_as_disabled_mods() {
+    let remote = platform_remote(
+      vec![archive_file("mods/dl.jar.disabled", "dl", true)],
+      vec![
+        archive_file("mods/ov.JAR.DISABLED", "ov", false),
+        archive_file("mods/on.jar", "on", false),
+      ],
+    );
+
+    remote.validate("pack").unwrap();
+    let state = |path: &str| {
+      let file = remote.file_of(path).unwrap();
+      (file.path.clone(), remote.ship_of(path).unwrap().disabled)
+    };
+    assert_eq!(state("mods/dl.jar"), ("mods/dl.jar".into(), Some(true)));
+    assert_eq!(state("mods/ov.jar"), ("mods/ov.JAR".into(), Some(true)));
+    assert_eq!(state("mods/on.jar"), ("mods/on.jar".into(), Some(false)));
+    assert_eq!(remote.files.len(), 3);
+    // A download is still fetched, an override still read out of the archive.
+    assert!(matches!(
+      remote.file_of("mods/dl.jar").unwrap().source,
+      FileSource::Download(_)
+    ));
+    assert!(matches!(
+      remote.file_of("mods/ov.jar").unwrap().source,
+      FileSource::ArchiveEntry { .. }
+    ));
+  }
+
+  #[test]
+  fn an_archive_carrying_both_spellings_keeps_the_enabled_one() {
+    for (disabled_is_download, enabled_is_download) in
+      [(true, true), (true, false), (false, true), (false, false)]
+    {
+      let disabled = archive_file("mods/a.jar.disabled", "off", disabled_is_download);
+      let enabled = archive_file("mods/a.jar", "on", enabled_is_download);
+      let (downloads, overrides): (Vec<_>, Vec<_>) = [disabled, enabled]
+        .into_iter()
+        .partition(|file| matches!(file.source, FileSource::Download(_)));
+
+      let remote = platform_remote(downloads, overrides);
+
+      remote.validate("pack").unwrap();
+      assert_eq!(remote.files.len(), 1);
+      assert_eq!(remote.files[0].path, "mods/a.jar");
+      assert!(!remote.files[0].disabled);
+      assert_eq!(remote.files[0].key, archive_file("x", "on", true).key);
+    }
+  }
+
+  #[test]
+  fn a_disabled_suffix_outside_mods_is_skipped() {
+    let remote = platform_remote(
+      vec![archive_file("resourcepacks/p.zip.disabled", "p", true)],
+      vec![
+        archive_file("config/a.toml.disabled", "c", false),
+        archive_file("mods/.disabled", "e", false),
+        archive_file("modsx/b.jar.disabled", "m", false),
+        archive_file("mods/keep.jar", "k", false),
+      ],
+    );
+
+    remote.validate("pack").unwrap();
+    let paths: Vec<_> = remote.files.iter().map(|file| file.path.as_str()).collect();
+    assert_eq!(paths, ["mods/keep.jar"]);
   }
 
   #[test]
@@ -1468,7 +1655,9 @@ mod tests {
       zip.write_all(b"hello").unwrap();
       zip.finish().unwrap();
     }
-    let key = hash_archive_entry(&path, "overrides/a.txt").unwrap();
+    let mut zip = zip::ZipArchive::new(File::open(&path).unwrap()).unwrap();
+    let key = hash_zip_entry(&mut zip, &path, "overrides/a.txt").unwrap();
+    drop(zip);
     let _ = fs::remove_file(&path);
     assert_eq!(key.size, 5);
     assert_eq!(key.sha1, "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d");

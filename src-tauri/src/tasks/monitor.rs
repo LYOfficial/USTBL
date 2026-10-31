@@ -37,6 +37,16 @@ pub struct TaskMonitor {
   pub download_rate_limiter: Option<Limiter>,
 }
 
+/// How many downloads run side by side: the available parallelism when the
+/// setting is automatic, the configured count otherwise.
+pub fn download_concurrency(auto_concurrent: bool, concurrent_count: usize) -> usize {
+  if auto_concurrent {
+    std::thread::available_parallelism().unwrap().into()
+  } else {
+    concurrent_count
+  }
+}
+
 impl TaskMonitor {
   pub fn new(app_handle: AppHandle) -> Self {
     let config = retrieve_launcher_config(app_handle.clone()).unwrap();
@@ -47,13 +57,10 @@ impl TaskMonitor {
       phs: RwLock::new(HashMap::new()),
       ths: RwLock::new(HashMap::new()),
       tasks: Arc::new(Mutex::new(HashMap::new())),
-      concurrency: Arc::new(Semaphore::new(
-        if config.download.transmission.auto_concurrent {
-          std::thread::available_parallelism().unwrap().into()
-        } else {
-          config.download.transmission.concurrent_count
-        },
-      )),
+      concurrency: Arc::new(Semaphore::new(download_concurrency(
+        config.download.transmission.auto_concurrent,
+        config.download.transmission.concurrent_count,
+      ))),
       tx,
       rx,
       group_map: Arc::new(RwLock::new(HashMap::new())),
@@ -528,6 +535,34 @@ impl TaskMonitor {
 
   pub fn get_transient_task(&self, task_id: u32) -> Option<THandle> {
     self.ths.read().unwrap().get(&task_id).cloned()
+  }
+
+  /// Cancel every unfinished task that `belongs` selects, abort the jobs
+  /// still running them and hand those jobs back, so the caller can wait until
+  /// they have ended. Modpack transactions are never touched: they must
+  /// finish or roll back.
+  pub fn cancel_tasks_where(&self, belongs: impl Fn(&PTaskDesc) -> bool) -> Vec<JoinHandle<()>> {
+    let mut jobs = Vec::new();
+    for (id, handle) in self.phs.read().unwrap().iter() {
+      let desc = handle.read().unwrap().desc.clone();
+      let unfinished =
+        desc.status.is_in_progress() || desc.status.is_waiting() || desc.status.is_stopped();
+      if !unfinished
+        || desc
+          .task_group
+          .as_deref()
+          .is_some_and(is_modpack_transaction)
+        || !belongs(&desc)
+      {
+        continue;
+      }
+      handle.write().unwrap().mark_cancelled();
+      if let Some(job) = self.tasks.lock().unwrap().remove(id) {
+        job.abort();
+        jobs.push(job);
+      }
+    }
+    jobs
   }
 
   pub fn cancel_progressive_task_group(&self, task_group: String) {

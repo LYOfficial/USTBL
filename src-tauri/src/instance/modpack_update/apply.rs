@@ -6,10 +6,11 @@
 //! folder instead of being deleted. If anything fails, or the launcher dies
 //! half way, the journal is enough to put every file back.
 
-use super::diff::{Operation, DISABLED_SUFFIX};
+use super::diff::{FileKey, Operation, DISABLED_SUFFIX};
 use super::packs::{FetchGroup, PackFetch, PackSession};
 use super::remote::{ComponentPack, FileSource, RemoteFile, RemoteModpack, UPDATE_DIR};
 use crate::error::USTBLResult;
+use crate::file_error::{tag, AtPath};
 use crate::instance::helpers::modpack::base_store;
 use crate::instance::helpers::modpack::baseline::{
   hash_file, BaselineLoader, ComponentRef, ModpackBaseline, BASELINE_FILE_NAME,
@@ -22,11 +23,12 @@ use crate::tasks::download::DownloadParam;
 use async_trait::async_trait;
 use futures::stream::{FuturesUnordered, StreamExt};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashSet};
+use sha1::{Digest, Sha1};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
@@ -78,23 +80,24 @@ fn staging_meta_path(root: &Path) -> PathBuf {
 }
 
 fn read_staging_meta(root: &Path) -> io::Result<Option<StagingMeta>> {
-  match fs::read(staging_meta_path(root)) {
+  let path = staging_meta_path(root);
+  match fs::read(&path) {
     Ok(bytes) => {
       Ok(Some(serde_json::from_slice(&bytes).map_err(|error| {
         io::Error::new(io::ErrorKind::InvalidData, error)
       })?))
     }
     Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-    Err(error) => Err(error),
+    Err(error) => Err(tag(error, &path, Some(root))),
   }
 }
 
 fn write_staging_meta(root: &Path, meta: &StagingMeta) -> io::Result<()> {
-  fs::create_dir_all(staging_dir(root))?;
+  fs::create_dir_all(staging_dir(root)).at_in(&staging_dir(root), root)?;
   let path = staging_meta_path(root);
   let temp = path.with_extension("json.tmp");
-  fs::write(&temp, serde_json::to_vec_pretty(meta)?)?;
-  fs::rename(temp, path)
+  fs::write(&temp, serde_json::to_vec_pretty(meta)?).at_in(&temp, root)?;
+  fs::rename(&temp, &path).at_in(&temp, root)
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Deserialize, Serialize)]
@@ -174,7 +177,13 @@ pub trait UpdateEnv: Send + Sync {
   fn ensure_not_running(&self) -> USTBLResult<()> {
     Ok(())
   }
-  /// Download `param.src` to `param.dest`. The engine verifies the result itself.
+  /// How many downloads may run side by side while fetching files.
+  fn download_concurrency(&self) -> usize {
+    FETCH_CONCURRENCY
+  }
+  /// Download `param.src` to `param.dest`. When `param.sha1` is set the
+  /// download must verify it and fail otherwise (`DownloadTask` does); the
+  /// engine then only checks the size.
   async fn fetch(&self, param: DownloadParam) -> USTBLResult<()>;
   /// Switch the instance to another loader version. Runs after the journal is
   /// written, so the instance files it rewrites are restored on failure.
@@ -186,6 +195,32 @@ pub trait UpdateEnv: Send + Sync {
   /// Point the instance at the new version once its files are in place.
   async fn commit_origin(&self, version_id: &str) -> USTBLResult<()>;
   fn report(&self, progress: Progress);
+  /// Whether the caller asked to abandon the run. Only honoured until
+  /// `begin_commit` succeeds.
+  fn cancel_requested(&self) -> bool {
+    false
+  }
+  /// Resolves once the caller asks to abandon the run; never, by default.
+  async fn cancelled(&self) {
+    std::future::pending::<()>().await
+  }
+  /// Called once everything is staged and nothing has been written to the
+  /// instance yet, right before `begin_commit`. The caller may wait here for
+  /// what the commit needs (a first install waits for the game client). The
+  /// run can still be cancelled while it waits; an error ends the run like any
+  /// other failure before the journal, so the staged files stay for a retry.
+  async fn before_commit(&self) -> USTBLResult<()> {
+    Ok(())
+  }
+  /// Called once, right before the journal is written. Fails when the run was
+  /// cancelled; otherwise the run can no longer be cancelled.
+  fn begin_commit(&self) -> USTBLResult<()> {
+    Ok(())
+  }
+}
+
+fn cancelled_error() -> crate::error::USTBLError {
+  InstanceError::ModpackInstallInterrupted.into()
 }
 
 pub struct UpdateRequest {
@@ -266,32 +301,35 @@ fn io_error(error: io::Error) -> crate::error::USTBLError {
 fn write_journal(root: &Path, journal: &Journal) -> io::Result<()> {
   let path = journal_path(root);
   let temp = path.with_extension("json.tmp");
-  fs::write(&temp, serde_json::to_vec_pretty(journal)?)?;
-  fs::rename(temp, path)
+  fs::write(&temp, serde_json::to_vec_pretty(journal)?).at_in(&temp, root)?;
+  fs::rename(&temp, &path).at_in(&temp, root)
 }
 
 fn read_journal(root: &Path) -> io::Result<Option<Journal>> {
-  match fs::read(journal_path(root)) {
+  let path = journal_path(root);
+  match fs::read(&path) {
     Ok(bytes) => {
       Ok(Some(serde_json::from_slice(&bytes).map_err(|e| {
         io::Error::new(io::ErrorKind::InvalidData, e)
       })?))
     }
     Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-    Err(error) => Err(error),
+    Err(error) => Err(tag(error, &path, Some(root))),
   }
 }
 
-fn move_file(from: &Path, to: &Path) -> io::Result<()> {
+/// Rename `from` to `to`. A failure names `from`: that is the file a scanner
+/// or another program holds on to.
+fn move_file(root: &Path, from: &Path, to: &Path) -> io::Result<()> {
   if let Some(parent) = to.parent() {
-    fs::create_dir_all(parent)?;
+    fs::create_dir_all(parent).at_in(parent, root)?;
   }
-  fs::rename(from, to)
+  fs::rename(from, to).at_in(from, root)
 }
 
-fn remove_file_if_exists(path: &Path) -> io::Result<()> {
+fn remove_file_if_exists(root: &Path, path: &Path) -> io::Result<()> {
   match fs::remove_file(path) {
-    Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+    Err(error) if error.kind() != io::ErrorKind::NotFound => Err(tag(error, path, Some(root))),
     _ => Ok(()),
   }
 }
@@ -332,30 +370,30 @@ fn roll_back_from(root: &Path, backup: &Path, journal: &Journal) -> io::Result<(
     // rollback behaved the same for both, so `unwrap_or(!had_original)`.
     let wrote_enabled = op.writes_enabled.unwrap_or(!op.had_original);
     if op.had_original && saved.is_file() {
-      remove_file_if_exists(&target)?;
-      move_file(&saved, &target)?;
+      remove_file_if_exists(root, &target)?;
+      move_file(root, &saved, &target)?;
     } else if wrote_enabled {
-      remove_file_if_exists(&target)?;
+      remove_file_if_exists(root, &target)?;
     }
     let disabled = disabled_path(&op.path);
     if op.moves_disabled {
       let saved = backup.join("files").join(&disabled);
-      remove_file_if_exists(&root.join(&disabled))?;
+      remove_file_if_exists(root, &root.join(&disabled))?;
       if saved.is_file() {
-        move_file(&saved, &root.join(&disabled))?;
+        move_file(root, &saved, &root.join(&disabled))?;
       }
     } else if op.writes_disabled {
-      remove_file_if_exists(&root.join(&disabled))?;
+      remove_file_if_exists(root, &root.join(&disabled))?;
     }
   }
   for name in &journal.meta_present {
     let saved = backup.join("meta").join(name);
     if saved.is_file() {
-      fs::copy(&saved, root.join(name))?;
+      fs::copy(&saved, root.join(name)).at_in(&root.join(name), root)?;
     }
   }
   for name in &journal.meta_absent {
-    remove_file_if_exists(&root.join(name))?;
+    remove_file_if_exists(root, &root.join(name))?;
   }
   // Recreate the directories the update pruned, deepest first.
   let mut dirs: Vec<&String> = journal
@@ -366,7 +404,7 @@ fn roll_back_from(root: &Path, backup: &Path, journal: &Journal) -> io::Result<(
   dirs.sort_by_key(|dir| std::cmp::Reverse(dir.matches('/').count()));
   dirs.dedup();
   for dir in dirs {
-    fs::create_dir_all(root.join(dir))?;
+    fs::create_dir_all(root.join(dir)).at_in(&root.join(dir), root)?;
   }
   Ok(())
 }
@@ -413,13 +451,16 @@ pub fn roll_back_last_checked(
   check()?;
   recover_locked(root)?;
   let backup = last_backup_dir(root);
-  let journal: Journal = match fs::read(backup.join(LAST_JOURNAL_NAME)) {
+  let journal_file = backup.join(LAST_JOURNAL_NAME);
+  let journal: Journal = match fs::read(&journal_file) {
     Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| io_error(e.into()))?,
     Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
-    Err(error) => return Err(io_error(error)),
+    Err(error) => return Err(io_error(tag(error, &journal_file, Some(root)))),
   };
   roll_back_from(root, &backup, &journal).map_err(io_error)?;
-  fs::remove_dir_all(&backup).map_err(io_error)?;
+  fs::remove_dir_all(&backup)
+    .at_in(&backup, root)
+    .map_err(io_error)?;
   Ok(true)
 }
 
@@ -469,15 +510,112 @@ fn recover_locked(root: &Path) -> USTBLResult<Recovery> {
   }
 }
 
-fn extract_entry(archive: &Path, entry: &str, dest: &Path) -> USTBLResult<()> {
-  let mut zip = zip::ZipArchive::new(fs::File::open(archive).map_err(io_error)?)?;
+/// Writes through to `inner` while hashing what passes.
+struct HashingWriter<W> {
+  inner: W,
+  hasher: Sha1,
+  size: u64,
+}
+
+impl<W: io::Write> io::Write for HashingWriter<W> {
+  fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    let written = self.inner.write(buf)?;
+    self.hasher.update(&buf[..written]);
+    self.size += written as u64;
+    Ok(written)
+  }
+
+  fn flush(&mut self) -> io::Result<()> {
+    self.inner.flush()
+  }
+}
+
+/// Extract `entry` to `dest`, hashing it on the way out. A file that does not
+/// match `key` is removed and rejected.
+fn extract_entry(archive: &Path, entry: &str, dest: &Path, key: &FileKey) -> USTBLResult<()> {
+  let mut zip = zip::ZipArchive::new(fs::File::open(archive).at(archive).map_err(io_error)?)?;
+  extract_entry_from(&mut zip, entry, dest, key)
+}
+
+fn extract_entry_from(
+  zip: &mut zip::ZipArchive<fs::File>,
+  entry: &str,
+  dest: &Path,
+  key: &FileKey,
+) -> USTBLResult<()> {
   let mut source = zip.by_name(entry)?;
   if let Some(parent) = dest.parent() {
-    fs::create_dir_all(parent).map_err(io_error)?;
+    fs::create_dir_all(parent).at(parent).map_err(io_error)?;
   }
-  let mut out = fs::File::create(dest).map_err(io_error)?;
-  io::copy(&mut source, &mut out).map_err(io_error)?;
+  let mut out = HashingWriter {
+    inner: fs::File::create(dest).at(dest).map_err(io_error)?,
+    hasher: Sha1::new(),
+    size: 0,
+  };
+  io::copy(&mut source, &mut out).at(dest).map_err(io_error)?;
+  let HashingWriter { hasher, size, .. } = out;
+  if hex::encode(hasher.finalize()) != key.sha1 || size != key.size {
+    let _ = fs::remove_file(dest);
+    return Err(InstanceError::ModpackUpdateVerifyFailed.into());
+  }
   Ok(())
+}
+
+/// How many override files one archive unit extracts at most, and how many
+/// bytes. Bounds how long a unit runs without reporting progress or noticing a
+/// cancel.
+const ARCHIVE_UNIT_FILES: usize = 64;
+const ARCHIVE_UNIT_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Extract `entries` of one archive through a single open `ZipArchive`,
+/// checking `stop` before each file.
+fn extract_entries(
+  archive: &Path,
+  entries: Vec<(String, PathBuf, FileKey)>,
+  stop: &AtomicBool,
+) -> USTBLResult<()> {
+  let mut zip = zip::ZipArchive::new(fs::File::open(archive).at(archive).map_err(io_error)?)?;
+  for (entry, dest, key) in entries {
+    if stop.load(Ordering::SeqCst) {
+      return Err(cancelled_error());
+    }
+    extract_entry_from(&mut zip, &entry, &dest, &key)?;
+  }
+  Ok(())
+}
+
+/// Run [`extract_entries`] on the blocking pool. A cancel stops it before the
+/// next file; the unit is still awaited, because a blocking extractor cannot be
+/// aborted while a retry or discard starts using the staging.
+async fn extract_archive_unit(
+  env: &dyn UpdateEnv,
+  archive: &Path,
+  files: &[(&RemoteFile, PathBuf)],
+) -> USTBLResult<()> {
+  let entries: Vec<(String, PathBuf, FileKey)> = files
+    .iter()
+    .filter_map(|(file, dest)| match &file.source {
+      FileSource::ArchiveEntry { entry, .. } => {
+        Some((entry.clone(), dest.clone(), file.key.clone()))
+      }
+      _ => None,
+    })
+    .collect();
+  let stop = Arc::new(AtomicBool::new(false));
+  let archive = archive.to_path_buf();
+  let worker = tokio::task::spawn_blocking({
+    let stop = stop.clone();
+    move || extract_entries(&archive, entries, &stop)
+  });
+  tokio::pin!(worker);
+  let joined = tokio::select! {
+    joined = &mut worker => joined,
+    () = env.cancelled() => {
+      stop.store(true, Ordering::SeqCst);
+      worker.await
+    }
+  };
+  joined.map_err(|e| crate::error::USTBLError(e.to_string()))?
 }
 
 /// Tell every pack session which of its files are about to be fetched, so it
@@ -543,13 +681,27 @@ async fn stage_file(env: &dyn UpdateEnv, dest: PathBuf, file: &RemoteFile) -> US
       let mut param = (**param).clone();
       param.dest = dest.clone();
       param.sha1 = Some(file.key.sha1.clone());
-      env.fetch(param).await?
+      env.fetch(param).await?;
+      // The download already checked the sha1; hashing again would read the
+      // whole file for nothing.
+      let size = fs::metadata(&dest).at(&dest).map_err(io_error)?.len();
+      if size != file.key.size {
+        let _ = fs::remove_file(&dest);
+        return Err(InstanceError::ModpackUpdateVerifyFailed.into());
+      }
+      return Ok(());
     }
     FileSource::ArchiveEntry { archive, entry } => {
-      let (archive, entry, dest) = (archive.clone(), entry.clone(), dest.clone());
-      tokio::task::spawn_blocking(move || extract_entry(&archive, &entry, &dest))
+      // Hashed while extracting.
+      let (archive, entry, dest, key) = (
+        archive.clone(),
+        entry.clone(),
+        dest.clone(),
+        file.key.clone(),
+      );
+      return tokio::task::spawn_blocking(move || extract_entry(&archive, &entry, &dest, &key))
         .await
-        .map_err(|e| crate::error::USTBLError(e.to_string()))??;
+        .map_err(|e| crate::error::USTBLError(e.to_string()))?;
     }
     FileSource::Pack(session) => session.fetch(&file.key.sha1, &dest).await?,
   }
@@ -573,11 +725,13 @@ pub async fn materialize_remote_file(
   stage_file(env, dest, file).await
 }
 
-/// One unit of fetch work: a single file from a download or an archive, or
-/// one group of pack entries a single merged Range request can cover. A
-/// group of one file is read on its own.
+/// One unit of fetch work: a single downloaded file, a batch of entries of one
+/// archive (extracted with a single open archive), or one group of pack
+/// entries a single merged Range request can cover. A group of one file is
+/// read on its own.
 enum FetchUnit<'a> {
   Single(&'a RemoteFile, PathBuf),
+  Archive(PathBuf, Vec<(&'a RemoteFile, PathBuf)>),
   Group(Arc<PackSession>, FetchGroup),
 }
 
@@ -585,9 +739,48 @@ impl FetchUnit<'_> {
   fn file_count(&self) -> usize {
     match self {
       FetchUnit::Single(..) => 1,
+      FetchUnit::Archive(_, files) => files.len(),
       FetchUnit::Group(_, group) => group.file_count(),
     }
   }
+}
+
+/// The archive entries of `to_fetch`, batched per archive in order of
+/// appearance and cut at [`ARCHIVE_UNIT_FILES`] files or [`ARCHIVE_UNIT_BYTES`]
+/// bytes.
+fn archive_units<'a>(to_fetch: &[(&'a RemoteFile, PathBuf)]) -> Vec<FetchUnit<'a>> {
+  let mut per_archive: Vec<(PathBuf, Vec<(&'a RemoteFile, PathBuf)>)> = Vec::new();
+  for (file, dest) in to_fetch {
+    let FileSource::ArchiveEntry { archive, .. } = &file.source else {
+      continue;
+    };
+    match per_archive.iter_mut().find(|(known, _)| known == archive) {
+      Some((_, files)) => files.push((file, dest.clone())),
+      None => per_archive.push((archive.clone(), vec![(file, dest.clone())])),
+    }
+  }
+  let mut units = Vec::new();
+  for (archive, files) in per_archive {
+    let mut batch: Vec<(&'a RemoteFile, PathBuf)> = Vec::new();
+    let mut bytes = 0u64;
+    for item in files {
+      if !batch.is_empty()
+        && (batch.len() >= ARCHIVE_UNIT_FILES || bytes + item.0.key.size > ARCHIVE_UNIT_BYTES)
+      {
+        units.push(FetchUnit::Archive(
+          archive.clone(),
+          std::mem::take(&mut batch),
+        ));
+        bytes = 0;
+      }
+      bytes += item.0.key.size;
+      batch.push(item);
+    }
+    if !batch.is_empty() {
+      units.push(FetchUnit::Archive(archive, batch));
+    }
+  }
+  units
 }
 
 /// Group `to_fetch` into fetch units. Every pack file goes to its session's
@@ -600,10 +793,11 @@ fn fetch_units<'a>(
 ) -> Vec<FetchUnit<'a>> {
   let mut units: Vec<FetchUnit<'a>> = Vec::new();
   for (file, dest) in to_fetch {
-    if !matches!(file.source, FileSource::Pack(_)) {
+    if matches!(file.source, FileSource::Download(_)) {
       units.push(FetchUnit::Single(file, dest.clone()));
     }
   }
+  units.extend(archive_units(to_fetch));
   for (session, groups) in planned {
     for group in groups {
       units.push(FetchUnit::Group(session.clone(), group));
@@ -629,24 +823,28 @@ fn commit_files(root: &Path, operations: &[Operation], journal: &Journal) -> io:
       };
       let saved = backup.join("files").join(backed);
       if let Some(parent) = saved.parent() {
-        fs::create_dir_all(parent)?;
+        fs::create_dir_all(parent).at_in(parent, root)?;
       }
-      fs::copy(&source, &saved)?;
-      move_file(&source, &dest)?;
+      fs::copy(&source, &saved).at_in(&source, root)?;
+      move_file(root, &source, &dest)?;
       continue;
     }
     if op.had_original {
-      move_file(&target, &backup.join("files").join(&op.path))?;
+      move_file(root, &target, &backup.join("files").join(&op.path))?;
     }
     if op.moves_disabled {
-      move_file(&root.join(&disabled), &backup.join("files").join(&disabled))?;
+      move_file(
+        root,
+        &root.join(&disabled),
+        &backup.join("files").join(&disabled),
+      )?;
     }
     if operation.write.is_some() || operation.write_local {
       let staged = staging_dir(root).join(&op.path);
       if operation.final_disabled {
-        move_file(&staged, &root.join(&disabled))?;
+        move_file(root, &staged, &root.join(&disabled))?;
       } else {
-        move_file(&staged, &target)?;
+        move_file(root, &staged, &target)?;
       }
     }
   }
@@ -677,16 +875,16 @@ fn prune_empty_dirs(root: &Path, operations: &[Operation]) {
 
 fn save_meta_backup(root: &Path, names: &[String]) -> io::Result<(Vec<String>, Vec<String>)> {
   let meta = backup_dir(root).join("meta");
-  fs::create_dir_all(&meta)?;
+  fs::create_dir_all(&meta).at_in(&meta, root)?;
   let (mut present, mut absent) = (Vec::new(), Vec::new());
   for name in names {
     let file = root.join(name);
     if file.is_file() {
       let saved = meta.join(name);
       if let Some(parent) = saved.parent() {
-        fs::create_dir_all(parent)?;
+        fs::create_dir_all(parent).at_in(parent, root)?;
       }
-      fs::copy(&file, saved)?;
+      fs::copy(&file, saved).at_in(&file, root)?;
       present.push(name.clone());
     } else {
       absent.push(name.clone());
@@ -718,6 +916,9 @@ pub async fn apply(env: &dyn UpdateEnv, request: UpdateRequest) -> USTBLResult<(
 
 async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
   let root = &request.root;
+  if env.cancel_requested() {
+    return Err(cancelled_error());
+  }
   // The plan was made against these ignores; others on disk mean it is stale.
   if let Some(update) = &request.ignores {
     if super::ignores::read(root) != update.from {
@@ -759,10 +960,10 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
   };
   if !reusable {
     for path in [staging_dir(root), components_dir(root)] {
-      match fs::remove_dir_all(path) {
+      match fs::remove_dir_all(&path) {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(io_error(error)),
+        Err(error) => return Err(io_error(tag(error, &path, Some(root)))),
       }
     }
   }
@@ -858,7 +1059,11 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
     bytes_done: 0,
     bytes_total: 0,
   });
-  prepare_packs(&wanted).await?;
+  tokio::select! {
+    biased;
+    result = prepare_packs(&wanted) => result?,
+    () = env.cancelled() => return Err(cancelled_error()),
+  }
   // Plan every session's merged groups up front: all of its files, wherever
   // they sit in `to_fetch`, are grouped by pack offset. Each group becomes
   // one unit of fetch work, so the groups run concurrently.
@@ -902,47 +1107,98 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
   let fetching = Instant::now();
   // Driven by hand rather than with `buffer_unordered`: the combinator's
   // closure makes the future fail the `Send` check of the command handler.
-  let mut pending = fetch_units(&to_fetch, planned).into_iter();
+  // Downloads follow the download settings. Archive extraction and pack
+  // requests keep their own fixed limit, so a campus pack never opens more
+  // pack connections than before.
+  let download_limit = env.download_concurrency().max(1);
+  let (mut pending_downloads, mut pending_other): (VecDeque<_>, VecDeque<_>) =
+    fetch_units(&to_fetch, planned)
+      .into_iter()
+      .partition(|unit| matches!(unit, FetchUnit::Single(..)));
+  let (mut downloads_running, mut others_running) = (0usize, 0usize);
+  let (mut downloaded_files, mut downloaded_bytes) = (0usize, 0u64);
+  let mut downloads_finished = None;
   let mut running = FuturesUnordered::new();
   let mut first_error = None;
   let fetching_result: USTBLResult<()> = loop {
-    while first_error.is_none() && running.len() < FETCH_CONCURRENCY {
-      let Some(unit) = pending.next() else {
+    if first_error.is_none() && env.cancel_requested() {
+      first_error = Some(cancelled_error());
+    }
+    while first_error.is_none() {
+      let is_download = downloads_running < download_limit && !pending_downloads.is_empty();
+      let unit = if is_download {
+        pending_downloads.pop_front()
+      } else if others_running < FETCH_CONCURRENCY {
+        pending_other.pop_front()
+      } else {
+        None
+      };
+      let Some(unit) = unit else {
         break;
       };
+      let is_download = matches!(unit, FetchUnit::Single(..));
+      if is_download {
+        downloads_running += 1;
+      } else {
+        others_running += 1;
+      }
       let files = unit.file_count();
       let bytes = match &unit {
         FetchUnit::Single(file, _) => file.key.size,
+        FetchUnit::Archive(_, files) => files.iter().map(|(file, _)| file.key.size).sum(),
         FetchUnit::Group(_, group) => group.entries.iter().map(|file| file.entry.size).sum(),
       };
       running.push(async move {
-        let result = match &unit {
-          FetchUnit::Single(file, dest) => stage_file(env, dest.clone(), file).await,
-          FetchUnit::Group(session, group) => {
-            session.fetch_group(group).await?;
-            let entries = group.entries.clone();
-            tokio::task::spawn_blocking(move || {
-              for entry in entries {
-                let (sha1, size) = hash_file(&entry.dest).map_err(io_error)?;
-                if sha1 != entry.sha1 || size != entry.entry.size {
-                  let _ = fs::remove_file(&entry.dest);
-                  return Err(InstanceError::ModpackUpdateVerifyFailed.into());
+        let result: USTBLResult<()> = async {
+          match &unit {
+            FetchUnit::Single(file, dest) => stage_file(env, dest.clone(), file).await,
+            FetchUnit::Archive(archive, files) => extract_archive_unit(env, archive, files).await,
+            FetchUnit::Group(session, group) => {
+              session.fetch_group(group).await?;
+              let entries = group.entries.clone();
+              tokio::task::spawn_blocking(move || {
+                for entry in entries {
+                  let (sha1, size) = hash_file(&entry.dest).map_err(io_error)?;
+                  if sha1 != entry.sha1 || size != entry.entry.size {
+                    let _ = fs::remove_file(&entry.dest);
+                    return Err(InstanceError::ModpackUpdateVerifyFailed.into());
+                  }
                 }
-              }
-              Ok(())
-            })
-            .await
-            .map_err(|error| crate::error::USTBLError(error.to_string()))?
+                Ok(())
+              })
+              .await
+              .map_err(|error| crate::error::USTBLError(error.to_string()))?
+            }
           }
-        };
-        result.map(|()| (files, bytes))
+        }
+        .await;
+        (is_download, result.map(|()| (files, bytes)))
       });
     }
-    let Some(result) = running.next().await else {
+    let next = tokio::select! {
+      biased;
+      next = running.next() => next,
+      // Stop scheduling and drain what is in flight; `fetch` ends promptly.
+      () = env.cancelled(), if first_error.is_none() => {
+        first_error = Some(cancelled_error());
+        continue;
+      }
+    };
+    let Some((was_download, result)) = next else {
       break first_error.map_or(Ok(()), Err);
     };
+    if was_download {
+      downloads_running -= 1;
+    } else {
+      others_running -= 1;
+    }
     match result {
       Ok((files, bytes)) => {
+        if was_download {
+          downloaded_files += files;
+          downloaded_bytes += bytes;
+          downloads_finished = Some(fetching.elapsed());
+        }
         done += files;
         bytes_done += bytes;
         env.report(Progress {
@@ -962,6 +1218,12 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
       }
     }
   };
+  if let Some(elapsed) = downloads_finished {
+    log::info!(
+      "modpack download fetch: {downloaded_files} files, {downloaded_bytes} bytes, \
+       {download_limit} concurrent, {elapsed:?} elapsed"
+    );
+  }
   // The measurement behind the "merged or not" comparison, per pack session.
   for session in sessions {
     let stats = session.stats();
@@ -979,15 +1241,23 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
   for (path, bytes) in &request.merged_contents {
     let dest = staging_dir(root).join(path);
     if let Some(parent) = dest.parent() {
-      fs::create_dir_all(parent).map_err(io_error)?;
+      fs::create_dir_all(parent)
+        .at_in(parent, root)
+        .map_err(io_error)?;
     }
-    fs::write(&dest, bytes).map_err(io_error)?;
+    fs::write(&dest, bytes)
+      .at_in(&dest, root)
+      .map_err(io_error)?;
     if !crate::instance::helpers::modpack::text::is_text_path(path, bytes) {
       return Err(InstanceError::ModpackUpdateVerifyFailed.into());
     }
   }
 
-  // Phase 2: write the journal and save the files the update rewrites.
+  env.before_commit().await?;
+
+  // Phase 2: write the journal and save the files the update rewrites. From
+  // here on the run cannot be cancelled.
+  env.begin_commit()?;
   env.report(Progress {
     stage: Stage::Applying,
     done: 0,
@@ -1028,7 +1298,9 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
       }
     })
     .collect();
-  fs::create_dir_all(backup_dir(root)).map_err(io_error)?;
+  fs::create_dir_all(backup_dir(root))
+    .at_in(&backup_dir(root), root)
+    .map_err(io_error)?;
   let (meta_present, meta_absent) = save_meta_backup(
     root,
     &meta_files(&request.instance_name, request.restore_components),
@@ -1137,7 +1409,8 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
       match undone {
         // Keep the journal so the next start can retry the rollback.
         Err(rollback_error) => Err(crate::error::USTBLError(format!(
-          "{error:?}; rollback failed: {rollback_error}"
+          "{}; rollback failed: {rollback_error}",
+          error.0
         ))),
         Ok(()) => {
           finish_cleanup(root, false);
@@ -1218,10 +1491,52 @@ mod tests {
     restored: Mutex<Vec<String>>,
     committed: Mutex<Vec<String>>,
     root: PathBuf,
+    cancel: std::sync::atomic::AtomicBool,
+    cancel_after_fetches: Option<usize>,
+    cancel_in_commit: bool,
+    committing: std::sync::atomic::AtomicBool,
+    download_limit: Option<usize>,
+    slow_downloads: bool,
+    downloads_in_flight: std::sync::atomic::AtomicUsize,
+    downloads_peak: std::sync::atomic::AtomicUsize,
+    hold_commit: Option<Arc<tokio::sync::Notify>>,
+    before_commit_error: Option<String>,
+    waiting_to_commit: std::sync::atomic::AtomicBool,
   }
 
   #[async_trait]
   impl UpdateEnv for FakeEnv {
+    fn download_concurrency(&self) -> usize {
+      self.download_limit.unwrap_or(FETCH_CONCURRENCY)
+    }
+    fn cancel_requested(&self) -> bool {
+      self.cancel.load(Ordering::SeqCst)
+    }
+    async fn cancelled(&self) {
+      while !self.cancel_requested() {
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+      }
+    }
+    async fn before_commit(&self) -> USTBLResult<()> {
+      self.waiting_to_commit.store(true, Ordering::SeqCst);
+      if let Some(error) = &self.before_commit_error {
+        return Err(crate::error::USTBLError(error.clone()));
+      }
+      if let Some(hold) = &self.hold_commit {
+        tokio::select! {
+          () = hold.notified() => {}
+          () = self.cancelled() => return Err(cancelled_error()),
+        }
+      }
+      Ok(())
+    }
+    fn begin_commit(&self) -> USTBLResult<()> {
+      if self.cancel_requested() {
+        return Err(cancelled_error());
+      }
+      self.committing.store(true, Ordering::SeqCst);
+      Ok(())
+    }
     async fn fetch(&self, param: DownloadParam) -> USTBLResult<()> {
       let (url, dest) = (param.src.as_str(), &param.dest);
       if self.fail_url.as_deref() == Some(url) {
@@ -1231,8 +1546,23 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
       }
       self.fetched.lock().unwrap().push(url.to_string());
+      if self.slow_downloads {
+        let now = self.downloads_in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+        self.downloads_peak.fetch_max(now, Ordering::SeqCst);
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        self.downloads_in_flight.fetch_sub(1, Ordering::SeqCst);
+      }
       fs::create_dir_all(dest.parent().unwrap()).unwrap();
       fs::write(dest, &self.contents[url]).unwrap();
+      // Like `DownloadTask`: a set sha1 is checked, and a mismatch fails.
+      if let Some(sha1) = &param.sha1 {
+        if hash_file(dest).unwrap().0 != *sha1 {
+          return Err(crate::error::USTBLError("SHA1 mismatch".into()));
+        }
+      }
+      if self.cancel_after_fetches == Some(self.fetched.lock().unwrap().len()) {
+        self.cancel.store(true, Ordering::SeqCst);
+      }
       Ok(())
     }
     async fn switch_loader(&self, loader: &BaselineLoader) -> USTBLResult<()> {
@@ -1256,6 +1586,9 @@ mod tests {
     async fn commit_origin(&self, version_id: &str) -> USTBLResult<()> {
       if self.fail_commit {
         return Err(crate::error::USTBLError("commit".into()));
+      }
+      if self.cancel_in_commit {
+        self.cancel.store(true, Ordering::SeqCst);
       }
       self.committed.lock().unwrap().push(version_id.into());
       Ok(())
@@ -1327,6 +1660,7 @@ mod tests {
         files,
         rules: Vec::new(),
         rules_manifest: false,
+        disabled_authoritative: false,
         path_index: Arc::new(OnceLock::new()),
       },
       origin: origin("1"),
@@ -1612,6 +1946,81 @@ mod tests {
   }
 
   #[tokio::test]
+  async fn a_run_cancelled_before_it_starts_fetches_and_writes_nothing() {
+    let root = setup();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let file = url_file("mods/a.jar", "a", &mut env);
+    let operations = vec![write_op(&file), remove_op("mods/gone.jar")];
+    env.cancel.store(true, Ordering::SeqCst);
+
+    let error = apply(&env, request(&root, vec![file], operations, "0.15.0"))
+      .await
+      .unwrap_err();
+
+    assert_eq!(
+      error.0,
+      InstanceError::ModpackInstallInterrupted.to_string()
+    );
+    assert!(env.fetched.lock().unwrap().is_empty());
+    assert!(!env.committing.load(Ordering::SeqCst));
+    assert!(!journal_path(&root.0).exists());
+    assert_eq!(root.read("mods/gone.jar").as_deref(), Some("gone"));
+  }
+
+  #[tokio::test]
+  async fn a_cancel_while_fetching_stops_before_the_journal_even_when_every_file_arrived() {
+    let root = setup();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let first = url_file("mods/a.jar", "a", &mut env);
+    let second = url_file("mods/b.jar", "b", &mut env);
+    env.cancel_after_fetches = Some(1);
+    let operations = vec![
+      write_op(&first),
+      write_op(&second),
+      remove_op("mods/gone.jar"),
+    ];
+
+    assert!(apply(
+      &env,
+      request(&root, vec![first, second], operations, "0.15.0")
+    )
+    .await
+    .is_err());
+
+    assert!(!env.committing.load(Ordering::SeqCst));
+    assert!(!journal_path(&root.0).exists());
+    assert!(env.committed.lock().unwrap().is_empty());
+    assert_eq!(root.read("mods/gone.jar").as_deref(), Some("gone"));
+    assert_eq!(root.read("mods/a.jar"), None);
+  }
+
+  #[tokio::test]
+  async fn a_cancel_after_the_commit_point_does_not_stop_the_run() {
+    let root = setup();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      cancel_in_commit: true,
+      ..Default::default()
+    };
+    let file = url_file("mods/a.jar", "a", &mut env);
+    let operations = vec![write_op(&file), remove_op("mods/gone.jar")];
+    let update = request(&root, vec![file], operations, "0.15.0");
+
+    apply(&env, update).await.unwrap();
+
+    assert!(env.cancel_requested());
+    assert!(env.committing.load(Ordering::SeqCst));
+    assert_eq!(root.read("mods/a.jar").as_deref(), Some("a"));
+    assert_eq!(root.read("mods/gone.jar"), None);
+  }
+
+  #[tokio::test]
   async fn a_retry_reuses_verified_staging_files_for_the_same_plan() {
     let root = setup();
     let mut env = FakeEnv {
@@ -1739,12 +2148,214 @@ mod tests {
       .await
       .unwrap_err();
 
+    assert_eq!(error.0, "SHA1 mismatch");
+    assert_eq!(root.read("mods/gone.jar").as_deref(), Some("gone"));
+    assert_eq!(root.read("mods/a.jar"), None);
+  }
+
+  #[tokio::test]
+  async fn a_download_of_the_wrong_size_is_rejected_without_hashing_it_again() {
+    let root = setup();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let mut file = url_file("mods/a.jar", "a", &mut env);
+    // The sha1 matches, so only the size check can catch this.
+    file.key.size += 1;
+    let operations = vec![write_op(&file), remove_op("mods/gone.jar")];
+
+    let error = apply(&env, request(&root, vec![file], operations, "0.15.0"))
+      .await
+      .unwrap_err();
+
     assert_eq!(
       error.0,
       InstanceError::ModpackUpdateVerifyFailed.to_string()
     );
     assert_eq!(root.read("mods/gone.jar").as_deref(), Some("gone"));
     assert_eq!(root.read("mods/a.jar"), None);
+    assert!(!staging_dir(&root.0).join("mods/a.jar").exists());
+  }
+
+  fn archive_files(archive: &Path, count: usize) -> Vec<RemoteFile> {
+    let mut zip = zip::ZipWriter::new(fs::File::create(archive).unwrap());
+    let mut files = Vec::new();
+    for index in 0..count {
+      let (entry, content) = (
+        format!("overrides/config/{index}.toml"),
+        format!("v{index}"),
+      );
+      zip
+        .start_file(&entry, zip::write::SimpleFileOptions::default())
+        .unwrap();
+      zip.write_all(content.as_bytes()).unwrap();
+      files.push(RemoteFile {
+        path: format!("config/{index}.toml"),
+        key: sha1_of(content.as_bytes()),
+        source: FileSource::ArchiveEntry {
+          archive: archive.to_path_buf(),
+          entry,
+        },
+        disabled: false,
+        once: false,
+      });
+    }
+    zip.finish().unwrap();
+    files
+  }
+
+  #[test]
+  fn archive_entries_are_batched_per_archive_and_cut_by_count_and_bytes() {
+    let root = Root::new();
+    let (first, second) = (root.0.join("a.zip"), root.0.join("b.zip"));
+    let mut files = archive_files(&first, ARCHIVE_UNIT_FILES * 2 + 1);
+    files.extend(archive_files(&second, 2));
+    let to_fetch: Vec<(&RemoteFile, PathBuf)> = files.iter().map(|f| (f, PathBuf::new())).collect();
+
+    let sizes: Vec<(PathBuf, usize)> = archive_units(&to_fetch)
+      .into_iter()
+      .map(|unit| match unit {
+        FetchUnit::Archive(archive, files) => (archive, files.len()),
+        _ => panic!("only archive units"),
+      })
+      .collect();
+    assert_eq!(
+      sizes,
+      vec![
+        (first.clone(), ARCHIVE_UNIT_FILES),
+        (first.clone(), ARCHIVE_UNIT_FILES),
+        (first, 1),
+        (second, 2),
+      ]
+    );
+
+    let mut big = archive_files(&root.0.join("c.zip"), 3);
+    for file in &mut big {
+      file.key.size = ARCHIVE_UNIT_BYTES / 2 + 1;
+    }
+    let to_fetch: Vec<(&RemoteFile, PathBuf)> = big.iter().map(|f| (f, PathBuf::new())).collect();
+    let counts: Vec<usize> = archive_units(&to_fetch)
+      .iter()
+      .map(FetchUnit::file_count)
+      .collect();
+    assert_eq!(counts, vec![1, 1, 1]);
+  }
+
+  #[tokio::test]
+  async fn many_archive_entries_are_applied_across_unit_boundaries() {
+    let root = setup();
+    let archive = root.0.join("pack.zip");
+    let files = archive_files(&archive, ARCHIVE_UNIT_FILES + 6);
+    let env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let operations: Vec<Operation> = files.iter().map(write_op).collect();
+
+    apply(&env, request(&root, files, operations, "0.15.0"))
+      .await
+      .unwrap();
+
+    for index in [
+      0,
+      ARCHIVE_UNIT_FILES - 1,
+      ARCHIVE_UNIT_FILES,
+      ARCHIVE_UNIT_FILES + 5,
+    ] {
+      assert_eq!(
+        root.read(&format!("config/{index}.toml")),
+        Some(format!("v{index}"))
+      );
+    }
+    let progress = env.progress.lock().unwrap();
+    let fetching: Vec<usize> = progress
+      .iter()
+      .filter(|p| matches!(p.stage, Stage::Fetching))
+      .map(|p| p.done)
+      .collect();
+    assert!(fetching.windows(2).all(|pair| pair[0] <= pair[1]));
+    assert_eq!(fetching.last(), Some(&(ARCHIVE_UNIT_FILES + 6)));
+  }
+
+  #[test]
+  fn a_stopped_archive_unit_extracts_nothing_more() {
+    let root = Root::new();
+    let archive = root.0.join("pack.zip");
+    let files = archive_files(&archive, 3);
+    let entries = |dir: &str| -> Vec<(String, PathBuf, FileKey)> {
+      files
+        .iter()
+        .map(|file| match &file.source {
+          FileSource::ArchiveEntry { entry, .. } => (
+            entry.clone(),
+            root.0.join(dir).join(&file.path),
+            file.key.clone(),
+          ),
+          _ => unreachable!(),
+        })
+        .collect()
+    };
+
+    let stop = AtomicBool::new(true);
+    let error = extract_entries(&archive, entries("stopped"), &stop).unwrap_err();
+    assert_eq!(error.0, cancelled_error().0);
+    assert!(!root.0.join("stopped/config/0.toml").exists());
+
+    stop.store(false, Ordering::SeqCst);
+    extract_entries(&archive, entries("done"), &stop).unwrap();
+    assert!(root.0.join("done/config/2.toml").is_file());
+  }
+  #[tokio::test]
+  async fn corrupt_archive_entries_are_rejected_while_extracting() {
+    let root = setup();
+    let archive = root.0.join("pack.zip");
+    {
+      let mut zip = zip::ZipWriter::new(fs::File::create(&archive).unwrap());
+      zip
+        .start_file(
+          "overrides/config/a.toml",
+          zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+      zip.write_all(b"from-zip").unwrap();
+      zip.finish().unwrap();
+    }
+    let env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    for key in [
+      sha1_of(b"something else"),
+      FileKey {
+        size: 99,
+        ..sha1_of(b"from-zip")
+      },
+    ] {
+      let file = RemoteFile {
+        path: "config/a.toml".into(),
+        key,
+        source: FileSource::ArchiveEntry {
+          archive: archive.clone(),
+          entry: "overrides/config/a.toml".into(),
+        },
+        disabled: false,
+        once: false,
+      };
+      let operations = vec![write_op(&file), remove_op("mods/gone.jar")];
+
+      let error = apply(&env, request(&root, vec![file], operations, "0.15.0"))
+        .await
+        .unwrap_err();
+
+      assert_eq!(
+        error.0,
+        InstanceError::ModpackUpdateVerifyFailed.to_string()
+      );
+      assert_eq!(root.read("mods/gone.jar").as_deref(), Some("gone"));
+      assert_eq!(root.read("config/a.toml"), None);
+      assert!(!staging_dir(&root.0).join("config/a.toml").exists());
+    }
   }
 
   #[tokio::test]
@@ -2238,6 +2849,30 @@ mod tests {
     assert!(env.switched.lock().unwrap().is_empty());
   }
 
+  #[tokio::test]
+  async fn a_disabled_ship_is_written_at_the_disabled_name() {
+    let root = setup();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let mut off = url_file("mods/off.jar", "off", &mut env);
+    off.disabled = true;
+    let on = url_file("mods/on.jar", "on", &mut env);
+    let mut operations = vec![write_op(&off), write_op(&on)];
+    operations[0].final_disabled = true;
+
+    let mut update = request(&root, vec![off, on], operations, "0.15.0");
+    update.remote.disabled_authoritative = true;
+
+    apply(&env, update).await.unwrap();
+
+    assert_eq!(root.read("mods/off.jar.disabled").as_deref(), Some("off"));
+    assert_eq!(root.read("mods/off.jar"), None);
+    assert_eq!(root.read("mods/on.jar").as_deref(), Some("on"));
+    assert_eq!(root.read("mods/on.jar.disabled"), None);
+  }
+
   /// A platform whose single delta pack holds one stored file at offset 0.
   struct OneFilePack(Vec<u8>);
 
@@ -2490,6 +3125,204 @@ mod tests {
     assert_eq!(root.read("mods/c.jar").as_deref(), Some("gamma"));
   }
 
+  async fn peak_downloads(limit: Option<usize>, count: usize) -> usize {
+    let root = setup();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      download_limit: limit,
+      slow_downloads: true,
+      ..Default::default()
+    };
+    let files: Vec<RemoteFile> = (0..count)
+      .map(|index| {
+        url_file(
+          &format!("mods/m{index}.jar"),
+          &format!("m{index}"),
+          &mut env,
+        )
+      })
+      .collect();
+    let operations = files.iter().map(write_op).collect();
+
+    apply(&env, request(&root, files, operations, "0.15.0"))
+      .await
+      .unwrap();
+
+    assert_eq!(root.read("mods/m0.jar").as_deref(), Some("m0"));
+    assert_eq!(env.fetched.lock().unwrap().len(), count);
+    env.downloads_peak.load(Ordering::SeqCst)
+  }
+
+  #[tokio::test]
+  async fn downloads_follow_the_download_concurrency() {
+    assert_eq!(peak_downloads(Some(3), 20).await, 3);
+    assert_eq!(peak_downloads(Some(1), 5).await, 1);
+    assert_eq!(peak_downloads(Some(20), 20).await, 20);
+    // A zero setting must not stall the fetch.
+    assert_eq!(peak_downloads(Some(0), 4).await, 1);
+  }
+
+  #[tokio::test]
+  async fn pack_groups_keep_their_own_limit_whatever_the_download_setting() {
+    let root = setup();
+    let env = FakeEnv {
+      root: root.0.clone(),
+      download_limit: Some(64),
+      ..Default::default()
+    };
+    let owned: Vec<(String, Vec<u8>)> = (0..24)
+      .map(|index| {
+        (
+          format!("mods/p{index}.jar"),
+          format!("pack-{index}").into_bytes(),
+        )
+      })
+      .collect();
+    let contents: Vec<(&str, &[u8])> = owned
+      .iter()
+      .map(|(path, data)| (path.as_str(), data.as_slice()))
+      .collect();
+    let sha1s = sha1s_of(&contents);
+    let gap = crate::instance::modpack_update::packs::MERGE_GAP as usize + 1;
+    let transport = Arc::new(MultiFilePack::spaced(
+      &sha1s
+        .iter()
+        .map(|(sha1, data)| (sha1.as_str(), *data))
+        .collect::<Vec<(&str, &[u8])>>(),
+      &vec![gap; contents.len() - 1],
+    ));
+    let session = PackSession::new(transport.clone(), 3);
+    let remote_files = pack_remote_files(&contents, &session);
+    let operations = remote_files.iter().map(write_op).collect();
+
+    apply(&env, request(&root, remote_files, operations, "0.15.0"))
+      .await
+      .unwrap();
+
+    let peak = transport.peak.load(Ordering::SeqCst);
+    assert!(peak > 1 && peak <= FETCH_CONCURRENCY, "peak was {peak}");
+  }
+  /// Drive `run` until the env reports that it waits to commit.
+  async fn until_waiting_to_commit<T: std::fmt::Debug>(
+    run: &mut std::pin::Pin<Box<impl std::future::Future<Output = T>>>,
+    env: &FakeEnv,
+  ) {
+    for _ in 0..1000 {
+      tokio::select! {
+        result = &mut *run => panic!("finished before the commit wait: {result:?}"),
+        () = tokio::time::sleep(std::time::Duration::from_millis(2)) => {}
+      }
+      if env.waiting_to_commit.load(Ordering::SeqCst) {
+        return;
+      }
+    }
+    panic!("never reached the commit wait");
+  }
+
+  #[tokio::test]
+  async fn files_are_staged_while_the_commit_waits_and_nothing_is_written_to_the_instance() {
+    let root = setup();
+    let hold = Arc::new(tokio::sync::Notify::new());
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      hold_commit: Some(hold.clone()),
+      ..Default::default()
+    };
+    let file = url_file("mods/a.jar", "a", &mut env);
+    let operations = vec![write_op(&file), remove_op("mods/gone.jar")];
+    let mut run = Box::pin(apply(
+      &env,
+      request(&root, vec![file], operations, "0.15.0"),
+    ));
+
+    until_waiting_to_commit(&mut run, &env).await;
+
+    // Fetched and verified into staging; the instance and the journal are
+    // untouched, and the run is still cancellable.
+    assert_eq!(
+      fs::read_to_string(staging_dir(&root.0).join("mods/a.jar")).unwrap(),
+      "a"
+    );
+    assert_eq!(root.read("mods/a.jar"), None);
+    assert_eq!(root.read("mods/gone.jar").as_deref(), Some("gone"));
+    assert!(!journal_path(&root.0).exists());
+    assert!(!env.committing.load(Ordering::SeqCst));
+    assert!(env.switched.lock().unwrap().is_empty());
+
+    hold.notify_one();
+    run.await.unwrap();
+
+    assert_eq!(root.read("mods/a.jar").as_deref(), Some("a"));
+    assert_eq!(root.read("mods/gone.jar"), None);
+    assert!(env.committing.load(Ordering::SeqCst));
+  }
+
+  #[tokio::test]
+  async fn a_failed_commit_wait_writes_nothing_and_keeps_the_staged_files_for_a_retry() {
+    let root = setup();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      before_commit_error: Some("MODPACK_INSTALL_INTERRUPTED".into()),
+      ..Default::default()
+    };
+    let file = url_file("mods/a.jar", "a", &mut env);
+    let operations = vec![write_op(&file), remove_op("mods/gone.jar")];
+
+    let error = apply(
+      &env,
+      request(&root, vec![file.clone()], operations.clone(), "0.15.0"),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(error.0, "MODPACK_INSTALL_INTERRUPTED");
+    assert_eq!(root.read("mods/a.jar"), None);
+    assert_eq!(root.read("mods/gone.jar").as_deref(), Some("gone"));
+    assert_eq!(root.read("pack.json").as_deref(), Some("client-v1"));
+    assert!(!journal_path(&root.0).exists());
+    assert!(!env.committing.load(Ordering::SeqCst));
+    assert!(env.switched.lock().unwrap().is_empty());
+    assert!(env.committed.lock().unwrap().is_empty());
+    // The retry finds the file already staged and fetches nothing.
+    let fetched = env.fetched.lock().unwrap().len();
+    let retry = FakeEnv {
+      root: root.0.clone(),
+      contents: env.contents.clone(),
+      ..Default::default()
+    };
+    apply(&retry, request(&root, vec![file], operations, "0.15.0"))
+      .await
+      .unwrap();
+    assert_eq!(fetched, 1);
+    assert!(retry.fetched.lock().unwrap().is_empty());
+    assert_eq!(root.read("mods/a.jar").as_deref(), Some("a"));
+  }
+
+  #[tokio::test]
+  async fn a_run_can_be_abandoned_while_it_waits_to_commit() {
+    let root = setup();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      hold_commit: Some(Arc::new(tokio::sync::Notify::new())),
+      ..Default::default()
+    };
+    let file = url_file("mods/a.jar", "a", &mut env);
+    let operations = vec![write_op(&file), remove_op("mods/gone.jar")];
+    let mut run = Box::pin(apply(
+      &env,
+      request(&root, vec![file], operations, "0.15.0"),
+    ));
+
+    until_waiting_to_commit(&mut run, &env).await;
+    env.cancel.store(true, Ordering::SeqCst);
+    let error = run.await.unwrap_err();
+
+    assert_eq!(error.0, cancelled_error().0);
+    assert_eq!(root.read("mods/a.jar"), None);
+    assert_eq!(root.read("mods/gone.jar").as_deref(), Some("gone"));
+    assert!(!journal_path(&root.0).exists());
+    assert!(!env.committing.load(Ordering::SeqCst));
+  }
   #[tokio::test]
   async fn distant_groups_are_fetched_concurrently() {
     let root = setup();
@@ -2969,5 +3802,28 @@ mod tests {
     assert_eq!(root.read("config/c.toml").as_deref(), Some("x = 2\n"));
     let restored = ignores::read(&root.0);
     assert!(restored.files["config/c.toml"].whole);
+  }
+
+  #[test]
+  fn a_failed_file_operation_names_the_file_relative_to_the_instance() {
+    let root = setup();
+    let from = root.0.join("mods").join("missing.jar");
+    let to = root
+      .0
+      .join(".ustbl-update")
+      .join("backup")
+      .join("missing.jar");
+    let error = move_file(&root.0, &from, &to).unwrap_err();
+    let parsed = crate::file_error::parse(&error.to_string()).unwrap();
+    assert_eq!(parsed.kind, crate::file_error::FileErrorKind::Missing);
+    assert_eq!(
+      parsed.file,
+      Path::new("mods").join("missing.jar").display().to_string()
+    );
+
+    fs::create_dir_all(staging_meta_path(&root.0)).unwrap();
+    let error = read_staging_meta(&root.0).unwrap_err();
+    let parsed = crate::file_error::parse(&error.to_string()).unwrap();
+    assert!(parsed.file.starts_with(".ustbl-update"));
   }
 }

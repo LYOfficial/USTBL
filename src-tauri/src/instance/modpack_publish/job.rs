@@ -14,6 +14,7 @@ use super::pack::{is_verified, mark_verified, rebuild_pack, verify_pack};
 use super::record::{jobs_dir, paths, JobRecord, Phase, RecordedUpload};
 use super::transfer::{report, SentBytes};
 use crate::error::{USTBLError, USTBLResult};
+use crate::file_error::AtPath;
 use crate::instance::models::misc::InstanceError;
 use crate::tasks::monitor::TaskMonitor;
 use crate::tasks::upload::upload_handle;
@@ -429,10 +430,10 @@ fn counting_body(
 /// used for the ETag self-check never requires a second pass over the bytes
 /// (§13.2).
 async fn read_part(pack: &Path, offset: u64, length: u64) -> USTBLResult<(Bytes, [u8; 16])> {
-  let mut file = tokio::fs::File::open(pack).await?;
-  file.seek(SeekFrom::Start(offset)).await?;
+  let mut file = tokio::fs::File::open(pack).await.at(pack)?;
+  file.seek(SeekFrom::Start(offset)).await.at(pack)?;
   let mut buffer = vec![0u8; length as usize];
-  file.read_exact(&mut buffer).await?;
+  file.read_exact(&mut buffer).await.at(pack)?;
   let digest: [u8; 16] = Md5::digest(&buffer).into();
   Ok((Bytes::from(buffer), digest))
 }

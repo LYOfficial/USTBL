@@ -47,6 +47,7 @@ import {
   localizeCampusInstallError,
   removeCampusInstallGroups,
 } from "@/utils/campus-install-task";
+import { localizeFileError } from "@/utils/file-error";
 import { takeLoaderCompletions } from "@/utils/loader-completion";
 import {
   finishModpackUpdate,
@@ -789,10 +790,12 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
       if (payload.error !== undefined) {
         toast({
           title: t("Services.instance.publishCampusModpack.error.title"),
-          description: t(
-            `Services.instance.publishCampusModpack.error.description.${payload.error}`,
-            { defaultValue: payload.error }
-          ),
+          description:
+            localizeFileError(t, payload.error) ??
+            t(
+              `Services.instance.publishCampusModpack.error.description.${payload.error}`,
+              { defaultValue: payload.error }
+            ),
           status: "error",
         });
         return;

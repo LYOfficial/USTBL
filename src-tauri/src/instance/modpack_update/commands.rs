@@ -18,8 +18,10 @@ use super::remote::{ComponentPack, RemoteModpack};
 use super::restore::restore_component_profile;
 use super::sources::{download_param, latest_version, resolve_remote, LatestVersion, Payload};
 use crate::error::USTBLResult;
-use crate::instance::commands::switch_mod_loader;
+use crate::file_error::AtPath;
+use crate::instance::commands::{remove_instance_blocking, switch_mod_loader};
 use crate::instance::helpers::client_json::McClientInfo;
+use crate::instance::helpers::loader::common::installer_task_group;
 use crate::instance::helpers::misc::{
   get_instance_game_config, get_instance_subdir_paths, refresh_and_update_instances,
 };
@@ -33,6 +35,7 @@ use crate::instance::models::misc::{
 };
 use crate::launch::models::LaunchingState;
 use crate::launch::helpers::file_validator::{get_invalid_assets, get_invalid_library_files};
+use crate::launcher_config::commands::retrieve_launcher_config;
 use crate::resource::helpers::misc::{download_source_candidates, get_source_priority_list};
 use crate::resource::models::{ModLoaderResourceInfo, ResourceType};
 use crate::tasks::download::DownloadParam;
@@ -311,10 +314,10 @@ fn campus_install_record(root: &Path) -> PathBuf {
 
 fn save_campus_install_record(root: &Path, record: &CampusInstallRecord) -> USTBLResult<()> {
   let path = campus_install_record(root);
-  fs::create_dir_all(path.parent().unwrap())?;
+  fs::create_dir_all(path.parent().unwrap()).at_in(path.parent().unwrap(), root)?;
   let temporary = path.with_extension("json.tmp");
-  fs::write(&temporary, serde_json::to_vec_pretty(record)?)?;
-  fs::rename(temporary, path)?;
+  fs::write(&temporary, serde_json::to_vec_pretty(record)?).at_in(&temporary, root)?;
+  fs::rename(&temporary, &path).at_in(&path, root)?;
   Ok(())
 }
 
@@ -463,9 +466,41 @@ pub async fn discard_campus_modpack_install(
 ) -> USTBLResult<()> {
   let instance = current_instance(&app, &instance_id)?;
   let root = instance.version_path;
-  let _guard = PlanGuard::acquire(&root)?;
+  let _guard = match PlanGuard::acquire(&root) {
+    Ok(guard) => guard,
+    Err(busy) => {
+      // Only a running first install can be abandoned. The job stops at its
+      // next safe point and releases the guard; past the commit point the
+      // request is refused with `ModpackUpdateBusy`.
+      let Some(control) = install_control(&instance_id) else {
+        return Err(busy);
+      };
+      control.request_cancel()?;
+      wait_for_plan_guard(&root).await?
+    }
+  };
   let record = load_campus_install_record(&root).ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let recovery = recover_checked(&root, || ensure_not_running(&app, &instance_id))?;
+  if recovery != Recovery::Nothing {
+    refresh_and_update_instances(&app, false).await;
+  }
+  // Recovery may have committed the first version; only then is it not fresh.
+  let instance = current_instance(&app, &instance_id)?;
+  if instance.origin.as_ref().is_some_and(is_fresh) {
+    // The guard is held, so no install job of this instance is running. The
+    // client and loader downloads are separate groups and still have to stop.
+    cancel_pending_install_downloads(&app, &instance, &record).await?;
+    plan_cache::clear_plan_cache(&root);
+    remove_campus_install_groups(&app, &instance_id, record.group.as_deref());
+    let app_for_delete = app.clone();
+    let id_for_delete = instance_id.clone();
+    let root_for_delete = root.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+      remove_instance_blocking(&app_for_delete, &id_for_delete, &root_for_delete, |_| {})
+    })
+    .await??;
+    return Ok(());
+  }
   for name in ["staging", "components", "remote"] {
     match fs::remove_dir_all(root.join(super::remote::UPDATE_DIR).join(name)) {
       Ok(()) => {}
@@ -487,8 +522,88 @@ pub async fn discard_campus_modpack_install(
   }
   plan_cache::clear_plan_cache(&root);
   remove_campus_install_groups(&app, &instance_id, record.group.as_deref());
-  if recovery != Recovery::Nothing {
-    refresh_and_update_instances(&app, false).await;
+  Ok(())
+}
+
+fn unfinished_download(desc: &PDesc<PTaskParam>) -> bool {
+  desc.status.is_in_progress() || desc.status.is_waiting() || desc.status.is_stopped()
+}
+
+fn writes_into(desc: &PDesc<PTaskParam>, root: &Path) -> bool {
+  matches!(&desc.payload, PTaskParam::Download(param) if param.dest.starts_with(root))
+}
+
+/// Groups that download for a pending install: the client (including its
+/// retries) and the loader installers. Descriptors outlive their group, so
+/// they are read from the descriptor list.
+fn pending_install_groups(
+  descriptors: Vec<PDesc<PTaskParam>>,
+  instance: &Instance,
+  linked_group: Option<&str>,
+) -> Vec<String> {
+  let installers = [
+    installer_task_group(&instance.id, false),
+    installer_task_group(&instance.id, true),
+  ];
+  let mut groups: Vec<String> = linked_group.map(str::to_owned).into_iter().collect();
+  let mut add = |group: &str| {
+    if !groups.iter().any(|name| name == group) {
+      groups.push(group.to_owned());
+    }
+  };
+  for task in &descriptors {
+    let Some(group) = task.task_group.as_deref() else {
+      continue;
+    };
+    let raw = group.rsplit_once('@').map_or(group, |(raw, _)| raw);
+    if installers.iter().any(|name| name == raw) {
+      add(group);
+    }
+  }
+  for task in campus_client_tasks(descriptors, instance, linked_group) {
+    if let Some(group) = task.task_group.as_deref() {
+      add(group);
+    }
+  }
+  groups
+}
+
+fn belongs_to_pending_install(desc: &PDesc<PTaskParam>, root: &Path, groups: &[String]) -> bool {
+  writes_into(desc, root)
+    || desc
+      .task_group
+      .as_ref()
+      .is_some_and(|group| groups.contains(group))
+}
+
+/// Stop every download that could still write into a first install about to
+/// be deleted, and wait for their jobs to end. Fails, so that nothing is
+/// deleted, when a task is still unfinished afterwards.
+async fn cancel_pending_install_downloads(
+  app: &AppHandle,
+  instance: &Instance,
+  record: &CampusInstallRecord,
+) -> USTBLResult<()> {
+  let monitor = app.state::<Pin<Box<TaskMonitor>>>();
+  let root = instance.version_path.clone();
+  let groups = pending_install_groups(
+    monitor.task_descriptors(),
+    instance,
+    record.client_group.as_deref(),
+  );
+  let jobs = monitor.cancel_tasks_where(|desc| belongs_to_pending_install(desc, &root, &groups));
+  for job in jobs {
+    let _ = job.await;
+  }
+  for group in &groups {
+    monitor.cancel_progressive_task_group(group.clone());
+  }
+  if monitor
+    .task_descriptors()
+    .iter()
+    .any(|desc| unfinished_download(desc) && belongs_to_pending_install(desc, &root, &groups))
+  {
+    return Err(InstanceError::ModpackUpdateBusy.into());
   }
   Ok(())
 }
@@ -587,7 +702,10 @@ pub async fn recover_publish_base(
   let dest = preview.join(path);
   let result = materialize_remote_file(&env, dest.clone(), file).await;
   if result.is_ok() {
-    let bytes = tokio::fs::read(&dest).await.map_err(crate::error::USTBLError::from)?;
+    let bytes = tokio::fs::read(&dest)
+      .await
+      .at_in(&dest, &instance.version_path)
+      .map_err(crate::error::USTBLError::from)?;
     let baseline = crate::instance::helpers::modpack::baseline::BaselineFile::managed(
       path,
       file.key.clone(),
@@ -713,6 +831,147 @@ impl Drop for PlanGuard {
   }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InstallPhase {
+  Running,
+  CancelRequested,
+  /// `apply` is about to write its journal; the install can only finish.
+  Committing,
+}
+
+/// Cooperative cancellation of one running first install. A cancel request and
+/// the move into the commit are decided under one lock, so exactly one wins.
+struct InstallControl {
+  phase: Mutex<InstallPhase>,
+  wake: tokio::sync::Notify,
+}
+
+impl InstallControl {
+  fn new() -> Arc<Self> {
+    Arc::new(Self {
+      phase: Mutex::new(InstallPhase::Running),
+      wake: tokio::sync::Notify::new(),
+    })
+  }
+
+  /// Refused with `ModpackUpdateBusy` once the install passed the point where
+  /// it can still be abandoned.
+  fn request_cancel(&self) -> USTBLResult<()> {
+    let mut phase = self.phase.lock()?;
+    if *phase == InstallPhase::Committing {
+      return Err(InstanceError::ModpackUpdateBusy.into());
+    }
+    *phase = InstallPhase::CancelRequested;
+    drop(phase);
+    self.wake.notify_waiters();
+    Ok(())
+  }
+
+  fn begin_commit(&self) -> USTBLResult<()> {
+    let mut phase = self.phase.lock()?;
+    if *phase == InstallPhase::CancelRequested {
+      return Err(InstanceError::ModpackInstallInterrupted.into());
+    }
+    *phase = InstallPhase::Committing;
+    Ok(())
+  }
+
+  fn cancel_requested(&self) -> bool {
+    self
+      .phase
+      .lock()
+      .is_ok_and(|phase| *phase == InstallPhase::CancelRequested)
+  }
+
+  async fn cancelled(&self) {
+    loop {
+      let notified = self.wake.notified();
+      if self.cancel_requested() {
+        return;
+      }
+      notified.await;
+    }
+  }
+}
+
+fn install_controls() -> &'static Mutex<HashMap<String, Arc<InstallControl>>> {
+  static CONTROLS: OnceLock<Mutex<HashMap<String, Arc<InstallControl>>>> = OnceLock::new();
+  CONTROLS.get_or_init(Default::default)
+}
+
+fn install_control(instance_id: &str) -> Option<Arc<InstallControl>> {
+  install_controls().lock().ok()?.get(instance_id).cloned()
+}
+
+/// Keeps an install's control registered while its job runs.
+struct InstallControlGuard {
+  instance_id: String,
+  control: Arc<InstallControl>,
+}
+
+impl InstallControlGuard {
+  fn register(instance_id: &str) -> Self {
+    let control = InstallControl::new();
+    if let Ok(mut controls) = install_controls().lock() {
+      controls.insert(instance_id.to_string(), control.clone());
+    }
+    Self {
+      instance_id: instance_id.to_string(),
+      control,
+    }
+  }
+}
+
+impl Drop for InstallControlGuard {
+  fn drop(&mut self) {
+    if let Ok(mut controls) = install_controls().lock() {
+      // A resumed install may have registered its own control already.
+      if controls
+        .get(&self.instance_id)
+        .is_some_and(|control| Arc::ptr_eq(control, &self.control))
+      {
+        controls.remove(&self.instance_id);
+      }
+    }
+  }
+}
+
+/// Stop at a safe point when the player abandoned the install.
+fn ensure_install_not_cancelled(instance_id: &str) -> USTBLResult<()> {
+  if install_control(instance_id).is_some_and(|control| control.cancel_requested()) {
+    return Err(InstanceError::ModpackInstallInterrupted.into());
+  }
+  Ok(())
+}
+
+/// Run `work` until it ends or the player abandons the install. `work` is
+/// dropped on cancel, so it may only write into the instance's own directory.
+async fn until_install_cancelled<T>(
+  instance_id: &str,
+  work: impl std::future::Future<Output = USTBLResult<T>>,
+) -> USTBLResult<T> {
+  let Some(control) = install_control(instance_id) else {
+    return work.await;
+  };
+  tokio::select! {
+    biased;
+    result = work => result,
+    () = control.cancelled() => Err(InstanceError::ModpackInstallInterrupted.into()),
+  }
+}
+
+/// After asking a running install to stop: wait for its job to release the
+/// plan guard, which is its last act.
+async fn wait_for_plan_guard(root: &Path) -> USTBLResult<PlanGuard> {
+  for _ in 0..300 {
+    match PlanGuard::acquire(root) {
+      Ok(guard) => return Ok(guard),
+      Err(_) => tokio::time::sleep(std::time::Duration::from_millis(100)).await,
+    }
+  }
+  Err(InstanceError::ModpackUpdateBusy.into())
+}
+
 /// The baseline is the record of what the modpack installed. Without a
 /// matching one the instance cannot be compared safely.
 async fn load_baseline(target: &Target) -> USTBLResult<ModpackBaseline> {
@@ -781,16 +1040,11 @@ impl<S: Sink> Clone for CampusInstallTasks<S> {
 
 impl<S: Sink> CampusInstallTasks<S> {
   fn all(&self) -> Vec<&ModpackTaskHandle<S>> {
-    let mut handles = vec![
-      &self.waiting_client,
-      &self.preparing,
-      &self.locating,
-      &self.fetching,
-      &self.applying,
-    ];
-    if self.is_update {
-      handles.remove(0);
+    let mut handles = vec![&self.preparing, &self.locating, &self.fetching];
+    if !self.is_update {
+      handles.push(&self.waiting_client);
     }
+    handles.push(&self.applying);
     handles
   }
 
@@ -801,13 +1055,13 @@ impl<S: Sink> CampusInstallTasks<S> {
   ) -> Self {
     let preparing = make("Preparing", 1);
     // Updates have no waiting-client phase; this unused alias is not registered.
+    let locating = make("Locating", 1);
+    let fetching = make("Fetching", 0);
     let waiting_client = if is_update {
       preparing.clone()
     } else {
       make("WaitingClient", 1)
     };
-    let locating = make("Locating", 1);
-    let fetching = make("Fetching", 0);
     let applying = make("Applying", 1);
     Self {
       group,
@@ -914,8 +1168,36 @@ impl UpdateEnv for AppEnv {
   fn ensure_not_running(&self) -> USTBLResult<()> {
     ensure_not_running(&self.app, &self.instance_id)
   }
+  fn download_concurrency(&self) -> usize {
+    retrieve_launcher_config(self.app.clone()).map_or(8, |config| {
+      let transmission = config.download.transmission;
+      crate::tasks::monitor::download_concurrency(
+        transmission.auto_concurrent,
+        transmission.concurrent_count,
+      )
+    })
+  }
+
   async fn fetch(&self, param: DownloadParam) -> USTBLResult<()> {
-    download_param(&self.app, param).await
+    until_install_cancelled(&self.instance_id, download_param(&self.app, param)).await
+  }
+
+  fn cancel_requested(&self) -> bool {
+    ensure_install_not_cancelled(&self.instance_id).is_err()
+  }
+
+  async fn cancelled(&self) {
+    match install_control(&self.instance_id) {
+      Some(control) => control.cancelled().await,
+      None => std::future::pending::<()>().await,
+    }
+  }
+
+  fn begin_commit(&self) -> USTBLResult<()> {
+    match install_control(&self.instance_id) {
+      Some(control) => control.begin_commit(),
+      None => Ok(()),
+    }
   }
 
   async fn switch_loader(&self, loader: &BaselineLoader) -> USTBLResult<()> {
@@ -1005,16 +1287,19 @@ impl UpdateEnv for AppEnv {
         }
       }
       let (current, next) = match progress.stage {
-        Stage::WaitingClient => (&tasks.waiting_client, None),
-        Stage::Preparing => (&tasks.preparing, Some(&tasks.waiting_client)),
+        Stage::Preparing => (&tasks.preparing, None),
         Stage::Locating => (&tasks.locating, Some(&tasks.preparing)),
         Stage::Fetching => (&tasks.fetching, Some(&tasks.locating)),
-        Stage::Applying | Stage::Finalizing => (&tasks.applying, Some(&tasks.fetching)),
+        Stage::WaitingClient => (&tasks.waiting_client, Some(&tasks.fetching)),
+        Stage::Applying | Stage::Finalizing => {
+          if !tasks.is_update && !tasks.waiting_client.read().unwrap().status().is_completed() {
+            CampusInstallTasks::complete(&tasks.waiting_client);
+          }
+          (&tasks.applying, Some(&tasks.fetching))
+        }
       };
       if let Some(previous) = next {
-        if !(tasks.is_update && progress.stage == Stage::Preparing)
-          && !previous.read().unwrap().status().is_completed()
-        {
+        if !previous.read().unwrap().status().is_completed() {
           CampusInstallTasks::complete(previous);
         }
       }
@@ -1800,6 +2085,11 @@ async fn plan_fresh_install(
     }
     resolve_latest_for_plan(app, target).await?
   };
+  log::info!(
+    "modpack install version located: instance={} elapsed_ms={}",
+    target.instance.id,
+    details_started.elapsed().as_millis()
+  );
   let baseline = ModpackBaseline::build(
     &target.origin,
     BaselineLoader {
@@ -1985,7 +2275,7 @@ async fn recover_base_copies(
       for file in files {
         let dest = preview.join(&file.path);
         materialize_remote_file(&env, dest.clone(), file).await?;
-        let bytes = tokio::fs::read(dest).await?;
+        let bytes = tokio::fs::read(&dest).await.at_in(&dest, &target.root)?;
         if let Some(base) = wanted.iter().find(|b| b.path == file.path) {
           base_store::store(&target.root, base, &bytes)?;
           recovered = true;
@@ -2125,7 +2415,7 @@ async fn materialize_text_candidates(
     }
     let dest = preview.join(&file.path);
     materialize_remote_file(&env, dest.clone(), file).await?;
-    let bytes = tokio::fs::read(&dest).await?;
+    let bytes = tokio::fs::read(&dest).await.at_in(&dest, &target.root)?;
     if text::is_text_path(&file.path, &bytes) {
       result.insert(file.path.clone(), bytes);
     }
@@ -2398,6 +2688,7 @@ async fn start_campus_modpack_install(
 ) -> USTBLResult<CampusInstallStarted> {
   let instance = current_instance(&app, &instance_id)?;
   let guard = PlanGuard::acquire(&instance.version_path)?;
+  let control = InstallControlGuard::register(&instance_id);
   let old_record = load_campus_install_record(&instance.version_path);
   if instance.origin.as_ref().is_none_or(|origin| {
     !is_campus_install(origin, old_record.as_ref()) || (old_record.is_none() && !is_fresh(origin))
@@ -2459,6 +2750,19 @@ async fn start_campus_modpack_install(
       retry_client,
     ))
     .await;
+    if result.is_err() && control.control.cancel_requested() {
+      // The player abandoned the install: no failure record and no result
+      // event. The discard command removes the groups and the instance. The
+      // card is closed here so it cannot stay running if that fails.
+      log::info!("campus install cancelled: instance={instance_for_error}");
+      task_handles.fail(&InstanceError::ModpackInstallInterrupted.to_string());
+      app_for_job
+        .state::<Pin<Box<TaskMonitor>>>()
+        .finish_job_group(&group_for_job, anchor, false);
+      drop(control);
+      drop(_guard);
+      return;
+    }
     if let Err(error) = &result {
       log::warn!("campus install failed: {error:?}");
       task_handles.fail(&error.0);
@@ -2477,6 +2781,7 @@ async fn start_campus_modpack_install(
         .state::<Pin<Box<TaskMonitor>>>()
         .finish_job_group(&group_for_job, anchor, true);
     }
+    drop(control);
     drop(_guard);
     let _ = app_for_job.emit_to(
       "main",
@@ -2535,49 +2840,239 @@ fn campus_client_tasks(
     .collect()
 }
 
-async fn install_campus_modpack_inner(
-  app: AppHandle,
-  instance_id: String,
-  tasks: CampusInstallTasks,
-  mut retry_client: bool,
-) -> USTBLResult<UpdateOutcome> {
-  let started = Instant::now();
-  log::info!("modpack install start: instance={instance_id}");
-  let instance = current_instance(&app, &instance_id)?;
-  if recover_checked(&instance.version_path, || {
-    ensure_not_running(&app, &instance_id)
-  })?
-    != Recovery::Nothing
-  {
-    plan_cache::clear_plan_cache(&instance.version_path);
+/// How the game client download of a first install stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ClientState {
+  Pending,
+  Ready,
+  Failed(String),
+}
+
+/// Shared by the task that follows the game client download and the install
+/// that must not write into the instance before the client is in place.
+struct ClientGate {
+  state: Mutex<ClientState>,
+  changed: tokio::sync::Notify,
+  stop: AtomicBool,
+}
+
+impl ClientGate {
+  fn new() -> Arc<Self> {
+    Arc::new(Self {
+      state: Mutex::new(ClientState::Pending),
+      changed: tokio::sync::Notify::new(),
+      stop: AtomicBool::new(false),
+    })
   }
-  let waiting = AppEnv {
-    app: app.clone(),
-    instance_id: instance_id.clone(),
-    label: String::new(),
-    loader: BaselineLoader {
-      loader_type: instance.mod_loader.loader_type,
-      version: instance.mod_loader.version.clone(),
-    },
-    loader_install_pending: AtomicBool::new(false),
-    started,
-    tasks: Some(tasks.clone()),
-  };
-  waiting.progress(Stage::WaitingClient);
+
+  fn set(&self, state: ClientState) {
+    if let Ok(mut current) = self.state.lock() {
+      *current = state;
+    }
+    self.changed.notify_waiters();
+  }
+
+  fn state(&self) -> ClientState {
+    self
+      .state
+      .lock()
+      .map_or(ClientState::Pending, |state| state.clone())
+  }
+
+  fn failure(&self) -> Option<crate::error::USTBLError> {
+    match self.state() {
+      ClientState::Failed(error) => Some(crate::error::USTBLError(error)),
+      _ => None,
+    }
+  }
+
+  /// Resolves with `Ready` or `Failed`, whichever the client download ends in.
+  async fn settled(&self) -> ClientState {
+    loop {
+      let changed = self.changed.notified();
+      let state = self.state();
+      if state != ClientState::Pending {
+        return state;
+      }
+      changed.await;
+    }
+  }
+
+  /// Resolves once the client download has failed; never when it succeeds.
+  async fn failed(&self) {
+    loop {
+      let changed = self.changed.notified();
+      if matches!(self.state(), ClientState::Failed(_)) {
+        return;
+      }
+      changed.await;
+    }
+  }
+}
+
+/// Follows the client download in a task of its own while the install plans
+/// and stages its files. Stopping waits for the task, so it cannot touch the
+/// install record after the install has written its final result.
+struct ClientFollower {
+  gate: Arc<ClientGate>,
+  task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl ClientFollower {
+  fn start(app: &AppHandle, instance: &Instance, instance_id: &str, retry_client: bool) -> Self {
+    let gate = ClientGate::new();
+    let (app, instance, follow_gate) = (app.clone(), instance.clone(), gate.clone());
+    let instance_id = instance_id.to_string();
+    let task = tokio::spawn(async move {
+      let inner_gate = follow_gate.clone();
+      let outcome = tokio::spawn(async move {
+        wait_for_client(&app, &instance, &instance_id, retry_client, &inner_gate).await
+      })
+      .await;
+      follow_gate.set(match outcome {
+        Ok(Ok(())) => ClientState::Ready,
+        Ok(Err(error)) => ClientState::Failed(error.0),
+        Err(error) => {
+          log::warn!("campus client follower terminated: {error:?}");
+          ClientState::Failed(InstanceError::ModpackInstallTaskFailed.to_string())
+        }
+      });
+    });
+    Self {
+      gate,
+      task: Some(task),
+    }
+  }
+
+  async fn stop(mut self) {
+    self.gate.stop.store(true, Ordering::SeqCst);
+    if let Some(task) = self.task.take() {
+      let _ = task.await;
+    }
+  }
+}
+
+impl Drop for ClientFollower {
+  fn drop(&mut self) {
+    self.gate.stop.store(true, Ordering::SeqCst);
+  }
+}
+
+/// The env of a first install. The game client downloads next to it, so the
+/// run may fetch and stage everything first; it waits for the client right
+/// before it writes into the instance, and stops early when the client fails.
+struct FirstInstallEnv {
+  env: AppEnv,
+  client: Arc<ClientGate>,
+  /// Loader type to record on the instance once its client is in place.
+  identity_loader: Option<ModLoaderType>,
+}
+
+#[async_trait]
+impl UpdateEnv for FirstInstallEnv {
+  fn ensure_not_running(&self) -> USTBLResult<()> {
+    self.env.ensure_not_running()
+  }
+
+  fn download_concurrency(&self) -> usize {
+    self.env.download_concurrency()
+  }
+
+  async fn fetch(&self, param: DownloadParam) -> USTBLResult<()> {
+    self.env.fetch(param).await
+  }
+
+  async fn switch_loader(&self, loader: &BaselineLoader) -> USTBLResult<()> {
+    self.env.switch_loader(loader).await
+  }
+
+  async fn restore_components(&self, pack: &ComponentPack, staged: &Path) -> USTBLResult<()> {
+    self.env.restore_components(pack, staged).await
+  }
+
+  async fn commit_origin(&self, version_id: &str) -> USTBLResult<()> {
+    self.env.commit_origin(version_id).await
+  }
+
+  fn report(&self, progress: Progress) {
+    self.env.report(progress)
+  }
+
+  fn cancel_requested(&self) -> bool {
+    self.env.cancel_requested() || matches!(self.client.state(), ClientState::Failed(_))
+  }
+
+  async fn cancelled(&self) {
+    tokio::select! {
+      () = self.env.cancelled() => {}
+      () = self.client.failed() => {}
+    }
+  }
+
+  async fn before_commit(&self) -> USTBLResult<()> {
+    let waiting = Instant::now();
+    if self.client.state() == ClientState::Pending {
+      self.env.progress(Stage::WaitingClient);
+    }
+    let state = tokio::select! {
+      biased;
+      state = self.client.settled() => state,
+      () = self.env.cancelled() => return Err(InstanceError::ModpackInstallInterrupted.into()),
+    };
+    if let ClientState::Failed(error) = state {
+      return Err(crate::error::USTBLError(error));
+    }
+    log::info!(
+      "modpack install client ready: instance={} waited_ms={} elapsed_ms={}",
+      self.env.instance_id,
+      waiting.elapsed().as_millis(),
+      self.env.started.elapsed().as_millis()
+    );
+    // The client is in place: record the resolved loader, then let the app see
+    // the instance (and start its loader libraries) before anything is written.
+    if let Some(loader_type) = self.identity_loader {
+      store_instance(&self.env.app, &self.env.instance_id, |instance| {
+        if let Some(origin) = instance.origin.as_mut() {
+          origin.loader_type = loader_type;
+        }
+      })
+      .await?;
+    }
+    refresh_and_update_instances(&self.env.app, false).await;
+    ensure_not_running(&self.env.app, &self.env.instance_id)
+  }
+
+  fn begin_commit(&self) -> USTBLResult<()> {
+    self.env.begin_commit()
+  }
+}
+
+/// Follow the client download of a first install until its jar is in place.
+async fn wait_for_client(
+  app: &AppHandle,
+  instance: &Instance,
+  instance_id: &str,
+  mut retry_client: bool,
+  gate: &ClientGate,
+) -> USTBLResult<()> {
   let mut client_group =
     load_campus_install_record(&instance.version_path).and_then(|record| record.client_group);
   let mut client_requeued = false;
   // Pending installs may be resumed while their client download is still
   // active (including restored download tasks after a launcher restart).
   loop {
+    ensure_install_not_cancelled(instance_id)?;
+    if gate.stop.load(Ordering::SeqCst) {
+      return Err(InstanceError::ModpackInstallInterrupted.into());
+    }
     let descriptors = campus_client_tasks(
       app.state::<Pin<Box<TaskMonitor>>>().task_descriptors(),
-      &instance,
+      instance,
       client_group.as_deref(),
     );
     if descriptors.is_empty() && !client_requeued {
       client_requeued = true;
-      if let Some(group) = resume_campus_client(&app, &instance).await? {
+      if let Some(group) = resume_campus_client(app, instance).await? {
         client_group = Some(group);
         if let Some(mut record) = load_campus_install_record(&instance.version_path) {
           record.client_group = client_group.clone();
@@ -2640,10 +3135,28 @@ async fn install_campus_modpack_inner(
     {
       return Err(InstanceError::ModpackInstallInterrupted.into());
     }
-    break;
+    return Ok(());
   }
-  // The instance was created moments ago; make sure the app knows it.
-  refresh_and_update_instances(&app, false).await;
+}
+
+async fn install_campus_modpack_inner(
+  app: AppHandle,
+  instance_id: String,
+  tasks: CampusInstallTasks,
+  retry_client: bool,
+) -> USTBLResult<UpdateOutcome> {
+  let started = Instant::now();
+  log::info!("modpack install start: instance={instance_id}");
+  let instance = current_instance(&app, &instance_id)?;
+  if recover_checked(&instance.version_path, || {
+    ensure_not_running(&app, &instance_id)
+  })?
+    != Recovery::Nothing
+  {
+    plan_cache::clear_plan_cache(&instance.version_path);
+  }
+  // The game client downloads in its own task group. Planning and staging the
+  // modpack's files do not need it; only writing into the instance does.
   let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   ensure_not_running(&app, &instance_id)?;
   let reporter = AppEnv {
@@ -2671,24 +3184,40 @@ async fn install_campus_modpack_inner(
       loader_install_pending: target.instance.mod_loader.status != ModLoaderStatus::Installed,
     });
   }
+  let follower = ClientFollower::start(&app, &instance, &instance_id, retry_client);
+  let result = install_beside_client(
+    app,
+    instance_id,
+    target,
+    reporter,
+    follower.gate.clone(),
+    started,
+  )
+  .await;
+  follower.stop().await;
+  result
+}
+
+async fn install_beside_client(
+  app: AppHandle,
+  instance_id: String,
+  target: Target,
+  reporter: AppEnv,
+  client: Arc<ClientGate>,
+  started: Instant,
+) -> USTBLResult<UpdateOutcome> {
   let planning_started = Instant::now();
   let InstallPlan {
     plan,
     prepared,
     remote,
-  } = plan_fresh_install(&app, &target, &reporter).await?;
-  if let Some(loader_type) = fresh_identity_loader(
+  } = until_install_cancelled(&instance_id, plan_fresh_install(&app, &target, &reporter)).await?;
+  ensure_install_not_cancelled(&instance_id)?;
+  let identity_loader = fresh_identity_loader(
     &target.origin,
     &remote.game_version,
     remote.loader.loader_type,
-  )? {
-    store_instance(&app, &instance_id, |instance| {
-      if let Some(origin) = instance.origin.as_mut() {
-        origin.loader_type = loader_type;
-      }
-    })
-    .await?;
-  }
+  )?;
   if plan.reinstall_required {
     return Err(InstanceError::ModpackUpdateReinstallRequired.into());
   }
@@ -2705,14 +3234,18 @@ async fn install_campus_modpack_inner(
     .iter()
     .map(|conflict| (conflict.path.clone(), ConflictChoice::TakeRemote))
     .collect();
-  let env = AppEnv {
-    app: app.clone(),
-    instance_id: instance_id.clone(),
-    label: remote.label.clone(),
-    loader: remote.loader.clone(),
-    loader_install_pending: AtomicBool::new(false),
-    started,
-    tasks: reporter.tasks,
+  let env = FirstInstallEnv {
+    env: AppEnv {
+      app: app.clone(),
+      instance_id: instance_id.clone(),
+      label: remote.label.clone(),
+      loader: remote.loader.clone(),
+      loader_install_pending: AtomicBool::new(false),
+      started,
+      tasks: reporter.tasks,
+    },
+    client,
+    identity_loader,
   };
   let version_id = remote.version_id.clone();
   let mut apply_choices = choices.clone();
@@ -2751,6 +3284,15 @@ async fn install_campus_modpack_inner(
     },
   )
   .await;
+  // A run that stopped because the client download failed reports that error.
+  let result = match (result, env.client.failure()) {
+    (Err(error), Some(client_error))
+      if error.0 == InstanceError::ModpackInstallInterrupted.to_string() =>
+    {
+      Err(client_error)
+    }
+    (result, _) => result,
+  };
   if result.is_err() {
     // A rolled back update restored the files on disk; drop stale memory.
     refresh_and_update_instances(&app, false).await;
@@ -2760,7 +3302,7 @@ async fn install_campus_modpack_inner(
   remove_campus_install_record(&target.root);
   Ok(UpdateOutcome {
     version_id,
-    loader_install_pending: env.loader_install_pending.load(Ordering::SeqCst),
+    loader_install_pending: env.env.loader_install_pending.load(Ordering::SeqCst),
   })
 }
 
@@ -3092,6 +3634,93 @@ mod tests {
   }
 
   #[tokio::test]
+  async fn install_groups_wait_for_the_client_after_fetching_and_before_applying() {
+    use crate::tasks::streams::desc::PStatus;
+    use crate::tasks::streams::reporter::Reporter;
+    use crate::tasks::upload::UploadParam;
+    let root = std::env::temp_dir().join(format!("ustbl-install-card-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    let sink = StageSink::default();
+    let mut id = 0;
+    let mut created = Vec::new();
+    let tasks =
+      CampusInstallTasks::with_handles("modpack-install?test@1".into(), false, |name, total| {
+        created.push(name.to_owned());
+        id += 1;
+        Arc::new(RwLock::new(PHandle::new(
+          PDesc::new(
+            id,
+            Some("modpack-install?test@1".into()),
+            total,
+            PTaskParam::Upload(UploadParam {
+              filename: name.into(),
+            }),
+            PStatus::Waiting,
+          ),
+          std::time::Duration::from_secs(1),
+          root.join(format!("{id}.json")),
+          Reporter::new(total, std::time::Duration::from_secs(1), sink.clone()),
+        )))
+      });
+    assert_eq!(
+      created,
+      [
+        "Preparing",
+        "Locating",
+        "Fetching",
+        "WaitingClient",
+        "Applying"
+      ]
+    );
+    let order: Vec<_> = tasks
+      .all()
+      .iter()
+      .map(|task| task.read().unwrap().desc.task_id)
+      .collect();
+    assert_eq!(order, [1, 2, 3, 4, 5]);
+    fs::remove_dir_all(root).unwrap();
+  }
+
+  #[tokio::test]
+  async fn client_gate_settles_on_ready_or_failure_and_reports_failure_early() {
+    let gate = ClientGate::new();
+    assert_eq!(gate.state(), ClientState::Pending);
+    assert!(gate.failure().is_none());
+    assert!(
+      tokio::time::timeout(std::time::Duration::from_millis(50), gate.settled())
+        .await
+        .is_err()
+    );
+
+    let waiter = {
+      let gate = gate.clone();
+      tokio::spawn(async move { gate.settled().await })
+    };
+    let failure_watcher = {
+      let gate = gate.clone();
+      tokio::spawn(async move { gate.failed().await })
+    };
+    tokio::task::yield_now().await;
+    gate.set(ClientState::Failed("MODPACK_INSTALL_CLIENT_FAILED".into()));
+    assert_eq!(
+      waiter.await.unwrap(),
+      ClientState::Failed("MODPACK_INSTALL_CLIENT_FAILED".into())
+    );
+    failure_watcher.await.unwrap();
+    assert_eq!(gate.failure().unwrap().0, "MODPACK_INSTALL_CLIENT_FAILED");
+
+    let ready = ClientGate::new();
+    ready.set(ClientState::Ready);
+    assert_eq!(ready.settled().await, ClientState::Ready);
+    assert!(ready.failure().is_none());
+    assert!(
+      tokio::time::timeout(std::time::Duration::from_millis(50), ready.failed())
+        .await
+        .is_err()
+    );
+  }
+
+  #[tokio::test]
   async fn update_supervisor_catches_panic_and_holds_instance_claim_through_final_result() {
     let root = std::env::temp_dir().join(format!("ustbl-update-panic-{}", uuid::Uuid::new_v4()));
     let guard = PlanGuard::acquire(&root).unwrap();
@@ -3380,6 +4009,80 @@ mod tests {
       Some(retry),
     );
     assert_eq!(selected.len(), 1);
+  }
+
+  fn download_task(
+    group: &str,
+    path: impl Into<PathBuf>,
+    status: crate::tasks::streams::desc::PStatus,
+  ) -> PDesc<PTaskParam> {
+    PDesc::new(
+      0,
+      Some(group.into()),
+      10,
+      PTaskParam::Download(DownloadParam {
+        src: "https://example.com/file".parse().unwrap(),
+        dest: path.into(),
+        filename: None,
+        sha1: None,
+        custom_headers: None,
+        transfer_options: Default::default(),
+      }),
+      status,
+    )
+  }
+
+  #[test]
+  fn discarding_selects_only_downloads_that_write_for_this_instance() {
+    use crate::tasks::streams::desc::PStatus::{Failed, InProgress, Stopped, Waiting};
+    let instance = Instance {
+      id: "games:a".into(),
+      name: "pack".into(),
+      version_path: PathBuf::from("games/versions/pack"),
+      ..Default::default()
+    };
+    let root = instance.version_path.clone();
+    let client = "game-client?pack@1";
+    let retry = "retry-game-client?pack@2";
+    let installer = "loader-installer?games:a@3";
+    let descriptors = vec![
+      download_task(client, "games/libraries/lib.jar", Failed),
+      download_task(retry, "games/libraries/lib2.jar", InProgress),
+      download_task(retry, root.join("pack.jar"), Waiting),
+      download_task(installer, "games/libraries/forge.jar", Stopped),
+      download_task("mod-update", root.join("mods/x.jar"), InProgress),
+      download_task("mod-update", "games/versions/other/mods/y.jar", InProgress),
+      download_task("game-client?other@4", "other/o.jar", InProgress),
+      download_task("loader-installer?games:ab@5", "z.jar", InProgress),
+    ];
+    let groups = pending_install_groups(descriptors.clone(), &instance, Some(client));
+    assert_eq!(groups, [client, installer, retry]);
+    let mine: Vec<_> = descriptors
+      .iter()
+      .enumerate()
+      .filter(|(_, desc)| belongs_to_pending_install(desc, &root, &groups))
+      .collect();
+    // Other instances' tasks and the same-prefix installer group are left
+    // alone; the failed library belongs but is not unfinished.
+    let indexes: Vec<_> = mine.iter().map(|(index, _)| *index).collect();
+    assert_eq!(indexes, [0, 1, 2, 3, 4]);
+    let unfinished = mine.iter().filter(|(_, d)| unfinished_download(d));
+    assert_eq!(unfinished.count(), 4);
+  }
+
+  #[test]
+  fn only_a_first_install_is_deleted_on_discard() {
+    let mut origin = InstanceOrigin {
+      platform: OriginPlatform::Modrinth,
+      project_id: "p".into(),
+      version_id: String::new(),
+      game_version: "1.21.1".into(),
+      loader_type: ModLoaderType::Fabric,
+      follow: true,
+    };
+    assert!(is_fresh(&origin));
+    origin.version_id = "v1".into();
+    assert!(!is_fresh(&origin));
   }
 
   #[test]
@@ -3683,6 +4386,7 @@ mod tests {
         files: Vec::new(),
         rules: Vec::new(),
         rules_manifest: false,
+        disabled_authoritative: false,
         path_index: std::sync::Arc::new(std::sync::OnceLock::new()),
       },
     };
@@ -3691,5 +4395,109 @@ mod tests {
     assert!(!plan.fast_forward);
     assert!(plan.changes.is_empty());
     assert_eq!(plan.plan_hash, "hh");
+  }
+
+  #[test]
+  fn a_cancelled_install_cannot_enter_the_commit() {
+    let control = InstallControl::new();
+    control.request_cancel().unwrap();
+    assert!(control.cancel_requested());
+    assert_eq!(
+      control.begin_commit().unwrap_err().0,
+      InstanceError::ModpackInstallInterrupted.to_string()
+    );
+  }
+
+  #[test]
+  fn an_install_past_the_commit_point_refuses_to_be_cancelled() {
+    let control = InstallControl::new();
+    control.begin_commit().unwrap();
+    assert_eq!(
+      control.request_cancel().unwrap_err().0,
+      InstanceError::ModpackUpdateBusy.to_string()
+    );
+    assert!(!control.cancel_requested());
+    assert!(control.begin_commit().is_ok());
+  }
+
+  #[test]
+  fn a_cancel_and_the_commit_race_has_exactly_one_winner() {
+    for _ in 0..200 {
+      let control = InstallControl::new();
+      let (a, b) = (control.clone(), control.clone());
+      let cancel = std::thread::spawn(move || a.request_cancel().is_ok());
+      let commit = std::thread::spawn(move || b.begin_commit().is_ok());
+      let (cancelled, committed) = (cancel.join().unwrap(), commit.join().unwrap());
+      assert_ne!(cancelled, committed);
+      assert_eq!(control.cancel_requested(), cancelled);
+    }
+  }
+
+  #[tokio::test]
+  async fn waiting_for_a_cancel_wakes_up_when_it_is_requested() {
+    let control = InstallControl::new();
+    let waiting = {
+      let control = control.clone();
+      tokio::spawn(async move { control.cancelled().await })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    assert!(!waiting.is_finished());
+    control.request_cancel().unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), waiting)
+      .await
+      .unwrap()
+      .unwrap();
+    // A request made before anyone waits is seen at once.
+    control.cancelled().await;
+  }
+
+  #[tokio::test]
+  async fn work_is_dropped_when_the_install_is_cancelled() {
+    let id = format!("games:cancel-{}", uuid::Uuid::new_v4());
+    let registered = InstallControlGuard::register(&id);
+    let control = registered.control.clone();
+    let canceller = tokio::spawn(async move {
+      tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+      control.request_cancel().unwrap();
+    });
+    let result: USTBLResult<()> = until_install_cancelled(&id, async {
+      tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+      Ok(())
+    })
+    .await;
+    canceller.await.unwrap();
+    assert_eq!(
+      result.unwrap_err().0,
+      InstanceError::ModpackInstallInterrupted.to_string()
+    );
+    assert!(ensure_install_not_cancelled(&id).is_err());
+    drop(registered);
+    assert!(ensure_install_not_cancelled(&id).is_ok());
+  }
+
+  #[test]
+  fn a_resumed_install_keeps_its_control_when_the_old_one_is_dropped() {
+    let id = format!("games:resume-{}", uuid::Uuid::new_v4());
+    let old = InstallControlGuard::register(&id);
+    let new = InstallControlGuard::register(&id);
+    drop(old);
+    assert!(Arc::ptr_eq(&install_control(&id).unwrap(), &new.control));
+    drop(new);
+    assert!(install_control(&id).is_none());
+  }
+
+  #[tokio::test]
+  async fn a_discard_waits_until_the_install_job_releases_the_guard() {
+    let root = std::env::temp_dir().join(format!("ustbl-wait-guard-{}", uuid::Uuid::new_v4()));
+    let guard = PlanGuard::acquire(&root).unwrap();
+    let release = tokio::spawn(async move {
+      tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+      drop(guard);
+    });
+    let taken = wait_for_plan_guard(&root).await.unwrap();
+    release.await.unwrap();
+    assert!(PlanGuard::acquire(&root).is_err());
+    drop(taken);
+    assert!(PlanGuard::acquire(&root).is_ok());
   }
 }

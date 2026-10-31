@@ -12,6 +12,7 @@ use super::plan::Prepared;
 use super::release::Release;
 use super::remote::{RemoteModpack, UPDATE_DIR};
 use super::text_diff::{edits, lines_of, Edit};
+use crate::file_error::{tag, AtPath};
 use crate::instance::helpers::modpack::baseline::ModpackBaseline;
 use crate::instance::helpers::modpack::{base_store, text};
 use serde::{Deserialize, Serialize};
@@ -214,12 +215,12 @@ pub fn write(root: &Path, ignores: &Ignores) -> io::Result<()> {
   match ignores.to_bytes() {
     Some(bytes) => {
       if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+        fs::create_dir_all(parent).at_in(parent, root)?;
       }
-      fs::write(path, bytes)
+      fs::write(&path, bytes).at_in(&path, root)
     }
-    None => match fs::remove_file(path) {
-      Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+    None => match fs::remove_file(&path) {
+      Err(error) if error.kind() != io::ErrorKind::NotFound => Err(tag(error, &path, Some(root))),
       _ => Ok(()),
     },
   }

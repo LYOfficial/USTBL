@@ -24,6 +24,8 @@ function load(file, requireModule = () => ({})) {
   return module.exports;
 }
 
+const fileError = load("src/utils/file-error.ts");
+
 const {
   campusInstallCardState,
   campusInstallStageKey,
@@ -34,7 +36,11 @@ const {
   compareCampusInstallStages,
   campusInstallTaskIndeterminate,
   campusInstallGroupLabel,
-} = load("src/utils/campus-install-task.ts");
+  campusInstallGroupInstanceId,
+  canDiscardRunningInstall,
+} = load("src/utils/campus-install-task.ts", (name) =>
+  name === "@/utils/file-error" ? fileError : {}
+);
 
 test("campus install cards expose active, paused, complete and failure states", () => {
   assert.equal(campusInstallCardState("Started"), "active-install");
@@ -148,7 +154,9 @@ test("task context applies removal events before repeated resume creation and ke
     if (name === "@/contexts/toast") return { useToast: () => () => {} };
     if (name === "@/models/task") return taskModel;
     if (name === "@/utils/campus-install-task")
-      return load("src/utils/campus-install-task.ts");
+      return load("src/utils/campus-install-task.ts", (inner) =>
+        inner === "@/utils/file-error" ? fileError : {}
+      );
     if (name === "@/utils/modpack-update-task")
       return {
         isModpackUpdateGroup: (group) => group.startsWith("modpack-update?"),
@@ -183,10 +191,10 @@ test("task context applies removal events before repeated resume creation and ke
     const group = `modpack-install?航空学 [games:a]@${attempt}`;
     listeners.removed(previous ? [previous] : []);
     for (const [index, filename] of [
-      "WaitingClient",
       "Preparing",
       "Locating",
       "Fetching",
+      "WaitingClient",
       "Applying",
     ].entries()) {
       const id = attempt * 10 + index;
@@ -210,7 +218,7 @@ test("task context applies removal events before repeated resume creation and ke
     assert.equal(states[0][0].taskDescs.length, 5);
     assert.deepEqual(
       states[0][0].taskDescs.map((task) => task.payload.filename),
-      ["WaitingClient", "Preparing", "Locating", "Fetching", "Applying"]
+      ["Preparing", "Locating", "Fetching", "WaitingClient", "Applying"]
     );
     listeners.progress({ group, stage: "locating" });
     assert.deepEqual(Object.keys(states[1]), [group]);
@@ -258,10 +266,10 @@ test("resume and discard controls render once outside the task group cards", () 
 test("install stages keep execution order regardless of status and insertion order", () => {
   const stages = [
     "Applying",
+    "WaitingClient",
     "Locating",
     "Fetching",
     "Preparing",
-    "WaitingClient",
   ].map((filename, index) => ({
     payload: { filename },
     status: index ? "Completed" : "Failed",
@@ -270,16 +278,16 @@ test("install stages keep execution order regardless of status and insertion ord
     stages
       .sort(compareCampusInstallStages)
       .map((task) => task.payload.filename),
-    ["WaitingClient", "Preparing", "Locating", "Fetching", "Applying"]
+    ["Preparing", "Locating", "Fetching", "WaitingClient", "Applying"]
   );
 });
 
 test("unstarted install stages never animate, only an active stage without a total does", () => {
   for (const filename of [
-    "WaitingClient",
     "Preparing",
     "Locating",
     "Fetching",
+    "WaitingClient",
     "Applying",
   ]) {
     for (const total of [0, 1]) {
@@ -315,6 +323,61 @@ test("install group titles hide internal identity but keep the human label", () 
     "同名 [自定义]"
   );
   assert.equal(campusInstallGroupLabel("modpack-install?航空学@123"), "航空学");
+});
+
+test("install group titles use the known instance id when it contains brackets", () => {
+  const id = "APP_DATA_SUBDIR:Pack [Fabric] 1.8.2";
+  const group = `modpack-install?Pack [Fabric] 1.8.2 [${id}]@123`;
+  const known = ["games:Other", id];
+  assert.equal(campusInstallGroupLabel(group, known), "Pack [Fabric] 1.8.2");
+  assert.equal(campusInstallGroupInstanceId(group, known), id);
+
+  // An id with "[" and characters the backend replaces in group names.
+  const odd = "games:A [x?y@z";
+  const oddGroup = "modpack-install?Title [games:A [x y z]@9";
+  assert.equal(campusInstallGroupLabel(oddGroup, [odd]), "Title");
+  assert.equal(campusInstallGroupInstanceId(oddGroup, [odd]), odd);
+
+  // The longest matching id wins over a shorter one that ends the same way.
+  const longer = "games:Pack [Fabric]";
+  const shorter = "Fabric]";
+  const both = `modpack-install?Pack [${longer}]@1`;
+  assert.equal(campusInstallGroupInstanceId(both, [shorter, longer]), longer);
+  assert.equal(campusInstallGroupLabel(both, [shorter, longer]), "Pack");
+});
+
+test("install group titles fall back to splitting when the id is unknown", () => {
+  const group = "modpack-install?Pack [games:Pack]@123";
+  assert.equal(campusInstallGroupLabel(group, ["games:Other"]), "Pack");
+  assert.equal(
+    campusInstallGroupInstanceId(group, ["games:Other"]),
+    "games:Pack"
+  );
+  // Groups from before the id was written have nothing to split.
+  assert.equal(
+    campusInstallGroupLabel("modpack-install?Pack@123", ["x"]),
+    "Pack"
+  );
+  assert.equal(
+    campusInstallGroupInstanceId("modpack-install?Pack@123", ["x"]),
+    null
+  );
+});
+
+test("abandoning finds an install whose instance id contains brackets", () => {
+  const id = "APP_DATA_SUBDIR:Pack [Fabric] 1.8.2";
+  const group = `modpack-install?Pack [Fabric] 1.8.2 [${id}]@1`;
+  const card = (descs) => ({
+    taskGroup: group,
+    status: "Started",
+    taskDescs: descs,
+  });
+  const applying = [
+    { payload: { filename: "Applying" }, status: "InProgress" },
+  ];
+  assert.equal(canDiscardRunningInstall(id, [card(applying)], {}), false);
+  assert.equal(canDiscardRunningInstall(id, [card([])], {}), true);
+  assert.equal(canDiscardRunningInstall(id, [card(applying)], {}, [id]), false);
 });
 
 test("failure reasons use locale keys and unknown errors never leak raw codes", () => {
@@ -361,4 +424,59 @@ test("unexpected task termination has a localized failure reason in every locale
       "failed"
     );
   }
+});
+
+test("a running install can be abandoned until it starts applying", () => {
+  const group = "modpack-install?Pack [games:Pack]@1";
+  const task = (filename, status) => ({ payload: { filename }, status });
+  const card = (status, descs) => ({
+    taskGroup: group,
+    status,
+    taskDescs: descs,
+  });
+  const waiting = [task("Fetching", "InProgress"), task("Applying", "Waiting")];
+  assert.equal(campusInstallGroupInstanceId(group), "games:Pack");
+  assert.equal(campusInstallGroupInstanceId("game-client?Pack@1"), null);
+  assert.equal(
+    canDiscardRunningInstall("games:Pack", [card("Started", waiting)], {}),
+    true
+  );
+  // The progress event is the earlier signal.
+  assert.equal(
+    canDiscardRunningInstall("games:Pack", [card("Started", waiting)], {
+      [group]: { instanceId: "games:Pack", stage: "applying" },
+    }),
+    false
+  );
+  assert.equal(
+    canDiscardRunningInstall("games:Pack", [card("Started", waiting)], {
+      [group]: { instanceId: "games:Pack", stage: "finalizing" },
+    }),
+    false
+  );
+  assert.equal(
+    canDiscardRunningInstall(
+      "games:Pack",
+      [card("Started", [task("Applying", "InProgress")])],
+      {}
+    ),
+    false
+  );
+  // Another instance's install, or a card that is not running, does not count.
+  assert.equal(
+    canDiscardRunningInstall(
+      "games:Other",
+      [card("Started", [task("Applying", "InProgress")])],
+      {}
+    ),
+    true
+  );
+  assert.equal(
+    canDiscardRunningInstall(
+      "games:Pack",
+      [card("Failed", [task("Applying", "Failed")])],
+      {}
+    ),
+    true
+  );
 });

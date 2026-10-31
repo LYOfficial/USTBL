@@ -24,15 +24,19 @@ import NavMenu from "@/components/common/nav-menu";
 import { Section } from "@/components/common/section";
 import { InstanceLaunchButton } from "@/components/instance-launch-button";
 import { useLauncherConfig } from "@/contexts/config";
+import { useGlobalData } from "@/contexts/global-data";
 import {
   InstanceContextProvider,
   useInstanceSharedData,
 } from "@/contexts/instance";
 import { useSharedModals } from "@/contexts/shared-modal";
+import { useTaskContext } from "@/contexts/task";
 import { useToast } from "@/contexts/toast";
+import { useDiscardCampusInstall } from "@/hooks/discard-campus-install";
 import { VustbAccount, isVustbManager } from "@/models/vustb";
 import { AccountService } from "@/services/account";
 import { InstanceService } from "@/services/instance";
+import { canDiscardRunningInstall } from "@/utils/campus-install-task";
 import { isInstallingInstance } from "@/utils/installing-instance";
 
 const InstanceDetailsLayout: React.FC<{ children: React.ReactNode }> = ({
@@ -57,6 +61,10 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
   const instanceId = Array.isArray(id) ? id[0] : id;
 
   const { summary, handleUpdateInstanceConfig } = useInstanceSharedData();
+  const { tasks, installProgress } = useTaskContext();
+  const { getInstanceList } = useGlobalData();
+  const { discard, discarding } = useDiscardCampusInstall();
+  const installing = isInstallingInstance(summary);
   const { config } = useLauncherConfig();
   const primaryColor = config.appearance.theme.primaryColor;
   const navBarType = config.general.functionality.instancesNavType;
@@ -171,6 +179,13 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
     },
   ];
 
+  // Only opening the folder works for an instance that is still installing:
+  // the other operations read the backend's instance table, which does not
+  // hold it yet.
+  const visibleOperations = installing
+    ? instanceSecMenuOperations.slice(0, 1)
+    : instanceSecMenuOperations;
+
   const instanceTabList: { key: string; icon: IconType }[] = [
     { key: "overview", icon: LuHouse },
     { key: "worlds", icon: LuEarth },
@@ -191,24 +206,26 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
       withBackButton={navBarType !== "instance"}
       backRoutePath="/instances/list"
       titleExtra={
-        <CommonIconButton
-          icon={summary?.starred ? FaStar : FaRegStar}
-          label={t(
-            `InstanceDetailsLayout.secMenu.${summary?.starred ? "unstar" : "star"}`
-          )}
-          color={summary?.starred ? "yellow.500" : "inherit"}
-          onClick={() => {
-            handleUpdateInstanceConfig("starred", !summary?.starred);
-          }}
-          size="xs"
-          fontSize="sm"
-          h={21}
-          marginInlineEnd="0.5rem"
-        />
+        installing ? undefined : (
+          <CommonIconButton
+            icon={summary?.starred ? FaStar : FaRegStar}
+            label={t(
+              `InstanceDetailsLayout.secMenu.${summary?.starred ? "unstar" : "star"}`
+            )}
+            color={summary?.starred ? "yellow.500" : "inherit"}
+            onClick={() => {
+              handleUpdateInstanceConfig("starred", !summary?.starred);
+            }}
+            size="xs"
+            fontSize="sm"
+            h={21}
+            marginInlineEnd="0.5rem"
+          />
+        )
       }
       headExtra={
         <HStack spacing={2}>
-          {instanceSecMenuOperations.map((btn, index) => (
+          {visibleOperations.map((btn, index) => (
             <CommonIconButton
               key={index}
               icon={btn.icon}
@@ -221,15 +238,6 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
               h={21}
             />
           ))}
-          {isInstallingInstance(summary) && (
-            <Button
-              size="xs"
-              variant="outline"
-              onClick={() => router.push("/downloads")}
-            >
-              {t("InstanceDetailsLayout.button.viewInstall")}
-            </Button>
-          )}
           <InstanceLaunchButton
             instance={summary}
             leftIcon={<LuPlay />}
@@ -246,37 +254,78 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
       }
       maxTitleLines={1}
     >
-      <NavMenu
-        flexWrap="wrap"
-        selectedKeys={[router.asPath]}
-        onClick={(value) => router.push(value)}
-        direction="row"
-        size="xs"
-        mb={4}
-        spacing={
-          config.general.general.language.startsWith("zh") ? "0.05rem" : 0.5
-        }
-        items={instanceTabList.map((item) => ({
-          value: `/instances/details/${encodeURIComponent(instanceId || "")}/${item.key}`,
-          label: (
-            <HStack spacing={1.5}>
-              <Icon as={item.icon} />
-              <Text fontSize="sm">
-                {t(`InstanceDetailsLayout.instanceTabList.${item.key}`)}
-              </Text>
-            </HStack>
-          ),
-        }))}
-      />
-      <VStack
-        overflow="auto"
-        align="stretch"
-        spacing={4}
-        flex="1"
-        key={router.asPath}
-      >
-        {children}
-      </VStack>
+      {installing ? (
+        <VStack flex="1" justify="center" spacing={4}>
+          <Text className="secondary-text">
+            {t("InstanceDetailsLayout.installing")}
+          </Text>
+          <HStack>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => router.push("/downloads")}
+            >
+              {t("InstanceDetailsLayout.button.viewInstall")}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              colorScheme="red"
+              isDisabled={
+                discarding ||
+                !summary ||
+                !canDiscardRunningInstall(
+                  summary.id,
+                  tasks,
+                  installProgress,
+                  (getInstanceList() ?? []).map((i) => i.id)
+                )
+              }
+              onClick={async () => {
+                if (summary && (await discard(summary.id))) {
+                  router.replace("/instances/list");
+                }
+              }}
+            >
+              {t("DownloadTasksPage.unfinishedInstall.discard")}
+            </Button>
+          </HStack>
+        </VStack>
+      ) : (
+        <>
+          <NavMenu
+            flexWrap="wrap"
+            selectedKeys={[router.asPath]}
+            onClick={(value) => router.push(value)}
+            direction="row"
+            size="xs"
+            mb={4}
+            spacing={
+              config.general.general.language.startsWith("zh") ? "0.05rem" : 0.5
+            }
+            items={instanceTabList.map((item) => ({
+              value: `/instances/details/${encodeURIComponent(instanceId || "")}/${item.key}`,
+              label: (
+                <HStack spacing={1.5}>
+                  <Icon as={item.icon} />
+                  <Text fontSize="sm">
+                    {t(`InstanceDetailsLayout.instanceTabList.${item.key}`)}
+                  </Text>
+                </HStack>
+              ),
+            }))}
+          />
+          <VStack
+            overflow="auto"
+            align="stretch"
+            spacing={4}
+            flex="1"
+            key={router.asPath}
+          >
+            {children}
+          </VStack>
+        </>
+      )}
     </Section>
   );
 };

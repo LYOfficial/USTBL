@@ -34,6 +34,7 @@ test("service errors stay structured when native logging is unavailable", async 
   const { responseHandler } = load("src/utils/response.ts", {
     i18next: { t: (key, options) => options?.defaultValue || key },
     "@/utils/env": { isDev: false },
+    "@/utils/file-error": load("src/utils/file-error.ts", {}),
     "@/utils/logging": { logger },
   });
   const descriptor = {

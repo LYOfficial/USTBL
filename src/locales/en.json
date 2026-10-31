@@ -719,6 +719,8 @@
       "neoforge-libraries": "NeoForge Libraries",
       "forge-libraries": "Forge Libraries",
       "loader-installer": "Loader Installer",
+      "optifine-installer": "OptiFine Installer",
+      "optifine-libraries": "OptiFine Libraries",
       "launcher-update": "Update Launcher",
       "mojang-java": "Java {{param}} Runtime",
       "modpack-publish": "Publish modpack {{param}}",
@@ -835,6 +837,13 @@
       "title": "Installing Java 25",
       "description": "First launch detected, downloading the Java 25 runtime automatically"
     }
+  },
+  "FileError": {
+    "FILE_BLOCKED_BY_ANTIVIRUS": "File {{file}} was blocked by antivirus software. Allow the file in Windows Security, or add the game directory to the exclusions, then try again.",
+    "FILE_MISSING": "Cannot find file {{file}}. It may have been deleted, moved, or quarantined by antivirus software. Check and try again.",
+    "FILE_INACCESSIBLE": "Cannot access file {{file}}. It may be in use by the game or another program, or you may lack permission. Close the related programs and try again.",
+    "DISK_FULL": "Not enough disk space to write {{file}}. Free up disk space and try again.",
+    "FILE_IO_FAILED": "Failed to read or write file {{file}} ({{detail}})."
   },
   "GameAdvancedSettingsPage": {
     "title": "Advanced Settings",
@@ -1327,6 +1336,7 @@
     "selectDirectory": "Select Game Directory"
   },
   "InstanceDetailsLayout": {
+    "installing": "Instance is installing",
     "secMenu": {
       "createShortcut": "Create Launch Shortcut",
       "exportModPack": "Export as Modpack",

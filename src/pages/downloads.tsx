@@ -27,8 +27,10 @@ import { Section } from "@/components/common/section";
 import { UnfinishedInstalls } from "@/components/unfinished-installs";
 import { UnfinishedPublishes } from "@/components/unfinished-publishes";
 import { useLauncherConfig } from "@/contexts/config";
+import { useGlobalData } from "@/contexts/global-data";
 import { useSharedModals } from "@/contexts/shared-modal";
 import { destOf, parseTaskGroup, useTaskContext } from "@/contexts/task";
+import { useDiscardCampusInstall } from "@/hooks/discard-campus-install";
 import {
   GTaskEventStatusEnums,
   TaskDesc,
@@ -39,14 +41,17 @@ import {
 } from "@/models/task";
 import {
   campusInstallCardState,
+  campusInstallGroupInstanceId,
   campusInstallGroupLabel,
   campusInstallProgressView,
   campusInstallStageKey,
   campusInstallTaskIndeterminate,
+  canDiscardRunningInstall,
   isCampusInstallGroup,
   localizeCampusInstallError,
 } from "@/utils/campus-install-task";
 import { formatTimeInterval } from "@/utils/datetime";
+import { localizeFileError } from "@/utils/file-error";
 import {
   isModpackUpdateGroup,
   localizeModpackUpdateError,
@@ -58,6 +63,7 @@ export const DownloadTasksPage = () => {
   const router = useRouter();
   const { openSharedModal } = useSharedModals();
   const { config } = useLauncherConfig();
+  const { getInstanceList } = useGlobalData();
   const primaryColor = config.appearance.theme.primaryColor;
 
   const {
@@ -71,6 +77,8 @@ export const DownloadTasksPage = () => {
     handleResumeProgressiveTaskGroup,
     handleClearHistoryTaskGroups,
   } = useTaskContext();
+
+  const { discard, discarding } = useDiscardCampusInstall();
 
   const [taskGroupList, setTaskGroupList] = useState<
     [TaskGroupDesc, boolean][]
@@ -114,6 +122,8 @@ export const DownloadTasksPage = () => {
       (task) => task.payload.taskType === TaskTypeEnums.Download
     );
 
+  const knownInstanceIds = (getInstanceList() ?? []).map((i) => i.id);
+
   const parseGroupTitle = (taskGroup: string) => {
     let { name, version, isRetry } = parseTaskGroup(taskGroup);
 
@@ -121,7 +131,7 @@ export const DownloadTasksPage = () => {
       `DownloadTasksPage.task.${name}`,
       {
         param: isModpackTransferGroup(taskGroup)
-          ? campusInstallGroupLabel(taskGroup)
+          ? campusInstallGroupLabel(taskGroup, knownInstanceIds)
           : version || "",
       }
     )}`;
@@ -132,7 +142,9 @@ export const DownloadTasksPage = () => {
       ? localizeModpackUpdateError(t, reason)
       : isCampusInstallGroup(group.taskGroup)
         ? localizeCampusInstallError(t, reason)
-        : reason || t("DownloadTasksPage.label.error");
+        : localizeFileError(t, reason) ||
+          reason ||
+          t("DownloadTasksPage.label.error");
 
   const showInstallProgress = (group: string) => {
     const progress = campusInstallProgressView(
@@ -162,6 +174,10 @@ export const DownloadTasksPage = () => {
 
   const canPause = (group: TaskGroupDesc) =>
     !isModpackTransferGroup(group.taskGroup);
+
+  const runningInstallId = (taskGroup: string) =>
+    installProgress[taskGroup]?.instanceId ??
+    campusInstallGroupInstanceId(taskGroup, knownInstanceIds);
 
   return (
     <Section
@@ -355,6 +371,30 @@ export const DownloadTasksPage = () => {
                             }
                           />
                         </Tooltip>
+                      )}
+
+                    {isCampusInstallGroup(group.taskGroup) &&
+                      group.status === GTaskEventStatusEnums.Started &&
+                      runningInstallId(group.taskGroup) && (
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          colorScheme="red"
+                          isDisabled={
+                            discarding ||
+                            !canDiscardRunningInstall(
+                              runningInstallId(group.taskGroup)!,
+                              tasks,
+                              installProgress,
+                              knownInstanceIds
+                            )
+                          }
+                          onClick={() =>
+                            discard(runningInstallId(group.taskGroup)!)
+                          }
+                        >
+                          {t("DownloadTasksPage.unfinishedInstall.discard")}
+                        </Button>
                       )}
 
                     <IconButton

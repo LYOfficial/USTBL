@@ -7,6 +7,7 @@
 //! is listed, and the local file stays unless the caller explicitly chooses the
 //! remote one.
 
+use crate::file_error::AtPath;
 use crate::instance::helpers::modpack::baseline::hash_file;
 use super::merge::MergeConflict;
 use serde::{Deserialize, Serialize};
@@ -305,7 +306,7 @@ pub fn collect_local_states(
 pub fn scan_path(root: &Path, path: &str) -> io::Result<LocalState> {
   let file = root.join(path);
   let enabled = if file.is_file() {
-    let (sha1, size) = hash_file(&file)?;
+    let (sha1, size) = hash_file(&file).rooted(root)?;
     Some(FileKey { sha1, size })
   } else if file.exists() {
     return Err(io::Error::new(
@@ -317,7 +318,7 @@ pub fn scan_path(root: &Path, path: &str) -> io::Result<LocalState> {
   };
   let disabled_file = root.join(format!("{path}{DISABLED_SUFFIX}"));
   let disabled = if disabled_file.is_file() {
-    let (sha1, size) = hash_file(&disabled_file)?;
+    let (sha1, size) = hash_file(&disabled_file).rooted(root)?;
     Some(FileKey { sha1, size })
   } else if disabled_file.exists() {
     return Err(io::Error::new(

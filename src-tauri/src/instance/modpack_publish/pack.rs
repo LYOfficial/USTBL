@@ -8,6 +8,7 @@
 
 use super::manifest::PackObject;
 use crate::error::{USTBLError, USTBLResult};
+use crate::file_error::{tag, AtPath};
 use crate::instance::helpers::modpack::baseline::hash_file;
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
@@ -16,8 +17,17 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 use std::time::SystemTime;
+use zip::result::ZipError;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, DateTime, HasZipMetadata, ZipArchive, ZipWriter};
+
+/// A zip error; its I/O cases name `path`, the pack file being written or read.
+fn zip_error(path: &Path) -> impl Fn(ZipError) -> USTBLError + '_ {
+  move |error| match error {
+    ZipError::Io(error) => USTBLError::from(tag(error, path, None)),
+    other => other.into(),
+  }
+}
 
 const COPY_BUFFER: usize = 256 * 1024;
 
@@ -110,7 +120,7 @@ pub fn build_pack(objects: &[PackObject], dest: &Path) -> USTBLResult<()> {
   let mut ordered: Vec<&PackObject> = objects.iter().collect();
   ordered.sort_by(|a, b| a.sha1.cmp(&b.sha1));
 
-  let mut zip = ZipWriter::new(File::create(dest)?);
+  let mut zip = ZipWriter::new(File::create(dest).at(dest)?);
   let mut buffer = vec![0u8; COPY_BUFFER];
   for object in ordered {
     let method = if object.stored {
@@ -123,17 +133,19 @@ pub fn build_pack(objects: &[PackObject], dest: &Path) -> USTBLResult<()> {
       .last_modified_time(DateTime::default())
       .unix_permissions(0o644)
       .large_file(true);
-    zip.start_file(format!("objects/{}", object.sha1), options)?;
+    zip
+      .start_file(format!("objects/{}", object.sha1), options)
+      .map_err(zip_error(dest))?;
 
-    let mut source = File::open(&object.path)?;
+    let mut source = File::open(&object.path).at(&object.path)?;
     let mut hasher = Sha1::new();
     loop {
-      let read = source.read(&mut buffer)?;
+      let read = source.read(&mut buffer).at(&object.path)?;
       if read == 0 {
         break;
       }
       hasher.update(&buffer[..read]);
-      zip.write_all(&buffer[..read])?;
+      zip.write_all(&buffer[..read]).at(dest)?;
     }
     if hex::encode(hasher.finalize()) != object.sha1 {
       return Err(USTBLError(format!(
@@ -142,7 +154,7 @@ pub fn build_pack(objects: &[PackObject], dest: &Path) -> USTBLResult<()> {
       )));
     }
   }
-  zip.finish()?.flush()?;
+  zip.finish().map_err(zip_error(dest))?.flush().at(dest)?;
   Ok(())
 }
 
@@ -218,7 +230,7 @@ pub fn verify_pack(path: &Path, expected_sha1: Option<&str>) -> USTBLResult<Veri
     return Err(bad());
   }
 
-  let mut zip = ZipArchive::new(File::open(path)?)?;
+  let mut zip = ZipArchive::new(File::open(path).at(path)?).map_err(zip_error(path))?;
   if !zip.comment().is_empty() {
     return Err(bad());
   }

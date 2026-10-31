@@ -8,6 +8,7 @@
 //! it stores no instance name or path, and renaming or moving the instance does
 //! not affect it.
 
+use crate::file_error::AtPath;
 use crate::instance::models::misc::{InstanceOrigin, ModLoaderType, OriginPlatform};
 use crate::instance::modpack_update::diff::FileKey;
 use crate::instance::modpack_update::remote::RemoteRule;
@@ -188,12 +189,12 @@ pub fn normalize_relative_path(path: &str) -> String {
 
 /// SHA-1 and size of a file, streamed.
 pub fn hash_file(path: &Path) -> std::io::Result<(String, u64)> {
-  let mut file = File::open(path)?;
+  let mut file = File::open(path).at(path)?;
   let mut hasher = Sha1::new();
   let mut buffer = vec![0u8; 64 * 1024];
   let mut size = 0u64;
   loop {
-    let read = file.read(&mut buffer)?;
+    let read = file.read(&mut buffer).at(path)?;
     if read == 0 {
       break;
     }
@@ -211,7 +212,7 @@ pub fn hash_existing_files(
   relative_paths
     .iter()
     .map(|relative| {
-      let (sha1, size) = hash_file(&root.join(relative))?;
+      let (sha1, size) = hash_file(&root.join(relative)).rooted(root)?;
       Ok(BaselineFile::managed(
         &normalize_relative_path(relative),
         FileKey { sha1, size },
@@ -371,12 +372,56 @@ impl ModpackBaseline {
   }
 
   pub async fn save(&self, instance_dir: &Path) -> std::io::Result<()> {
-    save_json_async(self, &instance_dir.join(BASELINE_FILE_NAME)).await
+    let path = instance_dir.join(BASELINE_FILE_NAME);
+    save_json_async(self, &path)
+      .await
+      .at_in(&path, instance_dir)
   }
 
   #[cfg_attr(not(test), allow(dead_code))]
   pub async fn load(instance_dir: &Path) -> std::io::Result<Self> {
-    load_json_async::<Self>(&instance_dir.join(BASELINE_FILE_NAME)).await
+    let mut baseline = load_json_async::<Self>(&instance_dir.join(BASELINE_FILE_NAME)).await?;
+    baseline.fold_disabled_suffixes();
+    Ok(baseline)
+  }
+
+  /// Installs before the update engine recorded a platform pack's disabled mod
+  /// under its disk name, `mods/x.jar.disabled` with `disabled: false`. The
+  /// engine names a file by its enabled path and keeps the state apart, so such
+  /// an entry is read as `mods/x.jar` with `disabled: true`. An entry whose
+  /// enabled name is recorded as well loses to it. Nothing changes, the content
+  /// hash included, when no entry carries the suffix.
+  fn fold_disabled_suffixes(&mut self) {
+    let suffix = crate::instance::modpack_update::diff::DISABLED_SUFFIX;
+    let is_disk_name = |path: &str| {
+      let folded = path.to_lowercase();
+      folded.starts_with("mods/")
+        && folded.ends_with(suffix)
+        && folded.len() > "mods/".len() + suffix.len()
+    };
+    if !self.files.iter().any(|file| is_disk_name(&file.path)) {
+      return;
+    }
+    let enabled: std::collections::HashSet<String> = self
+      .files
+      .iter()
+      .filter(|file| !is_disk_name(&file.path))
+      .map(|file| file.path.to_lowercase())
+      .collect();
+    let mut by_path = BTreeMap::new();
+    for mut file in std::mem::take(&mut self.files) {
+      if is_disk_name(&file.path) {
+        file.path.truncate(file.path.len() - suffix.len());
+        if enabled.contains(&file.path.to_lowercase()) {
+          continue;
+        }
+        file.disabled = true;
+      }
+      by_path.insert(file.path.clone(), file);
+    }
+    self.files = by_path.into_values().collect();
+    self.content_hash =
+      compute_content_hash(&self.loader, self.components.as_ref(), &self.files, &[]);
   }
 }
 
@@ -649,6 +694,56 @@ mod tests {
         3
       )]
     );
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn load_reads_a_recorded_disk_name_as_the_enabled_path_plus_disabled() {
+    let root = std::env::temp_dir().join(format!("ustbl-baseline-test-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    let recorded = ModpackBaseline::build(
+      &origin(),
+      loader("0.16.0"),
+      vec![
+        file("mods/off.jar.disabled", "aa", 1),
+        file("mods/Both.jar", "bb", 2),
+        file("mods/both.jar.DISABLED", "cc", 3),
+        file("config/c.toml.disabled", "dd", 4),
+        file("mods/on.jar", "ee", 5),
+      ],
+    );
+    recorded.save(&root).await.unwrap();
+
+    let loaded = ModpackBaseline::load(&root).await.unwrap();
+
+    let by_path: BTreeMap<_, _> = loaded
+      .files
+      .iter()
+      .map(|file| (file.path.as_str(), file.disabled))
+      .collect();
+    assert_eq!(
+      by_path,
+      BTreeMap::from([
+        ("config/c.toml.disabled", false),
+        ("mods/Both.jar", false),
+        ("mods/off.jar", true),
+        ("mods/on.jar", false),
+      ])
+    );
+    assert_eq!(
+      loaded.content_hash,
+      compute_content_hash(&loader("0.16.0"), None, &loaded.files, &[])
+    );
+    assert_ne!(loaded.content_hash, recorded.content_hash);
+
+    // Nothing to fold: the file reads back as written.
+    let plain = ModpackBaseline::build(
+      &origin(),
+      loader("0.16.0"),
+      vec![file("mods/a.jar", "aa", 1)],
+    );
+    plain.save(&root).await.unwrap();
+    assert_eq!(ModpackBaseline::load(&root).await.unwrap(), plain);
     let _ = fs::remove_dir_all(root);
   }
 

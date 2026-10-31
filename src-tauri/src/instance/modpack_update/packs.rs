@@ -8,6 +8,7 @@
 
 use super::sources::CAMPUS_API;
 use crate::error::{USTBLError, USTBLResult};
+use crate::file_error::AtPath;
 use crate::instance::models::misc::InstanceError;
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -505,14 +506,16 @@ impl PackSession {
 fn split_entry(raw: &Path, start: u64, entry: &EntryLocation, dest: &Path) -> USTBLResult<()> {
   let piece = raw_path(dest);
   let result = (|| -> USTBLResult<()> {
-    let mut input = File::open(raw)?;
-    input.seek(SeekFrom::Start(entry.data_offset - start))?;
+    let mut input = File::open(raw).at(raw)?;
+    input
+      .seek(SeekFrom::Start(entry.data_offset - start))
+      .at(raw)?;
     let mut taken = input.take(entry.compressed_size);
     if let Some(parent) = piece.parent() {
-      fs::create_dir_all(parent)?;
+      fs::create_dir_all(parent).at(parent)?;
     }
-    let mut out = File::create(&piece)?;
-    let copied = std::io::copy(&mut taken, &mut out)?;
+    let mut out = File::create(&piece).at(&piece)?;
+    let copied = std::io::copy(&mut taken, &mut out).at(&piece)?;
     if copied != entry.compressed_size {
       return Err(InstanceError::ModpackUpdateVerifyFailed.into());
     }
@@ -532,19 +535,19 @@ fn raw_path(dest: &Path) -> PathBuf {
 /// Write the entry's bytes, still compressed as stored in the pack, out as the
 /// original file, checking size and CRC.
 fn decode_entry(raw: &Path, entry: &EntryLocation, dest: &Path) -> USTBLResult<()> {
-  if fs::metadata(raw)?.len() != entry.compressed_size {
+  if fs::metadata(raw).at(raw)?.len() != entry.compressed_size {
     return Err(InstanceError::ModpackUpdateVerifyFailed.into());
   }
   if let Some(parent) = dest.parent() {
-    fs::create_dir_all(parent)?;
+    fs::create_dir_all(parent).at(parent)?;
   }
-  let input = File::open(raw)?;
+  let input = File::open(raw).at(raw)?;
   let mut reader: Box<dyn Read> = match entry.compress_type {
     STORED => Box::new(input),
     DEFLATED => Box::new(flate2::read::DeflateDecoder::new(input)),
     _ => return Err(InstanceError::ModpackUpdateRemoteInvalid.into()),
   };
-  let mut out = File::create(dest)?;
+  let mut out = File::create(dest).at(dest)?;
   let mut crc = flate2::Crc::new();
   let mut size = 0u64;
   let mut buffer = vec![0u8; 64 * 1024];
@@ -552,7 +555,7 @@ fn decode_entry(raw: &Path, entry: &EntryLocation, dest: &Path) -> USTBLResult<(
     let read = match reader.read(&mut buffer) {
       Ok(0) => break Ok(()),
       Ok(read) => read,
-      Err(error) => break Err(USTBLError::from(error)),
+      Err(error) => break Err(USTBLError::from(crate::file_error::tag(error, raw, None))),
     };
     size += read as u64;
     // A corrupt stream must not fill the disk.
@@ -561,7 +564,7 @@ fn decode_entry(raw: &Path, entry: &EntryLocation, dest: &Path) -> USTBLResult<(
     }
     crc.update(&buffer[..read]);
     if let Err(error) = out.write_all(&buffer[..read]) {
-      break Err(USTBLError::from(error));
+      break Err(USTBLError::from(crate::file_error::tag(error, dest, None)));
     }
   };
   let verified = outcome.and_then(|()| {
@@ -672,10 +675,13 @@ impl PackTransport for AppTransport {
     dest: &Path,
   ) -> Result<(), TransportError> {
     if length == 0 {
-      return tokio::fs::write(dest, b"").await.map_err(failed);
+      return tokio::fs::write(dest, b"").await.at(dest).map_err(failed);
     }
     if let Some(parent) = dest.parent() {
-      tokio::fs::create_dir_all(parent).await.map_err(failed)?;
+      tokio::fs::create_dir_all(parent)
+        .await
+        .at(parent)
+        .map_err(failed)?;
     }
     let client = self.app.state::<reqwest::Client>();
     let range = format!("bytes={start}-{}", start + length - 1);
@@ -700,16 +706,19 @@ impl PackTransport for AppTransport {
           ))));
         }
         let mut response = response;
-        let mut file = tokio::fs::File::create(dest).await.map_err(failed)?;
+        let mut file = tokio::fs::File::create(dest)
+          .await
+          .at(dest)
+          .map_err(failed)?;
         let mut written = 0u64;
         while let Some(chunk) = response.chunk().await.map_err(failed)? {
           written += chunk.len() as u64;
           if written > length {
             break;
           }
-          file.write_all(&chunk).await.map_err(failed)?;
+          file.write_all(&chunk).await.at(dest).map_err(failed)?;
         }
-        file.flush().await.map_err(failed)?;
+        file.flush().await.at(dest).map_err(failed)?;
         if written != length {
           return Err(TransportError::Failed(USTBLError(
             "pack range ended early".into(),

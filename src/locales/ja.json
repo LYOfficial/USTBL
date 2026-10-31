@@ -719,6 +719,8 @@
       "neoforge-libraries": "NeoForge ランタイムライブラリ",
       "forge-libraries": "Forge ランタイムライブラリ",
       "loader-installer": "ローダーインストーラー",
+      "optifine-installer": "OptiFine インストーラー",
+      "optifine-libraries": "OptiFine ランタイムライブラリ",
       "launcher-update": "ランチャーを更新",
       "mojang-java": "Java {{param}} ランタイム",
       "modpack-publish": "モッドパックを公開 {{param}}",
@@ -835,6 +837,13 @@
       "title": "Java 25 を自動インストール",
       "description": "初回起動を検出し、Java 25 ランタイムを自動でダウンロードしています"
     }
+  },
+  "FileError": {
+    "FILE_BLOCKED_BY_ANTIVIRUS": "ファイル {{file}} がウイルス対策ソフトにブロックされました。Windows セキュリティでこのファイルを許可するか、ゲームのフォルダーを除外に追加してから、もう一度お試しください。",
+    "FILE_MISSING": "ファイル {{file}} が見つかりません。削除または移動されたか、ウイルス対策ソフトに隔離された可能性があります。確認してからもう一度お試しください。",
+    "FILE_INACCESSIBLE": "ファイル {{file}} にアクセスできません。ゲームまたは他のプログラムが使用中か、権限がない可能性があります。関連するプログラムを閉じてからもう一度お試しください。",
+    "DISK_FULL": "ディスクの空き容量が不足しているため、{{file}} に書き込めません。ディスクを整理してからもう一度お試しください。",
+    "FILE_IO_FAILED": "ファイル {{file}} の読み書きに失敗しました（{{detail}}）。"
   },
   "GameAdvancedSettingsPage": {
     "title": "高度起動設定",
@@ -1327,6 +1336,7 @@
     "selectDirectory": "ゲームディレクトリ選択"
   },
   "InstanceDetailsLayout": {
+    "installing": "インスタンスをインストール中",
     "secMenu": {
       "createShortcut": "起動ショートカットを作成",
       "exportModPack": "モッドパックエクスポート",

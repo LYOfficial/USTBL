@@ -719,6 +719,8 @@
       "neoforge-libraries": "NeoForge 執行庫",
       "forge-libraries": "Forge 執行庫",
       "loader-installer": "載入器安裝程式",
+      "optifine-installer": "OptiFine 安裝程式",
+      "optifine-libraries": "OptiFine 執行庫",
       "launcher-update": "更新啟動器",
       "mojang-java": "Java {{param}} 執行時",
       "modpack-publish": "發布整合包 {{param}}",
@@ -835,6 +837,13 @@
       "title": "自動安裝 Java 25",
       "description": "首次啟動，正在自動下載 Java 25 執行環境"
     }
+  },
+  "FileError": {
+    "FILE_BLOCKED_BY_ANTIVIRUS": "檔案 {{file}} 被防毒軟體攔截。請在 Windows 安全性中允許該檔案，或把遊戲目錄加入排除項後重試。",
+    "FILE_MISSING": "找不到檔案 {{file}}，可能已被刪除、移動或被防毒軟體隔離。請檢查後重試。",
+    "FILE_INACCESSIBLE": "無法存取檔案 {{file}}，可能正被遊戲或其他程式佔用，或沒有權限。請關閉相關程式後重試。",
+    "DISK_FULL": "磁碟空間不足，無法寫入 {{file}}。請清理磁碟後重試。",
+    "FILE_IO_FAILED": "讀寫檔案 {{file}} 失敗（{{detail}}）。"
   },
   "GameAdvancedSettingsPage": {
     "title": "高階遊戲設定",
@@ -1327,6 +1336,7 @@
     "selectDirectory": "選擇遊戲目錄"
   },
   "InstanceDetailsLayout": {
+    "installing": "實例安裝中",
     "secMenu": {
       "createShortcut": "建立啟動捷徑",
       "exportModPack": "匯出為模組包",
