@@ -7,6 +7,15 @@ import {
 } from "@/utils/modpack-publish-tree";
 
 const LISTED = 12;
+const HINTED_ROWS = new Set([
+  "removed",
+  "ignored",
+  "deleted",
+  "toggled",
+  "onceUpdated",
+  "rulesChanged",
+  "localDeleted",
+]);
 
 interface Row {
   key: keyof Omit<PublishSummaryData, "isNew" | "pushed">;
@@ -72,7 +81,11 @@ const PublishSummary: React.FC<PublishSummaryProps> = ({ summary }) => {
                 key={key}
                 label={
                   <>
-                    <Text>{t(`PublishModpackModal.summary.hint.${key}`)}</Text>
+                    {HINTED_ROWS.has(key) && (
+                      <Text>
+                        {t(`PublishModpackModal.summary.hint.${key}`)}
+                      </Text>
+                    )}
                     {shown.map((name) => (
                       <Text key={name} mt={1} fontSize="xs">
                         {name}

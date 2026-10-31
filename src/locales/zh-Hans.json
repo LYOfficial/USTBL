@@ -2769,9 +2769,9 @@
             "MODPACK_UPDATE_UNSUPPORTED": "此实例暂不支持自动更新",
             "MODPACK_UPDATE_RUNNING": "游戏正在运行，请先关闭游戏再更新整合包",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的组件链，无法就地更新，请重新安装",
-            "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线",
+            "MODPACK_UPDATE_LINE_GONE": "平台上已没有这个整合包的这条版本线",
             "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试",
-            "MODPACK_UPDATE_MERGE_INVALID": "按块选择后配置文件的格式无效，请调整选择后重试"
+            "MODPACK_UPDATE_MERGE_INVALID": "按你的选择合并后，配置文件格式不对，请换个选择再试"
           }
         }
       },
@@ -2791,7 +2791,7 @@
         "error": {
           "title": "解除跟随失败",
           "description": {
-            "MODPACK_UPDATE_UNLINK_PENDING": "上次更新尚未完成，请先恢复或回滚后再解除跟随"
+            "MODPACK_UPDATE_UNLINK_PENDING": "上次更新没有完成，请先恢复或撤销再解除跟随"
           }
         }
       },
@@ -2813,9 +2813,9 @@
             "MODPACK_UPDATE_UNSUPPORTED": "此实例暂不支持自动更新",
             "MODPACK_UPDATE_RUNNING": "游戏正在运行，请先关闭游戏再更新整合包",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "新版本更改了整合包的组件链，无法就地更新，请重新安装",
-            "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线",
+            "MODPACK_UPDATE_LINE_GONE": "平台上已没有这个整合包的这条版本线",
             "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试",
-            "MODPACK_UPDATE_MERGE_INVALID": "按块选择后配置文件的格式无效，请调整选择后重试"
+            "MODPACK_UPDATE_MERGE_INVALID": "按你的选择合并后，配置文件格式不对，请换个选择再试"
           }
         }
       },
@@ -3222,83 +3222,83 @@
       "packing": "正在打包新增内容"
     },
     "tree": {
-      "include": "勾选",
+      "include": "发布",
       "ignore": "忽略",
       "delete": "删除",
       "remove": "移除",
       "mixed": "混合",
       "once": "仅首次安装",
-      "onceHint": "只在玩家首次安装时放入，之后不再更新；玩家删除后也不会重装",
+      "onceHint": "只在首次安装时附带此文件，之后不会更新，如若删除也不会补齐",
       "restore": "恢复继承",
-      "restoreHint": "去掉这一处的设置，沿用上层目录的规则",
+      "restoreHint": "去掉单独设置，跟随父目录",
       "disabled": "已禁用",
-      "missing": "磁盘上已没有",
-      "conflict": "启用和禁用两个文件同时存在",
+      "missing": "本地已删除",
+      "conflict": "启用和禁用（.disabled）并存",
       "toggle": "{{name}}：当前为“{{state}}”，点击切换为“{{next}}”",
       "legend": {
-        "include": "随版本发布",
-        "ignore": "这一版不管它，玩家本地的保持不动",
-        "delete": "玩家更新时直接删掉",
-        "cycle": "点击图标依次切换；目录的状态会应用到其下所有文件，单独设置过的除外"
+        "include": "发布此变动",
+        "ignore": "此文件/目录下的变动不会作用于用户更新",
+        "delete": "玩家更新时同步删除此文件/目录",
+        "cycle": "点击图标三态切换，文件级设置优先级高于目录级设置"
       },
       "hint": {
-        "include": "随这一版发给玩家，由整合包管理：没有的会装上，已有的更新为这一版；玩家改过的会合并，合并不了时提示冲突。",
-        "ignore": "这一版不管这个文件：玩家已有的保留原样，没有的不会拿到。",
-        "delete": "玩家那里这个位置的文件会被删除（目录则删除其下的文件），包括玩家自己放进去的；删除前会备份，可以回滚。",
-        "remove": "这一版不再包含它：玩家没改过的会被删除，改过的在更新时询问，不归整合包管理的不动。",
-        "mixed": "其下文件的状态不同。"
+        "include": "此变动会在更新时尝试与玩家对应文件合并",
+        "ignore": "此变动不会被发布，有此文件的玩家相应本地改动会被保留，或不会收到此文件",
+        "delete": "此变动会导致玩家侧客户端进行对应文件的备份后删除",
+        "remove": "取消此文件的发布。玩家未修改此文件会直接删除，否则更新时询问。",
+        "mixed": "目录下文件设置有多种状态"
       },
       "clickTo": "点击切换为“{{next}}”",
       "change": {
         "modified": "修改",
         "added": "新增",
         "toggled": "启用状态",
-        "onceChanged": "仅首次安装改动",
+        "onceChanged": "仅首次安装·已改",
         "deleted": "删除"
       },
       "changeHint": {
         "modified": "内容和上一版不同。",
         "added": "上一版没有这个文件。",
-        "toggled": "内容和上一版相同，只有启用或禁用状态不同。",
-        "onceChanged": "上一版把它标为“仅首次安装”，现在内容不同。保持“仅首次安装”，只有新装的玩家会拿到新内容；去掉标记，已装的玩家更新时也会收到。",
-        "deleted": "上一版有这个文件，磁盘上已经没有了。"
+        "toggled": "模组状态更改为启用或禁用",
+        "onceChanged": "标了仅首次安装，内容变了。保持标记：只有新装的玩家拿到新内容；去掉标记：所有玩家更新时都会拿到。",
+        "deleted": "上一版存在，本地已删除。"
       },
       "filter": {
         "title": "改动：",
         "onlyChanged": "只看改动"
       },
-      "noPrevious": "没有上一版可以比较，所有文件都算新增。",
+      "noPrevious": "首次发布，全部新增。",
       "dirChanges": "{{count}} 处改动",
       "localIgnored": "本地已忽略",
-      "localIgnoredHint": "这是玩家侧的设置，只影响这台电脑上的显示和更新，不影响发布：这个文件仍按这里的状态推送。",
+      "localIgnoredHint": "发布者在“查看改动”里忽略的文件/目录改动。仍会按设置处理发布，处理的是发布者实例本身的更新行为。",
       "diff": {
         "show": "查看差异",
         "hide": "收起差异",
-        "differs": "内容不同。上一版 {{previous}}，本地 {{local}}。",
-        "formatOnly": "文本内容相同，只有换行等格式不同。上一版 {{previous}}，本地 {{local}}。",
-        "unavailable": "暂时取不到上一版的内容。"
+        "differs": "非文本或文件太大，文件大小 {{previous}}→{{local}}",
+        "formatOnly": "仅换行等格式不同",
+        "unavailable": "无法获取上一版，请稍后再试"
       },
-      "localDelete": "本机也会删除",
-      "localDeleteHint": "发布后本机的这个文件也会删除（先备份）；想自己保留请改为忽略",
+      "localDelete": "删除（连带本地）",
+      "localDeleteHint": "发布后本机连同玩家侧该文件都会被备份后删除。",
       "localDeleteCount": "本机也会删除 {{count}} 个文件"
     },
     "skipped": "有 {{count}} 个启动器文件被排除",
     "adoption": {
-      "keptOther": "该实例已跟随其他整合包或其他线，未改动其来源记录。",
-      "notIsolated": "该实例未开启版本隔离，未将其关联到此整合包。",
+      "keptOther": "此实例跟随的其他非发布项目整合包，保持不变。",
+      "notIsolated": "实例未开启版本隔离，不会跟随所发布的整合包项目。",
       "localChanged": "该实例与刚发布的版本不一致（例如标为删除的文件仍在磁盘上），未将其关联到此版本，下次更新会按版本内容处理。",
-      "recordFailed": "版本已发布，但未能记录该实例与此版本的关联，下次检查将按常规比较。",
+      "recordFailed": "版本已发布，但未能记录该实例与此版本的关联。",
       "localDeleted": "按删除规则删除了本机 {{count}} 个文件，备份在 .ustbl-update/publish-deleted",
       "deleteFailed": "删除本机文件失败，未跟随这一版；备份已保留。"
     },
     "started": {
       "title": "已开始上传整合包",
-      "description": "上传在后台进行，可在下载页查看进度。"
+      "description": "在后台上传，进度见下载页。"
     },
     "summary": {
-      "title": "这次推送相对上一版",
-      "isNew": "没有上一版可以比较，以下全部为新增。",
-      "same": "推送的内容和上一版一致（{{count}} 个文件）。",
+      "title": "变动汇总",
+      "isNew": "首次发布。",
+      "same": "和上一版完全相同（{{count}} 个文件）。",
       "more": "…还有 {{count}} 项",
       "added": "新增 {{count}} 个文件",
       "modified": "修改 {{count}} 个文件",
@@ -3311,21 +3311,15 @@
       "onceOff": "不再仅首次安装 {{count}} 个",
       "rulesAdded": "新增规则 {{count}} 条",
       "rulesRemoved": "去掉规则 {{count}} 条",
-      "rulesChanged": "规则改状态 {{count}} 条",
+      "rulesChanged": "规则改动 {{count}} 条",
       "hint": {
-        "added": "上一版没有，这一版会带上。",
-        "modified": "内容和上一版不同，玩家更新时会收到。",
-        "onceUpdated": "这些文件保持“仅首次安装”，新内容只有新装的玩家会拿到。",
-        "removed": "上一版有，这一版不再包含：玩家没改过的会被删除，改过的在更新时询问。",
-        "ignored": "上一版有，这一版改为忽略：玩家那里保持原样，没有的不会拿到。",
-        "deleted": "上一版有，这一版改为删除：玩家那里的文件会被删除。",
-        "toggled": "启用或禁用状态和上一版不同：没改过状态的玩家会跟随，玩家自己改过的保留。",
-        "onceOn": "这些文件改为仅首次安装，之后不再更新。",
-        "onceOff": "这些文件不再是仅首次安装，之后随版本更新。",
-        "rulesAdded": "上一版没有、这一版新加的忽略或删除规则。",
-        "rulesRemoved": "上一版有、这一版不再带的规则。",
+        "onceUpdated": "新玩家只能拿到修改后的此文件",
+        "removed": "玩家没改过的删掉，改过的询问。",
+        "ignored": "玩家已有的不动，新装的拿不到。",
+        "deleted": "玩家那里会删掉。",
+        "toggled": "玩家没改过的跟着变，自己改过的保留。",
         "rulesChanged": "在忽略和删除之间改了状态的规则。",
-        "localDeleted": "发布后本机的这些文件也会删除（先备份）；想自己保留请改为忽略"
+        "localDeleted": "发布后本机的这些文件也会被备份后删除。"
       },
       "localDeleted": "本机也会删除 {{count}} 个文件"
     }
@@ -3355,14 +3349,14 @@
     "status": {
       "checking": "正在检查更新…",
       "planning": "正在对比新版本与本地文件…",
-      "applying": "正在更新整合包，请勿关闭启动器…",
+      "applying": "正在更新，请勿关闭启动器…",
       "available": "有新版本：{{latest}}",
       "upToDate": "已是最新版本",
-      "paused": "已暂停跟随该整合包的更新",
-      "notFollowing": "此实例未关联可跟随的整合包",
-      "needsRepair": "该实例暂时无法对比更新，需要先修复",
-      "unknown": "暂时无法获取更新信息，请稍后重试",
-      "waitingLoader": "正在等待模组加载器安装完成，完成后再检查更新",
+      "paused": "已暂停跟随更新",
+      "notFollowing": "此实例没有跟随整合包",
+      "needsRepair": "此实例需要修复后才能检查更新",
+      "unknown": "暂时无法获取更新，请稍后重试",
+      "waitingLoader": "等待模组加载器安装完成后才能检查更新",
       "localChanges": "有 {{count}} 处本地改动"
     },
     "label": {
@@ -3376,35 +3370,35 @@
       "delete": "删除 {{count}}",
       "disable": "禁用 {{count}}",
       "enable": "启用 {{count}}",
-      "retire": "转休眠 {{count}}",
-      "loaderChange": "模组加载器将从 {{from}} 切换到 {{to}}",
-      "conflicts": "有 {{count}} 个文件与本地修改冲突，请选择处理方式（默认保留本地）",
+      "retire": "休眠 {{count}}",
+      "loaderChange": "{{loader}} 将从 {{from}} 切换到 {{to}}",
+      "conflicts": "{{count}} 个文件和你的修改冲突，默认保留本地，可以逐个处理",
       "autoMerged": "自动合并 {{count}}",
       "showAll": "显示全部（还有 {{count}} 项）",
-      "reinstallRequired": "{{latest}} 更改了整合包的组件链，无法就地更新，请重新安装该整合包",
-      "restored": "还原已忽略的改动 {{count}}",
-      "restoredDescription": "这些是你忽略过的改动，这次更新还原成整合包的内容，还原前备份。新增文件被新版本的同路径文件直接替换的也在这里。",
+      "reinstallRequired": "{{latest}} 更改了实例的组件链，不能直接更新，请重新安装",
+      "restored": "覆盖已忽略的改动 {{count}}",
+      "restoredDescription": "本地忽略过的改动，将与新版本内容同步。包含新版本同名文件替换。",
       "restoredKind": {
         "add": "新增",
         "update": "更新",
         "delete": "删除",
         "disable": "禁用",
         "enable": "启用",
-        "retire": "不再管理"
+        "retire": "休眠"
       }
     },
     "conflictKind": {
-      "modifiedLocallyChangedRemotely": "你修改过，新版本也改了它",
-      "modifiedLocallyRemovedRemotely": "你修改过，新版本已不再包含它",
-      "deletedLocallyChangedRemotely": "你删除了它，新版本更新了它",
-      "unmanagedFileInTheWay": "同名文件不属于整合包，新版本想要写入",
-      "remanage": "整合包曾不再管它，现在重新管理它，而本地的内容与记录和新版本都不同"
+      "modifiedLocallyChangedRemotely": "本地和新版本在此文件的变动发生冲突",
+      "modifiedLocallyRemovedRemotely": "本地修改了此文件，新版本不再包含此文件",
+      "deletedLocallyChangedRemotely": "本地删除了此文件，新版本有此文件的修改版",
+      "unmanagedFileInTheWay": "新版本新增同名文件，会对此文件进行替换",
+      "remanage": "整合包重新管理它，但本地的内容和新版本不一样"
     },
     "choice": {
       "keepLocal": "保留本地",
       "takeRemote": "使用新版本",
       "revealFile": "在文件夹中显示",
-      "hunk": "第 {{number}} 处冲突（基线第 {{from}}-{{to}} 行）",
+      "hunk": "第 {{number}} 处冲突（原文件第 {{from}}-{{to}} 行）",
       "allKeepLocal": "全部保留本地",
       "allTakeRemote": "全部使用新版本",
       "localSide": "本地",
@@ -3419,30 +3413,31 @@
       "confirmRollback": "确认撤销"
     },
     "toast": {
-      "loaderPending": "模组加载器需要重新安装，请在下载页查看进度",
-      "planChanged": "更新计划已变化，请重新选择冲突"
+      "loaderPending": "正在重装模组加载器，进度见下载与上传页面",
+      "planChanged": "更新计划变更，请重新处理冲突"
     },
     "unlink": {
       "button": "解除跟随",
       "confirmTitle": "解除跟随整合包",
-      "confirmBody": "解除后不再检查该整合包的更新，也不会删除任何游戏文件。之后可以重新安装或重新发布来再次关联。",
+      "confirmBody": "不再检查这个整合包的更新，游戏文件不会删除。之后重新安装或重新发布可以再次跟随。",
       "success": "已解除跟随"
     },
     "reason": {
-      "MODPACK_UPDATE_UNLINK_PENDING": "上次更新尚未完成，请先恢复或回滚后再解除跟随",
-      "MODPACK_UPDATE_BOTH_VARIANTS": "同名文件及其 .disabled 变体同时存在，请删除其中一个后再更新",
-      "MODPACK_UPDATE_LINE_GONE": "平台上已不存在该整合包的这条线",
+      "MODPACK_UPDATE_UNLINK_PENDING": "上次更新没有完成，请先恢复或撤销再解除跟随",
+      "MODPACK_UPDATE_BOTH_VARIANTS": "启用和禁用（.disabled）版本同时存在，删掉一个再更新",
+      "MODPACK_UPDATE_LINE_GONE": "平台上已没有这个整合包的这条版本线",
       "MODPACK_UPDATE_PREPARE_CANCELLED": "更新预览已取消",
-      "MODPACK_UPDATE_UNSUPPORTED": "该实例缺少可用的安装记录或未开启版本隔离",
-      "MODPACK_UPDATE_NOT_ISOLATED": "该实例没有开启版本隔离，无法安全对比更新。请在实例设置中开启后重试",
-      "MODPACK_UPDATE_BASELINE_MISSING": "该实例缺少整合包的安装记录或记录已损坏，无法对比更新",
+      "MODPACK_UPDATE_UNSUPPORTED": "此实例没有安装记录或未开启版本隔离",
+      "MODPACK_UPDATE_NOT_ISOLATED": "此实例没开版本隔离，无法检查更新。请在实例设置里开启后重试",
+      "MODPACK_UPDATE_BASELINE_MISSING": "此实例的安装记录缺失或损坏，无法检查更新",
       "MODPACK_UPDATE_PACK_UNAVAILABLE": "平台上暂时取不到此版本所需的文件，请稍后重试",
-      "MODPACK_UPDATE_MERGE_INVALID": "按块选择后配置文件的格式无效，请调整选择后重试",
-      "MODPACK_UPDATE_LOCATE_LOCATING": "无法定位整合包文件，请检查网络后重试"
+      "MODPACK_UPDATE_MERGE_INVALID": "按你的选择合并后，配置文件格式不对，请换个选择再试",
+      "MODPACK_UPDATE_LOCATE_LOCATING": "无法定位整合包文件，请检查网络后重试",
+      "MODPACK_UPDATE_BUSY": "整合包正在更新，请等待完成"
     },
     "rollback": {
-      "hint": "可以撤销上一次整合包更新，把文件和加载器恢复成更新前的样子。",
-      "confirm": "撤销会覆盖更新之后你对这些文件做的修改，且只能撤销一次。"
+      "hint": "可以撤销上次更新，文件和加载器会恢复到更新前。",
+      "confirm": "更新后你对这些文件的修改会被覆盖，可以撤销回更新前。"
     }
   },
   "ModpackLocalChangesModal": {
@@ -3450,22 +3445,21 @@
       "title": "本地改动：{{name}}"
     },
     "loading": "正在对比本地文件…",
-    "empty": "和上一版相比没有改动",
+    "empty": "没有本地改动",
     "comparedTo": "对比的版本：{{label}}",
-    "countingRule": "只列下次更新会涉及的本地改动：修改、删除、禁用状态不同，以及 mods、resourcepacks、shaderpacks 下的新增文件。只比较规范化后的内容，仅换行或时间戳不同的不算改动。",
-    "filterHint": "点击分类只看这一类，再点一次取消。",
-    "incomplete": "暂时取不到上一版的规则，可能漏掉会被删除的文件。联网后重新打开可以补全。",
+    "countingRule": "列出本地改动：修改、删除、启用状态，以及 mods、资源包、光影里的新文件。",
+    "incomplete": "无法获取上一版改动规则，请重试",
     "class": {
       "modified": "修改",
       "deleted": "删除",
-      "toggled": "禁用切换",
+      "toggled": "启用/禁用",
       "added": "新增"
     },
     "disabled": "已禁用",
-    "toggledTag": "禁用状态也不同",
+    "toggledTag": "启用/禁用状态改变",
     "noDiff": {
-      "notText": "非文本文件或文件过大，不显示内容差异",
-      "baseMissing": "没有保存安装时的内容，无法显示差异",
+      "notText": "非文本或文件太大，不显示差异",
+      "baseMissing": "没有安装时的副本，无法显示差异",
       "bothVariants": "同名文件及其 .disabled 变体同时存在，请删除其中一个"
     },
     "button": {
@@ -3475,40 +3469,39 @@
       "spot": "忽略此处",
       "file": "忽略整个文件",
       "added": "忽略",
-      "spotHint": "这一处不再显示，也不计入本地改动。下一次更新时交给启动器处理：这一处会还原成整合包的内容（还原前备份）。在那之前，你的内容不变。",
-      "fileHint": "这个文件不再显示，也不计入本地改动。下一次更新时交给启动器处理：文件还原成整合包的内容，删掉的会重新装上，启用状态跟随整合包（还原前备份）。",
-      "addedHint": "这个文件不再显示，也不计入本地改动。更新不会动它；只有新版本带了同路径的文件时，直接用新版替换，不再询问（替换前备份）。",
+      "spotHint": "不再显示、不计入改动。下次更新时此处会与整合包的内容同步。",
+      "fileHint": "不再显示、不计入改动，将此文件交由更新系统处理。下次更新时整个文件同步到整合包的样子，会装回已删除的文件。",
+      "addedHint": "此本地新增不再显示、不计入改动。更新时，新版本带了同名文件时将直接替换。",
       "publishUnaffected": "不影响发布。"
     },
     "ignored": {
-      "title": "已忽略（{{count}} 项）",
-      "description": "已忽略的项目不在上面显示，也不计入本地改动。下一次更新时由启动器处理，每一项的结果写在条目里；可以随时撤销。",
+      "title": "已忽略（{{count}}）",
+      "description": "下次更新时按整合包最新状态的处理（会备份），随时可以撤销“忽略”。此处的忽略等同于将后续对应文件/目录的处理交给启动器。",
       "wholeFile": "整个文件",
       "spots": "{{count}} 处",
       "lines": "第 {{from}}–{{to}} 行",
       "undo": "撤销",
       "undoAll": "全部撤销",
       "addedFile": "新增文件",
-      "undoHint": "恢复显示和计数，下一次更新照常保留你的改动。",
+      "undoHint": "重新显示并计入变动，更新时照常保留你的改动",
       "next": {
-        "whole": "下一次更新时：文件还原成整合包的内容，删掉的会重新装上，启用状态跟随整合包（还原前备份）。",
-        "spots": "下一次更新时：这几处还原成整合包的内容，再和新版本正常合并；没忽略的改动照常保留（还原前备份）。",
-        "added": "更新不动这个文件；新版本带了同路径的文件时，直接用新版替换（替换前备份）。"
+        "whole": "下次更新：整个文件恢复成整合包的样子",
+        "spots": "下次更新：这 {{count}} 处改动会与最新版整合包同步，其他改动保留",
+        "added": "更新不会影响该文件，除非新版本带同名文件时直接替换"
       }
     },
     "publishHint": {
       "updateFirst": "线上已有新版本，请先更新再发布"
     },
     "next": {
-      "modified": "新版本没改这个文件：保留你的内容。改了：文本自动合并，同一处都改了时询问你；非文本直接询问。新版本不再包含它：询问保留还是删除。",
-      "deleted": "新版本没改它：保持删除。改了：询问你。",
+      "modified": "如若新版本与本地在同一文本/文件发生了变动而冲突，会提醒处理，不冲突的文本改动会合并。",
+      "deleted": "保持删除，直至新版本更新对此文件有要求",
       "toggled": "保留你的状态。",
-      "added": "更新不动它；新版本带了同路径的文件时询问你。"
+      "added": "不受更新影响；新版本有同名文件时会询问"
     },
     "willDelete": {
       "title": "下次更新会删除（{{count}}）",
-      "description": "这些文件不在整合包里，却被上一版的删除规则盖住：新版本仍保留这条删除规则时会删除（删除前备份）。",
-      "note": "新版本仍保留这条删除规则时，更新会删除这个文件（删除前备份）。"
+      "description": "这些文件在上一版本删除规则的范围内。如果新版本还有对应删除规则，更新将备份后删除对应文件。"
     }
   },
   "InstanceSyncPage": {
