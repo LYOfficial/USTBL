@@ -10,6 +10,7 @@ use crate::resource::models::{
   OtherResourceRequestType, OtherResourceSearchRes, OtherResourceSource, OtherResourceVersionPack,
   ResourceError,
 };
+use crate::utils::web::ApiClient;
 use serde::Deserialize;
 use std::collections::HashMap;
 use tauri::{AppHandle, Manager};
@@ -76,7 +77,7 @@ where
   T: serde::de::DeserializeOwned,
   P: serde::Serialize,
 {
-  let client = app.state::<reqwest::Client>();
+  let client = app.state::<ApiClient>();
   let mut last_error: Option<USTBLError> = None;
 
   for source in content_source_priority(app) {
@@ -158,7 +159,7 @@ pub async fn fetch_project_ids_by_hashes_modrinth(
   app: &AppHandle,
   hashes: &[String],
 ) -> LookupOutcome<String, String> {
-  let client = app.state::<reqwest::Client>();
+  let client = app.state::<ApiClient>();
   let sources = content_source_priority(app);
   let mut outcome = LookupOutcome::default();
   for chunk in hashes.chunks(VERSION_FILES_BATCH_SIZE) {
@@ -195,7 +196,7 @@ pub async fn fetch_projects_modrinth(
   app: &AppHandle,
   ids: &[String],
 ) -> LookupOutcome<String, ModrinthProjectBrief> {
-  let client = app.state::<reqwest::Client>();
+  let client = app.state::<ApiClient>();
   let sources = content_source_priority(app);
   lookup_across_sources(&sources, ids, |source, asked: Vec<String>| {
     let client = &client;

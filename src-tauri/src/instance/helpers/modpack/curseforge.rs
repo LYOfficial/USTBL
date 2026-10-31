@@ -29,6 +29,7 @@ use crate::resource::helpers::mcim::{
 };
 use crate::resource::models::OtherResourceSource;
 use crate::tasks::download::DownloadParam;
+use crate::utils::web::ApiClient;
 use std::sync::Mutex;
 
 lazy_static! {
@@ -590,7 +591,7 @@ impl ModpackManifest for CurseForgeManifest {
   ) -> USTBLResult<Vec<ModpackDownload>> {
     let started = Instant::now();
     let client = HttpMetadataClient::new(
-      app.state::<reqwest::Client>().inner().clone(),
+      app.state::<ApiClient>().inner().0.clone(),
       curseforge_content_sources(app),
     );
 

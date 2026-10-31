@@ -16,6 +16,7 @@ use crate::resource::models::{
   OtherResourceApiEndpoint, OtherResourceDependency, OtherResourceFileInfo, OtherResourceInfo,
   OtherResourceRequestType, OtherResourceSource, ResourceError,
 };
+use crate::utils::web::ApiClient;
 use lazy_static::lazy_static;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -486,7 +487,7 @@ pub async fn fetch_curseforge_json<T>(
 where
   T: serde::de::DeserializeOwned,
 {
-  let client = app.state::<reqwest::Client>();
+  let client = app.state::<ApiClient>();
   let mut last_error: Option<USTBLError> = None;
 
   for source in priority {

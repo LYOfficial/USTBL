@@ -38,8 +38,8 @@ use url::Url;
 pub fn build_ustbl_client(app: &AppHandle, use_proxy: bool) -> Client {
   // The shared client never asks for gzip: it also serves downloads and pack
   // Range reads, which count on Content-Length and on receiving the exact
-  // byte range they asked for. Only build_campus_client, made just for the
-  // campus JSON API, accepts a compressed response.
+  // byte range they asked for. Only the campus client and `ApiClient`, made
+  // for JSON APIs, accept a compressed response.
   shared_builder(build_client(app, use_proxy, Some(Duration::from_secs(30))))
     .build()
     .unwrap_or_else(|_| shared_builder(ClientBuilder::new()).build().unwrap())
@@ -57,8 +57,8 @@ fn campus_builder(builder: ClientBuilder) -> ClientBuilder {
   builder.gzip(true)
 }
 
-/// Builds the client for the campus modpack API (`CAMPUS_API`), the only
-/// client that accepts gzip. The version detail answers with several
+/// Builds the client for the campus modpack API (`CAMPUS_API`). It accepts
+/// gzip. The version detail answers with several
 /// megabytes of JSON over a slow link, and the platform compresses it; the
 /// shared client (downloads, pack Range reads) must keep seeing raw bytes.
 pub fn build_campus_client(app: &AppHandle) -> Client {
@@ -81,6 +81,31 @@ pub fn build_no_redirect_client(app: &AppHandle) -> NoRedirectClient {
     no_redirect_builder(build_client(app, true, Some(Duration::from_secs(30))))
       .build()
       .unwrap_or_else(|_| no_redirect_builder(ClientBuilder::new()).build().unwrap()),
+  )
+}
+
+/// State type of the client for JSON platform APIs (MCIM, Modrinth,
+/// CurseForge). It accepts gzip like the campus client: MCIM answers at about
+/// 30 KB/s per connection, and its JSON shrinks to a fifth when compressed.
+#[derive(Clone)]
+pub struct ApiClient(pub Client);
+
+impl std::ops::Deref for ApiClient {
+  type Target = Client;
+
+  fn deref(&self) -> &Client {
+    &self.0
+  }
+}
+
+/// Builds the client behind [`ApiClient`]: same proxy, User-Agent and timeouts
+/// as [`build_ustbl_client`], but it sends `Accept-Encoding: gzip` and decodes
+/// the reply.
+pub fn build_api_client(app: &AppHandle) -> ApiClient {
+  ApiClient(
+    campus_builder(build_client(app, true, Some(Duration::from_secs(30))))
+      .build()
+      .unwrap_or_else(|_| campus_builder(ClientBuilder::new()).build().unwrap()),
   )
 }
 
