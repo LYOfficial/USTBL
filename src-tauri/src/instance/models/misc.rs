@@ -123,6 +123,12 @@ pub struct ModpackOriginInput {
   pub version_id: String,
   /// SHA-1 of the modpack archive published by the platform.
   pub expected_sha1: String,
+  #[serde(default)]
+  pub url: Option<String>,
+  #[serde(default)]
+  pub label: Option<String>,
+  #[serde(default)]
+  pub loader_type: ModLoaderType,
 }
 
 structstruck::strike! {

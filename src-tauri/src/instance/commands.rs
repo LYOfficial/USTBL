@@ -994,6 +994,23 @@ async fn verify_origin(
       follow: true,
     });
   }
+  if modpack_path.is_none()
+    && matches!(
+      input.platform,
+      OriginPlatform::Modrinth | OriginPlatform::CurseForge
+    )
+    && !input.version_id.is_empty()
+    && !input.expected_sha1.is_empty()
+  {
+    return Some(InstanceOrigin {
+      platform: input.platform,
+      project_id: input.project_id,
+      version_id: String::new(),
+      game_version: game_version.to_string(),
+      loader_type: input.loader_type,
+      follow: true,
+    });
+  }
   let path = PathBuf::from(modpack_path?);
   let expected = input.expected_sha1.trim().to_lowercase();
   let actual = tokio::task::spawn_blocking(move || hash_file(&path))
@@ -1005,6 +1022,7 @@ async fn verify_origin(
     log::warn!("Dropping modpack origin: archive SHA-1 does not match the published one");
     return None;
   }
+  // No current caller passes an origin with an archive; keep this E4 path for compatibility.
   Some(InstanceOrigin {
     platform: input.platform,
     project_id: input.project_id,
@@ -1077,8 +1095,9 @@ pub async fn create_instance(
     ));
   }
 
+  let origin_input = origin.clone();
   let origin = verify_origin(
-    origin,
+    origin.clone(),
     modpack_path.as_ref(),
     &game.id,
     mod_loader.loader_type,
@@ -1407,6 +1426,7 @@ pub async fn create_instance(
   crate::instance::modpack_update::commands::register_created_campus_instance(
     &instance,
     client_group.task_group,
+    crate::instance::modpack_update::commands::install_target_from_origin(origin_input.as_ref()),
   )?;
   dir_guard.commit(); // disarm the cleanup guard on success
   Ok(())
@@ -1911,6 +1931,9 @@ mod origin_tests {
       project_id: "p".into(),
       version_id: "v".into(),
       expected_sha1: sha1.into(),
+      url: None,
+      label: None,
+      loader_type: ModLoaderType::Unknown,
     }
   }
 
@@ -1946,6 +1969,9 @@ mod origin_tests {
       project_id: "gtnh".into(),
       version_id: "42".into(),
       expected_sha1: sha1.into(),
+      url: None,
+      label: None,
+      loader_type: ModLoaderType::Unknown,
     };
     let origin = verify_origin(Some(campus("")), None, "1.7.10", ModLoaderType::Forge)
       .await
@@ -1963,6 +1989,51 @@ mod origin_tests {
         .await
         .is_none()
     );
+  }
+
+  #[tokio::test]
+  async fn a_platform_install_without_an_archive_uses_the_input_loader() {
+    let platform = ModpackOriginInput {
+      platform: OriginPlatform::Modrinth,
+      project_id: "project".into(),
+      version_id: "version".into(),
+      expected_sha1: "abc".into(),
+      url: Some("https://example.test/pack.mrpack".into()),
+      label: Some("Pack".into()),
+      loader_type: ModLoaderType::Fabric,
+    };
+    let origin = verify_origin(
+      Some(platform.clone()),
+      None,
+      "1.21.1",
+      ModLoaderType::Unknown,
+    )
+    .await
+    .unwrap();
+    assert_eq!(origin.version_id, "");
+    assert_eq!(origin.loader_type, ModLoaderType::Fabric);
+    assert!(verify_origin(
+      Some(ModpackOriginInput {
+        version_id: String::new(),
+        ..platform.clone()
+      }),
+      None,
+      "1.21.1",
+      ModLoaderType::Unknown,
+    )
+    .await
+    .is_none());
+    assert!(verify_origin(
+      Some(ModpackOriginInput {
+        expected_sha1: String::new(),
+        ..platform
+      }),
+      None,
+      "1.21.1",
+      ModLoaderType::Unknown,
+    )
+    .await
+    .is_none());
   }
 }
 
@@ -1985,6 +2056,8 @@ mod isolation_tests {
       follow: true,
     });
     assert!(should_lock_on_create(&instance, false));
+    apply_creation_isolation(&mut instance, false);
+    assert!(instance.isolation_locked);
 
     instance.origin = None;
     instance.modpack_version = Some("1.0.0".into());

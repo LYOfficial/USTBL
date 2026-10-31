@@ -107,7 +107,7 @@
       },
       "modpack": {
         "title": "导入整合包",
-        "description": "从本地文件或互联网导入整合包（CurseForge, Modrinth 或 MultiMC 格式）"
+        "description": "从本地文件导入整合包（CurseForge、Modrinth 或 MultiMC 格式）"
       },
       "campusModpack": {
         "title": "安装北科整合包",
@@ -117,10 +117,6 @@
         "title": "管理游戏目录",
         "description": "管理本地游戏存储目录，以添加已安装实例"
       }
-    },
-    "modpackOperations": {
-      "fromdisk": "从本地文件导入",
-      "download": "下载整合包"
     },
     "moreOptions": {
       "title": "更多",
@@ -510,10 +506,20 @@
       }
     }
   },
+  "DiscoverModpacksPage": {
+    "title": "整合包",
+    "description": "搜索并安装来自 Modrinth 和 CurseForge 的整合包"
+  },
+  "DiscoverCampusModpacksPage": {
+    "title": "校园整合包",
+    "description": "浏览并安装像素北科平台发布的校内整合包"
+  },
   "DiscoverLayout": {
     "discoverDomainList": {
       "search": "搜索",
       "home": "主页",
+      "modpacks": "整合包",
+      "campus-modpacks": "校园整合包",
       "community-news": "社团新闻",
       "minecraft-news": "Minecraft 新闻",
       "modpack": "整合包",
@@ -546,11 +552,6 @@
     "warning": {
       "mojang": "由 Mojang 分发的 Java 运行时将由 USTBL 安装到特定目录",
       "oracle": "从 Oracle 源下载可能需要登录"
-    }
-  },
-  "DownloadModpackModal": {
-    "header": {
-      "title": "下载整合包"
     }
   },
   "DownloadResourceModal": {
@@ -644,6 +645,25 @@
       "alpha": "内测版",
       "beta": "公测版",
       "release": "正式版"
+    },
+    "error": {
+      "missingSha1": "该文件没有 SHA-1，无法安装"
+    }
+  },
+  "InstallPlatformModpackModal": {
+    "header": {
+      "title": "安装整合包"
+    },
+    "label": {
+      "gameVersion": "游戏版本",
+      "modLoader": "模组加载器",
+      "manifest": "以整合包清单为准",
+      "modpackVersion": "整合包版本",
+      "modpackInfo": "整合包信息",
+      "summary": "简介"
+    },
+    "button": {
+      "install": "安装"
     }
   },
   "DownloadTasksPage": {
@@ -2269,7 +2289,7 @@
           "title": "选择合适 Java 运行时失败",
           "description": {
             "INSTANCE_NOT_FOUND_BY_ID": "实例 ID 不存在",
-            "LAUNCH_INSTANCE_INSTALLING": "此实例的校内安装尚未完成，暂时无法启动。请先前往下载与上传任务完成安装。",
+            "LAUNCH_INSTANCE_INSTALLING": "此实例的整合包安装尚未完成，暂时无法启动。请先前往下载与上传任务完成安装。",
             "NO_SUITABLE_JAVA": "没有合适的 Java 运行时可供选择",
             "MODPACK_UPDATE_BUSY": "该实例的整合包正在更新，请等待更新任务结束后再启动",
             "SELECTED_JAVA_UNAVAILABLE": "手动选择的 Java 运行时已移除或不可用"

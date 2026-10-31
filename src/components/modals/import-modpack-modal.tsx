@@ -26,7 +26,7 @@ import {
 } from "@/components/modals/create-instance-modal";
 import { useLauncherConfig } from "@/contexts/config";
 import { useToast } from "@/contexts/toast";
-import { ModpackMetaInfo, ModpackOriginInput } from "@/models/instance/misc";
+import { ModpackMetaInfo } from "@/models/instance/misc";
 import {
   ModLoaderResourceInfo,
   defaultModLoaderResourceInfo,
@@ -37,12 +37,10 @@ import { isDirNameInvalid, sanitizeFileName } from "@/utils/string";
 
 interface ImportModpackModalProps extends Omit<ModalProps, "children"> {
   path: string;
-  origin?: ModpackOriginInput;
 }
 
 const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
   path,
-  origin,
   ...modalProps
 }) => {
   const { config } = useLauncherConfig();
@@ -136,7 +134,7 @@ const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
         path,
         undefined,
         modpack.version,
-        origin
+        undefined
       );
       if (createResp.status === "success") {
         onClose();
@@ -160,7 +158,6 @@ const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
     onClose,
     modpack,
     name,
-    origin,
     path,
     router,
     toast,

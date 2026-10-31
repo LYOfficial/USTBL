@@ -525,7 +525,9 @@ pub async fn remote_from_archive(
   let manifest = parse_platform_manifest(&file)?;
   let game_version = manifest.get_client_version()?;
   let (loader_type, loader_version) = manifest.get_mod_loader_type_version()?;
-  if game_version != origin.game_version || loader_type != origin.loader_type {
+  if game_version != origin.game_version
+    || (loader_type != origin.loader_type && !origin.version_id.is_empty())
+  {
     return Err(InstanceError::ModpackUpdateLineMismatch.into());
   }
 
@@ -1042,7 +1044,9 @@ pub async fn resolve_remote(
     }
     remote
   };
-  if remote.game_version != origin.game_version || remote.loader.loader_type != origin.loader_type {
+  if remote.game_version != origin.game_version
+    || (remote.loader.loader_type != origin.loader_type && !origin.version_id.is_empty())
+  {
     return Err(InstanceError::ModpackUpdateLineMismatch.into());
   }
   remote.validate(instance_name)?;

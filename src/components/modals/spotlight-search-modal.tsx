@@ -199,18 +199,15 @@ const SpotlightSearchModal: React.FC<Omit<ModalProps, "children">> = ({
           description: "",
           title: t(`SpotlightSearchModal.resource.${type}`, { query }),
           action: () =>
-            openSharedModal(
-              type === OtherResourceType.ModPack
-                ? "download-modpack"
-                : "download-resource",
-              {
-                initialSearchQuery: query,
-                initialDownloadSource: source,
-                ...(type !== OtherResourceType.ModPack && {
+            type === OtherResourceType.ModPack
+              ? void router.push(
+                  `/discover/modpacks?q=${encodeURIComponent(query)}&source=${encodeURIComponent(source)}`
+                )
+              : openSharedModal("download-resource", {
+                  initialSearchQuery: query,
+                  initialDownloadSource: source,
                   initialResourceType: type,
                 }),
-              }
-            ),
         });
 
       const resourceSearchResults: SearchResult[] = [
@@ -221,7 +218,7 @@ const SpotlightSearchModal: React.FC<Omit<ModalProps, "children">> = ({
 
       return resourceSearchResults;
     },
-    [openSharedModal, t]
+    [openSharedModal, router, t]
   );
 
   const handleAllSearch = useCallback(

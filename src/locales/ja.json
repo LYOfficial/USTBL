@@ -107,7 +107,7 @@
       },
       "modpack": {
         "title": "モッドパックインポート",
-        "description": "ローカルファイル或はインタネットからモッドパックをインポート（ CurseForge、 Modrinth あるいは HMCL フォーマット）"
+        "description": "ローカルファイルからモッドパックをインポート（CurseForge、Modrinth あるいは HMCL フォーマット）"
       },
       "campusModpack": {
         "title": "北京科技大学モッドパックをインストール",
@@ -117,10 +117,6 @@
         "title": "ゲームディレクトリ管理",
         "description": "ローカルゲーム保存ディレクトリを設定し、インストール済のインスタンスを追加"
       }
-    },
-    "modpackOperations": {
-      "fromdisk": "ローカルファイルからインポート",
-      "download": "モッドパックをダウンロード"
     },
     "moreOptions": {
       "title": "その他のオプション",
@@ -510,10 +506,20 @@
       }
     }
   },
+  "DiscoverModpacksPage": {
+    "title": "Modpack",
+    "description": "Modrinth と CurseForge の Modpack を検索してインストール"
+  },
+  "DiscoverCampusModpacksPage": {
+    "title": "学内 Modpack",
+    "description": "Pixel Beike プラットフォームで公開された学内 Modpack を閲覧してインストール"
+  },
   "DiscoverLayout": {
     "discoverDomainList": {
       "search": "検索",
       "home": "ホーム",
+      "modpacks": "Modpack",
+      "campus-modpacks": "学内 Modpack",
       "community-news": "コミュニティ",
       "minecraft-news": "Minecraft ニュース",
       "modpack": "Modpack",
@@ -546,11 +552,6 @@
     "warning": {
       "mojang": "Mojang によって配布される Java ランタイムは USTBL によって特定のディレクトリにインストールされます",
       "oracle": "Oracle ソースからのダウンロードにはログインの必要な場合があります"
-    }
-  },
-  "DownloadModpackModal": {
-    "header": {
-      "title": "モッドパックをダウンロード"
     }
   },
   "DownloadResourceModal": {
@@ -644,6 +645,25 @@
       "alpha": "アルファ版",
       "beta": "ベータ版",
       "release": "正式版"
+    },
+    "error": {
+      "missingSha1": "このファイルには SHA-1 がないため、インストールできません"
+    }
+  },
+  "InstallPlatformModpackModal": {
+    "header": {
+      "title": "Modpack をインストール"
+    },
+    "label": {
+      "gameVersion": "ゲームバージョン",
+      "modLoader": "Mod ローダー",
+      "manifest": "Modpack マニフェストに従う",
+      "modpackVersion": "Modpack バージョン",
+      "modpackInfo": "Modpack 情報",
+      "summary": "概要"
+    },
+    "button": {
+      "install": "インストール"
     }
   },
   "DownloadTasksPage": {
@@ -2269,7 +2289,7 @@
           "title": "適切な Java ランタイムの選択に失敗",
           "description": {
             "INSTANCE_NOT_FOUND_BY_ID": "インスタンス ID が存在しません",
-            "LAUNCH_INSTANCE_INSTALLING": "このインスタンスは学内パックのインストールが未完了のため起動できません。「ダウンロードとアップロードのタスク」でインストールを完了してください。",
+            "LAUNCH_INSTANCE_INSTALLING": "このインスタンスは Modpack のインストールが未完了のため起動できません。「ダウンロードとアップロードのタスク」でインストールを完了してください。",
             "NO_SUITABLE_JAVA": "選択可能な適切な Java ランタイムがありません",
             "SELECTED_JAVA_UNAVAILABLE": "手動で選択した Java ランタイムが削除されたか利用できません",
             "MODPACK_UPDATE_BUSY": "このインスタンスのモッドパックは更新中です。更新タスクの完了後に起動してください"

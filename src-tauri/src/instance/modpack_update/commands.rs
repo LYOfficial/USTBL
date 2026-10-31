@@ -15,7 +15,7 @@ use super::plan::{
 use super::plan_cache::{self, PlanCache};
 use super::remote::{ComponentPack, RemoteModpack};
 use super::restore::restore_component_profile;
-use super::sources::{download_param, latest_version, resolve_remote, LatestVersion};
+use super::sources::{download_param, latest_version, resolve_remote, LatestVersion, Payload};
 use crate::error::USTBLResult;
 use crate::instance::commands::switch_mod_loader;
 use crate::instance::helpers::client_json::McClientInfo;
@@ -109,6 +109,16 @@ pub struct LoaderChange {
   pub to: BaselineLoader,
 }
 
+fn compute_loader_change(
+  baseline: &BaselineLoader,
+  remote: &BaselineLoader,
+) -> Option<LoaderChange> {
+  (remote != baseline).then(|| LoaderChange {
+    from: baseline.clone(),
+    to: remote.clone(),
+  })
+}
+
 #[derive(Debug, Clone, serde::Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdatePlan {
@@ -183,6 +193,15 @@ struct ModpackUpdateFinished {
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct InstallTarget {
+  pub version_id: String,
+  pub label: String,
+  pub url: String,
+  pub sha1: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 struct CampusInstallRecord {
   instance_id: String,
   instance_name: String,
@@ -195,6 +214,65 @@ struct CampusInstallRecord {
   progress: Option<Progress>,
   #[serde(default)]
   client_group: Option<String>,
+  #[serde(default)]
+  target: Option<InstallTarget>,
+}
+
+pub(crate) fn install_target_from_origin(
+  input: Option<&crate::instance::models::misc::ModpackOriginInput>,
+) -> Option<InstallTarget> {
+  let input = input?;
+  matches!(
+    input.platform,
+    OriginPlatform::Modrinth | OriginPlatform::CurseForge
+  )
+  .then(|| InstallTarget {
+    version_id: input.version_id.clone(),
+    label: input.label.clone().unwrap_or_default(),
+    url: input.url.clone().unwrap_or_default(),
+    sha1: input.expected_sha1.clone(),
+  })
+}
+
+/// Campus installs and platform first installs use the same resumable record.
+fn is_campus_install(origin: &InstanceOrigin, record: Option<&CampusInstallRecord>) -> bool {
+  origin.platform == OriginPlatform::Campus
+    || matches!(
+      origin.platform,
+      OriginPlatform::Modrinth | OriginPlatform::CurseForge
+    ) && record.is_some_and(|record| record.target.is_some())
+}
+
+fn latest_from_install_target(target: InstallTarget) -> LatestVersion {
+  LatestVersion {
+    version_id: target.version_id,
+    label: target.label,
+    payload: Some(Payload::Archive {
+      url: target.url,
+      sha1: target.sha1,
+    }),
+  }
+}
+
+fn rewrite_install_record(
+  instance_id: String,
+  instance_name: String,
+  label: String,
+  old_record: Option<CampusInstallRecord>,
+) -> CampusInstallRecord {
+  CampusInstallRecord {
+    instance_id,
+    instance_name,
+    label,
+    phase: "waitingClient".into(),
+    error: None,
+    group: None,
+    progress: None,
+    client_group: old_record
+      .as_ref()
+      .and_then(|record| record.client_group.clone()),
+    target: old_record.and_then(|record| record.target),
+  }
 }
 
 fn campus_install_record(root: &Path) -> PathBuf {
@@ -236,25 +314,25 @@ fn remove_campus_install_record(root: &Path) {
 pub(crate) fn register_created_campus_instance(
   instance: &Instance,
   client_group: String,
+  target: Option<InstallTarget>,
 ) -> USTBLResult<()> {
+  let record = CampusInstallRecord {
+    instance_id: instance.id.clone(),
+    instance_name: instance.name.clone(),
+    label: instance.name.clone(),
+    phase: "waitingClient".into(),
+    error: None,
+    group: None,
+    progress: None,
+    client_group: Some(client_group),
+    target,
+  };
   if instance
     .origin
     .as_ref()
-    .is_some_and(|origin| origin.platform == OriginPlatform::Campus && is_fresh(origin))
+    .is_some_and(|origin| is_campus_install(origin, Some(&record)) && is_fresh(origin))
   {
-    save_campus_install_record(
-      &instance.version_path,
-      &CampusInstallRecord {
-        instance_id: instance.id.clone(),
-        instance_name: instance.name.clone(),
-        label: instance.name.clone(),
-        phase: "waitingClient".into(),
-        error: None,
-        group: None,
-        progress: None,
-        client_group: Some(client_group),
-      },
-    )?;
+    save_campus_install_record(&instance.version_path, &record)?;
   }
   Ok(())
 }
@@ -339,24 +417,14 @@ pub async fn register_campus_modpack_install(
   label: String,
 ) -> USTBLResult<()> {
   let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
-  if target.origin.platform != OriginPlatform::Campus || !is_fresh(&target.origin) {
+  let old_record = load_campus_install_record(&target.root);
+  if !is_campus_install(&target.origin, old_record.as_ref()) || !is_fresh(&target.origin) {
     return Err(InstanceError::ModpackUpdateUnsupported.into());
   }
   let _guard = PlanGuard::acquire(&target.root)?;
-  let client_group =
-    load_campus_install_record(&target.root).and_then(|record| record.client_group);
   save_campus_install_record(
     &target.root,
-    &CampusInstallRecord {
-      instance_id,
-      instance_name: target.instance.name,
-      label,
-      phase: "waitingClient".into(),
-      error: None,
-      group: None,
-      progress: None,
-      client_group,
-    },
+    &rewrite_install_record(instance_id, target.instance.name, label, old_record),
   )
 }
 
@@ -463,7 +531,7 @@ fn scan_campus_instances(
       if instance
         .origin
         .as_ref()
-        .is_none_or(|origin| origin.platform != OriginPlatform::Campus)
+        .is_none_or(|origin| !is_campus_install(origin, load_campus_install_record(&root).as_ref()))
       {
         continue;
       }
@@ -796,6 +864,9 @@ impl UpdateEnv for AppEnv {
   async fn commit_origin(&self, version_id: &str) -> USTBLResult<()> {
     store_instance(&self.app, &self.instance_id, |instance| {
       if let Some(origin) = instance.origin.as_mut() {
+        if origin.version_id.is_empty() {
+          origin.loader_type = self.loader.loader_type;
+        }
         origin.version_id = version_id.to_string();
       }
       instance.modpack_version = Some(self.label.clone());
@@ -1364,10 +1435,7 @@ async fn plan_prepared(
       remote,
     });
   }
-  let loader_change = (remote.loader != baseline.loader).then(|| LoaderChange {
-    from: baseline.loader.clone(),
-    to: remote.loader.clone(),
-  });
+  let loader_change = compute_loader_change(&baseline.loader, &remote.loader);
   let compared = compare(&target.root, baseline, &remote).await?;
   if !compared.both_variants.is_empty() {
     log::info!(
@@ -1443,6 +1511,20 @@ fn is_fresh(origin: &InstanceOrigin) -> bool {
   origin.version_id.is_empty()
 }
 
+fn fresh_identity_loader(
+  origin: &InstanceOrigin,
+  game_version: &str,
+  loader_type: ModLoaderType,
+) -> USTBLResult<Option<ModLoaderType>> {
+  if game_version != origin.game_version {
+    return Err(InstanceError::ModpackUpdateLineMismatch.into());
+  }
+  Ok(
+    (loader_type != origin.loader_type || origin.loader_type == ModLoaderType::Unknown)
+      .then_some(loader_type),
+  )
+}
+
 /// A plan fast-forwards when nothing but the baseline moves. A `Retire`
 /// change only rewrites the entry (the file itself stays), so it does not
 /// count; everything else, a conflict or a loader change does.
@@ -1507,16 +1589,28 @@ async fn plan_fresh_install(
 ) -> USTBLResult<InstallPlan> {
   debug_assert!(is_fresh(&target.origin));
   let details_started = Instant::now();
-  // The listing answers first, so a line that disappeared between the
-  // install click and here says so before the version detail is fetched.
-  match light_check(app, target).await? {
-    LightCheck::Available { .. } => {}
-    LightCheck::UpToDate => return Err(InstanceError::ModpackUpdateStale.into()),
-    LightCheck::LineGone | LightCheck::ProjectGone => {
-      return Err(InstanceError::ModpackUpdateLineGone.into());
+  let install_target = load_campus_install_record(&target.root)
+    .and_then(|record| record.target)
+    .filter(|_| {
+      matches!(
+        target.origin.platform,
+        OriginPlatform::Modrinth | OriginPlatform::CurseForge
+      )
+    });
+  let latest = if let Some(install_target) = install_target {
+    latest_from_install_target(install_target)
+  } else {
+    // The listing answers first, so a line that disappeared between the
+    // install click and here says so before the version detail is fetched.
+    match light_check(app, target).await? {
+      LightCheck::Available { .. } => {}
+      LightCheck::UpToDate => return Err(InstanceError::ModpackUpdateStale.into()),
+      LightCheck::LineGone | LightCheck::ProjectGone => {
+        return Err(InstanceError::ModpackUpdateLineGone.into());
+      }
     }
-  }
-  let latest = resolve_latest_for_plan(app, target).await?;
+    resolve_latest_for_plan(app, target).await?
+  };
   let baseline = ModpackBaseline::build(
     &target.origin,
     BaselineLoader {
@@ -1610,10 +1704,7 @@ async fn plan_fresh_install(
     Ok::<_, crate::error::USTBLError>(prepared)
   };
   let (prepared, ()) = tokio::try_join!(planning, locating)?;
-  let loader_change = (remote.loader != baseline.loader).then(|| LoaderChange {
-    from: baseline.loader.clone(),
-    to: remote.loader.clone(),
-  });
+  let loader_change = compute_loader_change(&baseline.loader, &remote.loader);
   let plan = UpdatePlan {
     from_version_id: target.origin.version_id.clone(),
     to_version_id: remote.version_id.clone(),
@@ -2111,7 +2202,7 @@ async fn start_campus_modpack_install(
   let guard = PlanGuard::acquire(&instance.version_path)?;
   let old_record = load_campus_install_record(&instance.version_path);
   if instance.origin.as_ref().is_none_or(|origin| {
-    origin.platform != OriginPlatform::Campus || (old_record.is_none() && !is_fresh(origin))
+    !is_campus_install(origin, old_record.as_ref()) || (old_record.is_none() && !is_fresh(origin))
   }) {
     return Err(InstanceError::ModpackUpdateUnsupported.into());
   }
@@ -2133,6 +2224,7 @@ async fn start_campus_modpack_install(
       client_group: old_record
         .as_ref()
         .and_then(|record| record.client_group.clone()),
+      target: old_record.as_ref().and_then(|record| record.target.clone()),
     },
   )?;
   remove_campus_install_groups(
@@ -2369,7 +2461,8 @@ async fn install_campus_modpack_inner(
     tasks: Some(tasks),
   };
   reporter.progress(Stage::Preparing);
-  if target.origin.platform != OriginPlatform::Campus {
+  let install_record = load_campus_install_record(&target.root);
+  if !is_campus_install(&target.origin, install_record.as_ref()) {
     return Err(InstanceError::ModpackUpdateUnsupported.into());
   }
   if !is_fresh(&target.origin) {
@@ -2386,6 +2479,18 @@ async fn install_campus_modpack_inner(
     prepared,
     remote,
   } = plan_fresh_install(&app, &target, &reporter).await?;
+  if let Some(loader_type) = fresh_identity_loader(
+    &target.origin,
+    &remote.game_version,
+    remote.loader.loader_type,
+  )? {
+    store_instance(&app, &instance_id, |instance| {
+      if let Some(origin) = instance.origin.as_mut() {
+        origin.loader_type = loader_type;
+      }
+    })
+    .await?;
+  }
   if plan.reinstall_required {
     return Err(InstanceError::ModpackUpdateReinstallRequired.into());
   }
@@ -2554,6 +2659,164 @@ mod tests {
   #[derive(Clone, Default)]
   struct StageSink(Arc<Mutex<Vec<String>>>);
 
+  fn platform_origin(loader_type: ModLoaderType) -> InstanceOrigin {
+    InstanceOrigin {
+      platform: OriginPlatform::Modrinth,
+      project_id: "project".into(),
+      version_id: String::new(),
+      game_version: "1.21.1".into(),
+      loader_type,
+      follow: true,
+    }
+  }
+
+  #[test]
+  fn install_record_supports_old_json_and_serializes_a_target() {
+    let old: CampusInstallRecord = serde_json::from_value(serde_json::json!({
+      "instanceId": "games:pack",
+      "instanceName": "pack",
+      "label": "Pack",
+      "phase": "waitingClient",
+      "error": null
+    }))
+    .unwrap();
+    assert!(old.target.is_none());
+
+    let target = InstallTarget {
+      version_id: "v1".into(),
+      label: "1.0".into(),
+      url: "https://example.test/pack.mrpack".into(),
+      sha1: "abc".into(),
+    };
+    let record = CampusInstallRecord {
+      target: Some(target.clone()),
+      ..old
+    };
+    assert_eq!(
+      serde_json::to_value(record).unwrap()["target"]["versionId"],
+      "v1"
+    );
+  }
+
+  #[test]
+  fn install_support_predicate_covers_campus_and_fixed_platform_targets() {
+    let campus = InstanceOrigin {
+      platform: OriginPlatform::Campus,
+      ..platform_origin(ModLoaderType::Forge)
+    };
+    let target = CampusInstallRecord {
+      target: Some(InstallTarget {
+        version_id: "v1".into(),
+        label: "Pack".into(),
+        url: "https://example.test/pack".into(),
+        sha1: "abc".into(),
+      }),
+      ..serde_json::from_value(serde_json::json!({
+        "instanceId": "i",
+        "instanceName": "i",
+        "label": "i",
+        "phase": "waitingClient",
+        "error": null
+      }))
+      .unwrap()
+    };
+    let no_target = CampusInstallRecord {
+      target: None,
+      ..target.clone()
+    };
+    assert!(is_campus_install(&campus, None));
+    assert!(is_campus_install(
+      &platform_origin(ModLoaderType::Fabric),
+      Some(&target)
+    ));
+    assert!(!is_campus_install(
+      &platform_origin(ModLoaderType::Fabric),
+      None
+    ));
+    assert!(!is_campus_install(
+      &platform_origin(ModLoaderType::Fabric),
+      Some(&no_target)
+    ));
+  }
+
+  #[test]
+  fn fixed_target_builds_an_archive_latest_without_a_platform_check() {
+    let latest = latest_from_install_target(InstallTarget {
+      version_id: "file-42".into(),
+      label: "Release 42".into(),
+      url: "https://example.test/pack.mrpack".into(),
+      sha1: "abc".into(),
+    });
+    assert_eq!(latest.version_id, "file-42");
+    assert_eq!(latest.label, "Release 42");
+    assert_eq!(
+      latest.archive_ref(),
+      Some(("abc", "https://example.test/pack.mrpack"))
+    );
+  }
+
+  #[test]
+  fn registration_rewrite_preserves_the_fixed_target() {
+    let old = CampusInstallRecord {
+      instance_id: "i".into(),
+      instance_name: "old".into(),
+      label: "old".into(),
+      phase: "failed".into(),
+      error: Some("error".into()),
+      group: None,
+      progress: None,
+      client_group: Some("client".into()),
+      target: Some(InstallTarget {
+        version_id: "v1".into(),
+        label: "Pack 1".into(),
+        url: "https://example.test/pack".into(),
+        sha1: "abc".into(),
+      }),
+    };
+    let rewritten = rewrite_install_record("i".into(), "new".into(), "New".into(), Some(old));
+    assert_eq!(rewritten.target.as_ref().unwrap().version_id, "v1");
+    assert_eq!(rewritten.client_group.as_deref(), Some("client"));
+  }
+
+  #[test]
+  fn fresh_identity_accepts_loader_changes_and_rejects_game_version_changes() {
+    let origin = platform_origin(ModLoaderType::Unknown);
+    assert_eq!(
+      fresh_identity_loader(&origin, "1.21.1", ModLoaderType::Fabric).unwrap(),
+      Some(ModLoaderType::Fabric)
+    );
+    assert_eq!(
+      fresh_identity_loader(
+        &platform_origin(ModLoaderType::Fabric),
+        "1.21.1",
+        ModLoaderType::Fabric
+      )
+      .unwrap(),
+      None
+    );
+    assert_eq!(
+      fresh_identity_loader(&origin, "1.20.1", ModLoaderType::Fabric)
+        .unwrap_err()
+        .0,
+      "MODPACK_UPDATE_LINE_MISMATCH"
+    );
+  }
+
+  #[test]
+  fn vanilla_placeholder_plan_reports_loader_change() {
+    let baseline = BaselineLoader {
+      loader_type: ModLoaderType::Unknown,
+      version: String::new(),
+    };
+    let remote = BaselineLoader {
+      loader_type: ModLoaderType::Fabric,
+      version: "0.16.9".into(),
+    };
+    let change = compute_loader_change(&baseline, &remote).unwrap();
+    assert_eq!(change.from, baseline);
+    assert_eq!(change.to, remote);
+  }
+
   impl Sink for StageSink {
     fn report_progress(
       &self,
@@ -2704,6 +2967,7 @@ mod tests {
           group: None,
           progress: None,
           client_group: None,
+          target: None,
         },
       )
       .unwrap();
@@ -2778,6 +3042,7 @@ mod tests {
         group: Some("modpack-install?panic@1".into()),
         progress: Some(progress),
         client_group: None,
+        target: None,
       },
     )
     .unwrap();
@@ -2841,6 +3106,7 @@ mod tests {
         group: Some("modpack-install?interrupted@1".into()),
         progress: None,
         client_group: None,
+        target: None,
       },
     )
     .unwrap();
@@ -2950,6 +3216,7 @@ mod tests {
         ..instance
       },
       "game-client?pending@1".into(),
+      None,
     )
     .unwrap();
     assert_eq!(
@@ -2968,6 +3235,7 @@ mod tests {
       group: None,
       progress: None,
       client_group: None,
+      target: None,
     };
     save_campus_install_record(&version, &record).unwrap();
     save_campus_install_record(&version, &record).unwrap();
@@ -2984,6 +3252,54 @@ mod tests {
         .phase,
       "waitingClient"
     );
+    fs::remove_dir_all(root).unwrap();
+  }
+
+  #[test]
+  fn scan_finds_platform_instances_only_when_the_install_record_has_a_target() {
+    use crate::launcher_config::models::GameDirectory;
+    let root = std::env::temp_dir().join(format!("ustbl-platform-scan-{}", uuid::Uuid::new_v4()));
+    let versions = root.join("versions");
+    let with_target = versions.join("with-target");
+    let without_record = versions.join("without-record");
+    fs::create_dir_all(&with_target).unwrap();
+    fs::create_dir_all(&without_record).unwrap();
+    let write_instance = |path: &Path| {
+      fs::write(
+        path.join(crate::instance::constants::INSTANCE_CFG_FILE_NAME),
+        serde_json::to_vec(&Instance {
+          origin: Some(platform_origin(ModLoaderType::Fabric)),
+          ..Default::default()
+        })
+        .unwrap(),
+      )
+      .unwrap();
+    };
+    write_instance(&with_target);
+    write_instance(&without_record);
+    let record = CampusInstallRecord {
+      instance_id: "games:with-target".into(),
+      instance_name: "with-target".into(),
+      label: "Pack".into(),
+      phase: "waitingClient".into(),
+      error: None,
+      group: None,
+      progress: None,
+      client_group: None,
+      target: Some(InstallTarget {
+        version_id: "v1".into(),
+        label: "Pack".into(),
+        url: "https://example.test/pack".into(),
+        sha1: "abc".into(),
+      }),
+    };
+    save_campus_install_record(&with_target, &record).unwrap();
+    let scanned = scan_campus_instances(&[GameDirectory {
+      name: "games".into(),
+      dir: root.clone(),
+    }]);
+    assert!(scanned.contains_key("games:with-target"));
+    assert!(!scanned.contains_key("games:without-record"));
     fs::remove_dir_all(root).unwrap();
   }
 
