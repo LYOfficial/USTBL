@@ -18,6 +18,7 @@
 
 use crate::resource::helpers::mcim::{acquire_mcim_api_permit_for, MCIM_BASE};
 use crate::resource::models::{OtherResourceInfo, OtherResourceSource};
+use crate::utils::web::ApiClient;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
@@ -268,7 +269,7 @@ pub async fn translate_resource_descriptions(
   let Some(source) = TranslationSource::from_resource_source(source) else {
     return HashMap::new();
   };
-  let client = app.state::<reqwest::Client>();
+  let client = app.state::<ApiClient>();
   translate_through_cache(&TRANSLATION_CACHE, source, ids, |batch| {
     fetch_translation_batch(&client, source, batch)
   })

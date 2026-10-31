@@ -26,6 +26,7 @@ use crate::resource::models::{
   OtherResourceSearchQuery, OtherResourceSearchRes, OtherResourceSource, OtherResourceVersionPack,
   OtherResourceVersionPackQuery, ResourceError,
 };
+use crate::utils::web::ApiClient;
 use misc::{
   class_id_of_resource_type, fetch_curseforge_json, game_versions_of, has_official_api_key,
   loaders_of_game_versions, make_curseforge_request, mod_loader_type_of, resolve_category_id,
@@ -110,7 +111,7 @@ pub async fn fetch_resource_list_by_name_curseforge(
   );
 
   if !selected_tag.is_empty() && selected_tag != ALL_FILTER {
-    let client = app.state::<reqwest::Client>();
+    let client = app.state::<ApiClient>();
     // Category ids are not guessable, and legacy categories in the UI's tag list
     // may no longer exist; in that case the search runs unfiltered.
     for source in &priority {
@@ -380,7 +381,7 @@ pub async fn fetch_remote_resources_by_fingerprints_curseforge(
   if sources.is_empty() {
     return Err(ResourceError::NoDownloadApi.into());
   }
-  let client = app.state::<reqwest::Client>();
+  let client = app.state::<ApiClient>();
   let mut found = HashMap::new();
 
   for chunk in fingerprints.chunks(FINGERPRINTS_BATCH_SIZE) {
@@ -457,7 +458,7 @@ pub async fn fetch_mods_curseforge(
     .into_iter()
     .filter(|source| *source != ContentSource::Official || has_official_api_key())
     .collect();
-  let client = app.state::<reqwest::Client>();
+  let client = app.state::<ApiClient>();
   let mut outcome = LookupOutcome::default();
 
   for chunk in mod_ids.chunks(MODS_BATCH_SIZE) {

@@ -62,6 +62,7 @@ pub async fn install(root: &Path) -> USTBLResult<()> {
   let client = reqwest::Client::builder()
     .no_gzip()
     .no_proxy()
+    .no_gzip()
     .connect_timeout(Duration::from_secs(15))
     .timeout(Duration::from_secs(60))
     .build()?;
