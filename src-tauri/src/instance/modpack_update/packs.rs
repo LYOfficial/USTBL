@@ -329,11 +329,18 @@ impl PackSession {
       let mut to = from + 1;
       while to < items.len() && MERGE_GAP > 0 && MERGE_SPAN > 0 {
         let (prev, next) = (items[to - 1].0, items[to].0);
+        // Offsets are local to each pack and may restart below this group's start.
+        if next.pack != prev.pack {
+          break;
+        }
         let gap = next
           .data_offset
-          .saturating_sub(prev.data_offset + prev.compressed_size);
-        let span = next.data_offset + next.compressed_size - items[from].0.data_offset;
-        if next.pack != prev.pack || gap > MERGE_GAP || span > MERGE_SPAN {
+          .saturating_sub(prev.data_offset.saturating_add(prev.compressed_size));
+        let span = next
+          .data_offset
+          .saturating_sub(items[from].0.data_offset)
+          .saturating_add(next.compressed_size);
+        if gap > MERGE_GAP || span > MERGE_SPAN {
           break;
         }
         to += 1;
@@ -1069,6 +1076,51 @@ mod tests {
     assert_eq!(stats.bytes.load(Ordering::Relaxed), span);
     assert_eq!(stats.merged.load(Ordering::Relaxed), 1);
     let _ = fs::remove_dir_all(work);
+  }
+
+  #[tokio::test]
+  async fn a_lower_offset_in_the_next_pack_starts_a_new_group_without_underflow() {
+    let (session, _, _) = session(Fake::new(&[]));
+    let entry = |pack, data_offset| EntryLocation {
+      pack,
+      data_offset,
+      compressed_size: 10,
+      size: 10,
+      compress_type: STORED,
+      crc32: 0,
+    };
+    let located = Located {
+      packs: vec![location(1), location(2)],
+      entries: HashMap::from([
+        ("aa".into(), entry(1, 1000)),
+        ("bb".into(), entry(1, 1010)),
+        ("cc".into(), entry(2, 0)),
+        ("dd".into(), entry(2, 10)),
+      ]),
+    };
+    let batch: Vec<_> = ["dd", "bb", "cc", "aa"]
+      .into_iter()
+      .map(|sha1| PackFetch {
+        sha1: sha1.into(),
+        dest: PathBuf::from(sha1),
+      })
+      .collect();
+    let groups = session.plan_groups(&located, 1, &batch).unwrap();
+    let grouped: Vec<Vec<_>> = groups
+      .iter()
+      .map(|group| {
+        group
+          .entries
+          .iter()
+          .map(|entry| entry.sha1.as_str())
+          .collect()
+      })
+      .collect();
+    assert_eq!(grouped, vec![vec!["aa", "bb"], vec!["cc", "dd"]]);
+    assert!(groups.iter().all(|group| group
+      .entries
+      .iter()
+      .all(|entry| entry.entry.pack == group.entries[0].entry.pack)));
   }
 
   #[tokio::test]
