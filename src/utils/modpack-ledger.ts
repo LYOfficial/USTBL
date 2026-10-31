@@ -45,7 +45,7 @@ export const findInstancesOfLine = (
 /**
  * What a ledger row's badge shows: where the instance stands against its
  * line, or not checked yet. Local edits are not a line state; the row shows
- * them on their own (see `ledgerLocalChanges`).
+ * them on their own (see `ledgerScanned`).
  */
 export type LedgerBadge =
   | Exclude<ModpackCheckStatus, "notFollowing" | "localChanges">
@@ -68,10 +68,12 @@ export const ledgerUpdateDisabled = (
   check?: ModpackUpdateCheck
 ) => isInstallingInstance(instance) || check?.status === "installing";
 
-/** Managed files changed here, once the local scan has run; else 0. */
-export const ledgerLocalChanges = (
-  check: ModpackUpdateCheck | undefined
-): number => check?.localChanges ?? 0;
+/**
+ * Whether the local scan has run (its count may be 0), so "view changes" has
+ * a comparison to show: the detail also lists entries the count leaves out.
+ */
+export const ledgerScanned = (check: ModpackUpdateCheck | undefined) =>
+  check?.localChanges != null;
 
 /**
  * The ledger of modpack instances: only those with an origin. An instance

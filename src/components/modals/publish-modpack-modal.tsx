@@ -15,7 +15,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import Editable from "@/components/common/editable";
 import {
@@ -23,6 +23,7 @@ import {
   OptionItemGroupProps,
 } from "@/components/common/option-item";
 import PublishFileTree from "@/components/common/publish-file-tree";
+import PublishSummary from "@/components/common/publish-summary";
 import { useLauncherConfig } from "@/contexts/config";
 import { useGlobalData } from "@/contexts/global-data";
 import { useToast } from "@/contexts/toast";
@@ -30,14 +31,15 @@ import {
   CampusModpackProject,
   CampusPublishProgress,
 } from "@/models/campus-modpack";
-import { ModpackFileList } from "@/models/instance/misc";
 import { CampusModpackService } from "@/services/campus-modpack";
-import { InstanceService } from "@/services/instance";
 import {
   MAX_RULES,
+  PreviousRelease,
+  PublishChange,
   PublishContext,
   PublishDraft,
-  createInitialModel,
+  publishTargetAfterLoad,
+  summarizePublish,
   toPublishPayload,
 } from "@/utils/modpack-publish-tree";
 
@@ -53,6 +55,7 @@ const EMPTY_DRAFT: PublishDraft = {
   included: new Set(),
   once: new Set(),
 };
+const NO_CHANGES: PublishChange[] = [];
 
 const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
   instanceId,
@@ -67,14 +70,24 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
 
   const [projects, setProjects] = useState<CampusModpackProject[]>([]);
   const [projectChoice, setProjectChoice] = useState(NEW_PROJECT);
+  // The project list is in and the default target is set; the tree waits for
+  // it so that it is not built for a target that is replaced at once.
+  const [projectsReady, setProjectsReady] = useState(false);
+  // What the user picked (null is "new project"); undefined until they do.
+  const userChoice = useRef<string | null | undefined>(undefined);
+  const origin = getInstanceList()?.find(
+    (instance) => instance.id === instanceId
+  )?.origin;
+  const originRef = useRef(origin);
+  originRef.current = origin;
   const [projectName, setProjectName] = useState(instanceName);
   const [summary, setSummary] = useState("");
   const [versionNumber, setVersionNumber] = useState("");
   const [changelog, setChangelog] = useState("");
-  const [fileList, setFileList] = useState<ModpackFileList | null>(null);
   const [context, setContext] = useState<PublishContext | null>(null);
   const [draft, setDraft] = useState<PublishDraft | null>(null);
-  const [isFileListLoading, setIsFileListLoading] = useState(false);
+  const [changes, setChanges] = useState<PublishChange[]>(NO_CHANGES);
+  const [previous, setPrevious] = useState<PreviousRelease | null>(null);
   const [isModelLoading, setIsModelLoading] = useState(false);
   // Set when the line's previous release could not be read: publishing on a
   // guessed default would drop its files and rules, so it stays blocked.
@@ -115,6 +128,9 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
     if (!modalProps.isOpen) return;
     let isActive = true;
     setPublishBlockReason("unknown");
+    setProjectsReady(false);
+    setProjectChoice(NEW_PROJECT);
+    userChoice.current = undefined;
 
     CampusModpackService.checkCampusModpackPublishable(instanceId).then(
       (response) => {
@@ -129,6 +145,15 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
           if (!isActive) return;
           if (response.status === "success") {
             setProjects(response.data);
+            // Default to the project the instance came from, once per open
+            // and never over a choice the user already made.
+            setProjectChoice(
+              publishTargetAfterLoad(
+                userChoice.current,
+                originRef.current,
+                response.data
+              ) ?? NEW_PROJECT
+            );
           } else {
             toast({
               title: response.message,
@@ -136,67 +161,50 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
               status: "error",
             });
           }
+          setProjectsReady(true);
         });
-
-        setIsFileListLoading(true);
-        InstanceService.retrieveExportableFileList(instanceId)
-          .then((response) => {
-            if (!isActive) return;
-            if (response.status === "success") {
-              setFileList(response.data);
-            } else {
-              toast({
-                title: response.message,
-                description: response.details,
-                status: "error",
-              });
-            }
-          })
-          .finally(() => {
-            if (isActive) setIsFileListLoading(false);
-          });
       }
     );
 
     return () => {
       isActive = false;
+      setProjectsReady(false);
     };
   }, [instanceId, modalProps.isOpen, toast]);
 
-  // Start the tree from what the line's current release lists (§4 defaults);
-  // picking another target starts over.
+  // Start the tree from what the line's current release lists (§4 defaults,
+  // worked out by the launcher); picking another target starts over.
   useEffect(() => {
-    if (!modalProps.isOpen || !fileList) return;
-    let isActive = true;
-    const build = (
-      previous: Parameters<typeof createInitialModel>[0]["previous"]
-    ) => {
-      const model = createInitialModel({
-        all: fileList.all,
-        previous,
-        suggested: fileList.suggested ?? [],
-      });
-      setContext(model.context);
-      setDraft(model.draft);
-    };
-    setPreviousFailed(false);
-    if (isNewProject) {
-      build(null);
+    if (!modalProps.isOpen || publishBlockReason !== "" || !projectsReady) {
       return;
     }
+    let isActive = true;
+    setPreviousFailed(false);
     setIsModelLoading(true);
     setContext(null);
     setDraft(null);
-    CampusModpackService.fetchCampusModpackPreviousRelease(
+    setChanges(NO_CHANGES);
+    setPrevious(null);
+    CampusModpackService.prepareCampusModpackPublishTree(
       instanceId,
-      projectChoice
+      isNewProject ? null : projectChoice
     )
       .then((response) => {
         if (!isActive) return;
         if (response.status === "success") {
-          build(response.data);
+          const { files, ghosts, rules, included, once } = response.data;
+          setContext({ files, ghosts });
+          setDraft({
+            rules,
+            included: new Set(included),
+            once: new Set(once),
+          });
+          setChanges(response.data.changes);
+          setPrevious(response.data.previous);
         } else {
-          setPreviousFailed(true);
+          // Without a new project there is a release to start from; a
+          // guessed default would drop its files and rules.
+          if (!isNewProject) setPreviousFailed(true);
           toast({
             title: response.message,
             description: response.details,
@@ -211,11 +219,12 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
       isActive = false;
     };
   }, [
-    fileList,
     instanceId,
     isNewProject,
     modalProps.isOpen,
     projectChoice,
+    projectsReady,
+    publishBlockReason,
     toast,
   ]);
 
@@ -329,6 +338,15 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
     versionNumber,
   ]);
 
+  // Worked out from the same payload `handlePublish` sends.
+  const pushSummary = useMemo(
+    () =>
+      context && draft && !previousFailed
+        ? summarizePublish(context, draft, previous, changes)
+        : null,
+    [changes, context, draft, previous, previousFailed]
+  );
+
   const editableProps = {
     textProps: { className: "secondary-text", fontSize: "xs-sm" },
     inputProps: { fontSize: "xs-sm" },
@@ -362,7 +380,13 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
               value={projectChoice}
               aria-label={t("PublishModpackModal.label.target")}
               isDisabled={isPublishing}
-              onChange={(event) => setProjectChoice(event.target.value)}
+              onChange={(event) => {
+                userChoice.current =
+                  event.target.value === NEW_PROJECT
+                    ? null
+                    : event.target.value;
+                setProjectChoice(event.target.value);
+              }}
             >
               <option value={NEW_PROJECT}>
                 {t("PublishModpackModal.label.newProject")}
@@ -459,9 +483,14 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
           : []),
         <PublishFileTree
           key="included-files-tree"
+          instanceId={instanceId}
           context={context ?? EMPTY_CONTEXT}
           draft={draft ?? EMPTY_DRAFT}
-          isLoading={isFileListLoading || isModelLoading}
+          changes={changes}
+          previous={previous}
+          isLoading={
+            isModelLoading || (publishBlockReason === "" && !projectsReady)
+          }
           onDraftChange={(updater) =>
             setDraft((prev) => (prev ? updater(prev) : prev))
           }
@@ -490,8 +519,9 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
             ))}
           </VStack>
         </ModalBody>
-        <ModalFooter>
-          <HStack spacing={2}>
+        <ModalFooter flexDirection="column" alignItems="stretch" gap={3}>
+          {pushSummary && <PublishSummary summary={pushSummary} />}
+          <HStack spacing={2} justify="flex-end">
             {progress && (
               <Text fontSize="xs" className="secondary-text">
                 {t(`PublishModpackModal.stage.${progress.stage}`, {

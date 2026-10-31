@@ -9,10 +9,11 @@ use super::diff::{Conflict, ConflictChoice, Diff, FileChange};
 use super::merge::merge_with_choices;
 use super::notice::{read_update_notice, write_update_notice, UpdateNotice};
 use super::plan::{
-  compare, count_local_changes, finish, invalidate_scan_cache, local_changes,
-  requires_reinstall, resolve, LocalChange, Prepared,
+  compare, count_local_changes, finish, invalidate_scan_cache, requires_reinstall, resolve,
+  Prepared,
 };
 use super::plan_cache::{self, PlanCache};
+use super::release;
 use super::remote::{ComponentPack, RemoteModpack};
 use super::restore::restore_component_profile;
 use super::sources::{download_param, latest_version, resolve_remote, LatestVersion, Payload};
@@ -58,6 +59,33 @@ use tauri_plugin_opener::reveal_item_in_dir;
 
 const PROGRESS_EVENT: &str = "modpack-update:progress";
 
+/// A missing release record is repaired at most twice per process for one
+/// instance/version: the initial lookup and one retry. This keeps an offline
+/// instance usable without retrying a failed request on every render.
+static RELEASE_FETCH_ATTEMPTS: std::sync::LazyLock<Mutex<HashMap<String, u8>>> =
+  std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn release_fetch_allowed(root: &Path, version_id: &str) -> bool {
+  let key = format!("{}\0{version_id}", root.to_string_lossy());
+  let mut attempts = RELEASE_FETCH_ATTEMPTS
+    .lock()
+    .unwrap_or_else(|poisoned| poisoned.into_inner());
+  let attempt = attempts.entry(key).or_default();
+  if *attempt >= 2 {
+    return false;
+  }
+  *attempt += 1;
+  true
+}
+
+fn release_fetch_succeeded(root: &Path, version_id: &str) {
+  let key = format!("{}\0{version_id}", root.to_string_lossy());
+  RELEASE_FETCH_ATTEMPTS
+    .lock()
+    .unwrap_or_else(|poisoned| poisoned.into_inner())
+    .remove(&key);
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum CheckStatus {
@@ -95,7 +123,7 @@ pub struct UpdateCheck {
   pub reason: Option<String>,
   /// The previous update left a backup that can still be rolled back.
   pub can_roll_back: bool,
-  /// How many managed files differ from the install; set by the local scan.
+  /// Counted local changes against the last release; set by the local scan.
   pub local_changes: Option<usize>,
   /// The platform confirmed the followed project is gone, so this check
   /// detached the instance from it. Only set on the check that unlinked.
@@ -486,6 +514,90 @@ struct Target {
   instance: Instance,
   origin: InstanceOrigin,
   root: PathBuf,
+}
+
+pub async fn recover_publish_base(
+  app: &AppHandle,
+  instance: &Instance,
+  project: &str,
+  version_id: &str,
+  path: &str,
+  sha1: &str,
+) -> USTBLResult<Option<()>> {
+  if !text::is_text_path(path, &[]) || sha1.len() != 40 {
+    return Ok(None);
+  }
+  let mut origin = instance.origin.clone().unwrap_or(InstanceOrigin {
+    platform: OriginPlatform::Campus,
+    project_id: project.to_string(),
+    version_id: version_id.to_string(),
+    game_version: instance.version.clone(),
+    loader_type: instance.mod_loader.loader_type,
+    follow: false,
+  });
+  origin.project_id = project.to_string();
+  origin.version_id = version_id.to_string();
+  let remote = super::sources::campus_base_remote(
+    app,
+    &origin,
+    &instance.version_path,
+    &instance.name,
+  )
+  .await?;
+  let local_size = [
+    instance.version_path.join(path),
+    instance
+      .version_path
+      .join(format!("{path}{}", super::diff::DISABLED_SUFFIX)),
+  ]
+  .iter()
+  .find_map(|file| std::fs::metadata(file).ok().map(|meta| meta.len()));
+  let candidates: Vec<_> = remote
+    .files
+    .iter()
+    .map(|file| super::super::modpack_publish::changes::PublishBaseCandidate {
+      path: file.path.clone(),
+      sha1: file.key.sha1.clone(),
+      size: file.key.size,
+    })
+    .collect();
+  let Some(index) = super::super::modpack_publish::changes::select_publish_base(
+    false,
+    path,
+    sha1,
+    local_size,
+    &candidates,
+  ) else {
+    return Ok(None);
+  };
+  let file = &remote.files[index];
+  let env = AppEnv::preparing(
+    app,
+    &Target {
+      instance: instance.clone(),
+      origin,
+      root: instance.version_path.clone(),
+    },
+  );
+  prepare_packs(std::slice::from_ref(&file)).await?;
+  let preview = instance
+    .version_path
+    .join(super::remote::UPDATE_DIR)
+    .join(format!("publish-diff-{}", uuid::Uuid::new_v4()));
+  let dest = preview.join(path);
+  let result = materialize_remote_file(&env, dest.clone(), file).await;
+  if result.is_ok() {
+    let bytes = tokio::fs::read(&dest).await.map_err(crate::error::USTBLError::from)?;
+    let baseline = crate::instance::helpers::modpack::baseline::BaselineFile::managed(
+      path,
+      file.key.clone(),
+      file.disabled,
+    );
+    crate::instance::helpers::modpack::base_store::store(&instance.version_path, &baseline, &bytes)
+      .map_err(crate::error::USTBLError::from)?;
+  }
+  let _ = tokio::fs::remove_dir_all(preview).await;
+  result.map(|_| Some(()))
 }
 
 fn current_instance(app: &AppHandle, instance_id: &str) -> USTBLResult<Instance> {
@@ -1113,6 +1225,7 @@ async fn light_check(app: &AppHandle, target: &Target) -> USTBLResult<LightCheck
 async fn unlink_origin(app: &AppHandle, instance_id: &str, target: &Target) -> USTBLResult<()> {
   ensure_unlink_safe(&target.root)?;
   fs::remove_file(target.root.join(BASELINE_FILE_NAME)).ok();
+  release::remove(&target.root).ok();
   super::ignores::remove(&target.root);
   plan_cache::clear_plan_cache(&target.root);
   store_instance(app, instance_id, |instance| {
@@ -1193,16 +1306,67 @@ pub async fn set_modpack_follow(
   .await
 }
 
-/// The managed files changed here since the modpack installed them, with
-/// line diffs for text files. Works offline: only the local record is used.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModpackChangeDetail {
+  pub version_id: String,
+  pub label: String,
+  pub incomplete: bool,
+  pub entries: Vec<super::changes::ChangeDetailEntry>,
+}
+
+/// The local changes against the release the instance last matched, with line
+/// diffs for modified text files. Works offline; a campus instance without a
+/// saved release record fetches it once (see `incomplete`).
 #[tauri::command]
-pub async fn list_modpack_local_changes(
+pub async fn list_modpack_change_detail(
   app: AppHandle,
   instance_id: String,
-) -> USTBLResult<Vec<LocalChange>> {
+) -> USTBLResult<ModpackChangeDetail> {
   let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let baseline = load_baseline(&target).await?;
-  local_changes(&target.root, &baseline, true).await
+  let (mut release, fallback) = release::release_for(&target.root, &baseline);
+  let mut incomplete = false;
+  if fallback && target.origin.platform == OriginPlatform::Campus {
+    let version_id = baseline.origin.version_id.clone();
+    let mut origin = target.origin.clone();
+    origin.version_id = version_id.clone();
+    // Not while an update runs, and not on every render after a failure. The
+    // lock is held until the record is written.
+    let fetched = match UpdateGuard::acquire(&target.root) {
+      Ok(guard) if release_fetch_allowed(&target.root, &version_id) => {
+        super::sources::campus_base_remote(&app, &origin, &target.root, &target.instance.name)
+          .await
+          .ok()
+          .map(|remote| (guard, remote))
+      }
+      _ => None,
+    };
+    match fetched {
+      Some((_guard, remote)) => {
+        release = release::Release::from_remote(&remote);
+        if let Err(error) = release::write(&target.root, &release).await {
+          log::warn!("cannot save local release record: {error}");
+        } else {
+          release_fetch_succeeded(&target.root, &version_id);
+        }
+      }
+      None => incomplete = true,
+    }
+  }
+  let listed = tokio::task::spawn_blocking({
+    let instance = target.instance.clone();
+    move || crate::instance::helpers::modpack::export::list_files(&instance)
+  })
+  .await
+  .map_err(|error| crate::error::USTBLError(error.to_string()))??;
+  let entries = super::changes::classify(&target.root, &baseline, &release, &listed).await?;
+  Ok(ModpackChangeDetail {
+    version_id: release.version_id,
+    label: release.label,
+    incomplete,
+    entries,
+  })
 }
 
 /// Map the ignore store's refusals onto the update errors: a request that no
@@ -1239,6 +1403,29 @@ pub async fn ignore_modpack_local_change(
   Ok(())
 }
 
+#[tauri::command]
+pub async fn ignore_modpack_added_file(
+  app: AppHandle,
+  instance_id: String,
+  path: String,
+) -> USTBLResult<()> {
+  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let _guard = UpdateGuard::acquire(&target.root)?;
+  let baseline = load_baseline(&target).await?;
+  let (release, _) = release::release_for(&target.root, &baseline);
+  let listed = tokio::task::spawn_blocking({
+    let instance = target.instance.clone();
+    move || crate::instance::helpers::modpack::export::list_files(&instance)
+  })
+  .await
+  .map_err(|error| crate::error::USTBLError(error.to_string()))??;
+  super::changes::ignore_added_file(&target.root, &baseline, &release, &listed, &path)
+    .await
+    .map_err(ignore_error)?;
+  plan_cache::clear_plan_cache(&target.root);
+  Ok(())
+}
+
 /// The ignored spots and files of this instance, for the undo list.
 #[tauri::command]
 pub async fn list_modpack_ignores(
@@ -1247,8 +1434,9 @@ pub async fn list_modpack_ignores(
 ) -> USTBLResult<Vec<super::ignores::IgnoredItem>> {
   let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let baseline = load_baseline(&target).await?;
+  let (release, _) = release::release_for(&target.root, &baseline);
   let root = target.root.clone();
-  tokio::task::spawn_blocking(move || super::ignores::list(&root, &baseline))
+  tokio::task::spawn_blocking(move || super::ignores::list_for_release(&root, &baseline, &release))
     .await
     .map_err(|e| crate::error::USTBLError(e.to_string()).into())
 }
@@ -1266,7 +1454,8 @@ pub async fn unignore_modpack_local_change(
   let _guard = UpdateGuard::acquire(&target.root)?;
   let baseline = load_baseline(&target).await?;
   let root = target.root.clone();
-  tokio::task::spawn_blocking(move || super::ignores::undo(&root, &baseline, &path, range))
+  let undo_path = path.clone();
+  tokio::task::spawn_blocking(move || super::ignores::undo(&root, &baseline, &undo_path, range))
     .await
     .map_err(|e| crate::error::USTBLError(e.to_string()))?
     .map_err(ignore_error)?;
@@ -1533,7 +1722,7 @@ pub(crate) fn fast_forward<'a>(
   conflicts: usize,
   loader_change: bool,
 ) -> bool {
-  !changes.any(|change| change.kind != super::diff::ChangeKind::Retire)
+  !changes.any(|change| change.restored || change.kind != super::diff::ChangeKind::Retire)
     && conflicts == 0
     && !loader_change
 }
@@ -1651,6 +1840,7 @@ async fn plan_fresh_install(
         plan_hash: String::new(),
         merged_contents: BTreeMap::new(),
         conflict_sources: BTreeMap::new(),
+        restored_locals: BTreeMap::new(),
         next_baseline: Vec::new(),
         variants: BTreeMap::new(),
         prune_dirs: BTreeMap::new(),
@@ -1862,6 +2052,14 @@ pub(super) fn selected_hunk_contents(
   choices: &mut BTreeMap<String, ConflictChoice>,
 ) -> USTBLResult<BTreeMap<String, Vec<u8>>> {
   let mut result = prepared.merged_contents.clone();
+  for conflict in &prepared.diff.conflicts {
+    if conflict.hunks.is_empty() && choices.get(&conflict.path) != Some(&ConflictChoice::TakeRemote)
+    {
+      if let Some(bytes) = prepared.restored_locals.get(&conflict.path) {
+        result.insert(conflict.path.clone(), bytes.clone());
+      }
+    }
+  }
   for (path, (base, local, remote)) in &prepared.conflict_sources {
     let hunk_count = prepared
       .diff
@@ -2126,7 +2324,7 @@ async fn apply_modpack_update_inner(
     "modpack update apply resolutions: instance={instance_id} plan_hash={plan_hash} resolutions=[{}]",
     describe_conflict_resolutions(&prepared.diff, &apply_choices).join(","),
   );
-  let ignores = super::ignores::plan_update(&target.root, &prepared, &base_texts, &apply_choices);
+  let ignores = super::ignores::plan_update(&target.root, &prepared, &remote);
   let result = apply(
     &env,
     UpdateRequest {
@@ -2530,8 +2728,7 @@ async fn install_campus_modpack_inner(
   } else {
     None
   };
-  let ignores =
-    super::ignores::plan_update(&target.root, &prepared, &BTreeMap::new(), &apply_choices);
+  let ignores = super::ignores::plan_update(&target.root, &prepared, &remote);
   let result = apply(
     &env,
     UpdateRequest {
@@ -3355,6 +3552,7 @@ mod tests {
       kind,
       remote: None,
       local_size: None,
+      restored: false,
     };
     let none: &[FileChange] = &[];
     assert!(fast_forward(none.iter(), 0, false));
@@ -3364,6 +3562,9 @@ mod tests {
     // A plan that only retires entries has no file action: it fast-forwards,
     // and the retirements still write the baseline when applied.
     assert!(fast_forward([change(ChangeKind::Retire)].iter(), 0, false));
+    let mut restored = change(ChangeKind::Retire);
+    restored.restored = true;
+    assert!(!fast_forward([restored].iter(), 0, false));
   }
 
   /// The JSON the update dialog sends for "use the new version on the first
@@ -3417,8 +3618,6 @@ mod tests {
           remote_disabled: None,
           local_disabled: Some(false),
           hunks: vec![hunk(0), hunk(4)],
-          ignored: false,
-          ignored_hunks: Vec::new(),
         },
         super::super::diff::Conflict {
           path: "mods/b.jar".into(),
@@ -3429,8 +3628,6 @@ mod tests {
           remote_disabled: None,
           local_disabled: Some(false),
           hunks: Vec::new(),
-          ignored: false,
-          ignored_hunks: Vec::new(),
         },
       ],
       ..Default::default()

@@ -20,17 +20,6 @@ export interface PublishFileEntry {
   once: boolean;
 }
 
-export interface PreviousRelease {
-  files: PublishFileEntry[];
-  rules: PublishRule[];
-}
-
-/** A suggested-blacklist entry at the level the blacklist names it. */
-export interface SuggestedEntry {
-  path: string;
-  kind: "file" | "dir";
-}
-
 export interface DiskFile {
   /** The enabled name. */
   path: string;
@@ -66,47 +55,13 @@ export interface PublishPayload {
   conflicts: string[];
 }
 
-export const DISABLED_SUFFIX = ".disabled";
-export const MODS_PREFIX = "mods/";
 export const MAX_RULES = 2000;
 
+/** Matches the lowercased keys the launcher's starting state uses. */
 export const keyOf = (path: string): string => path.toLowerCase();
 
 const isUnder = (key: string, dirKey: string): boolean =>
   key.startsWith(`${dirKey}/`);
-
-/**
- * Turn the listed files into enabled names. `mods/x.jar.disabled` becomes
- * `mods/x.jar` flagged disabled; a `.disabled` file elsewhere cannot be
- * expressed in a manifest and is left out.
- */
-export const normalizeDiskFiles = (all: string[]): DiskFile[] => {
-  const byKey = new Map<string, DiskFile>();
-  const order: string[] = [];
-  const put = (path: string, disabled: boolean) => {
-    const key = keyOf(path);
-    const existing = byKey.get(key);
-    if (existing) {
-      existing.conflict = true;
-      if (!disabled) {
-        existing.path = path;
-        existing.disabled = false;
-      }
-      return;
-    }
-    byKey.set(key, { path, disabled, conflict: false });
-    order.push(key);
-  };
-  for (const path of all) {
-    if (keyOf(path).endsWith(DISABLED_SUFFIX)) {
-      const base = path.slice(0, path.length - DISABLED_SUFFIX.length);
-      if (base !== "" && keyOf(base).startsWith(MODS_PREFIX)) put(base, true);
-    } else {
-      put(path, false);
-    }
-  }
-  return order.map((key) => byKey.get(key)!);
-};
 
 interface RuleIndex {
   files: Map<string, PublishRule>;
@@ -136,116 +91,6 @@ const coveringRule = (
     cut = key.lastIndexOf("/", cut - 1);
   }
   return undefined;
-};
-
-const dirKeysOf = (keys: Set<string>): Set<string> => {
-  const dirs = new Set<string>();
-  keys.forEach((key) => {
-    let cut = key.lastIndexOf("/");
-    while (cut > 0 && !dirs.has(key.slice(0, cut))) {
-      dirs.add(key.slice(0, cut));
-      cut = key.lastIndexOf("/", cut - 1);
-    }
-  });
-  return dirs;
-};
-
-const stripGhosts = (
-  ghosts: GhostEntry[],
-  diskKeys: Set<string>,
-  diskDirs: Set<string>
-): GhostEntry[] => {
-  const taken = new Set<string>();
-  const fileGhosts = new Set(
-    ghosts.filter((g) => g.kind === "file").map((g) => keyOf(g.path))
-  );
-  return ghosts.filter((ghost) => {
-    const key = keyOf(ghost.path);
-    if (taken.has(key) || diskKeys.has(key)) return false;
-    if (ghost.kind === "file" && diskDirs.has(key)) return false;
-    let cut = key.lastIndexOf("/");
-    while (cut > 0) {
-      const parent = key.slice(0, cut);
-      if (diskKeys.has(parent) || fileGhosts.has(parent)) return false;
-      cut = key.lastIndexOf("/", cut - 1);
-    }
-    taken.add(key);
-    return true;
-  });
-};
-
-export interface InitialModelInput {
-  /** Every listed file of the instance, `.disabled` names included. */
-  all: string[];
-  previous: PreviousRelease | null;
-  suggested: SuggestedEntry[];
-}
-
-/**
- * The tree the dialog opens with (§4 defaults): the previous release's rules
- * carry over as they are, files it listed stay ticked with their `once`, new
- * files follow the nearest rule or are ticked, and a suggested-blacklist entry
- * the previous release never mentioned gets one ignore rule at its own level.
- */
-export const createInitialModel = ({
-  all,
-  previous,
-  suggested,
-}: InitialModelInput): { context: PublishContext; draft: PublishDraft } => {
-  const files = normalizeDiskFiles(all);
-  const diskKeys = new Set(files.map((file) => keyOf(file.path)));
-  const diskDirs = dirKeysOf(diskKeys);
-  const prevFiles = previous?.files ?? [];
-  const rules: PublishRule[] = (previous?.rules ?? []).map((rule) => ({
-    ...rule,
-  }));
-
-  const ghostCandidates: GhostEntry[] = [];
-  for (const entry of prevFiles) {
-    if (!diskKeys.has(keyOf(entry.path))) {
-      ghostCandidates.push({ path: entry.path, kind: "file" });
-    }
-  }
-  for (const rule of rules) {
-    const key = keyOf(rule.path);
-    const present =
-      rule.kind === "file" ? diskKeys.has(key) : diskDirs.has(key);
-    if (!present) ghostCandidates.push({ path: rule.path, kind: rule.kind });
-  }
-  const ghosts = stripGhosts(ghostCandidates, diskKeys, diskDirs);
-
-  const prevByKey = new Map(prevFiles.map((f) => [keyOf(f.path), f]));
-  const mentioned = (entry: SuggestedEntry): boolean => {
-    const key = keyOf(entry.path);
-    const inside = (other: string) => other === key || isUnder(other, key);
-    return (
-      prevFiles.some((f) => inside(keyOf(f.path))) ||
-      rules.some((rule) => {
-        const ruleKey = keyOf(rule.path);
-        return (
-          inside(ruleKey) || (rule.kind === "dir" && isUnder(key, ruleKey))
-        );
-      })
-    );
-  };
-  for (const entry of suggested) {
-    if (!mentioned(entry)) {
-      rules.push({ path: entry.path, kind: entry.kind, state: "ignore" });
-    }
-  }
-
-  const index = indexRules(rules);
-  const included = new Set<string>();
-  const once = new Set<string>();
-  for (const file of files) {
-    const key = keyOf(file.path);
-    const prev = prevByKey.get(key);
-    if (!prev) continue;
-    if (prev.once) once.add(key);
-    if (!index.files.has(key) && coveringRule(index, key)) included.add(key);
-  }
-
-  return { context: { files, ghosts }, draft: { rules, included, once } };
 };
 
 export interface PublishView {
@@ -316,6 +161,17 @@ export const viewOf = (
     },
     isOnce: (path) => draft.once.has(keyOf(path)),
   };
+};
+
+/** Files present on the publisher's disk that a delete state will remove. */
+export const localDeletePaths = (
+  context: PublishContext,
+  draft: PublishDraft
+): string[] => {
+  const view = viewOf(context, draft);
+  return context.files
+    .filter((file) => view.fileState(file.path) === "delete")
+    .map((file) => file.path);
 };
 
 const withRule = (rules: PublishRule[], next: PublishRule): PublishRule[] => {
@@ -562,3 +418,329 @@ export const buildPublishNodes = (context: PublishContext): PublishNode[] => {
   sort(roots);
   return roots;
 };
+
+// ------------------------------------------------------------- change marks
+//
+// How the files differ from the project line's current release (plan 《整合包
+// 本地改动明细》§11.3). The launcher lists the content differences; deleted
+// files are the tree's own ghosts.
+
+export type ChangeKind = "modified" | "added" | "toggled" | "onceChanged";
+/** A kind of mark; "deleted" is a file of the previous release gone from disk. */
+export type ChangeCategory =
+  | Exclude<ChangeKind, "toggled">
+  | "enable"
+  | "disable"
+  | "deleted";
+
+export const CHANGE_CATEGORIES: ChangeCategory[] = [
+  "modified",
+  "added",
+  "enable",
+  "disable",
+  "onceChanged",
+  "deleted",
+];
+
+export interface PublishChange {
+  /** The enabled name. */
+  path: string;
+  kind: ChangeKind;
+  /** The previous release's content; null for an added file. */
+  previousSha1: string | null;
+  previousSize: number | null;
+  localSize: number | null;
+  /** The player-side ignore list names the file; publishing does not care. */
+  localIgnored: boolean;
+  /** Backend-verified location of the previous release. */
+  previousVersionId?: string | null;
+  previousProjectId?: string | null;
+}
+
+export interface PreviousFile {
+  path: string;
+  sha1: string;
+  size: number;
+  disabled: boolean;
+  once: boolean;
+}
+
+/** What the project line's current release lists; null for a new project. */
+export interface PreviousRelease {
+  files: PreviousFile[];
+  rules: PublishRule[];
+  rulesManifest: boolean;
+}
+
+/**
+ * The mark of each node by lowercased path. A file the previous release lacks
+ * is only "added" while the draft publishes it.
+ */
+export const categorizeChanges = (
+  changes: PublishChange[],
+  ghosts: GhostEntry[],
+  previous: PreviousRelease | null,
+  view: PublishView,
+  disabledByPath: ReadonlyMap<string, boolean>
+): Map<string, ChangeCategory> => {
+  const marks = new Map<string, ChangeCategory>();
+  for (const change of changes) {
+    if (change.kind === "added" && view.fileState(change.path) !== "include") {
+      continue;
+    }
+    marks.set(
+      keyOf(change.path),
+      change.kind === "toggled"
+        ? disabledByPath.get(keyOf(change.path)) === false
+          ? "enable"
+          : "disable"
+        : change.kind
+    );
+  }
+  if (previous) {
+    const listed = new Set(previous.files.map((file) => keyOf(file.path)));
+    for (const ghost of ghosts) {
+      if (ghost.kind === "file" && listed.has(keyOf(ghost.path))) {
+        marks.set(keyOf(ghost.path), "deleted");
+      }
+    }
+  }
+  return marks;
+};
+
+export const countCategories = (
+  marks: Map<string, ChangeCategory>
+): Record<ChangeCategory, number> => {
+  const counts: Record<ChangeCategory, number> = {
+    modified: 0,
+    added: 0,
+    enable: 0,
+    disable: 0,
+    onceChanged: 0,
+    deleted: 0,
+  };
+  marks.forEach((category) => {
+    counts[category] += 1;
+  });
+  return counts;
+};
+
+/** How many marked files sit under each directory, by lowercased path. */
+export const dirChangeCounts = (
+  marks: Map<string, ChangeCategory>
+): Map<string, number> => {
+  const counts = new Map<string, number>();
+  marks.forEach((_, key) => {
+    let cut = key.lastIndexOf("/");
+    while (cut > 0) {
+      const parent = key.slice(0, cut);
+      counts.set(parent, (counts.get(parent) ?? 0) + 1);
+      cut = key.lastIndexOf("/", cut - 1);
+    }
+  });
+  return counts;
+};
+
+export interface ChangeFilter {
+  /** Show only these marks; empty means every mark. */
+  categories: ReadonlySet<ChangeCategory>;
+  /** Show only marked files. */
+  onlyChanged: boolean;
+}
+
+export const NO_FILTER: ChangeFilter = {
+  categories: new Set(),
+  onlyChanged: false,
+};
+
+export const isFilterActive = (filter: ChangeFilter): boolean =>
+  filter.onlyChanged || filter.categories.size > 0;
+
+export const toggleCategory = (
+  filter: ChangeFilter,
+  category: ChangeCategory
+): ChangeFilter => {
+  const categories = new Set(filter.categories);
+  if (categories.has(category)) categories.delete(category);
+  else categories.add(category);
+  return { ...filter, categories };
+};
+
+/**
+ * The tree with only the files the filter lets through, and the directories
+ * that lead to them. The tree itself is returned when no filter is active.
+ */
+export const filterNodes = (
+  nodes: PublishNode[],
+  marks: Map<string, ChangeCategory>,
+  filter: ChangeFilter
+): PublishNode[] => {
+  if (!isFilterActive(filter)) return nodes;
+  const keep = (list: PublishNode[]): PublishNode[] =>
+    list.flatMap((node) => {
+      if (node.kind === "file") {
+        const category = marks.get(keyOf(node.path));
+        const shown =
+          category !== undefined &&
+          (filter.categories.size === 0 || filter.categories.has(category));
+        return shown ? [node] : [];
+      }
+      const children = keep(node.children);
+      return children.length > 0 ? [{ ...node, children }] : [];
+    });
+  return keep(nodes);
+};
+
+/** The slug of the project to publish to by default, or null for a new one. */
+export const defaultPublishProject = (
+  origin: { platform: string; projectId: string } | null | undefined,
+  projects: { slug: string }[]
+): string | null => {
+  if (!origin || origin.platform !== "campus") return null;
+  return projects.some((project) => project.slug === origin.projectId)
+    ? origin.projectId
+    : null;
+};
+
+/**
+ * The target to show once the project list is in. A choice the user made
+ * (a slug, or null for a new project) stays; `undefined` means none yet.
+ */
+export const publishTargetAfterLoad = (
+  userChoice: string | null | undefined,
+  origin: { platform: string; projectId: string } | null | undefined,
+  projects: { slug: string }[]
+): string | null =>
+  userChoice !== undefined
+    ? userChoice
+    : defaultPublishProject(origin, projects);
+
+export interface PublishSummary {
+  /** Nothing to compare with: every pushed file is new. */
+  isNew: boolean;
+  /** Files this version lists. */
+  pushed: number;
+  added: string[];
+  /** Content differs from the previous release. */
+  modified: string[];
+  /** Content differs, and the file stays first-install only. */
+  onceUpdated: string[];
+  /** Listed before and not pushed now, and nothing else mentions it. */
+  removed: string[];
+  /** Listed before, now ignored. */
+  ignored: string[];
+  /** Listed before, now deleted. */
+  deleted: string[];
+  /** The enabled or disabled state differs from the previous release. */
+  enable: string[];
+  disable: string[];
+  /** Became first-install only. */
+  onceOn: string[];
+  /** Stopped being first-install only. */
+  onceOff: string[];
+  rulesAdded: PublishRule[];
+  rulesRemoved: PublishRule[];
+  rulesChanged: PublishRule[];
+  /** Files the publisher's own instance will remove after following. */
+  localDeleted: string[];
+}
+
+const ruleKey = (rule: PublishRule): string =>
+  `${rule.kind}:${keyOf(rule.path)}`;
+
+/**
+ * What this publish changes against the previous release, computed from the
+ * payload the dialog would send (`toPublishPayload`) so the two cannot differ.
+ * `changes` only tells whether a file's content differs.
+ */
+export const summarizePublish = (
+  context: PublishContext,
+  draft: PublishDraft,
+  previous: PreviousRelease | null,
+  changes: PublishChange[]
+): PublishSummary => {
+  const payload = toPublishPayload(context, draft);
+  const view = viewOf(context, draft);
+  const summary: PublishSummary = {
+    isNew: previous === null,
+    pushed: payload.files.length,
+    added: [],
+    modified: [],
+    onceUpdated: [],
+    removed: [],
+    ignored: [],
+    deleted: [],
+    enable: [],
+    disable: [],
+    onceOn: [],
+    onceOff: [],
+    rulesAdded: [],
+    rulesRemoved: [],
+    rulesChanged: [],
+    localDeleted: localDeletePaths(context, draft),
+  };
+  const before = new Map(
+    (previous?.files ?? []).map((file) => [keyOf(file.path), file])
+  );
+  const differs = new Set(
+    changes
+      .filter(
+        (change) => change.kind === "modified" || change.kind === "onceChanged"
+      )
+      .map((change) => keyOf(change.path))
+  );
+  const pushed = new Set<string>();
+  for (const file of payload.files) {
+    const key = keyOf(file.path);
+    pushed.add(key);
+    const old = before.get(key);
+    if (!old) {
+      summary.added.push(file.path);
+      continue;
+    }
+    if (differs.has(key)) {
+      (file.once ? summary.onceUpdated : summary.modified).push(file.path);
+    }
+    if (file.disabled !== old.disabled)
+      (file.disabled ? summary.disable : summary.enable).push(file.path);
+    if (file.once && !old.once) summary.onceOn.push(file.path);
+    if (!file.once && old.once) summary.onceOff.push(file.path);
+  }
+  for (const [key, old] of before) {
+    if (pushed.has(key)) continue;
+    const state = view.fileState(old.path);
+    if (state === "ignore") summary.ignored.push(old.path);
+    else if (state === "delete") summary.deleted.push(old.path);
+    else summary.removed.push(old.path);
+  }
+  const oldRules = new Map(
+    (previous?.rules ?? []).map((rule) => [ruleKey(rule), rule])
+  );
+  const newRules = new Map(draft.rules.map((rule) => [ruleKey(rule), rule]));
+  for (const [key, rule] of newRules) {
+    const old = oldRules.get(key);
+    if (!old) summary.rulesAdded.push(rule);
+    else if (old.state !== rule.state) summary.rulesChanged.push(rule);
+  }
+  for (const [key, rule] of oldRules) {
+    if (!newRules.has(key)) summary.rulesRemoved.push(rule);
+  }
+  return summary;
+};
+
+/** Whether the summary has nothing to show. */
+export const isSummaryEmpty = (summary: PublishSummary): boolean =>
+  summary.added.length === 0 &&
+  summary.modified.length === 0 &&
+  summary.onceUpdated.length === 0 &&
+  summary.removed.length === 0 &&
+  summary.ignored.length === 0 &&
+  summary.deleted.length === 0 &&
+  summary.enable.length === 0 &&
+  summary.disable.length === 0 &&
+  summary.onceOn.length === 0 &&
+  summary.onceOff.length === 0 &&
+  summary.rulesAdded.length === 0 &&
+  summary.rulesRemoved.length === 0 &&
+  summary.rulesChanged.length === 0 &&
+  summary.localDeleted.length === 0;

@@ -20,7 +20,7 @@ import {
   LedgerBadge,
   ledgerBadge,
   ledgerInstances,
-  ledgerLocalChanges,
+  ledgerScanned,
   ledgerUpdateDisabled,
   loaderSlug,
 } from "@/utils/modpack-ledger";
@@ -155,7 +155,6 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
               instanceId: instance.id,
               instanceName: instance.name,
             });
-          const localChanges = ledgerLocalChanges(check);
 
           const detail =
             badge === "available" && check?.latestLabel
@@ -177,7 +176,7 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
               <Button
                 size="xs"
                 variant="outline"
-                isDisabled={localChanges === 0}
+                isDisabled={!ledgerScanned(check)}
                 onClick={openChanges}
               >
                 {t("InstanceSyncPage.ledger.action.viewChanges")}

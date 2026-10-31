@@ -21,7 +21,7 @@ export interface ModpackUpdateCheck {
   reason?: string;
   /** The previous update left a backup that can still be rolled back. */
   canRollBack: boolean;
-  /** Managed files that differ from the install; set by the local scan. */
+  /** Counted local changes against the last release; set by the local scan. */
   localChanges?: number;
   /** The platform confirmed the project is gone; this check detached the instance. */
   unlinked?: boolean;
@@ -47,6 +47,8 @@ export interface ModpackFileChange {
   kind: ModpackChangeKind;
   remote?: ModpackFileKey;
   localSize?: number;
+  /** The player ignored the local change; this update puts the modpack's content back. */
+  restored?: boolean;
 }
 
 export type ModpackConflictKind =
@@ -64,10 +66,6 @@ export interface ModpackConflict {
   local?: ModpackFileKey;
   remote?: ModpackFileKey;
   hunks: ModpackMergeConflict[];
-  /** The player ignored the local change here: the file, or every block. */
-  ignored?: boolean;
-  /** Blocks (indexes into `hunks`) whose local changes are all ignored. */
-  ignoredHunks?: number[];
 }
 
 export interface ModpackMergeConflict {
@@ -110,23 +108,48 @@ export interface ModpackDiffHunk {
   edits?: ModpackDiffEdit[];
 }
 
-export type ModpackLocalChangeKind =
+/** How a path differs from the release the instance last matched. */
+export type ModpackChangeClass =
   | "modified"
   | "deleted"
-  /** Only the disabled state differs: the file sits at the other variant. */
-  | "disabled"
-  | "enabled";
+  /** Only the disabled state differs from the release. */
+  | "toggled"
+  /** A first-install file that changed or is gone; only new players see it. */
+  | "onceChanged"
+  /** Not in the release; the publish tree ticks it by default. */
+  | "added"
+  /** Not in the release, and left out of publishing by a rule or the blacklist. */
+  | "addedExcluded";
 
-export interface ModpackLocalChange {
+export interface ModpackChangeDetailEntry {
+  /** The enabled name. */
   path: string;
-  kind: ModpackLocalChangeKind;
-  baseline: ModpackFileKey;
-  local?: ModpackFileKey | null;
-  /** Normalized line diff, installed → local; only for text files. */
-  hunks?: ModpackDiffHunk[] | null;
-  noDiff?: "notText" | "baseMissing" | "bothVariants" | null;
-  /** A modified file whose disabled state also flipped. */
-  toggled?: boolean;
+  class: ModpackChangeClass;
+  /** Counts toward the instance's local-change number. */
+  counted: boolean;
+  /** The previous release's rule covering an added file; only set on added entries. */
+  rule?: "ignore" | "delete";
+  size?: number;
+  /** The managed baseline entry (else the release's key) an ignore anchors on. */
+  baseline?: ModpackFileKey;
+  local?: ModpackFileKey;
+  /** Normalized line diff, installed → local; only for modified text files. */
+  hunks?: ModpackDiffHunk[];
+  noDiff?: "notText" | "baseMissing" | "bothVariants";
+  /** The disabled state also differs from the release. */
+  toggled: boolean;
+  /** The file sits at `<path>.disabled` on disk. */
+  disabled: boolean;
+}
+
+export interface ModpackChangeDetail {
+  versionId: string;
+  /** Name of the release the changes are against. */
+  label: string;
+  /** No saved release record could be had: compared with the install only. */
+  incomplete: boolean;
+  /** Ignored entries are left out; they come from the ignore list. */
+  entries: ModpackChangeDetailEntry[];
 }
 
 export type ModpackConflictChoice = "keepLocal" | "takeRemote";
@@ -145,6 +168,8 @@ export interface ModpackIgnoredItem {
   /** The whole file is ignored. */
   whole: boolean;
   regions: ModpackIgnoredRegion[];
+  /** A file the release does not list, ignored by path (`baseSha1` is empty). */
+  added: boolean;
 }
 
 export interface ModpackBaselineLoader {

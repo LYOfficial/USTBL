@@ -854,7 +854,7 @@ impl PublishJob {
           .as_str()
           .unwrap_or(&self.record.project_slug)
           .to_string();
-        let adoption = match instance_of(&self.app, &self.record.instance_id) {
+        let (adoption, locally_deleted) = match instance_of(&self.app, &self.record.instance_id) {
           Ok(instance) => {
             adopt_published(
               &self.app,
@@ -865,13 +865,14 @@ impl PublishJob {
             )
             .await
           }
-          Err(_) => super::commands::Adoption::RecordFailed,
+          Err(_) => (super::commands::Adoption::RecordFailed, 0),
         };
         JobRecord::remove(&jobs_dir(), &self.record.id);
         let outcome = PublishOutcome {
           version_id: self.record.version_id,
           skipped: self.record.skipped.clone(),
           adoption,
+          locally_deleted,
         };
         complete(&tasks.platform);
         log::info!(

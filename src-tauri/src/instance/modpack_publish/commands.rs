@@ -15,22 +15,27 @@ use crate::account::helpers::vustb;
 use crate::account::models::AccountInfo;
 use crate::error::{USTBLError, USTBLResult};
 use crate::instance::helpers::misc::{get_instance_game_config, get_instance_subdir_paths};
+use crate::instance::helpers::modpack::base_store;
 use crate::instance::helpers::modpack::baseline::{
   canonical_loader_version, hash_file, BaselineLoader, ModpackBaseline,
 };
 use crate::instance::helpers::modpack::multimc::profile::safe_relative;
 use crate::instance::helpers::modpack::multimc::snapshot::load_required_snapshot;
+use crate::instance::helpers::modpack::text;
 use crate::instance::models::misc::{
   Instance, InstanceError, InstanceOrigin, InstanceSubdirType, OriginPlatform,
 };
 use crate::instance::modpack_update::commands::fast_forward;
 use crate::instance::modpack_update::commands::store_instance;
+use crate::instance::modpack_update::decide::Policy;
 use crate::instance::modpack_update::diff::FileKey;
-use crate::instance::modpack_update::plan::{compare, Compared};
+use crate::instance::modpack_update::plan::{compare, scan_cache, Compared};
+use crate::instance::modpack_update::release;
 use crate::instance::modpack_update::remote::RemoteRule;
 use crate::instance::modpack_update::sources::{
   campus_base_remote, campus_client, loader_slug, CAMPUS_API,
 };
+use crate::instance::modpack_update::text_diff::DiffHunk;
 use crate::utils::web::build_part_upload_client;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -151,6 +156,8 @@ pub struct PublishOutcome {
   pub skipped: Vec<String>,
   /// What happened to the instance's own record of the modpack.
   pub adoption: Adoption,
+  /// Files removed locally because the published version deletes them.
+  pub locally_deleted: usize,
 }
 
 /// Whether the published version became the instance's own baseline. The
@@ -168,6 +175,8 @@ pub enum Adoption {
   LocalChanged,
   /// The release went out but writing the instance's record failed.
   RecordFailed,
+  /// The published version was not adopted because a local deletion failed.
+  DeleteFailed,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -376,6 +385,10 @@ where
 pub struct PreviousFile {
   pub path: String,
   #[serde(default)]
+  pub sha1: String,
+  #[serde(default)]
+  pub size: u64,
+  #[serde(default)]
   pub disabled: bool,
   #[serde(default)]
   pub once: bool,
@@ -390,22 +403,23 @@ pub struct PreviousRelease {
   pub files: Vec<PreviousFile>,
   #[serde(default)]
   pub rules: Vec<RemoteRule>,
+  #[serde(default)]
+  pub rules_manifest: bool,
+  #[serde(default)]
+  pub version_id: Option<String>,
+  #[serde(default)]
+  pub project_id: Option<String>,
 }
 
 /// The files and rules the line's current release lists, so the publish dialog
 /// starts from them. `None` when the project has no release on this line; any
 /// other failure is an error, since publishing on top of a guess would lose rules.
-#[tauri::command]
 pub async fn fetch_campus_modpack_previous_release(
   app: AppHandle,
   instance_id: String,
   project: String,
 ) -> USTBLResult<Option<PreviousRelease>> {
-  let valid = !project.is_empty()
-    && project
-      .chars()
-      .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
-  if !valid {
+  if !is_project_slug(&project) {
     return Err(InstanceError::ModpackUpdateUnsupported.into());
   }
   let instance = instance_of(&app, &instance_id)?;
@@ -425,12 +439,159 @@ pub async fn fetch_campus_modpack_previous_release(
     return Err(failure(response).await);
   }
   let body: Value = response.json().await?;
-  Ok(Some(previous_release_of(&body["manifest"])?))
+  let mut release = previous_release_of(&body["manifest"])?;
+  release.version_id = body["id"].as_i64().map(|id| id.to_string());
+  Ok(Some(release))
 }
 
 fn previous_release_of(manifest: &Value) -> USTBLResult<PreviousRelease> {
   serde_json::from_value(manifest.clone())
     .map_err(|_| InstanceError::ModpackUpdateRemoteInvalid.into())
+}
+
+/// The publish tree's starting state, and what the files differ in from the
+/// line's current release (`previous`, `None` for a new project or a line
+/// without a release; then every file is an addition).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublishTree {
+  #[serde(flatten)]
+  pub defaults: super::defaults::PublishDefaults,
+  pub changes: Vec<super::changes::PublishChange>,
+  pub previous: Option<PreviousRelease>,
+}
+
+#[tauri::command]
+pub async fn prepare_campus_modpack_publish_tree(
+  app: AppHandle,
+  instance_id: String,
+  project: Option<String>,
+) -> USTBLResult<PublishTree> {
+  let instance = instance_of(&app, &instance_id)?;
+  let root = instance.version_path.clone();
+  let previous = match project {
+    Some(project) => {
+      fetch_campus_modpack_previous_release(app.clone(), instance_id, project.clone())
+        .await?
+        .map(|mut release| {
+          release.project_id = Some(project);
+          release
+        })
+    }
+    None => None,
+  };
+  let list = tokio::task::spawn_blocking(move || {
+    crate::instance::helpers::modpack::export::list_files(&instance)
+  })
+  .await
+  .map_err(|error| USTBLError(error.to_string()))??;
+  let suggested = list
+    .suggested
+    .iter()
+    .filter_map(|entry| {
+      Some(super::defaults::SuggestedEntry {
+        path: entry.path.clone(),
+        kind: match entry.kind.as_str() {
+          "file" => crate::instance::modpack_update::remote::RuleKind::File,
+          "dir" => crate::instance::modpack_update::remote::RuleKind::Dir,
+          _ => return None,
+        },
+      })
+    })
+    .collect::<Vec<_>>();
+  let defaults = super::defaults::create_initial_model(&list.all, previous.as_ref(), &suggested);
+  let baseline = ModpackBaseline::load(&root).await.ok();
+  let files = defaults.files.clone();
+  let listed = previous.clone();
+  let changes = tokio::task::spawn_blocking(move || {
+    let ignored = super::changes::locally_ignored(&root, baseline.as_ref());
+    super::changes::classify(&root, scan_cache(), &files, listed.as_ref(), &ignored)
+  })
+  .await
+  .map_err(|error| USTBLError(error.to_string()))??;
+  Ok(PublishTree {
+    defaults,
+    changes,
+    previous,
+  })
+}
+
+/// The line diff of one file from the previous release's text to the file on
+/// disk. `None` when the previous text is not kept locally or the file is not
+/// text; the tree then only says the content differs.
+#[tauri::command]
+pub async fn diff_campus_modpack_publish_file(
+  app: AppHandle,
+  instance_id: String,
+  path: String,
+  previous_sha1: String,
+  previous_version_id: String,
+  previous_project_id: String,
+) -> USTBLResult<Option<Vec<DiffHunk>>> {
+  if !valid_publish_diff_inputs(
+    &path,
+    &previous_sha1,
+    &previous_version_id,
+    &previous_project_id,
+  ) {
+    return Err(InstanceError::ModpackUpdateUnsupported.into());
+  }
+  let instance = instance_of(&app, &instance_id)?;
+  let root = instance.version_path.clone();
+  let local_path = root.join(&path);
+  let disabled_path = root.join(format!(
+    "{path}{}",
+    crate::instance::modpack_update::diff::DISABLED_SUFFIX
+  ));
+  let size = [local_path, disabled_path]
+    .iter()
+    .find_map(|file| std::fs::metadata(file).ok().map(|meta| meta.len()));
+  if !text::is_text_path(&path, &[]) || size.is_none_or(|size| size > text::MAX_TEXT_SIZE as u64) {
+    return tokio::task::spawn_blocking(move || {
+      super::changes::file_diff(&root, &path, &previous_sha1)
+    })
+    .await
+    .map_err(|error| USTBLError(error.to_string()))?;
+  }
+  if crate::instance::helpers::modpack::base_store::load(&root, &previous_sha1.to_lowercase())?
+    .is_none()
+  {
+    match crate::instance::modpack_update::commands::recover_publish_base(
+      &app,
+      &instance,
+      &previous_project_id,
+      &previous_version_id,
+      &path,
+      &previous_sha1,
+    )
+    .await
+    {
+      Ok(Some(())) | Ok(None) => {}
+      Err(_) => return Err(InstanceError::ModpackPublishPreviousUnavailable.into()),
+    }
+  }
+  tokio::task::spawn_blocking(move || super::changes::file_diff(&root, &path, &previous_sha1))
+    .await
+    .map_err(|error| USTBLError(error.to_string()))?
+}
+
+fn is_sha1(value: &str) -> bool {
+  value.len() == 40 && value.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn is_project_slug(value: &str) -> bool {
+  !value.is_empty()
+    && value
+      .chars()
+      .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+fn valid_publish_diff_inputs(path: &str, sha1: &str, version_id: &str, project_id: &str) -> bool {
+  safe_relative(path).is_ok()
+    && is_sha1(sha1)
+    && !version_id.is_empty()
+    && version_id.chars().all(|c| c.is_ascii_digit())
+    && is_project_slug(project_id)
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -935,14 +1096,14 @@ pub(super) async fn adopt_published(
   project: &str,
   version_id: i64,
   version_number: &str,
-) -> Adoption {
+) -> (Adoption, usize) {
   match try_adopt(app, instance, project, version_id, version_number).await {
-    Ok(adoption) => adoption,
+    Ok(result) => result,
     Err(error) => {
       // The release itself succeeded; a failed record only means the next
       // check compares the instance with it the ordinary way.
       log::warn!("Could not record the published version: {error:?}");
-      Adoption::RecordFailed
+      (Adoption::RecordFailed, 0)
     }
   }
 }
@@ -982,9 +1143,29 @@ fn adopt_action(
   Adoption::Followed
 }
 
-/// Whether the comparison of the instance with the published version moves
-/// nothing but the baseline. The instance is the source of the loader and the
-/// component chain, so those never count as a change here.
+/// A publish can adopt a version while applying only its explicit delete rules
+/// to the publisher's disk. Other local changes must still prevent adoption.
+fn is_fast_forward_after_delete_rules(
+  compared: &Compared,
+  remote: &crate::instance::modpack_update::remote::RemoteModpack,
+) -> bool {
+  compared.both_variants.is_empty()
+    && fast_forward(
+      compared
+        .diff
+        .changes
+        .iter()
+        .chain(&compared.diff.auto_merged)
+        .filter(|change| {
+          !(change.kind == crate::instance::modpack_update::diff::ChangeKind::Delete
+            && remote.policy_of(&change.path) == Policy::Delete)
+        }),
+      compared.diff.conflicts.len(),
+      false,
+    )
+}
+
+#[cfg(test)]
 fn is_fast_forward(compared: &Compared) -> bool {
   compared.both_variants.is_empty()
     && fast_forward(
@@ -998,13 +1179,69 @@ fn is_fast_forward(compared: &Compared) -> bool {
     )
 }
 
+fn publish_delete_paths(
+  root: &Path,
+  compared: &Compared,
+  remote: &crate::instance::modpack_update::remote::RemoteModpack,
+) -> USTBLResult<Vec<String>> {
+  let mut paths = Vec::new();
+  for change in compared.diff.changes.iter().filter(|change| {
+    change.kind == crate::instance::modpack_update::diff::ChangeKind::Delete
+      && remote.policy_of(&change.path) == Policy::Delete
+  }) {
+    safe_relative(&change.path)?;
+    for path in [
+      change.path.clone(),
+      format!(
+        "{}{}",
+        change.path,
+        crate::instance::modpack_update::diff::DISABLED_SUFFIX
+      ),
+    ] {
+      if root.join(&path).is_file() {
+        paths.push(path);
+      }
+    }
+  }
+  Ok(paths)
+}
+
+/// Back up every target before removing any of them. The directory is private
+/// to publishing and never shares the update transaction's last-backup area.
+fn backup_and_delete_publish_files(root: &Path, paths: &[String]) -> USTBLResult<usize> {
+  if paths.is_empty() {
+    return Ok(0);
+  }
+  let backup = root.join(".ustbl-update").join("publish-deleted");
+  if backup.exists() {
+    fs::remove_dir_all(&backup)?;
+  }
+  for path in paths {
+    let source = root.join(path);
+    let target = backup.join(path);
+    if let Some(parent) = target.parent() {
+      fs::create_dir_all(parent)?;
+    }
+    fs::copy(&source, &target)?;
+  }
+  for path in paths {
+    if let Err(error) = fs::remove_file(root.join(path)) {
+      log::warn!("Could not remove published delete target {path}: {error}");
+      return Err(USTBLError(format!(
+        "删除发布者本机文件失败：{path}: {error}"
+      )));
+    }
+  }
+  Ok(paths.len())
+}
+
 async fn try_adopt(
   app: &AppHandle,
   instance: &Instance,
   project: &str,
   version_id: i64,
   version_number: &str,
-) -> USTBLResult<Adoption> {
+) -> USTBLResult<(Adoption, usize)> {
   let loader_type = instance.mod_loader.loader_type;
   let origin = instance.origin.as_ref();
   // Only ask the platform when the instance follows another campus project;
@@ -1020,10 +1257,10 @@ async fn try_adopt(
     _ => false,
   };
   if adopt_action(origin, project, &instance.version, loader_type, gone) == Adoption::KeptOther {
-    return Ok(Adoption::KeptOther);
+    return Ok((Adoption::KeptOther, 0));
   }
   if !get_instance_game_config(app, instance).version_isolation {
-    return Ok(Adoption::NotIsolated);
+    return Ok((Adoption::NotIsolated, 0));
   }
 
   let root = instance.version_path.clone();
@@ -1050,21 +1287,48 @@ async fn try_adopt(
     _ => ModpackBaseline::build(&new_origin, loader.clone(), Vec::new()),
   };
   let compared = compare(&root, &base, &remote).await?;
-  if !is_fast_forward(&compared) {
-    return Ok(Adoption::LocalChanged);
+  let delete_paths = publish_delete_paths(&root, &compared, &remote)?;
+  if !is_fast_forward_after_delete_rules(&compared, &remote) {
+    return Ok((Adoption::LocalChanged, 0));
   }
+  let locally_deleted = match backup_and_delete_publish_files(&root, &delete_paths) {
+    Ok(count) => count,
+    Err(error) => {
+      log::warn!("Could not apply published delete rules locally: {error:?}");
+      return Ok((Adoption::DeleteFailed, 0));
+    }
+  };
 
   let mut baseline = ModpackBaseline::build(&new_origin, loader, compared.next_baseline);
   if let Some(components) = remote.components.clone() {
     baseline = baseline.with_components(components);
   }
-  baseline.save(&instance.version_path).await?;
+  if let Err(error) = baseline.save(&instance.version_path).await {
+    log::warn!("Could not save published baseline: {error:?}");
+    return Ok((Adoption::RecordFailed, locally_deleted));
+  }
+  if let Err(error) = base_store::sync(&instance.version_path, &baseline.files) {
+    log::warn!("Could not cache published text baselines: {error}");
+  }
+  if let Err(error) = release::write(
+    &instance.version_path,
+    &release::Release::from_remote(&remote),
+  )
+  .await
+  {
+    log::warn!("Could not save published release record: {error:?}");
+    return Ok((Adoption::RecordFailed, locally_deleted));
+  }
   let label = version_number.to_string();
-  store_instance(app, &instance.id, move |stored| {
+  if let Err(error) = store_instance(app, &instance.id, move |stored| {
     adopt_instance_identity(stored, new_origin, label);
   })
-  .await?;
-  Ok(Adoption::Followed)
+  .await
+  {
+    log::warn!("Could not save published instance identity: {error:?}");
+    return Ok((Adoption::RecordFailed, locally_deleted));
+  }
+  Ok((Adoption::Followed, locally_deleted))
 }
 
 fn adopt_instance_identity(instance: &mut Instance, origin: InstanceOrigin, version: String) {
@@ -1076,9 +1340,45 @@ fn adopt_instance_identity(instance: &mut Instance, origin: InstanceOrigin, vers
 #[cfg(test)]
 mod tests {
   use super::*;
+
   use crate::instance::models::misc::ModLoaderType;
   use crate::instance::modpack_update::remote::{RemoteModpack, RuleKind, RuleState};
   use std::path::PathBuf;
+
+  #[test]
+  fn publish_diff_inputs_are_rejected_before_filesystem_access() {
+    let sha1 = "a".repeat(40);
+    assert!(!valid_publish_diff_inputs(
+      "../config/a.cfg",
+      &sha1,
+      "1",
+      "project"
+    ));
+    assert!(!valid_publish_diff_inputs(
+      "config/a.cfg",
+      "../base",
+      "1",
+      "project"
+    ));
+    assert!(!valid_publish_diff_inputs(
+      "config/a.cfg",
+      &sha1,
+      "1x",
+      "project"
+    ));
+    assert!(!valid_publish_diff_inputs(
+      "config/a.cfg",
+      &sha1,
+      "1",
+      "bad/project"
+    ));
+    assert!(valid_publish_diff_inputs(
+      "config/a.cfg",
+      &sha1,
+      "1",
+      "project_name-2"
+    ));
+  }
 
   fn instance_dir(files: &[(&str, &str)]) -> PathBuf {
     let root = std::env::temp_dir().join(format!("ustbl-publish-test-{}", uuid::Uuid::new_v4()));
@@ -1335,11 +1635,143 @@ mod tests {
     fs::remove_file(root.join("old/stale.zip")).unwrap();
     let compared = compare(&root, &first_install(), &delete).await.unwrap();
     assert!(is_fast_forward(&compared));
+    assert!(is_fast_forward_after_delete_rules(&compared, &delete));
 
     // A file that no longer matches what was published.
     fs::write(root.join("mods/a.jar"), "edited").unwrap();
     let compared = compare(&root, &first_install(), &delete).await.unwrap();
     assert!(!is_fast_forward(&compared));
+    assert!(!is_fast_forward_after_delete_rules(&compared, &delete));
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn delete_rule_targets_include_enabled_and_disabled_variants() {
+    let root = instance_dir(&[("mods/a.jar.disabled", "a")]);
+    let compared = Compared {
+      diff: crate::instance::modpack_update::diff::Diff {
+        changes: vec![crate::instance::modpack_update::diff::FileChange {
+          path: "mods/a.jar".into(),
+          kind: crate::instance::modpack_update::diff::ChangeKind::Delete,
+          remote: None,
+          local_size: Some(1),
+          restored: false,
+        }],
+        ..Default::default()
+      },
+      next_baseline: Vec::new(),
+      variants: Default::default(),
+      both_variants: Vec::new(),
+      prune_dirs: Default::default(),
+      restored_locals: Default::default(),
+      restored_writes: Default::default(),
+      ignores: Default::default(),
+      ignores_on_disk: Default::default(),
+    };
+    let remote = published(
+      &[],
+      vec![rule("mods/a.jar", RuleKind::File, RuleState::Delete)],
+    );
+    let paths = publish_delete_paths(&root, &compared, &remote).unwrap();
+    assert_eq!(paths, ["mods/a.jar.disabled"]);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn delete_rule_fast_forward_only_ignores_its_own_delete_changes() {
+    let root = instance_dir(&[("old/stale.zip", "z")]);
+    let compared = Compared {
+      diff: crate::instance::modpack_update::diff::Diff {
+        changes: vec![crate::instance::modpack_update::diff::FileChange {
+          path: "old/stale.zip".into(),
+          kind: crate::instance::modpack_update::diff::ChangeKind::Delete,
+          remote: None,
+          local_size: Some(1),
+          restored: false,
+        }],
+        ..Default::default()
+      },
+      next_baseline: Vec::new(),
+      variants: Default::default(),
+      both_variants: Vec::new(),
+      prune_dirs: Default::default(),
+      restored_locals: Default::default(),
+      restored_writes: Default::default(),
+      ignores: Default::default(),
+      ignores_on_disk: Default::default(),
+    };
+    let delete = published(
+      &[],
+      vec![rule("old/stale.zip", RuleKind::File, RuleState::Delete)],
+    );
+    assert!(is_fast_forward_after_delete_rules(&compared, &delete));
+
+    let ignore = published(
+      &[],
+      vec![rule("old/stale.zip", RuleKind::File, RuleState::Ignore)],
+    );
+    assert!(!is_fast_forward_after_delete_rules(&compared, &ignore));
+
+    let unmentioned = published(&[], Vec::new());
+    assert!(!is_fast_forward_after_delete_rules(&compared, &unmentioned));
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn publish_deleted_files_are_backed_up_before_removal() {
+    let root = instance_dir(&[("config/old.txt", "old")]);
+    let count = backup_and_delete_publish_files(&root, &["config/old.txt".into()]).unwrap();
+    assert_eq!(count, 1);
+    assert!(!root.join("config/old.txt").exists());
+    assert_eq!(
+      fs::read_to_string(root.join(".ustbl-update/publish-deleted/config/old.txt")).unwrap(),
+      "old"
+    );
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn backup_failure_does_not_remove_any_publish_delete_file() {
+    let root = instance_dir(&[("config/old.txt", "old")]);
+    let result = backup_and_delete_publish_files(
+      &root,
+      &["config/old.txt".into(), "config/missing.txt".into()],
+    );
+    assert!(result.is_err());
+    assert!(root.join("config/old.txt").exists());
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn ignored_local_files_are_not_publish_delete_targets() {
+    let root = instance_dir(&[("config/old.txt", "old")]);
+    let compared = Compared {
+      diff: crate::instance::modpack_update::diff::Diff {
+        changes: vec![crate::instance::modpack_update::diff::FileChange {
+          path: "config/old.txt".into(),
+          kind: crate::instance::modpack_update::diff::ChangeKind::Delete,
+          remote: None,
+          local_size: Some(3),
+          restored: false,
+        }],
+        ..Default::default()
+      },
+      next_baseline: Vec::new(),
+      variants: Default::default(),
+      both_variants: Vec::new(),
+      prune_dirs: Default::default(),
+      restored_locals: Default::default(),
+      restored_writes: Default::default(),
+      ignores: Default::default(),
+      ignores_on_disk: Default::default(),
+    };
+    let remote = published(
+      &[],
+      vec![rule("config/old.txt", RuleKind::File, RuleState::Ignore)],
+    );
+    assert!(publish_delete_paths(&root, &compared, &remote)
+      .unwrap()
+      .is_empty());
     let _ = fs::remove_dir_all(root);
   }
 

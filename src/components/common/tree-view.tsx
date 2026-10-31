@@ -1,6 +1,11 @@
 import { Box, HStack, IconButton, VStack } from "@chakra-ui/react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { LuChevronDown, LuChevronRight } from "react-icons/lu";
+import {
+  ExpansionHistory,
+  applyExpansionRequest,
+  syncExpandedState,
+} from "@/utils/tree-expansion";
 
 export interface TreeNode<T = unknown> {
   id: string;
@@ -26,6 +31,9 @@ interface TreeViewProps<T = unknown> {
   indentSize?: number;
   spacing?: number;
   defaultExpandedDepth?: number;
+  preserveExpanded?: boolean;
+  expandRequest?: { ids: Set<string> };
+  leafPlaceholderWidth?: number;
 }
 
 const collectExpandedIdsByDepth = <T,>(
@@ -43,7 +51,6 @@ const collectExpandedIdsByDepth = <T,>(
   });
   return expandedIds;
 };
-
 export const buildStructTreeNodes = (
   data: unknown,
   parentId = "root"
@@ -71,12 +78,35 @@ const TreeView = <T,>({
   indentSize = 3,
   spacing = 1,
   defaultExpandedDepth = 0,
+  preserveExpanded = false,
+  expandRequest,
+  leafPlaceholderWidth = 24,
 }: TreeViewProps<T>) => {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const expansionHistory = useRef<ExpansionHistory>(new Map());
+  const lastExpandRequest = useRef<TreeViewProps<T>["expandRequest"]>();
 
   useEffect(() => {
-    setExpandedIds(collectExpandedIdsByDepth(nodes, defaultExpandedDepth));
-  }, [nodes, defaultExpandedDepth]);
+    const defaults = collectExpandedIdsByDepth(nodes, defaultExpandedDepth);
+    setExpandedIds((current) => {
+      if (!preserveExpanded) return new Set([...defaults]);
+      return syncExpandedState(
+        expansionHistory.current,
+        current,
+        nodes,
+        defaults
+      );
+    });
+    if (
+      preserveExpanded &&
+      expandRequest &&
+      lastExpandRequest.current !== expandRequest
+    ) {
+      applyExpansionRequest(expansionHistory.current, expandRequest.ids);
+      lastExpandRequest.current = expandRequest;
+      setExpandedIds((current) => new Set([...current, ...expandRequest.ids]));
+    }
+  }, [nodes, defaultExpandedDepth, preserveExpanded, expandRequest]);
 
   const toggleExpanded = useCallback((id: string) => {
     setExpandedIds((prev) => {
@@ -85,6 +115,9 @@ const TreeView = <T,>({
         next.delete(id);
       } else {
         next.add(id);
+      }
+      if (expansionHistory.current.has(id)) {
+        expansionHistory.current.set(id, next.has(id));
       }
       return next;
     });
@@ -112,9 +145,9 @@ const TreeView = <T,>({
               variant="ghost"
               onClick={() => toggleExpanded(node.id)}
             />
-          ) : (
-            <Box w="24px" flexShrink={0} />
-          )}
+          ) : leafPlaceholderWidth > 0 ? (
+            <Box w={`${leafPlaceholderWidth}px`} flexShrink={0} />
+          ) : null}
           <Box flex="1" minW={0}>
             {renderNode({ node, depth, isLeaf, isExpanded })}
           </Box>

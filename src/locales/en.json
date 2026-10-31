@@ -2720,6 +2720,7 @@
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "This version changes the modpack's component chain and cannot be applied in place; install it again",
             "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack",
             "MODPACK_UPDATE_PACK_UNAVAILABLE": "The files of this version are temporarily unavailable on the platform. Try again later",
+            "MODPACK_PUBLISH_PREVIOUS_UNAVAILABLE": "Temporarily unable to retrieve the previous version's content",
             "MODPACK_UPDATE_MERGE_INVALID": "The selected blocks produce an invalid configuration. Adjust your choices and try again",
             "MODPACK_INSTALL_STAGING_MISMATCH": "The saved download belongs to another install plan and was cleared",
             "MODPACK_INSTALL_INTERRUPTED": "The installation was interrupted; continue it from the task page",
@@ -2768,9 +2769,9 @@
             "MODPACK_UPDATE_UNSUPPORTED": "This instance cannot be updated automatically",
             "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "This version changes the modpack's component chain and cannot be applied in place; install it again",
-            "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack",
+            "MODPACK_UPDATE_LINE_GONE": "This modpack version line is no longer available on the platform",
             "MODPACK_UPDATE_PACK_UNAVAILABLE": "The files of this version are temporarily unavailable on the platform. Try again later",
-            "MODPACK_UPDATE_MERGE_INVALID": "The selected blocks produce an invalid configuration. Adjust your choices and try again"
+            "MODPACK_UPDATE_MERGE_INVALID": "The configuration format is invalid after merging your choices; try a different choice"
           }
         }
       },
@@ -2790,7 +2791,7 @@
         "error": {
           "title": "Failed to unfollow",
           "description": {
-            "MODPACK_UPDATE_UNLINK_PENDING": "The last update is not finished. Recover or roll it back before unfollowing"
+            "MODPACK_UPDATE_UNLINK_PENDING": "The previous update did not finish; restore or undo it before unlinking"
           }
         }
       },
@@ -2812,9 +2813,9 @@
             "MODPACK_UPDATE_UNSUPPORTED": "This instance cannot be updated automatically",
             "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "This version changes the modpack's component chain and cannot be applied in place; install it again",
-            "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack",
+            "MODPACK_UPDATE_LINE_GONE": "This modpack version line is no longer available on the platform",
             "MODPACK_UPDATE_PACK_UNAVAILABLE": "The files of this version are temporarily unavailable on the platform. Try again later",
-            "MODPACK_UPDATE_MERGE_INVALID": "The selected blocks produce an invalid configuration. Adjust your choices and try again"
+            "MODPACK_UPDATE_MERGE_INVALID": "The configuration format is invalid after merging your choices; try a different choice"
           }
         }
       },
@@ -3221,31 +3222,108 @@
       "packing": "Packing new content"
     },
     "tree": {
-      "legend": "Include: ships with the version. Ignore: this version leaves it alone and players keep theirs. Delete: removed on players' update. Click the state button to cycle; a folder's state applies to every file under it except those set individually.",
-      "include": "Include",
+      "include": "Publish",
       "ignore": "Ignore",
       "delete": "Delete",
       "remove": "Remove",
       "mixed": "Mixed",
       "once": "First install only",
-      "onceHint": "Placed only when a player first installs; never updated afterwards and not restored if the player deletes it",
+      "onceHint": "Include this file only on first install; it is not updated or restored after deletion",
       "restore": "Restore inheritance",
-      "restoreHint": "Drop the setting here and follow the folder above",
+      "restoreHint": "Remove the separate setting and follow the parent directory",
       "disabled": "Disabled",
-      "missing": "No longer on disk",
-      "conflict": "Both the enabled and disabled file exist",
-      "toggle": "{{name}}: currently {{state}}, click to change to {{next}}"
+      "missing": "Deleted locally",
+      "conflict": "Enabled and disabled (.disabled) variants coexist",
+      "toggle": "{{name}}: currently {{state}}, click to change to {{next}}",
+      "legend": {
+        "include": "Publish this change",
+        "ignore": "Changes in this file/directory will not affect user updates",
+        "delete": "Delete this file/directory when players update",
+        "cycle": "Click the icon to cycle through three states; file settings override directory settings"
+      },
+      "hint": {
+        "include": "This change will be merged with the player’s corresponding file during updates",
+        "ignore": "This change will not be published; players who have the file keep their local changes, and others will not receive it",
+        "delete": "The client will back up and delete the corresponding player-side file",
+        "remove": "Stop publishing this file. Unmodified player files are deleted; modified ones prompt during update.",
+        "mixed": "Files in this directory have different settings"
+      },
+      "clickTo": "Click to change to {{next}}",
+      "change": {
+        "modified": "Modified",
+        "added": "Added",
+        "onceChanged": "First-install only · changed",
+        "deleted": "Deleted",
+        "enable": "Enable",
+        "disable": "Disable"
+      },
+      "changeHint": {
+        "modified": "The content differs from the previous version.",
+        "added": "The previous version does not have this file.",
+        "toggled": "The mod state changed to enabled or disabled",
+        "onceChanged": "Marked first-install only, but its contents changed. Keep the mark: only new players get the new contents; remove it: all players get them on update.",
+        "deleted": "Present in the previous version, now deleted locally."
+      },
+      "filter": {
+        "title": "Changes:",
+        "onlyChanged": "Changes only"
+      },
+      "noPrevious": "First publication; all files are new.",
+      "dirChanges": "{{count}} change(s)",
+      "localIgnored": "Ignored locally",
+      "localIgnoredHint": "A file/directory change ignored by the publisher in “View changes”. It is still handled according to these settings, including this publisher instance’s update behavior.",
+      "diff": {
+        "show": "Show diff",
+        "hide": "Hide diff",
+        "differs": "Non-text or too large; file size {{previous}}→{{local}}",
+        "formatOnly": "Only line endings or other formatting differ",
+        "unavailable": "Unable to get the previous version; try again later"
+      },
+      "localDelete": "Delete (including locally)",
+      "localDeleteHint": "After publishing, this file will be backed up and deleted both here and on the player side.",
+      "localDeleteCount": "{{count}} also deleted locally"
     },
     "skipped": "{{count}} launcher file(s) were left out",
     "adoption": {
-      "keptOther": "The instance already follows another modpack or line, so its source record was left alone.",
-      "notIsolated": "Version isolation is off for this instance, so it was not linked to this modpack.",
+      "keptOther": "This instance follows another non-publishing modpack and remains unchanged.",
+      "notIsolated": "Version isolation is disabled; this instance will not follow the published modpack.",
       "localChanged": "The instance does not match the version just published (for example a file marked Delete is still on disk), so it was not linked to it. The next update will handle it from the version's contents.",
-      "recordFailed": "The version was published, but the instance could not be linked to it. The next check compares as usual."
+      "recordFailed": "Published, but the instance association could not be recorded.",
+      "localDeleted": "{{count}} local files were deleted by the deletion rules. Backup: .ustbl-update/publish-deleted",
+      "deleteFailed": "The published version was not followed because deleting a local file failed. The backup was kept."
     },
     "started": {
       "title": "Upload started",
-      "description": "It continues in the background. Follow it on the Downloads page."
+      "description": "Uploading in the background; see the downloads page for progress."
+    },
+    "summary": {
+      "title": "Change summary",
+      "isNew": "First publication.",
+      "same": "Exactly the same as the previous version ({{count}} files).",
+      "more": "…and {{count}} more",
+      "added": "{{count}} file(s) added",
+      "modified": "{{count}} file(s) modified",
+      "onceUpdated": "{{count}} first-install file(s) modified",
+      "removed": "{{count}} file(s) removed",
+      "ignored": "{{count}} file(s) set to ignore",
+      "deleted": "{{count}} file(s) set to delete",
+      "onceOn": "{{count}} set to first install only",
+      "onceOff": "{{count}} no longer first install only",
+      "rulesAdded": "{{count}} rule(s) added",
+      "rulesRemoved": "{{count}} rule(s) dropped",
+      "rulesChanged": "{{count}} rule changes",
+      "hint": {
+        "onceUpdated": "New players only receive the modified file",
+        "removed": "Unmodified player files are deleted; modified ones prompt.",
+        "ignored": "Existing player files stay unchanged; new installs do not receive them.",
+        "deleted": "The file is deleted on the player side.",
+        "toggled": "Players who did not change the state follow it; those who did keep theirs.",
+        "rulesChanged": "Rules that switched between ignore and delete.",
+        "localDeleted": "These files will also be backed up and deleted locally after publishing."
+      },
+      "localDeleted": "{{count}} also deleted locally",
+      "enable": "{{count}} enabled",
+      "disable": "{{count}} disabled"
     }
   },
   "InstallCampusModpackModal": {
@@ -3270,23 +3348,18 @@
     "header": {
       "title": "Update modpack: {{name}}"
     },
-    "ignored": {
-      "hunk": "You ignored this spot",
-      "file": "You ignored changes in this file. Your version is kept by default.",
-      "takeAllNote": "Spots you ignored keep your version, even with \"Use new version for all\"."
-    },
     "status": {
       "checking": "Checking for updates…",
       "planning": "Comparing the new version with local files…",
-      "applying": "Updating the modpack. Do not close the launcher…",
+      "applying": "Updating; do not close the launcher…",
       "available": "New version available: {{latest}}",
       "upToDate": "Already up to date",
-      "paused": "Following this modpack is paused",
-      "notFollowing": "This instance does not follow a modpack",
-      "needsRepair": "This instance cannot be compared for updates until it is repaired",
-      "unknown": "Could not get update information. Try again later",
-      "waitingLoader": "Waiting for the mod loader to finish installing before checking for updates",
-      "localChanges": "You changed {{count}} file(s) managed by the modpack; the update will ask about each"
+      "paused": "Updates paused",
+      "notFollowing": "This instance is not following a modpack",
+      "needsRepair": "This instance needs repair before updates can be checked",
+      "unknown": "Unable to get updates for now; try again later",
+      "waitingLoader": "Wait for the mod loader to finish installing before checking for updates",
+      "localChanges": "Local changes: {{count}}"
     },
     "label": {
       "current": "Current version: {{current}}"
@@ -3299,25 +3372,35 @@
       "delete": "{{count}} removed",
       "disable": "{{count}} disabled",
       "enable": "{{count}} enabled",
-      "retire": "{{count}} retired",
-      "loaderChange": "Mod loader will change from {{from}} to {{to}}",
-      "conflicts": "{{count}} files conflict with local changes. Choose what to do (local is kept by default)",
+      "retire": "Stop managing {{count}}",
+      "loaderChange": "{{loader}} will switch from {{from}} to {{to}}",
+      "conflicts": "{{count}} files conflict with your changes; keep local by default and handle them individually",
       "autoMerged": "{{count}} auto-merged",
       "showAll": "Show all ({{count}} more)",
-      "reinstallRequired": "{{latest}} changes the modpack's component chain and cannot be applied in place. Install the modpack again"
+      "reinstallRequired": "This instance cannot be updated directly because {{latest}} changed its component chain; reinstall it",
+      "restored": "Overwrite ignored changes {{count}}",
+      "restoredDescription": "Locally ignored changes sync with the new version, including same-named file replacements.",
+      "restoredKind": {
+        "add": "Add",
+        "update": "Update",
+        "delete": "Delete",
+        "disable": "Disable",
+        "enable": "Enable",
+        "retire": "Dormant"
+      }
     },
     "conflictKind": {
-      "modifiedLocallyChangedRemotely": "You edited it and the new version changed it",
-      "modifiedLocallyRemovedRemotely": "You edited it and the new version no longer ships it",
-      "deletedLocallyChangedRemotely": "You deleted it and the new version changed it",
-      "unmanagedFileInTheWay": "A file that is not part of the modpack is in the way",
-      "remanage": "The modpack left it alone before and manages it again, but its content is neither the recorded nor the shipped one"
+      "modifiedLocallyChangedRemotely": "Local changes and the new version’s changes to this file conflict",
+      "modifiedLocallyRemovedRemotely": "Modified locally, but this file is no longer included in the new version",
+      "deletedLocallyChangedRemotely": "Deleted locally, but the new version has a modified copy",
+      "unmanagedFileInTheWay": "The new version adds a same-named file and will replace this one",
+      "remanage": "The modpack manages it again, but local contents differ from the new version"
     },
     "choice": {
       "keepLocal": "Keep local",
       "takeRemote": "Use new version",
       "revealFile": "Show in folder",
-      "hunk": "Conflict {{number}} (baseline lines {{from}}-{{to}})",
+      "hunk": "Conflict {{number}} (lines {{from}}–{{to}} in the original file)",
       "allKeepLocal": "Keep all local",
       "allTakeRemote": "Use new version for all",
       "localSide": "Local",
@@ -3332,30 +3415,31 @@
       "confirmRollback": "Confirm undo"
     },
     "toast": {
-      "loaderPending": "The mod loader needs to be installed again. See the downloads page",
-      "planChanged": "The update plan changed. Choose how to resolve the conflicts again"
+      "loaderPending": "The mod loader is being reinstalled; see the downloads and uploads page for progress",
+      "planChanged": "The update plan changed; handle the conflicts again"
     },
     "unlink": {
       "button": "Unfollow",
       "confirmTitle": "Unfollow modpack",
-      "confirmBody": "The launcher will no longer check this modpack for updates, and no game files are deleted. You can reinstall or republish it to link again.",
+      "confirmBody": "Updates for this modpack will no longer be checked, and game files will not be deleted. Reinstall or republish later to follow it again.",
       "success": "Unfollowed"
     },
     "reason": {
-      "MODPACK_UPDATE_UNLINK_PENDING": "The last update is not finished. Recover or roll it back before unfollowing",
-      "MODPACK_UPDATE_BOTH_VARIANTS": "A file and its .disabled variant both exist. Delete one of them before updating",
-      "MODPACK_UPDATE_LINE_GONE": "The platform no longer lists this line of the modpack",
+      "MODPACK_UPDATE_UNLINK_PENDING": "The previous update did not finish; restore or undo it before unlinking",
+      "MODPACK_UPDATE_BOTH_VARIANTS": "Enabled and disabled (.disabled) variants exist at the same time; delete one before updating",
+      "MODPACK_UPDATE_LINE_GONE": "This modpack version line is no longer available on the platform",
       "MODPACK_UPDATE_PREPARE_CANCELLED": "The update preview was cancelled",
-      "MODPACK_UPDATE_UNSUPPORTED": "This instance has no usable install record or version isolation is off",
-      "MODPACK_UPDATE_NOT_ISOLATED": "Version isolation is off for this instance, so it cannot be compared safely. Turn it on in the instance settings and retry",
-      "MODPACK_UPDATE_BASELINE_MISSING": "This instance has no install record for the modpack, or the record is damaged, so it cannot be compared",
+      "MODPACK_UPDATE_UNSUPPORTED": "This instance has no installation record or version isolation is disabled",
+      "MODPACK_UPDATE_NOT_ISOLATED": "Version isolation is disabled, so updates cannot be checked. Enable it in instance settings and try again",
+      "MODPACK_UPDATE_BASELINE_MISSING": "This instance’s installation record is missing or damaged, so updates cannot be checked",
       "MODPACK_UPDATE_PACK_UNAVAILABLE": "The files of this version are temporarily unavailable on the platform. Try again later",
-      "MODPACK_UPDATE_MERGE_INVALID": "The selected blocks produce an invalid configuration. Adjust your choices and try again",
-      "MODPACK_UPDATE_LOCATE_LOCATING": "Could not locate the modpack files. Check your connection and try again."
+      "MODPACK_UPDATE_MERGE_INVALID": "The configuration format is invalid after merging your choices; try a different choice",
+      "MODPACK_UPDATE_LOCATE_LOCATING": "Could not locate the modpack files. Check your connection and try again.",
+      "MODPACK_UPDATE_BUSY": "The modpack is updating; please wait until it finishes"
     },
     "rollback": {
-      "hint": "You can undo the last modpack update and restore files and loader as they were before it.",
-      "confirm": "Undoing overwrites changes you made to these files since the update, and works only once."
+      "hint": "You can undo the last update and restore files and the loader to their previous state.",
+      "confirm": "Changes you made to these files after the update will be overwritten; undoing returns them to their pre-update state."
     }
   },
   "ModpackLocalChangesModal": {
@@ -3363,22 +3447,21 @@
       "title": "Local changes: {{name}}"
     },
     "loading": "Comparing local files…",
-    "empty": "All files managed by the modpack match the install",
-    "summary": "{{count}} files managed by the modpack differ from the install. Contents are compared after normalization; files that only differ in line endings or timestamps are not counted.",
-    "kind": {
+    "empty": "No local changes",
+    "comparedTo": "Compared with: {{label}}",
+    "countingRule": "Lists local changes: modifications, deletions, enabled state, and new files in mods, resource packs, and shaders.",
+    "incomplete": "Unable to get the previous version’s change rules; try again",
+    "class": {
       "modified": "Modified",
       "deleted": "Deleted",
-      "disabled": "Disabled",
-      "enabled": "Enabled"
+      "added": "New",
+      "enable": "Enabled",
+      "disable": "Disabled"
     },
-    "hint": {
-      "deleted": "This file was deleted locally",
-      "disabled": "This file was disabled locally (.disabled)",
-      "enabled": "This file was enabled again locally"
-    },
+    "disabled": "Disabled",
     "noDiff": {
-      "notText": "Not a text file or too large; contents are not compared",
-      "baseMissing": "The installed content was not kept, so no diff can be shown",
+      "notText": "Non-text or too large; differences are not shown",
+      "baseMissing": "No copy from installation exists; differences cannot be shown",
       "bothVariants": "A file and its .disabled variant both exist. Delete one of them"
     },
     "button": {
@@ -3386,20 +3469,41 @@
     },
     "ignore": {
       "spot": "Ignore this spot",
-      "file": "Ignore whole file"
+      "file": "Ignore whole file",
+      "added": "Ignore",
+      "spotHint": "No longer shown or counted. This spot will sync with the modpack on the next update.",
+      "fileHint": "No longer shown or counted; let the update system handle this file. On the next update it is synced to the modpack, including deleted files.",
+      "addedHint": "This local addition is no longer shown or counted. A same-named file in a new version replaces it directly.",
+      "publishUnaffected": "Publishing is not affected."
     },
     "ignored": {
-      "title": "Ignored ({{count}} files)",
-      "description": "Ignored changes do not count as local changes. Updates keep your content; if the new version also changes the same spot, you are still asked to choose (your version is kept by default).",
+      "title": "Ignored ({{count}})",
+      "description": "Handled according to the latest modpack state on the next update (backed up); you can undo “ignore” at any time.",
       "wholeFile": "Whole file",
       "spots": "Spots: {{count}}",
       "lines": "Lines {{from}}–{{to}}",
       "undo": "Undo",
-      "undoAll": "Undo all"
+      "undoAll": "Undo all",
+      "addedFile": "New file",
+      "undoHint": "Show and count it again; your changes will be kept normally during updates",
+      "next": {
+        "whole": "Next update: restore the entire file to the modpack state",
+        "spots": "Next update: sync these {{count}} changes with the latest modpack; keep other changes",
+        "added": "Updates leave it alone, unless the new version has a file with the same name, which replaces it directly"
+      }
     },
     "publishHint": {
-      "noPermission": "Publishing requires campus modpack management permission",
       "updateFirst": "A newer version is online. Update before publishing"
+    },
+    "next": {
+      "modified": "If both the new version and local copy changed the same text/file and conflict, you will be prompted; non-conflicting text changes are merged.",
+      "deleted": "Keep it deleted until a new version requires this file",
+      "toggled": "Your state is kept.",
+      "added": "Unaffected by updates; prompt if a new version has the same-named file"
+    },
+    "willDelete": {
+      "title": "Deleted by the next update ({{count}})",
+      "description": "These files are covered by the previous deletion rule. If the new version retains it, the files are backed up and deleted."
     }
   },
   "InstanceSyncPage": {

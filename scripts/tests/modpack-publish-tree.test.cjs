@@ -14,7 +14,12 @@ function load(file) {
     "require",
     ts.transpileModule(
       fs.readFileSync(path.join(__dirname, "../../", file), "utf8"),
-      { compilerOptions: { module: ts.ModuleKind.CommonJS } }
+      {
+        compilerOptions: {
+          module: ts.ModuleKind.CommonJS,
+          target: ts.ScriptTarget.ES2017,
+        },
+      }
     ).outputText
   )(exports, module, () => ({}));
   return module.exports;
@@ -22,269 +27,84 @@ function load(file) {
 
 const {
   MAX_RULES,
+  NO_FILTER,
   buildPublishNodes,
   canRemoveFile,
-  createInitialModel,
+  categorizeChanges: categorizeChangesRaw,
+  countCategories,
+  defaultPublishProject,
+  dirChangeCounts,
+  filterNodes,
+  isFilterActive,
+  isSummaryEmpty,
+  localDeletePaths,
   nextState,
-  normalizeDiskFiles,
+  publishTargetAfterLoad,
   restoreInheritance,
   setDirState,
   setFileState,
   setOnce,
+  summarizePublish,
   toPublishPayload,
+  toggleCategory,
   viewOf,
 } = load("src/utils/modpack-publish-tree.ts");
 
-// Plan 《整合包发布三态与本地忽略》§3-§4 is the source of every expectation.
+const categorizeChanges = (changes, ghosts, previous, view, context) =>
+  categorizeChangesRaw(
+    changes,
+    ghosts,
+    previous,
+    view,
+    new Map((context?.files ?? []).map((file) => [file.path.toLowerCase(), file.disabled]))
+  );
 
-const entry = (p, extra = {}) => ({
-  path: p,
-  disabled: false,
-  once: false,
-  ...extra,
-});
+// Plan 《整合包发布三态与本地忽略》§3-§4 is the source of every expectation.
+// The starting state (§4 defaults) is worked out by the launcher and tested
+// in `src-tauri/src/instance/modpack_publish/defaults.rs`; the cases here
+// build the context and draft it hands over directly.
+
 const rule = (p, kind, state) => ({ path: p, kind, state });
-const ctxOf = (paths, ghosts = []) => ({
-  files: normalizeDiskFiles(paths),
+/** Files on disk: a plain path, or a `DiskFile` with its flags. */
+const diskFile = (file) =>
+  typeof file === "string"
+    ? { path: file, disabled: false, conflict: false }
+    : { disabled: false, conflict: false, ...file };
+const ctxOf = (files, ghosts = []) => ({
+  files: files.map(diskFile),
   ghosts,
 });
+const ghostOf = (p, kind = "file") => ({ path: p, kind });
 const draftOf = (rules = [], { included = [], once = [] } = {}) => ({
   rules,
   included: new Set(included),
   once: new Set(once),
 });
-const model = (all, previous = null, suggested = []) =>
-  createInitialModel({ all, previous, suggested });
-const view = (m) => viewOf(m.context, m.draft);
 const paths = (payload) => payload.files.map((f) => f.path).sort();
-
-// ---------------------------------------------------------------- §4 defaults
-
-test("first release: every file is ticked, no rules, nothing once or disabled", () => {
-  const m = model(["config/a.toml", "mods/x.jar", "options.txt"]);
-  const payload = toPublishPayload(m.context, m.draft);
-  assert.deepEqual(paths(payload), [
-    "config/a.toml",
-    "mods/x.jar",
-    "options.txt",
-  ]);
-  assert.deepEqual(payload.rules, []);
-  assert.ok(payload.files.every((f) => !f.once && !f.disabled));
-  assert.deepEqual(payload.conflicts, []);
-  assert.deepEqual(m.context.ghosts, []);
-});
-
-test("first release: a suggested dir becomes ONE ignore rule at its own level", () => {
-  const m = model(
-    ["saves/w1/level.dat", "saves/w1/region/r.0.mca", "saves/w2/level.dat", "mods/x.jar"],
-    null,
-    [{ path: "saves", kind: "dir" }]
-  );
-  assert.deepEqual(m.draft.rules, [rule("saves", "dir", "ignore")]);
-  const v = view(m);
-  assert.equal(v.fileState("saves/w1/level.dat"), "ignore");
-  assert.equal(v.fileState("saves/w1/region/r.0.mca"), "ignore");
-  assert.equal(v.dirState("saves"), "ignore");
-  const payload = toPublishPayload(m.context, m.draft);
-  assert.deepEqual(paths(payload), ["mods/x.jar"]);
-  assert.deepEqual(payload.rules, [rule("saves", "dir", "ignore")]);
-});
-
-test("first release: a suggested single file becomes a file rule, a nested dir a dir rule", () => {
-  const m = model(
-    ["options.txt", "mods/VoxelMods/a.json", "mods/VoxelMods/b.json", "mods/x.jar"],
-    null,
-    [
-      { path: "options.txt", kind: "file" },
-      { path: "mods/VoxelMods", kind: "dir" },
-    ]
-  );
-  assert.equal(m.draft.rules.length, 2);
-  assert.deepEqual(
-    m.draft.rules.slice().sort((a, b) => a.path.localeCompare(b.path)),
-    [rule("mods/VoxelMods", "dir", "ignore"), rule("options.txt", "file", "ignore")]
-  );
-  assert.deepEqual(paths(toPublishPayload(m.context, m.draft)), ["mods/x.jar"]);
-});
-
-test("previous release: files still on disk stay ticked and keep their once flag", () => {
-  const m = model(["config/a.toml", "config/b.toml"], {
-    files: [entry("config/a.toml", { once: true }), entry("config/b.toml")],
-    rules: [],
-  });
-  const v = view(m);
-  assert.equal(v.fileState("config/a.toml"), "include");
-  assert.equal(v.isOnce("config/a.toml"), true);
-  assert.equal(v.isOnce("config/b.toml"), false);
-  const payload = toPublishPayload(m.context, m.draft);
-  assert.deepEqual(
-    payload.files.map((f) => [f.path, f.once]).sort(),
-    [
-      ["config/a.toml", true],
-      ["config/b.toml", false],
-    ]
-  );
-});
-
-test("previous release: new files with no rule are ticked and not once", () => {
-  const m = model(["config/a.toml", "config/new.toml"], {
-    files: [entry("config/a.toml", { once: true })],
-    rules: [],
-  });
-  const v = view(m);
-  assert.equal(v.fileState("config/new.toml"), "include");
-  assert.equal(v.isOnce("config/new.toml"), false);
-});
-
-test("previous release: its rules carry over as they were, even when the target is gone", () => {
-  const prevRules = [
-    rule("gone/dir", "dir", "delete"),
-    rule("resourcepacks/old.zip", "file", "delete"),
-    rule("config/cache", "dir", "ignore"),
-  ];
-  const m = model(
-    ["resourcepacks/old.zip", "config/cache/x.bin", "config/a.toml"],
-    { files: [entry("config/a.toml")], rules: prevRules }
-  );
-  assert.deepEqual(m.draft.rules, prevRules);
-  assert.deepEqual(toPublishPayload(m.context, m.draft).rules, prevRules);
-  const v = view(m);
-  assert.equal(v.fileState("resourcepacks/old.zip"), "delete");
-  assert.equal(v.fileState("config/cache/x.bin"), "ignore");
-  assert.deepEqual(m.context.ghosts.find((g) => g.path === "gone/dir"), {
-    path: "gone/dir",
-    kind: "dir",
-  });
-});
-
-test("previous release: a new file under a previous rule inherits it", () => {
-  const m = model(["config/cache/new.bin"], {
-    files: [],
-    rules: [rule("config/cache", "dir", "delete")],
-  });
-  assert.equal(view(m).fileState("config/cache/new.bin"), "delete");
-  assert.deepEqual(paths(toPublishPayload(m.context, m.draft)), []);
-});
-
-test("previous release: a file it listed under its own dir rule stays ticked, new siblings do not", () => {
-  const m = model(["saves/keep.dat", "saves/other.dat"], {
-    files: [entry("saves/keep.dat")],
-    rules: [rule("saves", "dir", "ignore")],
-  });
-  const v = view(m);
-  assert.equal(v.fileState("saves/keep.dat"), "include");
-  assert.equal(v.fileState("saves/other.dat"), "ignore");
-  assert.deepEqual(paths(toPublishPayload(m.context, m.draft)), ["saves/keep.dat"]);
-  assert.deepEqual(m.draft.rules, [rule("saves", "dir", "ignore")]);
-});
-
-test("previous release without the suggested path: suggestion applies, previous rules kept", () => {
-  const prevRules = [rule("config/cache", "dir", "ignore")];
-  const m = model(
-    ["config/a.toml", "saves/w1/level.dat"],
-    { files: [entry("config/a.toml")], rules: prevRules },
-    [{ path: "saves", kind: "dir" }]
-  );
-  assert.ok(m.draft.rules.some((r) => r.path === "config/cache" && r.state === "ignore"));
-  assert.equal(m.draft.rules.filter((r) => r.path === "saves").length, 1);
-  assert.deepEqual(m.draft.rules.find((r) => r.path === "saves"), rule("saves", "dir", "ignore"));
-  assert.equal(m.draft.rules.length, 2);
-  assert.equal(view(m).fileState("saves/w1/level.dat"), "ignore");
-});
-
-test("suggestion is skipped when the previous release listed a file inside the path", () => {
-  const m = model(
-    ["saves/w1/level.dat", "saves/w2/level.dat"],
-    { files: [entry("saves/w1/level.dat")], rules: [] },
-    [{ path: "saves", kind: "dir" }]
-  );
-  assert.deepEqual(m.draft.rules, []);
-  const v = view(m);
-  assert.equal(v.fileState("saves/w1/level.dat"), "include");
-  assert.equal(v.fileState("saves/w2/level.dat"), "include");
-});
-
-test("suggestion is skipped when the previous release had a rule on or below the path", () => {
-  const onPath = model(
-    ["saves/w1/level.dat"],
-    { files: [], rules: [rule("saves", "dir", "delete")] },
-    [{ path: "saves", kind: "dir" }]
-  );
-  assert.deepEqual(onPath.draft.rules, [rule("saves", "dir", "delete")]);
-
-  const below = model(
-    ["saves/w1/level.dat"],
-    { files: [], rules: [rule("saves/w1", "dir", "delete")] },
-    [{ path: "saves", kind: "dir" }]
-  );
-  assert.deepEqual(below.draft.rules, [rule("saves/w1", "dir", "delete")]);
-
-  const fileRule = model(
-    ["options.txt"],
-    { files: [], rules: [rule("options.txt", "file", "delete")] },
-    [{ path: "options.txt", kind: "file" }]
-  );
-  assert.deepEqual(fileRule.draft.rules, [rule("options.txt", "file", "delete")]);
-});
-
-test("a previous path that merely shares a name prefix does not count as mentioning the suggestion", () => {
-  const m = model(
-    ["saves/w1/level.dat", "saves2/a.dat"],
-    { files: [entry("saves2/a.dat")], rules: [] },
-    [{ path: "saves", kind: "dir" }]
-  );
-  assert.deepEqual(m.draft.rules, [rule("saves", "dir", "ignore")]);
-});
-
-test("suggestion matching is case-insensitive", () => {
-  const m = model(
-    ["saves/w1/level.dat"],
-    { files: [entry("Saves/W1/Level.dat")], rules: [] },
-    [{ path: "saves", kind: "dir" }]
-  );
-  assert.deepEqual(m.draft.rules, []);
-  assert.equal(view(m).fileState("saves/w1/level.dat"), "include");
-});
 
 // ---------------------------------------------------------------- virtual nodes
 
-test("virtual file: listed by the previous release, missing on disk, shown as remove and never published", () => {
-  const m = model(["a/keep.txt"], {
-    files: [entry("a/keep.txt"), entry("a/old.txt", { once: true })],
-    rules: [],
-  });
-  assert.deepEqual(m.context.ghosts, [{ path: "a/old.txt", kind: "file" }]);
-  const v = view(m);
-  assert.equal(v.fileState("a/old.txt"), "remove");
-  const payload = toPublishPayload(m.context, m.draft);
-  assert.deepEqual(paths(payload), ["a/keep.txt"]);
-  assert.deepEqual(payload.rules, []);
-});
-
 test("virtual file cannot be ticked", () => {
-  const m = model(["a/keep.txt"], {
-    files: [entry("a/old.txt")],
-    rules: [],
-  });
-  const next = setFileState(m.context, m.draft, "a/old.txt", "include");
-  assert.equal(viewOf(m.context, next).fileState("a/old.txt"), "remove");
-  assert.deepEqual(paths(toPublishPayload(m.context, next)), ["a/keep.txt"]);
+  const context = ctxOf(["a/keep.txt"], [ghostOf("a/old.txt")]);
+  const next = setFileState(context, draftOf(), "a/old.txt", "include");
+  assert.equal(viewOf(context, next).fileState("a/old.txt"), "remove");
+  assert.deepEqual(paths(toPublishPayload(context, next)), ["a/keep.txt"]);
   assert.deepEqual(next.rules, []);
   assert.equal(next.included.size, 0);
 });
 
 test("virtual file can be set to ignore or delete (file rule) and back to remove", () => {
-  const m = model(["a/keep.txt"], { files: [entry("a/old.txt")], rules: [] });
-  const ignored = setFileState(m.context, m.draft, "a/old.txt", "ignore");
+  const context = ctxOf(["a/keep.txt"], [ghostOf("a/old.txt")]);
+  const ignored = setFileState(context, draftOf(), "a/old.txt", "ignore");
   assert.deepEqual(ignored.rules, [rule("a/old.txt", "file", "ignore")]);
-  assert.equal(viewOf(m.context, ignored).fileState("a/old.txt"), "ignore");
+  assert.equal(viewOf(context, ignored).fileState("a/old.txt"), "ignore");
 
-  const deleted = setFileState(m.context, ignored, "a/old.txt", "delete");
+  const deleted = setFileState(context, ignored, "a/old.txt", "delete");
   assert.deepEqual(deleted.rules, [rule("a/old.txt", "file", "delete")]);
 
-  const removed = setFileState(m.context, deleted, "a/old.txt", "remove");
+  const removed = setFileState(context, deleted, "a/old.txt", "remove");
   assert.deepEqual(removed.rules, []);
-  assert.equal(viewOf(m.context, removed).fileState("a/old.txt"), "remove");
+  assert.equal(viewOf(context, removed).fileState("a/old.txt"), "remove");
 
   const restored = restoreInheritance(deleted, "a/old.txt", "file");
   assert.deepEqual(restored.rules, []);
@@ -298,18 +118,15 @@ test("virtual file: remove is only offered when no dir rule covers it", () => {
 });
 
 test("virtual node for a previous rule whose target is gone", () => {
-  const m = model(["config/a.toml"], {
-    files: [],
-    rules: [rule("gone.txt", "file", "ignore"), rule("gonedir", "dir", "delete")],
-  });
+  const context = ctxOf(["config/a.toml"], [ghostOf("gone.txt"), ghostOf("gonedir", "dir")]);
   assert.deepEqual(
-    m.context.ghosts.slice().sort((a, b) => a.path.localeCompare(b.path)),
+    context.ghosts.slice().sort((a, b) => a.path.localeCompare(b.path)),
     [
       { path: "gone.txt", kind: "file" },
       { path: "gonedir", kind: "dir" },
     ]
   );
-  const nodes = buildPublishNodes(m.context);
+  const nodes = buildPublishNodes(context);
   const gonedir = nodes.find((n) => n.path === "gonedir");
   assert.ok(gonedir);
   assert.equal(gonedir.ghost, true);
@@ -317,8 +134,7 @@ test("virtual node for a previous rule whose target is gone", () => {
 });
 
 test("buildPublishNodes: ghost flag only on missing files, real parents are not ghosts", () => {
-  const m = model(["a/keep.txt"], { files: [entry("a/old.txt")], rules: [] });
-  const [dir] = buildPublishNodes(m.context);
+  const [dir] = buildPublishNodes(ctxOf(["a/keep.txt"], [ghostOf("a/old.txt")]));
   assert.equal(dir.path, "a");
   assert.equal(dir.ghost, false);
   const byName = Object.fromEntries(dir.children.map((c) => [c.name, c]));
@@ -400,12 +216,12 @@ test("dirState: uniform children show that state, different children show mixed"
 // ---------------------------------------------------------------- setting states
 
 test("setFileState: a file in a plain tree gets exactly one file rule, replaced on the next change", () => {
-  const m = model(["a/x.txt", "a/y.txt"]);
-  const ignored = setFileState(m.context, m.draft, "a/x.txt", "ignore");
+  const context = ctxOf(["a/x.txt", "a/y.txt"]);
+  const ignored = setFileState(context, draftOf(), "a/x.txt", "ignore");
   assert.deepEqual(ignored.rules, [rule("a/x.txt", "file", "ignore")]);
-  const deleted = setFileState(m.context, ignored, "a/x.txt", "delete");
+  const deleted = setFileState(context, ignored, "a/x.txt", "delete");
   assert.deepEqual(deleted.rules, [rule("a/x.txt", "file", "delete")]);
-  const back = setFileState(m.context, deleted, "a/x.txt", "include");
+  const back = setFileState(context, deleted, "a/x.txt", "include");
   assert.deepEqual(back.rules, []);
   assert.equal(back.included.size, 0);
 });
@@ -454,13 +270,13 @@ test("setFileState does not mutate its input draft", () => {
 });
 
 test("setDirState: ignore or delete on a plain dir leaves one rule on that dir", () => {
-  const m = model(["a/x.txt", "a/b/y.txt", "c/z.txt"]);
-  const next = setDirState(m.context, m.draft, "a", "ignore");
+  const context = ctxOf(["a/x.txt", "a/b/y.txt", "c/z.txt"]);
+  const next = setDirState(context, draftOf(), "a", "ignore");
   assert.deepEqual(next.rules, [rule("a", "dir", "ignore")]);
-  const v = viewOf(m.context, next);
+  const v = viewOf(context, next);
   assert.equal(v.fileState("a/b/y.txt"), "ignore");
   assert.equal(v.fileState("c/z.txt"), "include");
-  const del = setDirState(m.context, next, "a", "delete");
+  const del = setDirState(context, next, "a", "delete");
   assert.deepEqual(del.rules, [rule("a", "dir", "delete")]);
 });
 
@@ -647,102 +463,20 @@ test("hasOverride is true on a node with its own rule or tick, false when it onl
 
 // ---------------------------------------------------------------- disabled mods
 
-test("mods/*.jar.disabled is listed under its enabled name with disabled: true", () => {
-  const files = normalizeDiskFiles(["mods/a.jar.disabled", "mods/b.jar", "mods/sub/c.jar.disabled"]);
-  const byPath = Object.fromEntries(files.map((f) => [f.path, f]));
-  assert.equal(byPath["mods/a.jar"].disabled, true);
-  assert.equal(byPath["mods/b.jar"].disabled, false);
-  assert.equal(byPath["mods/sub/c.jar"].disabled, true);
-  assert.equal(files.length, 3);
-  assert.ok(files.every((f) => !f.path.endsWith(".disabled") && !f.conflict));
-});
-
-test("a disabled mod is published under the enabled name with disabled: true", () => {
-  const m = model(["mods/a.jar.disabled", "mods/b.jar"]);
-  const payload = toPublishPayload(m.context, m.draft);
-  assert.deepEqual(
-    payload.files.map((f) => [f.path, f.disabled, f.once]).sort(),
-    [
-      ["mods/a.jar", true, false],
-      ["mods/b.jar", false, false],
-    ]
-  );
-  assert.ok(payload.files.every((f) => !f.path.endsWith(".disabled")));
-});
-
-test("the .disabled suffix is recognised case-insensitively", () => {
-  const files = normalizeDiskFiles(["Mods/A.JAR.DISABLED"]);
-  assert.equal(files.length, 1);
-  assert.equal(files[0].path, "Mods/A.JAR");
-  assert.equal(files[0].disabled, true);
-});
-
-test("previous release listing the enabled name matches a disabled file on disk (not a virtual node)", () => {
-  const m = model(["mods/a.jar.disabled"], {
-    files: [entry("mods/a.jar", { once: true })],
-    rules: [],
-  });
-  assert.deepEqual(m.context.ghosts, []);
-  const payload = toPublishPayload(m.context, m.draft);
-  assert.deepEqual(payload.files, [{ path: "mods/a.jar", disabled: true, once: true }]);
-});
-
-test("the disk decides disabled: a mod the previous release shipped enabled is published disabled once disabled locally", () => {
-  const m = model(["mods/a.jar.disabled"], {
-    files: [entry("mods/a.jar", { disabled: false })],
-    rules: [],
-  });
-  assert.equal(toPublishPayload(m.context, m.draft).files[0].disabled, true);
-});
-
-test("both variants on disk are flagged as a conflict", () => {
-  const files = normalizeDiskFiles(["mods/a.jar", "mods/a.jar.disabled", "mods/b.jar"]);
-  const a = files.filter((f) => f.path === "mods/a.jar");
-  assert.equal(a.length, 1);
-  assert.equal(a[0].conflict, true);
-  assert.equal(files.find((f) => f.path === "mods/b.jar").conflict, false);
-});
-
 test("both variants on disk: the conflict is reported for the ticked file only", () => {
-  const all = ["mods/a.jar", "mods/a.jar.disabled", "mods/b.jar"];
-  const m = model(all);
-  assert.deepEqual(toPublishPayload(m.context, m.draft).conflicts, ["mods/a.jar"]);
-  const ignored = {
-    ...m.draft,
-    rules: [rule("mods/a.jar", "file", "ignore")],
-  };
-  assert.deepEqual(toPublishPayload(m.context, ignored).conflicts, []);
-});
-
-test("the conflict is detected whatever the listing order or case of the variants", () => {
-  const a = normalizeDiskFiles(["mods/a.jar.disabled", "mods/a.jar"]);
-  assert.equal(a.length, 1);
-  assert.equal(a[0].conflict, true);
-  const b = normalizeDiskFiles(["Mods/A.jar.disabled", "mods/a.JAR"]);
-  assert.equal(b.length, 1);
-  assert.equal(b[0].conflict, true);
-});
-
-test("a .disabled file outside mods/ is never published as disabled", () => {
-  const all = [
-    "config/a.toml.disabled",
-    "modsx/a.jar.disabled",
-    "resourcepacks/p.zip.disabled",
-    "x.disabled",
-    "mods/ok.jar",
-  ];
-  const files = normalizeDiskFiles(all);
-  assert.ok(files.every((f) => !(f.disabled && !f.path.toLowerCase().startsWith("mods/"))));
-  const m = model(all);
-  const payload = toPublishPayload(m.context, m.draft);
-  assert.ok(payload.files.every((f) => !f.path.toLowerCase().endsWith(".disabled")));
-  assert.ok(payload.files.every((f) => !f.disabled));
-  assert.deepEqual(paths(payload), ["mods/ok.jar"]);
+  const context = ctxOf([{ path: "mods/a.jar", conflict: true }, "mods/b.jar"]);
+  assert.deepEqual(toPublishPayload(context, draftOf()).conflicts, ["mods/a.jar"]);
+  const ignored = draftOf([rule("mods/a.jar", "file", "ignore")]);
+  assert.deepEqual(toPublishPayload(context, ignored).conflicts, []);
 });
 
 test("buildPublishNodes marks a disabled mod under its enabled name", () => {
-  const m = model(["mods/a.jar.disabled", "mods/b.jar", "mods/c.jar", "mods/c.jar.disabled"]);
-  const mods = buildPublishNodes(m.context).find((n) => n.path === "mods");
+  const context = ctxOf([
+    { path: "mods/a.jar", disabled: true },
+    "mods/b.jar",
+    { path: "mods/c.jar", conflict: true },
+  ]);
+  const mods = buildPublishNodes(context).find((n) => n.path === "mods");
   const byName = Object.fromEntries(mods.children.map((c) => [c.name, c]));
   assert.equal(byName["a.jar"].disabled, true);
   assert.equal(byName["b.jar"].disabled, false);
@@ -751,28 +485,11 @@ test("buildPublishNodes marks a disabled mod under its enabled name", () => {
 });
 
 test("buildPublishNodes lists directories before files", () => {
-  const m = model(["z.txt", "a/x.txt", "b.txt"]);
-  const nodes = buildPublishNodes(m.context);
+  const nodes = buildPublishNodes(ctxOf(["z.txt", "a/x.txt", "b.txt"]));
   assert.deepEqual(nodes.map((n) => n.name), ["a", "b.txt", "z.txt"]);
 });
 
 // ---------------------------------------------------------------- casefold
-
-test("the payload never holds two files whose paths differ only by case", () => {
-  const m = model(["a/X.txt", "a/x.txt", "b/y.txt"]);
-  const keys = toPublishPayload(m.context, m.draft).files.map((f) => f.path.toLowerCase());
-  assert.equal(new Set(keys).size, keys.length);
-  assert.ok(keys.includes("b/y.txt"));
-});
-
-test("previous-release once and ticks are matched case-insensitively", () => {
-  const m = model(["config/a.toml"], {
-    files: [entry("Config/A.toml", { once: true })],
-    rules: [],
-  });
-  assert.deepEqual(m.context.ghosts, []);
-  assert.equal(view(m).isOnce("config/a.toml"), true);
-});
 
 test("file state lookups ignore the case of the queried path", () => {
   const context = ctxOf(["Config/A.toml"]);
@@ -871,29 +588,27 @@ test("a virtual file covered by a directory rule cycles only ignore and delete",
   assert.equal(nextState("ignore", ghost), "delete");
   assert.equal(nextState("delete", ghost), "ignore");
   assert.equal(nextState("remove", ghost), "ignore");
-  const m = model([], {
-    files: [entry("cache/old.bin")],
-    rules: [rule("cache", "dir", "ignore")],
-  });
-  assert.equal(canRemoveFile(m.draft, "cache/old.bin"), false);
-  let draft = m.draft;
+  const context = ctxOf([], [ghostOf("cache/old.bin")]);
+  let draft = draftOf([rule("cache", "dir", "ignore")]);
+  assert.equal(canRemoveFile(draft, "cache/old.bin"), false);
   for (let i = 0; i < 5; i++) {
-    const current = viewOf(m.context, draft).fileState("cache/old.bin");
-    draft = setFileState(m.context, draft, "cache/old.bin", nextState(current, ghost));
-    const after = viewOf(m.context, draft).fileState("cache/old.bin");
+    const current = viewOf(context, draft).fileState("cache/old.bin");
+    draft = setFileState(context, draft, "cache/old.bin", nextState(current, ghost));
+    const after = viewOf(context, draft).fileState("cache/old.bin");
     assert.ok(after === "ignore" || after === "delete");
   }
-  assert.deepEqual(toPublishPayload(m.context, draft).files, []);
+  assert.deepEqual(toPublishPayload(context, draft).files, []);
 });
 
 test("a virtual directory cycles remove, ignore, delete and is not ticked", () => {
-  const m = model(["a.txt"], { files: [], rules: [rule("gone", "dir", "delete")] });
-  assert.deepEqual(m.context.ghosts, [{ path: "gone", kind: "dir" }]);
-  assert.equal(viewOf(m.context, m.draft).dirState("gone"), "delete");
-  const restored = restoreInheritance(m.draft, "gone", "dir");
+  const context = ctxOf(["a.txt"], [ghostOf("gone", "dir")]);
+  const draft = draftOf([rule("gone", "dir", "delete")]);
+  assert.deepEqual(context.ghosts, [{ path: "gone", kind: "dir" }]);
+  assert.equal(viewOf(context, draft).dirState("gone"), "delete");
+  const restored = restoreInheritance(draft, "gone", "dir");
   assert.deepEqual(restored.rules, []);
-  assert.equal(viewOf(m.context, restored).dirState("gone"), "remove");
-  const nodes = buildPublishNodes(m.context);
+  assert.equal(viewOf(context, restored).dirState("gone"), "remove");
+  const nodes = buildPublishNodes(context);
   assert.ok(nodes.some((node) => node.name === "gone" && node.kind === "dir" && node.ghost));
 });
 
@@ -907,11 +622,487 @@ test("a rule with nothing ticked is still a publishable payload", () => {
   assert.deepEqual(payload.rules, [rule("a.txt", "file", "delete")]);
 });
 
-test("a dir rule that matches an existing directory by case is not a virtual node", () => {
-  const m = model(["Config/Cache/a.bin"], {
-    files: [],
-    rules: [rule("config/cache", "dir", "ignore")],
+// ------------------------------------------------------- default project (H2)
+
+test("the project the instance came from is the default when it can be published to", () => {
+  const projects = [{ slug: "gtnh" }, { slug: "other" }];
+  const origin = { platform: "campus", projectId: "gtnh" };
+  assert.equal(defaultPublishProject(origin, projects), "gtnh");
+});
+
+test("an origin whose project is not in the list defaults to a new project", () => {
+  const origin = { platform: "campus", projectId: "gone" };
+  assert.equal(defaultPublishProject(origin, [{ slug: "gtnh" }]), null);
+  assert.equal(defaultPublishProject(origin, []), null);
+});
+
+test("an instance from another platform or without an origin defaults to a new project", () => {
+  const projects = [{ slug: "gtnh" }];
+  // The same id on Modrinth is another project.
+  assert.equal(
+    defaultPublishProject({ platform: "modrinth", projectId: "gtnh" }, projects),
+    null
+  );
+  assert.equal(
+    defaultPublishProject({ platform: "curseforge", projectId: "gtnh" }, projects),
+    null
+  );
+  assert.equal(defaultPublishProject(undefined, projects), null);
+  assert.equal(defaultPublishProject(null, projects), null);
+});
+
+test("the default does not look at whether the instance still follows the project", () => {
+  // `follow` is not even an input: an unfollowed instance publishes back.
+  const origin = { platform: "campus", projectId: "gtnh", follow: false };
+  assert.equal(defaultPublishProject(origin, [{ slug: "gtnh" }]), "gtnh");
+});
+
+test("a target the user picked is kept when the list arrives", () => {
+  const origin = { platform: "campus", projectId: "gtnh" };
+  const projects = [{ slug: "gtnh" }, { slug: "other" }];
+  assert.equal(publishTargetAfterLoad(undefined, origin, projects), "gtnh");
+  assert.equal(publishTargetAfterLoad("other", origin, projects), "other");
+  // Choosing "new project" is a choice too.
+  assert.equal(publishTargetAfterLoad(null, origin, projects), null);
+});
+
+// --------------------------------------------------------------- change marks
+
+const change = (p, kind, extra = {}) => ({
+  path: p,
+  kind,
+  previousSha1: kind === "added" ? null : "aa",
+  previousSize: kind === "added" ? null : 1,
+  localSize: 2,
+  localIgnored: false,
+  ...extra,
+});
+const before = (p, extra = {}) => ({
+  path: p,
+  sha1: "aa",
+  size: 1,
+  disabled: false,
+  once: false,
+  ...extra,
+});
+const release = (files, rules = []) => ({ files, rules, rulesManifest: true });
+
+test("every mark is by lowercased path and a missing previous file is deleted", () => {
+  const ghosts = [ghostOf("mods/Gone.jar"), ghostOf("cache", "dir"), ghostOf("old/rule.txt")];
+  const previous = release([before("mods/gone.jar"), before("mods/A.jar")]);
+  const marks = categorizeChanges(
+    [change("Mods/A.jar", "modified"), change("mods/new.jar", "added")],
+    ghosts,
+    previous,
+    viewOf(ctxOf(["mods/A.jar", "mods/new.jar"]), draftOf())
+  );
+  assert.equal(marks.get("mods/a.jar"), "modified");
+  assert.equal(marks.get("mods/new.jar"), "added");
+  assert.equal(marks.get("mods/gone.jar"), "deleted");
+  // A rule's target and a directory are not deleted files.
+  assert.equal(marks.has("cache"), false);
+  assert.equal(marks.has("old/rule.txt"), false);
+  assert.deepEqual(countCategories(marks), {
+    modified: 1,
+    added: 1,
+    enable: 0,
+    disable: 0,
+    onceChanged: 0,
+    deleted: 1,
   });
-  assert.deepEqual(m.context.ghosts, []);
-  assert.equal(view(m).fileState("Config/Cache/a.bin"), "ignore");
+});
+
+test("a new project has no deleted files", () => {
+  const marks = categorizeChanges(
+    [change("a.txt", "added")],
+    [ghostOf("b.txt")],
+    null,
+    viewOf(ctxOf(["a.txt"]), draftOf())
+  );
+  assert.deepEqual(Array.from(marks.keys()), ["a.txt"]);
+});
+
+test("a directory counts the marked files below it at every level", () => {
+  const marks = categorizeChanges(
+    [
+      change("mods/a.jar", "modified"),
+      change("mods/sub/b.jar", "added"),
+      change("config/c.cfg", "toggled"),
+      change("root.txt", "added"),
+    ],
+    [],
+    null,
+    viewOf(
+      ctxOf(["mods/a.jar", "mods/sub/b.jar", "config/c.cfg", "root.txt"]),
+      draftOf()
+    )
+  );
+  const counts = dirChangeCounts(marks);
+  assert.equal(counts.get("mods"), 2);
+  assert.equal(counts.get("mods/sub"), 1);
+  assert.equal(counts.get("config"), 1);
+  assert.equal(counts.has("root.txt"), false);
+});
+
+test("a new file only counts as added while the draft publishes it", () => {
+  const context = ctxOf(["saves/w/r.mca", "mods/new.jar", "mods/a.jar"]);
+  const changes = [
+    change("saves/w/r.mca", "added"),
+    change("mods/new.jar", "added"),
+    change("mods/a.jar", "modified"),
+  ];
+  const previous = release([before("mods/a.jar")]);
+  const draft = draftOf([rule("saves", "dir", "ignore")]);
+  const marksOf = (d) =>
+    categorizeChanges(changes, [], previous, viewOf(context, d));
+
+  let marks = marksOf(draft);
+  assert.equal(marks.has("saves/w/r.mca"), false);
+  assert.equal(marks.get("mods/new.jar"), "added");
+  assert.equal(countCategories(marks).added, 1);
+  assert.equal(countCategories(marks).modified, 1);
+
+  // Publishing the ignored file brings it into "added"; ignoring it again removes it.
+  const published = setFileState(context, draft, "saves/w/r.mca", "include");
+  marks = marksOf(published);
+  assert.equal(marks.get("saves/w/r.mca"), "added");
+  assert.equal(countCategories(marks).added, 2);
+  assert.equal(dirChangeCounts(marks).get("saves/w"), 1);
+  const back = setFileState(context, published, "saves/w/r.mca", "ignore");
+  assert.equal(marksOf(back).has("saves/w/r.mca"), false);
+});
+
+test("a new file under the previous release's ignore rule is added only once published", () => {
+  const context = ctxOf(["config/x.cfg"]);
+  const changes = [change("config/x.cfg", "added")];
+  const previous = release([], [rule("config", "dir", "ignore")]);
+  const covered = draftOf(previous.rules);
+  assert.equal(
+    categorizeChanges(changes, [], previous, viewOf(context, covered)).has(
+      "config/x.cfg"
+    ),
+    false
+  );
+  const published = setFileState(context, covered, "config/x.cfg", "include");
+  assert.equal(
+    categorizeChanges(changes, [], previous, viewOf(context, published)).get(
+      "config/x.cfg"
+    ),
+    "added"
+  );
+});
+
+test("a new project marks only the files it publishes as added", () => {
+  const context = ctxOf(["a.txt", "saves/s.dat"]);
+  const changes = [change("a.txt", "added"), change("saves/s.dat", "added")];
+  const draft = draftOf([rule("saves", "dir", "ignore")]);
+  const marks = categorizeChanges(changes, [], null, viewOf(context, draft));
+  assert.deepEqual(Array.from(marks.keys()), ["a.txt"]);
+});
+
+const treeFixture = () => {
+  const context = ctxOf(
+    ["mods/a.jar", "mods/b.jar", "mods/sub/c.jar", "config/d.cfg", "keep/e.txt"],
+    [ghostOf("mods/old.jar")]
+  );
+  const previous = release([before("mods/old.jar"), before("mods/a.jar")]);
+  const marks = categorizeChanges(
+    [
+      change("mods/a.jar", "modified"),
+      change("mods/sub/c.jar", "added"),
+      change("config/d.cfg", "toggled"),
+    ],
+    context.ghosts,
+    previous,
+    viewOf(context, draftOf())
+  );
+  return { nodes: buildPublishNodes(context), marks };
+};
+const names = (nodes) =>
+  nodes.flatMap((node) =>
+    node.kind === "file" ? [node.path] : names(node.children)
+  );
+
+test("without a filter the tree is returned as is", () => {
+  const { nodes, marks } = treeFixture();
+  assert.equal(isFilterActive(NO_FILTER), false);
+  assert.equal(filterNodes(nodes, marks, NO_FILTER), nodes);
+});
+
+test("only changed keeps marked files and the directories leading to them", () => {
+  const { nodes, marks } = treeFixture();
+  const shown = filterNodes(nodes, marks, { ...NO_FILTER, onlyChanged: true });
+  assert.deepEqual(names(shown).sort(), [
+    "config/d.cfg",
+    "mods/a.jar",
+    "mods/old.jar",
+    "mods/sub/c.jar",
+  ]);
+  assert.deepEqual(shown.map((node) => node.name).sort(), ["config", "mods"]);
+});
+
+test("picking a mark shows only that mark and several marks add up", () => {
+  const { nodes, marks } = treeFixture();
+  let filter = toggleCategory(NO_FILTER, "added");
+  assert.equal(isFilterActive(filter), true);
+  assert.deepEqual(names(filterNodes(nodes, marks, filter)), ["mods/sub/c.jar"]);
+  filter = toggleCategory(filter, "deleted");
+  assert.deepEqual(names(filterNodes(nodes, marks, filter)).sort(), [
+    "mods/old.jar",
+    "mods/sub/c.jar",
+  ]);
+  filter = toggleCategory(toggleCategory(filter, "added"), "deleted");
+  assert.equal(isFilterActive(filter), false);
+  assert.deepEqual(NO_FILTER.categories.size, 0);
+});
+
+test("a filter that nothing matches leaves an empty tree", () => {
+  const { nodes, marks } = treeFixture();
+  const shown = filterNodes(nodes, marks, toggleCategory(NO_FILTER, "onceChanged"));
+  assert.deepEqual(shown, []);
+});
+
+// ------------------------------------------------------------ publish summary
+
+const sizes = (summary) =>
+  Object.fromEntries(
+    Object.entries(summary)
+      .filter(([, value]) => Array.isArray(value) && value.length > 0)
+      .map(([key, value]) => [key, value.length])
+  );
+
+test("a new project adds every pushed file and every rule", () => {
+  const context = ctxOf(["a.txt", "b/c.txt", "cache/x.bin"]);
+  const draft = draftOf([rule("cache", "dir", "ignore")]);
+  const summary = summarizePublish(context, draft, null, [
+    change("a.txt", "added"),
+    change("b/c.txt", "added"),
+    change("cache/x.bin", "added"),
+  ]);
+  assert.equal(summary.isNew, true);
+  assert.equal(summary.pushed, 2);
+  assert.deepEqual(summary.added.sort(), ["a.txt", "b/c.txt"]);
+  assert.deepEqual(summary.rulesAdded, [rule("cache", "dir", "ignore")]);
+  assert.deepEqual(sizes(summary), { added: 2, rulesAdded: 1 });
+});
+
+test("pushing exactly the previous release says nothing", () => {
+  const context = ctxOf(["a.txt", "mods/b.jar"]);
+  const previous = release([before("a.txt"), before("mods/b.jar")]);
+  const summary = summarizePublish(context, draftOf(), previous, []);
+  assert.equal(summary.isNew, false);
+  assert.equal(summary.pushed, 2);
+  assert.equal(isSummaryEmpty(summary), true);
+});
+
+test("a modified file and an added one are pushed; a removed one is not", () => {
+  const context = ctxOf(["a.txt", "new.txt"], [ghostOf("gone.txt")]);
+  const previous = release([before("a.txt"), before("gone.txt")]);
+  const summary = summarizePublish(context, draftOf(), previous, [
+    change("a.txt", "modified"),
+    change("new.txt", "added"),
+  ]);
+  assert.deepEqual(summary.modified, ["a.txt"]);
+  assert.deepEqual(summary.added, ["new.txt"]);
+  assert.deepEqual(summary.removed, ["gone.txt"]);
+  assert.deepEqual(sizes(summary), { added: 1, modified: 1, removed: 1 });
+});
+
+test("setting a file of the previous release to ignore moves it out of the push", () => {
+  const context = ctxOf(["a.txt", "b.txt"]);
+  const previous = release([before("a.txt"), before("b.txt")]);
+  const draft = setFileState(context, draftOf(), "a.txt", "ignore");
+  const summary = summarizePublish(context, draft, previous, [change("a.txt", "modified")]);
+  assert.equal(summary.pushed, 1);
+  assert.deepEqual(summary.ignored, ["a.txt"]);
+  // Not pushed, so its changed content is not part of the push.
+  assert.deepEqual(summary.modified, []);
+  assert.deepEqual(summary.rulesAdded, [rule("a.txt", "file", "ignore")]);
+  assert.deepEqual(sizes(summary), { ignored: 1, rulesAdded: 1 });
+});
+
+test("setting a file to delete is told apart from ignore", () => {
+  const context = ctxOf(["a.txt"], [ghostOf("g.txt")]);
+  const previous = release([before("a.txt"), before("g.txt")]);
+  let draft = setFileState(context, draftOf(), "a.txt", "delete");
+  draft = setFileState(context, draft, "g.txt", "ignore");
+  const summary = summarizePublish(context, draft, previous, []);
+  assert.deepEqual(summary.deleted, ["a.txt"]);
+  assert.deepEqual(summary.ignored, ["g.txt"]);
+  assert.equal(summary.pushed, 0);
+});
+
+test("a new file set to ignore is not mentioned apart from its rule", () => {
+  const context = ctxOf(["a.txt", "extra.txt"]);
+  const previous = release([before("a.txt")]);
+  const draft = setFileState(context, draftOf(), "extra.txt", "ignore");
+  const summary = summarizePublish(context, draft, previous, [change("extra.txt", "added")]);
+  assert.deepEqual(summary.added, []);
+  assert.deepEqual(summary.rulesAdded, [rule("extra.txt", "file", "ignore")]);
+});
+
+test("dropping a rule of the previous release is a removed rule", () => {
+  const context = ctxOf(["cache/x.bin"]);
+  const rules = [rule("cache", "dir", "ignore"), rule("logs", "dir", "delete")];
+  const previous = release([], rules);
+  // `x.bin` was covered by the ignore rule; without it the file is pushed.
+  const draft = draftOf([rules[1]]);
+  const summary = summarizePublish(context, draft, previous, [change("cache/x.bin", "added")]);
+  assert.deepEqual(summary.rulesRemoved, [rules[0]]);
+  assert.deepEqual(summary.rulesAdded, []);
+  assert.deepEqual(summary.added, ["cache/x.bin"]);
+});
+
+test("a rule that changes its state is a changed rule", () => {
+  const context = ctxOf(["a.txt"]);
+  const previous = release([], [rule("cache", "dir", "ignore")]);
+  const draft = draftOf([rule("cache", "dir", "delete")]);
+  const summary = summarizePublish(context, draft, previous, []);
+  assert.deepEqual(summary.rulesChanged, [rule("cache", "dir", "delete")]);
+  assert.deepEqual(summary.rulesAdded, []);
+  assert.deepEqual(summary.rulesRemoved, []);
+});
+
+test("a file whose enabled state differs is toggled even when the content does too", () => {
+  const context = ctxOf([
+    { path: "mods/off.jar", disabled: true },
+    { path: "mods/on.jar", disabled: false },
+    { path: "mods/same.jar", disabled: false },
+    { path: "mods/both.jar", disabled: true },
+  ]);
+  const previous = release([
+    before("mods/off.jar"),
+    before("mods/on.jar", { disabled: true }),
+    before("mods/same.jar"),
+    before("mods/both.jar"),
+  ]);
+  const summary = summarizePublish(context, draftOf(), previous, [
+    change("mods/off.jar", "toggled"),
+    change("mods/on.jar", "toggled"),
+    change("mods/both.jar", "modified"),
+  ]);
+  assert.deepEqual(summary.enable.sort(), ["mods/on.jar"]);
+  assert.deepEqual(summary.disable.sort(), ["mods/both.jar", "mods/off.jar"]);
+  assert.deepEqual(summary.modified, ["mods/both.jar"]);
+});
+
+test("summary splits enabled and disabled state changes", () => {
+  const context = ctxOf([
+    { path: "mods/on.jar", disabled: false },
+    { path: "mods/off.jar", disabled: true },
+  ]);
+  const previous = release([
+    before("mods/on.jar", { disabled: true }),
+    before("mods/off.jar", { disabled: false }),
+  ]);
+  const summary = summarizePublish(context, draftOf(), previous, []);
+  assert.deepEqual(summary.enable, ["mods/on.jar"]);
+  assert.deepEqual(summary.disable, ["mods/off.jar"]);
+});
+
+test("a locally deleted file keeps the summary visible when content is unchanged", () => {
+  const context = ctxOf(["config/remove.cfg"]);
+  const previous = release([before("config/remove.cfg")]);
+  const draft = setFileState(context, draftOf(), "config/remove.cfg", "delete");
+  const summary = summarizePublish(context, draft, previous, []);
+  assert.deepEqual(summary.localDeleted, ["config/remove.cfg"]);
+  assert.equal(isSummaryEmpty(summary), false);
+});
+
+test("local delete paths include real deleted files but not ghosts", () => {
+  const context = ctxOf(["config/remove.cfg"], [ghostOf("config/ghost.cfg")]);
+  const draft = setFileState(context, draftOf(), "config/remove.cfg", "delete");
+  assert.deepEqual(localDeletePaths(context, draft), ["config/remove.cfg"]);
+});
+
+test("a directory delete counts inherited local files but an explicit ignore does not", () => {
+  const context = ctxOf(["config/a.cfg", "config/keep.cfg"]);
+  let draft = setDirState(context, draftOf(), "config", "delete");
+  assert.deepEqual(localDeletePaths(context, draft).sort(), ["config/a.cfg", "config/keep.cfg"]);
+  draft = setFileState(context, draft, "config/keep.cfg", "ignore");
+  assert.deepEqual(localDeletePaths(context, draft), ["config/a.cfg"]);
+});
+
+test("first-install flags and content are told apart", () => {
+  const context = ctxOf(["a.cfg", "b.cfg", "c.cfg", "d.cfg"]);
+  const previous = release([
+    before("a.cfg", { once: true }),
+    before("b.cfg"),
+    before("c.cfg", { once: true }),
+    before("d.cfg", { once: true }),
+  ]);
+  // a stays first-install with new content, b becomes first-install, c turns
+  // into an ordinary file with new content, d is unchanged.
+  const draft = setOnce(
+    setOnce(setOnce(draftOf([], { once: ["a.cfg", "d.cfg"] }), "b.cfg", true), "c.cfg", false),
+    "d.cfg",
+    true
+  );
+  const summary = summarizePublish(context, draft, previous, [
+    change("a.cfg", "onceChanged"),
+    change("c.cfg", "onceChanged"),
+  ]);
+  assert.deepEqual(summary.onceUpdated, ["a.cfg"]);
+  assert.deepEqual(summary.onceOn, ["b.cfg"]);
+  assert.deepEqual(summary.onceOff, ["c.cfg"]);
+  assert.deepEqual(summary.modified, ["c.cfg"]);
+});
+
+test("a file that left the disk is a removal until it is ignored, and the summary follows the draft", () => {
+  const context = ctxOf(["a.txt"], [ghostOf("old.txt")]);
+  const previous = release([before("a.txt"), before("old.txt")]);
+  const first = summarizePublish(context, draftOf(), previous, []);
+  assert.deepEqual(first.removed, ["old.txt"]);
+  const ignored = setFileState(context, draftOf(), "old.txt", "ignore");
+  const second = summarizePublish(context, ignored, previous, []);
+  assert.deepEqual(second.removed, []);
+  assert.deepEqual(second.ignored, ["old.txt"]);
+});
+
+test("the summary always agrees with the payload the dialog sends", () => {
+  const context = ctxOf(
+    [
+      "a.txt",
+      "mods/b.jar",
+      { path: "mods/c.jar", disabled: true },
+      "cache/x.bin",
+      "cache/keep.bin",
+      "new.txt",
+    ],
+    [ghostOf("gone.txt"), ghostOf("lost", "dir")]
+  );
+  const previous = release(
+    [before("a.txt"), before("mods/b.jar"), before("mods/c.jar"), before("gone.txt")],
+    [rule("lost", "dir", "ignore")]
+  );
+  let draft = draftOf([rule("cache", "dir", "ignore")], { included: ["cache/keep.bin"] });
+  draft = setFileState(context, draft, "mods/b.jar", "delete");
+  draft = setOnce(draft, "new.txt", true);
+  const changes = [
+    change("a.txt", "modified"),
+    change("mods/c.jar", "toggled"),
+    change("new.txt", "added"),
+    change("cache/x.bin", "added"),
+    change("cache/keep.bin", "added"),
+  ];
+  const payload = toPublishPayload(context, draft);
+  const summary = summarizePublish(context, draft, previous, changes);
+  assert.equal(summary.pushed, payload.files.length);
+  // Every pushed file is either new or a file of the previous release.
+  const pushed = new Set(payload.files.map((file) => file.path));
+  const listed = new Set(previous.files.map((file) => file.path));
+  const added = new Set(summary.added);
+  for (const file of pushed) assert.equal(added.has(file), !listed.has(file), file);
+  for (const file of added) assert.ok(pushed.has(file), file);
+  // Every file of the previous release that is not pushed is accounted for once.
+  const gone = [...summary.removed, ...summary.ignored, ...summary.deleted].sort();
+  assert.deepEqual(
+    gone,
+    previous.files.map((file) => file.path).filter((file) => !pushed.has(file)).sort()
+  );
+  assert.deepEqual(summary.rulesAdded, [
+    rule("cache", "dir", "ignore"),
+    rule("mods/b.jar", "file", "delete"),
+  ]);
+  assert.deepEqual(summary.rulesRemoved, [rule("lost", "dir", "ignore")]);
 });

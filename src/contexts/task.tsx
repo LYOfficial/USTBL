@@ -800,10 +800,20 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
       const adoption = payload.outcome?.adoption;
       if (adoption === "followed") getInstanceList(true);
       const skipped = payload.outcome?.skipped.length ?? 0;
+      const locallyDeleted = payload.outcome?.locallyDeleted ?? 0;
       const notes = [
         skipped > 0 ? t("PublishModpackModal.skipped", { count: skipped }) : "",
         adoption && adoption !== "followed"
           ? t(`PublishModpackModal.adoption.${adoption}`)
+          : locallyDeleted > 0
+            ? t("PublishModpackModal.adoption.localDeleted", {
+                count: locallyDeleted,
+              })
+            : "",
+        adoption && adoption !== "followed" && locallyDeleted > 0
+          ? t("PublishModpackModal.adoption.localDeleted", {
+              count: locallyDeleted,
+            })
           : "",
       ].filter(Boolean);
       toast({

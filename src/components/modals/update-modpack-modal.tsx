@@ -41,6 +41,7 @@ import {
   rememberedChoices,
   resolvePlanChoices,
 } from "@/utils/modpack-update-choices";
+import { groupPlanChanges } from "@/utils/modpack-update-groups";
 
 interface UpdateModpackModalProps extends Omit<ModalProps, "children"> {
   instanceId: string;
@@ -77,9 +78,18 @@ const ChangeGroup: React.FC<{
   colorScheme: string;
   changes: ModpackFileChange[];
   renderSize: (change: ModpackFileChange) => string;
-}> = ({ title, colorScheme, changes, renderSize }) => {
+  description?: string;
+  defaultOpen?: boolean;
+}> = ({
+  title,
+  colorScheme,
+  changes,
+  renderSize,
+  description,
+  defaultOpen = false,
+}) => {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [showAll, setShowAll] = useState(false);
   if (changes.length === 0) return null;
   const sorted = [...changes].sort((a, b) => a.path.localeCompare(b.path));
@@ -103,6 +113,11 @@ const ChangeGroup: React.FC<{
       </HStack>
       {open && (
         <VStack align="stretch" spacing={0} borderTopWidth="1px">
+          {description && (
+            <Text fontSize="xs" className="secondary-text" px={3} py={1.5}>
+              {description}
+            </Text>
+          )}
           {shown.map((change) => (
             <HStack
               key={change.path}
@@ -427,17 +442,11 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
       if (!plan) return;
       const next: Record<string, ModpackConflictChoice> = {};
       for (const conflict of plan.conflicts) {
-        // What the player ignored stays with them, whatever "all" says.
-        const skipTake = choice === "takeRemote";
         if (conflict.hunks.length === 0) {
-          next[conflict.path] =
-            skipTake && conflict.ignored ? "keepLocal" : choice;
+          next[conflict.path] = choice;
         } else {
           conflict.hunks.forEach((_, index) => {
-            next[`${conflict.path}#${index}`] =
-              skipTake && conflict.ignoredHunks?.includes(index)
-                ? "keepLocal"
-                : choice;
+            next[`${conflict.path}#${index}`] = choice;
           });
         }
       }
@@ -566,12 +575,13 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
         </Text>
       );
     }
-    const adds = plan.changes.filter((c) => c.kind === "add");
-    const updates = plan.changes.filter((c) => c.kind === "update");
-    const deletes = plan.changes.filter((c) => c.kind === "delete");
-    const disables = plan.changes.filter((c) => c.kind === "disable");
-    const enables = plan.changes.filter((c) => c.kind === "enable");
-    const retires = plan.changes.filter((c) => c.kind === "retire");
+    const groups = groupPlanChanges(plan);
+    const adds = groups.add;
+    const updates = groups.update;
+    const deletes = groups.delete;
+    const disables = groups.disable;
+    const enables = groups.enable;
+    const retires = groups.retire;
     return (
       <VStack align="stretch" spacing={3}>
         <Text>
@@ -582,10 +592,27 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
             {t("UpdateModpackModal.plan.loaderChange", {
               from: plan.loaderChange.from.version,
               to: plan.loaderChange.to.version,
+              loader: plan.loaderChange.to.type,
             })}
           </Text>
         )}
         <VStack align="stretch" spacing={2}>
+          <ChangeGroup
+            title="UpdateModpackModal.plan.restored"
+            colorScheme="orange"
+            changes={groups.restored}
+            description={t("UpdateModpackModal.plan.restoredDescription")}
+            defaultOpen
+            renderSize={(change) =>
+              `${t(`UpdateModpackModal.plan.restoredKind.${change.kind}`)} ${
+                change.kind === "add"
+                  ? formatSize(change.remote?.size)
+                  : change.kind === "update"
+                    ? `${formatSize(change.localSize)} → ${formatSize(change.remote?.size)}`
+                    : formatSize(change.localSize)
+              }`
+            }
+          />
           <ChangeGroup
             title="UpdateModpackModal.plan.add"
             colorScheme="green"
@@ -627,7 +654,7 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
           <ChangeGroup
             title="UpdateModpackModal.plan.autoMerged"
             colorScheme="green"
-            changes={plan.autoMerged}
+            changes={groups.autoMerged}
             renderSize={(change) =>
               `${formatSize(change.localSize)} → ${formatSize(change.remote?.size)}`
             }
@@ -658,14 +685,6 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
                 </Button>
               </HStack>
             </HStack>
-            {plan.conflicts.some(
-              (conflict) =>
-                conflict.ignored || (conflict.ignoredHunks?.length ?? 0) > 0
-            ) && (
-              <Text fontSize="xs" className="secondary-text">
-                {t("UpdateModpackModal.ignored.takeAllNote")}
-              </Text>
-            )}
             {plan.conflicts.map((conflict) => {
               // A text conflict is answered block by block; anything else as
               // a whole file. Never both, so each answer has one control.
@@ -700,16 +719,6 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
                     </>
                   }
                 >
-                  {conflict.ignored && (
-                    <Text
-                      fontSize="xs"
-                      className="secondary-text"
-                      px={3}
-                      py={1.5}
-                    >
-                      {t("UpdateModpackModal.ignored.file")}
-                    </Text>
-                  )}
                   {byHunk && (
                     <VStack align="stretch" spacing={0}>
                       {conflict.hunks.map((hunk, index) => {
@@ -728,23 +737,20 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
                               py={1.5}
                               spacing={2}
                             >
-                              <HStack spacing={2} minW={0}>
-                                <Text fontSize="xs" className="secondary-text">
-                                  {t("UpdateModpackModal.choice.hunk", {
-                                    number: index + 1,
-                                    from: hunk.baseStart + 1,
-                                    to: Math.max(
-                                      hunk.baseEnd,
-                                      hunk.baseStart + 1
-                                    ),
-                                  })}
-                                </Text>
-                                {conflict.ignoredHunks?.includes(index) && (
-                                  <Badge flexShrink={0}>
-                                    {t("UpdateModpackModal.ignored.hunk")}
-                                  </Badge>
-                                )}
-                              </HStack>
+                              <Text
+                                fontSize="xs"
+                                className="secondary-text"
+                                minW={0}
+                              >
+                                {t("UpdateModpackModal.choice.hunk", {
+                                  number: index + 1,
+                                  from: hunk.baseStart + 1,
+                                  to: Math.max(
+                                    hunk.baseEnd,
+                                    hunk.baseStart + 1
+                                  ),
+                                })}
+                              </Text>
                               {renderChoice(key, choice)}
                             </HStack>
                             {(["keepLocal", "takeRemote"] as const).map(

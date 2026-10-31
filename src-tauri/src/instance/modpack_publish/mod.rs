@@ -1,5 +1,7 @@
 pub mod cancel;
+pub mod changes;
 pub mod commands;
+pub mod defaults;
 pub mod components;
 pub mod job;
 pub mod manifest;

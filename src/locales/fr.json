@@ -2720,6 +2720,7 @@
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "Cette version modifie la chaîne de composants du pack et ne peut pas être appliquée sur place ; réinstallez-la",
             "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack",
             "MODPACK_UPDATE_PACK_UNAVAILABLE": "Les fichiers de cette version sont momentanément indisponibles sur la plateforme. Réessayez plus tard",
+            "MODPACK_PUBLISH_PREVIOUS_UNAVAILABLE": "Impossible de récupérer temporairement le contenu de la version précédente",
             "MODPACK_UPDATE_MERGE_INVALID": "Les blocs sélectionnés produisent une configuration invalide. Modifiez vos choix et réessayez",
             "MODPACK_INSTALL_STAGING_MISMATCH": "Le téléchargement enregistré appartient à un autre plan d'installation et a été supprimé",
             "MODPACK_INSTALL_INTERRUPTED": "L'installation a été interrompue ; continuez-la depuis la page des tâches",
@@ -2768,9 +2769,9 @@
             "MODPACK_UPDATE_UNSUPPORTED": "Cette instance ne peut pas être mise à jour automatiquement",
             "MODPACK_UPDATE_RUNNING": "Le jeu est en cours d’exécution ; fermez-le avant de mettre à jour le pack de mods",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "Cette version modifie la chaîne de composants du pack et ne peut pas être appliquée sur place ; réinstallez-la",
-            "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack",
+            "MODPACK_UPDATE_LINE_GONE": "Cette ligne de versions du modpack n’est plus disponible sur la plateforme",
             "MODPACK_UPDATE_PACK_UNAVAILABLE": "Les fichiers de cette version sont momentanément indisponibles sur la plateforme. Réessayez plus tard",
-            "MODPACK_UPDATE_MERGE_INVALID": "Les blocs sélectionnés produisent une configuration invalide. Modifiez vos choix et réessayez"
+            "MODPACK_UPDATE_MERGE_INVALID": "Le format de configuration est invalide après la fusion de vos choix ; essayez un autre choix"
           }
         }
       },
@@ -2790,7 +2791,7 @@
         "error": {
           "title": "Échec du retrait du suivi",
           "description": {
-            "MODPACK_UPDATE_UNLINK_PENDING": "La dernière mise à jour n'est pas terminée. Restaurez-la ou annulez-la avant de retirer le suivi"
+            "MODPACK_UPDATE_UNLINK_PENDING": "La dernière mise à jour est incomplète ; restaurez-la ou annulez-la avant de supprimer le suivi"
           }
         }
       },
@@ -2812,9 +2813,9 @@
             "MODPACK_UPDATE_UNSUPPORTED": "Cette instance ne peut pas être mise à jour automatiquement",
             "MODPACK_UPDATE_RUNNING": "Le jeu est en cours d’exécution ; fermez-le avant de mettre à jour le pack de mods",
             "MODPACK_UPDATE_REINSTALL_REQUIRED": "Cette version modifie la chaîne de composants du pack et ne peut pas être appliquée sur place ; réinstallez-la",
-            "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack",
+            "MODPACK_UPDATE_LINE_GONE": "Cette ligne de versions du modpack n’est plus disponible sur la plateforme",
             "MODPACK_UPDATE_PACK_UNAVAILABLE": "Les fichiers de cette version sont momentanément indisponibles sur la plateforme. Réessayez plus tard",
-            "MODPACK_UPDATE_MERGE_INVALID": "Les blocs sélectionnés produisent une configuration invalide. Modifiez vos choix et réessayez"
+            "MODPACK_UPDATE_MERGE_INVALID": "Le format de configuration est invalide après la fusion de vos choix ; essayez un autre choix"
           }
         }
       },
@@ -3221,31 +3222,108 @@
       "packing": "Création du paquet des nouveautés"
     },
     "tree": {
-      "legend": "Inclure : publié avec la version. Ignorer : cette version n'y touche pas, les joueurs gardent le leur. Supprimer : retiré à la mise à jour des joueurs. Cliquez sur le bouton d'état pour changer ; l'état d'un dossier s'applique à tous ses fichiers, sauf ceux réglés individuellement.",
-      "include": "Inclure",
+      "legend": {
+        "include": "Publier cette modification",
+        "ignore": "Les modifications de ce fichier/dossier ne seront pas appliquées lors des mises à jour utilisateur",
+        "delete": "Supprimer ce fichier/dossier lors de la mise à jour du joueur",
+        "cycle": "Cliquer sur l’icône pour passer entre trois états ; les réglages du fichier priment sur ceux du dossier"
+      },
+      "include": "Publier",
       "ignore": "Ignorer",
       "delete": "Supprimer",
       "remove": "Retirer",
       "mixed": "Mixte",
       "once": "Première installation seulement",
-      "onceHint": "Posé uniquement à la première installation du joueur ; jamais mis à jour ensuite et non restauré si le joueur le supprime",
+      "onceHint": "Joindre ce fichier uniquement à la première installation ; il ne sera ensuite ni mis à jour ni réinstallé s’il est supprimé",
       "restore": "Rétablir l'héritage",
-      "restoreHint": "Supprime le réglage ici et suit le dossier parent",
+      "restoreHint": "Supprimer le réglage particulier et suivre le dossier parent",
       "disabled": "Désactivé",
-      "missing": "Absent du disque",
-      "conflict": "Les fichiers activé et désactivé existent tous les deux",
-      "toggle": "{{name}} : actuellement {{state}}, cliquez pour passer à {{next}}"
+      "missing": "Supprimé localement",
+      "conflict": "Les versions activée et désactivée (.disabled) coexistent",
+      "toggle": "{{name}} : actuellement {{state}}, cliquez pour passer à {{next}}",
+      "hint": {
+        "include": "Cette modification sera tentée en fusion avec le fichier correspondant du joueur lors de la mise à jour",
+        "ignore": "Cette modification ne sera pas publiée ; les joueurs possédant ce fichier conservent leurs changements locaux, les autres ne le reçoivent pas",
+        "delete": "Le client sauvegardera puis supprimera le fichier correspondant chez le joueur",
+        "remove": "Annuler la publication de ce fichier. Les fichiers inchangés seront supprimés ; les fichiers modifiés demanderont confirmation.",
+        "mixed": "Les fichiers du dossier ont plusieurs états"
+      },
+      "clickTo": "Cliquez pour passer à {{next}}",
+      "change": {
+        "modified": "Modifié",
+        "added": "Ajouté",
+        "onceChanged": "Première installation uniquement · modifié",
+        "deleted": "Supprimé",
+        "enable": "Activer",
+        "disable": "Désactiver"
+      },
+      "changeHint": {
+        "modified": "Le contenu diffère de la version précédente.",
+        "added": "La version précédente n'a pas ce fichier.",
+        "toggled": "L’état du mod est passé à activé ou désactivé",
+        "onceChanged": "Marqué comme première installation uniquement, son contenu a changé. Garder le marqueur : seuls les nouveaux joueurs reçoivent le nouveau contenu ; le retirer : tous le recevront lors de la mise à jour.",
+        "deleted": "Présent dans la version précédente, supprimé localement."
+      },
+      "filter": {
+        "title": "Changements :",
+        "onlyChanged": "Changements seulement"
+      },
+      "noPrevious": "Première publication : tout est nouveau.",
+      "dirChanges": "{{count}} changement(s)",
+      "localIgnored": "Ignoré localement",
+      "localIgnoredHint": "Modification de fichier/dossier ignorée par le responsable de la publication dans « Voir les changements ». Elle sera tout de même traitée selon ces réglages pour cette instance.",
+      "diff": {
+        "show": "Afficher les différences",
+        "hide": "Masquer les différences",
+        "differs": "Non textuel ou trop volumineux ; taille {{previous}}→{{local}}",
+        "formatOnly": "Seuls les sauts de ligne ou autres formats diffèrent",
+        "unavailable": "Impossible d’obtenir la version précédente, réessayez plus tard"
+      },
+      "localDelete": "Supprimer (y compris localement)",
+      "localDeleteHint": "Après publication, ce fichier sera sauvegardé puis supprimé ici et chez le joueur.",
+      "localDeleteCount": "{{count}} fichiers supprimés localement"
     },
     "skipped": "{{count}} fichier(s) du lanceur exclu(s)",
     "adoption": {
-      "keptOther": "L'instance suit déjà un autre pack ou une autre ligne ; son enregistrement de source est inchangé.",
-      "notIsolated": "L'isolation de version est désactivée pour cette instance ; elle n'a pas été liée à ce pack.",
+      "keptOther": "Cette instance suit un autre modpack non publié et reste inchangée.",
+      "notIsolated": "L’isolation des versions est désactivée ; cette instance ne suivra pas le modpack publié.",
       "localChanged": "L'instance ne correspond pas à la version publiée (par exemple un fichier marqué Supprimer est toujours sur le disque) ; elle n'y a pas été liée. La prochaine mise à jour s'appuiera sur le contenu de la version.",
-      "recordFailed": "La version est publiée, mais l'instance n'a pas pu y être liée. La prochaine vérification comparera normalement."
+      "recordFailed": "Publié, mais l’association de cette instance n’a pas pu être enregistrée.",
+      "localDeleted": "{{count}} fichiers locaux supprimés selon les règles, sauvegarde dans .ustbl-update/publish-deleted",
+      "deleteFailed": "La version publiée n’a pas été suivie car la suppression d’un fichier local a échoué. La sauvegarde est conservée."
     },
     "started": {
       "title": "Envoi démarré",
-      "description": "L'envoi continue en arrière-plan. Suivez-le sur la page des téléchargements."
+      "description": "Envoi en arrière-plan ; consultez la page des téléchargements."
+    },
+    "summary": {
+      "title": "Résumé des modifications",
+      "isNew": "Première publication.",
+      "same": "Identique à la version précédente ({{count}} fichiers).",
+      "more": "…et {{count}} de plus",
+      "added": "{{count}} fichier(s) ajouté(s)",
+      "modified": "{{count}} fichier(s) modifié(s)",
+      "onceUpdated": "{{count}} fichier(s) de première installation modifié(s)",
+      "removed": "{{count}} fichier(s) retiré(s)",
+      "ignored": "{{count}} fichier(s) passé(s) en ignoré",
+      "deleted": "{{count}} fichier(s) passé(s) en supprimé",
+      "onceOn": "{{count}} passé(s) en première installation uniquement",
+      "onceOff": "{{count}} qui ne sont plus en première installation uniquement",
+      "rulesAdded": "{{count}} règle(s) ajoutée(s)",
+      "rulesRemoved": "{{count}} règle(s) retirée(s)",
+      "rulesChanged": "{{count}} modifications de règles",
+      "hint": {
+        "onceUpdated": "Les nouveaux joueurs recevront uniquement le fichier modifié",
+        "removed": "Les fichiers non modifiés sont supprimés ; les fichiers modifiés demandent confirmation.",
+        "ignored": "Les fichiers déjà présents restent inchangés ; les nouvelles installations ne les reçoivent pas.",
+        "deleted": "Le fichier sera supprimé chez le joueur.",
+        "toggled": "Les joueurs n’ayant pas modifié l’état le suivent ; les autres conservent le leur.",
+        "rulesChanged": "Règles passées de ignorer à supprimer, ou l'inverse.",
+        "localDeleted": "Ces fichiers seront aussi sauvegardés puis supprimés localement après la publication."
+      },
+      "localDeleted": "{{count}} fichiers supprimés localement",
+      "enable": "{{count}} activés",
+      "disable": "{{count}} désactivés"
     }
   },
   "InstallCampusModpackModal": {
@@ -3270,23 +3348,18 @@
     "header": {
       "title": "Mettre à jour le pack : {{name}}"
     },
-    "ignored": {
-      "hunk": "Vous avez ignoré cet endroit",
-      "file": "Vous avez ignoré les modifications de ce fichier. Votre version est conservée par défaut.",
-      "takeAllNote": "Les endroits que vous avez ignorés gardent votre version, même avec « Tout prendre de la nouvelle version »."
-    },
     "status": {
       "checking": "Recherche de mises à jour…",
       "planning": "Comparaison de la nouvelle version avec les fichiers locaux…",
-      "applying": "Mise à jour du pack. Ne fermez pas le lanceur…",
+      "applying": "Mise à jour en cours ; ne fermez pas le lanceur…",
       "available": "Nouvelle version disponible : {{latest}}",
       "upToDate": "Déjà à jour",
-      "paused": "Le suivi de ce pack est en pause",
-      "notFollowing": "Cette instance ne suit aucun pack",
-      "needsRepair": "Cette instance ne peut pas être comparée tant qu'elle n'est pas réparée",
-      "unknown": "Impossible d'obtenir les informations de mise à jour. Réessayez plus tard",
-      "waitingLoader": "En attente de la fin de l'installation du chargeur de mods avant de vérifier les mises à jour",
-      "localChanges": "Vous avez modifié {{count}} fichier(s) géré(s) par le pack ; la mise à jour demandera pour chacun"
+      "paused": "Mises à jour en pause",
+      "notFollowing": "Cette instance ne suit aucun modpack",
+      "needsRepair": "Cette instance doit être réparée avant de vérifier les mises à jour",
+      "unknown": "Impossible d’obtenir les mises à jour pour le moment ; réessayez plus tard",
+      "waitingLoader": "Attendez la fin de l’installation du chargeur de mods avant de vérifier les mises à jour",
+      "localChanges": "Modifications locales : {{count}}"
     },
     "label": {
       "current": "Version actuelle : {{current}}"
@@ -3299,25 +3372,35 @@
       "delete": "{{count}} supprimé(s)",
       "disable": "{{count}} désactivé(s)",
       "enable": "{{count}} activé(s)",
-      "retire": "{{count}} mis en sommeil",
-      "loaderChange": "Le chargeur de mods passera de {{from}} à {{to}}",
-      "conflicts": "{{count}} fichiers entrent en conflit avec vos modifications. Choisissez (le local est conservé par défaut)",
+      "retire": "Mettre en sommeil {{count}}",
+      "loaderChange": "{{loader}} passera de {{from}} à {{to}}",
+      "conflicts": "{{count}} fichiers sont en conflit avec vos modifications ; conserver le local par défaut et les traiter individuellement",
       "autoMerged": "{{count}} fusionnés automatiquement",
       "showAll": "Tout afficher (encore {{count}})",
-      "reinstallRequired": "{{latest}} modifie la chaîne de composants du pack et ne peut pas être appliquée sur place. Réinstallez le pack"
+      "reinstallRequired": "Cette instance ne peut pas être mise à jour directement, car {{latest}} a modifié sa chaîne de composants ; réinstallez-la",
+      "restored": "Remplacer les modifications ignorées {{count}}",
+      "restoredDescription": "Les modifications ignorées localement seront synchronisées avec la nouvelle version, y compris le remplacement de fichiers du même nom.",
+      "restoredKind": {
+        "add": "Ajout",
+        "update": "Mise à jour",
+        "delete": "Suppression",
+        "disable": "Désactivation",
+        "enable": "Activation",
+        "retire": "En sommeil"
+      }
     },
     "conflictKind": {
-      "modifiedLocallyChangedRemotely": "Vous l'avez modifié et la nouvelle version aussi",
-      "modifiedLocallyRemovedRemotely": "Vous l'avez modifié et la nouvelle version ne l'inclut plus",
-      "deletedLocallyChangedRemotely": "Vous l'avez supprimé et la nouvelle version l'a modifié",
-      "unmanagedFileInTheWay": "Un fichier étranger au pack occupe l'emplacement",
-      "remanage": "Le pack l'avait laissé de côté et le gère à nouveau, mais son contenu diffère de l'enregistrement et de la nouvelle version"
+      "modifiedLocallyChangedRemotely": "Les modifications locales et celles de la nouvelle version de ce fichier sont en conflit",
+      "modifiedLocallyRemovedRemotely": "Modifié localement, mais ce fichier n’est plus inclus dans la nouvelle version",
+      "deletedLocallyChangedRemotely": "Supprimé localement, mais la nouvelle version en contient une copie modifiée",
+      "unmanagedFileInTheWay": "La nouvelle version ajoute un fichier du même nom et remplacera celui-ci",
+      "remanage": "Le modpack le gère de nouveau, mais le contenu local diffère de la nouvelle version"
     },
     "choice": {
       "keepLocal": "Garder le local",
       "takeRemote": "Utiliser la nouvelle version",
       "revealFile": "Afficher dans le dossier",
-      "hunk": "Conflit {{number}} (lignes de base {{from}}-{{to}})",
+      "hunk": "Conflit {{number}} (lignes {{from}}–{{to}} du fichier original)",
       "allKeepLocal": "Tout garder en local",
       "allTakeRemote": "Tout prendre de la nouvelle version",
       "localSide": "Local",
@@ -3332,30 +3415,31 @@
       "confirmRollback": "Confirmer l'annulation"
     },
     "toast": {
-      "loaderPending": "Le chargeur de mods doit être réinstallé. Consultez la page des téléchargements",
-      "planChanged": "Le plan de mise à jour a changé. Choisissez de nouveau comment résoudre les conflits"
+      "loaderPending": "Réinstallation du chargeur de mods en cours ; consultez la page téléchargements et envois pour suivre la progression",
+      "planChanged": "Le plan de mise à jour a changé ; reprenez le traitement des conflits"
     },
     "unlink": {
       "button": "Ne plus suivre",
       "confirmTitle": "Ne plus suivre le pack",
-      "confirmBody": "Le lanceur ne vérifiera plus les mises à jour de ce pack et aucun fichier de jeu ne sera supprimé. Vous pourrez le réinstaller ou le republier pour le réassocier.",
+      "confirmBody": "Les mises à jour de ce modpack ne seront plus vérifiées et aucun fichier de jeu ne sera supprimé. Réinstallez ou republiez-le plus tard pour le suivre à nouveau.",
       "success": "Suivi retiré"
     },
     "reason": {
-      "MODPACK_UPDATE_UNLINK_PENDING": "La dernière mise à jour n'est pas terminée. Restaurez-la ou annulez-la avant de retirer le suivi",
-      "MODPACK_UPDATE_BOTH_VARIANTS": "Un fichier et sa variante .disabled existent tous les deux. Supprimez l'un des deux avant de mettre à jour",
-      "MODPACK_UPDATE_LINE_GONE": "La plateforme ne propose plus cette ligne du pack",
+      "MODPACK_UPDATE_UNLINK_PENDING": "La dernière mise à jour est incomplète ; restaurez-la ou annulez-la avant de supprimer le suivi",
+      "MODPACK_UPDATE_BOTH_VARIANTS": "Les versions activée et désactivée (.disabled) existent simultanément ; supprimez-en une avant la mise à jour",
+      "MODPACK_UPDATE_LINE_GONE": "Cette ligne de versions du modpack n’est plus disponible sur la plateforme",
       "MODPACK_UPDATE_PREPARE_CANCELLED": "L'aperçu de la mise à jour a été annulé",
-      "MODPACK_UPDATE_UNSUPPORTED": "Cette instance n'a pas d'enregistrement d'installation utilisable ou l'isolation de version est désactivée",
-      "MODPACK_UPDATE_NOT_ISOLATED": "L'isolation de version est désactivée pour cette instance, la comparaison n'est pas sûre. Activez-la dans les paramètres de l'instance puis réessayez",
-      "MODPACK_UPDATE_BASELINE_MISSING": "Cette instance n'a pas d'enregistrement d'installation du pack, ou il est endommagé ; comparaison impossible",
+      "MODPACK_UPDATE_UNSUPPORTED": "Cette instance n’a pas d’enregistrement d’installation ou l’isolation des versions est désactivée",
+      "MODPACK_UPDATE_NOT_ISOLATED": "L’isolation des versions est désactivée, impossible de vérifier les mises à jour. Activez-la dans les réglages de l’instance puis réessayez",
+      "MODPACK_UPDATE_BASELINE_MISSING": "L’enregistrement d’installation de cette instance est absent ou endommagé ; impossible de vérifier les mises à jour",
       "MODPACK_UPDATE_PACK_UNAVAILABLE": "Les fichiers de cette version sont momentanément indisponibles sur la plateforme. Réessayez plus tard",
-      "MODPACK_UPDATE_MERGE_INVALID": "Les blocs sélectionnés produisent une configuration invalide. Modifiez vos choix et réessayez",
-      "MODPACK_UPDATE_LOCATE_LOCATING": "Impossible de localiser les fichiers du pack de mods. Vérifiez votre connexion et réessayez."
+      "MODPACK_UPDATE_MERGE_INVALID": "Le format de configuration est invalide après la fusion de vos choix ; essayez un autre choix",
+      "MODPACK_UPDATE_LOCATE_LOCATING": "Impossible de localiser les fichiers du pack de mods. Vérifiez votre connexion et réessayez.",
+      "MODPACK_UPDATE_BUSY": "Le modpack est en cours de mise à jour ; veuillez patienter"
     },
     "rollback": {
-      "hint": "Vous pouvez annuler la dernière mise à jour du pack et rétablir fichiers et chargeur comme avant.",
-      "confirm": "L'annulation écrase les modifications faites sur ces fichiers depuis la mise à jour, et ne peut se faire qu'une fois."
+      "hint": "Vous pouvez annuler la dernière mise à jour et restaurer les fichiers et le chargeur à leur état précédent.",
+      "confirm": "Les modifications apportées à ces fichiers après la mise à jour seront écrasées ; vous pouvez revenir à l’état précédent."
     }
   },
   "ModpackLocalChangesModal": {
@@ -3363,22 +3447,21 @@
       "title": "Modifications locales : {{name}}"
     },
     "loading": "Comparaison des fichiers locaux…",
-    "empty": "Tous les fichiers gérés par le modpack correspondent à l'installation",
-    "summary": "{{count}} fichiers gérés par le modpack diffèrent de l'installation. Le contenu est comparé après normalisation ; les fichiers qui ne diffèrent que par les fins de ligne ou les horodatages ne sont pas comptés.",
-    "kind": {
+    "empty": "Aucune modification locale",
+    "comparedTo": "Comparé à : {{label}}",
+    "countingRule": "Liste les modifications locales : modifications, suppressions, état activé, et nouveaux fichiers dans les mods, packs de ressources et shaders.",
+    "incomplete": "Impossible d’obtenir les règles de modification précédentes ; réessayez",
+    "class": {
       "modified": "Modifié",
       "deleted": "Supprimé",
-      "disabled": "Désactivé",
-      "enabled": "Activé"
+      "added": "Nouveau",
+      "enable": "Activé",
+      "disable": "Désactivé"
     },
-    "hint": {
-      "deleted": "Ce fichier a été supprimé localement",
-      "disabled": "Ce fichier a été désactivé localement (.disabled)",
-      "enabled": "Ce fichier a été réactivé localement"
-    },
+    "disabled": "Désactivé",
     "noDiff": {
-      "notText": "Fichier non texte ou trop volumineux ; contenu non comparé",
-      "baseMissing": "Le contenu installé n'a pas été conservé, aucune différence ne peut être affichée",
+      "notText": "Fichier non textuel ou trop volumineux ; différence non affichée",
+      "baseMissing": "Aucune copie de l’installation ; impossible d’afficher la différence",
       "bothVariants": "Un fichier et sa variante .disabled existent tous les deux. Supprimez l'un des deux"
     },
     "button": {
@@ -3386,20 +3469,41 @@
     },
     "ignore": {
       "spot": "Ignorer cet endroit",
-      "file": "Ignorer tout le fichier"
+      "file": "Ignorer tout le fichier",
+      "added": "Ignorer",
+      "spotHint": "N’est plus affiché ni compté. Cette partie sera synchronisée avec le modpack lors de la prochaine mise à jour.",
+      "fileHint": "N’est plus affiché ni compté ; confiez ce fichier au système de mise à jour. Il sera synchronisé avec le modpack, y compris les fichiers supprimés.",
+      "addedHint": "Cet ajout local n’est plus affiché ni compté. Un fichier du même nom dans la nouvelle version le remplacera directement.",
+      "publishUnaffected": "Sans effet sur la publication."
     },
     "ignored": {
-      "title": "Ignorés ({{count}} fichiers)",
-      "description": "Les modifications ignorées ne comptent pas comme modifications locales. Les mises à jour conservent votre contenu ; si la nouvelle version modifie aussi le même endroit, un choix vous est tout de même demandé (votre version est conservée par défaut).",
+      "title": "Ignoré ({{count}})",
+      "description": "Traité selon l’état le plus récent du modpack lors de la prochaine mise à jour (sauvegarde incluse) ; « Ignorer » peut être annulé à tout moment.",
       "wholeFile": "Fichier entier",
       "spots": "Endroits : {{count}}",
       "lines": "Lignes {{from}}–{{to}}",
       "undo": "Annuler",
-      "undoAll": "Tout annuler"
+      "undoAll": "Tout annuler",
+      "addedFile": "Nouveau fichier",
+      "undoHint": "Réafficher et compter à nouveau ; vos modifications seront conservées normalement lors des mises à jour",
+      "next": {
+        "whole": "Prochaine mise à jour : restaurer tout le fichier selon le modpack",
+        "spots": "Prochaine mise à jour : synchroniser ces {{count}} modifications avec le dernier modpack, en conservant les autres",
+        "added": "Les mises à jour n’y touchent pas, sauf si la nouvelle version contient un fichier du même nom, qui le remplace directement"
+      }
     },
     "publishHint": {
-      "noPermission": "La publication nécessite la permission de gestion des modpacks du campus",
       "updateFirst": "Une version plus récente est en ligne. Mettez à jour avant de publier"
+    },
+    "next": {
+      "modified": "Si la nouvelle version et la copie locale ont été modifiées sur le même texte/fichier et entrent en conflit, vous serez invité à intervenir ; les changements textuels sans conflit sont fusionnés.",
+      "deleted": "Le laisser supprimé jusqu’à ce qu’une nouvelle version en ait besoin",
+      "toggled": "Votre état est conservé.",
+      "added": "Sans effet sur la mise à jour ; demander confirmation si une nouvelle version contient un fichier du même nom"
+    },
+    "willDelete": {
+      "title": "Supprimés à la prochaine mise à jour ({{count}})",
+      "description": "Ces fichiers sont couverts par la règle de suppression précédente. Si la nouvelle version la conserve, ils seront sauvegardés puis supprimés."
     }
   },
   "InstanceSyncPage": {

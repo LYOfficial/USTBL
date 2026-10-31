@@ -1,3 +1,8 @@
+import type {
+  PreviousRelease,
+  PublishChange,
+} from "@/utils/modpack-publish-tree";
+
 export interface CampusModpackLine {
   id: number;
   gameVersion: string;
@@ -21,6 +26,7 @@ export interface CampusPublishOutcome {
   skipped: string[];
   /** What happened to the instance's own record of the modpack. */
   adoption: CampusPublishAdoption;
+  locallyDeleted: number;
 }
 
 export type CampusPublishAdoption =
@@ -28,7 +34,8 @@ export type CampusPublishAdoption =
   | "keptOther"
   | "notIsolated"
   | "localChanged"
-  | "recordFailed";
+  | "recordFailed"
+  | "deleteFailed";
 
 /** What happens before the upload, while the publish dialog is still open. */
 export type CampusPublishStage = "hashing" | "packing";
@@ -59,10 +66,30 @@ export interface CampusPublishRule {
   state: "ignore" | "delete";
 }
 
-/** What the line's current release lists. */
-export interface CampusPreviousRelease {
-  files: CampusPublishFile[];
+/**
+ * The publish tree's starting state, worked out by the launcher from the
+ * files on disk and the line's current release.
+ */
+export interface CampusPublishDefaults {
+  /** Enabled names; `conflict` when both variants are on disk. */
+  files: { path: string; disabled: boolean; conflict: boolean }[];
+  /** Paths the current release mentions that are not on disk any more. */
+  ghosts: { path: string; kind: "file" | "dir" }[];
   rules: CampusPublishRule[];
+  /** Lowercased paths of the files ticked explicitly. */
+  included: string[];
+  /** Lowercased paths of the files that install only once. */
+  once: string[];
+}
+
+/**
+ * The publish tree to open with: the starting state, how the files differ
+ * from the line's current release, and that release (`null` for a new project
+ * or a line without a release, where every file is an addition).
+ */
+export interface CampusPublishTree extends CampusPublishDefaults {
+  changes: PublishChange[];
+  previous: PreviousRelease | null;
 }
 
 export interface CampusNewProject {
