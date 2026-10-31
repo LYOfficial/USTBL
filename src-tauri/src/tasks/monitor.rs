@@ -293,6 +293,16 @@ impl TaskMonitor {
       .is_some_and(|group| group.status == GEventStatus::Stopped)
   }
 
+  pub fn finish_empty_group(&self, task_group: &str) {
+    let mut groups = self.group_map.write().unwrap();
+    if let Some(group) = groups.get_mut(task_group) {
+      if group.phs.is_empty() && group.status == GEventStatus::Started {
+        group.status = GEventStatus::Completed;
+        GEvent::emit_group_completed(&self.app_handle, task_group);
+      }
+    }
+  }
+
   pub async fn background_process(&self) {
     loop {
       let future = self.rx.recv_async().await.unwrap();

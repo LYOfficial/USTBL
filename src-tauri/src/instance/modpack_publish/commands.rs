@@ -28,7 +28,9 @@ use crate::instance::modpack_update::commands::store_instance;
 use crate::instance::modpack_update::diff::FileKey;
 use crate::instance::modpack_update::plan::{compare, Compared};
 use crate::instance::modpack_update::remote::RemoteRule;
-use crate::instance::modpack_update::sources::{campus_base_remote, loader_slug, CAMPUS_API};
+use crate::instance::modpack_update::sources::{
+  campus_base_remote, campus_client, loader_slug, CAMPUS_API,
+};
 use crate::utils::web::build_part_upload_client;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -239,7 +241,8 @@ pub(super) async fn authed_json(
   body: Option<Value>,
 ) -> USTBLResult<reqwest::Response> {
   let url = format!("{CAMPUS_API}{path}");
-  vustb::send_authenticated(app, |client, token| {
+  let client = campus_client(app);
+  vustb::send_authenticated_with(app, &client, |client, token| {
     let request = client.request(method.clone(), &url).bearer_auth(token);
     match &body {
       Some(body) => request.json(body),
@@ -275,7 +278,7 @@ pub async fn check_campus_modpack_publishable(
 
 #[tauri::command]
 pub async fn list_campus_modpack_projects(app: AppHandle) -> USTBLResult<Vec<CampusProject>> {
-  let client = app.state::<reqwest::Client>();
+  let client = campus_client(&app);
   let response = client.get(format!("{CAMPUS_API}/projects")).send().await?;
   if !response.status().is_success() {
     return Err(failure(response).await);
@@ -408,8 +411,7 @@ pub async fn fetch_campus_modpack_previous_release(
   let instance = instance_of(&app, &instance_id)?;
   let loader_type =
     loader_slug(instance.mod_loader.loader_type).ok_or(InstanceError::ModpackUpdateUnsupported)?;
-  let response = app
-    .state::<reqwest::Client>()
+  let response = campus_client(&app)
     .get(format!(
       "{CAMPUS_API}/projects/{project}/lines/{}/{loader_type}",
       instance.version
@@ -444,7 +446,7 @@ pub async fn fetch_campus_modpack_recommendation(
   app: AppHandle,
   slot: String,
 ) -> USTBLResult<Option<CampusRecommendation>> {
-  let client = app.state::<reqwest::Client>();
+  let client = campus_client(&app);
   let response = client
     .get(format!("{CAMPUS_API}/recommend/{slot}"))
     .send()
@@ -643,8 +645,7 @@ async fn prepare(
   let parent_version_id = match &project {
     None => None,
     Some(project) => {
-      let current = app
-        .state::<reqwest::Client>()
+      let current = campus_client(&app)
         .get(format!(
           "{CAMPUS_API}/projects/{project}/lines/{}/{loader_type}",
           instance.version
@@ -757,8 +758,7 @@ async fn prepare(
     None => {
       let mut name = None;
       if let Some(project) = &project {
-        if let Ok(response) = app
-          .state::<reqwest::Client>()
+        if let Ok(response) = campus_client(&app)
           .get(format!("{CAMPUS_API}/projects/{project}"))
           .send()
           .await

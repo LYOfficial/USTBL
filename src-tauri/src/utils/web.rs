@@ -36,11 +36,40 @@ use url::Url;
 /// let client = build_ustbl_client(&app, true);
 /// ```
 pub fn build_ustbl_client(app: &AppHandle, use_proxy: bool) -> Client {
-  build_client(app, use_proxy, Some(Duration::from_secs(30)))
+  // The shared client never asks for gzip: it also serves downloads and pack
+  // Range reads, which count on Content-Length and on receiving the exact
+  // byte range they asked for. Only build_campus_client, made just for the
+  // campus JSON API, accepts a compressed response.
+  shared_builder(build_client(app, use_proxy, Some(Duration::from_secs(30))))
+    .build()
+    .unwrap_or_else(|_| shared_builder(ClientBuilder::new()).build().unwrap())
 }
 
-fn build_client(app: &AppHandle, use_proxy: bool, read_timeout: Option<Duration>) -> Client {
+fn shared_builder(builder: ClientBuilder) -> ClientBuilder {
+  builder.no_gzip()
+}
+
+/// Separate state type so campus requests cannot accidentally use the shared
+/// raw-byte client registered under `Client`.
+pub struct CampusClient(pub Client);
+
+fn campus_builder(builder: ClientBuilder) -> ClientBuilder {
+  builder.gzip(true)
+}
+
+/// Builds the client for the campus modpack API (`CAMPUS_API`), the only
+/// client that accepts gzip. The version detail answers with several
+/// megabytes of JSON over a slow link, and the platform compresses it; the
+/// shared client (downloads, pack Range reads) must keep seeing raw bytes.
+pub fn build_campus_client(app: &AppHandle) -> Client {
+  campus_builder(build_client(app, true, Some(Duration::from_secs(30))))
+    .build()
+    .unwrap_or_else(|_| campus_builder(ClientBuilder::new()).build().unwrap())
+}
+
+fn build_client(app: &AppHandle, use_proxy: bool, read_timeout: Option<Duration>) -> ClientBuilder {
   let mut builder = ClientBuilder::new()
+    .no_gzip()
     .connect_timeout(Duration::from_secs(10))
     .tcp_keepalive(Duration::from_secs(10));
   if let Some(timeout) = read_timeout {
@@ -70,7 +99,7 @@ fn build_client(app: &AppHandle, use_proxy: bool, read_timeout: Option<Duration>
     }
   }
 
-  builder.build().unwrap_or_else(|_| Client::new())
+  builder
 }
 
 /// Builds the client that PUTs pack parts straight to the cloud drive's signed
@@ -103,7 +132,10 @@ pub fn build_part_upload_client(app: &AppHandle) -> Client {
     }
   }
 
-  builder.build().unwrap_or_else(|_| Client::new())
+  builder
+    .no_gzip()
+    .build()
+    .unwrap_or_else(|_| shared_builder(ClientBuilder::new()).build().unwrap())
 }
 
 struct USTBLRetryableStrategy;
@@ -281,4 +313,115 @@ pub fn normalize_url(input: &str) -> String {
   normalized.set_fragment(url.fragment());
 
   normalized.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use std::io::{BufRead, BufReader, Read, Write};
+  use std::net::TcpListener;
+
+  /// Answer one request per connection, remembering the request headers.
+  fn serve() -> (String, std::sync::mpsc::Receiver<Vec<String>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let (seen, requests) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+      for _ in 0..3 {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut headers = Vec::new();
+        for line in reader.by_ref().lines() {
+          let line = line.unwrap();
+          if line.is_empty() {
+            break;
+          }
+          headers.push(line.to_lowercase());
+        }
+        seen.send(headers).unwrap();
+        let body = b"hello";
+        write!(
+          stream,
+          "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+          body.len()
+        )
+        .unwrap();
+        stream.write_all(body).unwrap();
+      }
+    });
+    (url, requests)
+  }
+
+  /// The client the launcher shares: the gzip feature is on for the campus
+  /// client, so this one has to opt out explicitly or downloads and pack
+  /// Range reads would see compressed bodies and stripped Content-Length.
+  /// A Range request never asks for an encoding, whatever the client accepts.
+  #[tokio::test]
+  async fn the_shared_client_never_asks_for_gzip() {
+    let (url, requests) = serve();
+    let shared = shared_builder(ClientBuilder::new()).build().unwrap();
+    shared.get(&url).send().await.unwrap();
+    let headers = requests.recv().unwrap();
+    assert!(!headers
+      .iter()
+      .any(|line| line.starts_with("accept-encoding")));
+
+    let campus = campus_builder(ClientBuilder::new()).build().unwrap();
+    campus.get(&url).send().await.unwrap();
+    let headers = requests.recv().unwrap();
+    assert!(headers.iter().any(|line| line == "accept-encoding: gzip"));
+
+    campus
+      .get(&url)
+      .header(reqwest::header::RANGE, "bytes=0-2")
+      .send()
+      .await
+      .unwrap();
+    let headers = requests.recv().unwrap();
+    assert!(!headers
+      .iter()
+      .any(|line| line.starts_with("accept-encoding")));
+  }
+
+  #[tokio::test]
+  async fn campus_decompresses_but_downloads_and_ranges_keep_the_wire_bytes() {
+    use flate2::{write::GzEncoder, Compression};
+    let plain = br#"{"version":35}"#;
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(plain).unwrap();
+    let compressed = encoder.finish().unwrap();
+    let wire = compressed.clone();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+      for _ in 0..3 {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        loop {
+          let mut line = String::new();
+          reader.read_line(&mut line).unwrap();
+          if line == "\r\n" {
+            break;
+          }
+        }
+        write!(stream, "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", wire.len()).unwrap();
+        stream.write_all(&wire).unwrap();
+      }
+    });
+    let campus = campus_builder(ClientBuilder::new().no_proxy()).build().unwrap();
+    let response = campus.get(&url).send().await.unwrap();
+    assert!(response.content_length().is_none());
+    assert_eq!(response.bytes().await.unwrap().as_ref(), plain);
+    let shared = shared_builder(ClientBuilder::new().no_proxy()).build().unwrap();
+    for range in [false, true] {
+      let mut request = shared.get(&url);
+      if range {
+        request = request.header(reqwest::header::RANGE, "bytes=0-20");
+      }
+      let response = request.send().await.unwrap();
+      assert_eq!(response.content_length(), Some(compressed.len() as u64));
+      assert_eq!(response.bytes().await.unwrap().as_ref(), compressed.as_slice());
+    }
+    server.join().unwrap();
+  }
 }

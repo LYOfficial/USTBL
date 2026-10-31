@@ -139,6 +139,7 @@ pub async fn test_latency(github: bool, running: bool) -> Vec<ResourceAccelerati
   }
   // 检测明确使用当前加速通道，避免环境代理覆盖检测路径。
   let mut builder = reqwest::Client::builder()
+    .no_gzip()
     .no_proxy()
     .timeout(Duration::from_secs(15));
   if running {

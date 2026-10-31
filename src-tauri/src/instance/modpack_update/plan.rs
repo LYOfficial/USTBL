@@ -1071,6 +1071,61 @@ mod tests {
   }
 
   #[tokio::test]
+  async fn fresh_install_single_comparison_preserves_rules_and_whole_file_choices() {
+    let root = instance(&[
+      ("config/a.toml", "value = 1\n"),
+      ("config/once.toml", "keep = 1\n"),
+      ("cache/old", "delete"),
+      ("ignored/local", "keep"),
+    ]);
+    let baseline = baseline(&[]);
+    let mut remote = remote_with_rules(
+      &[
+        ("config/a.toml", "value = 2\n"),
+        ("config/once.toml", "keep = 2\n"),
+        ("mods/new.jar", "jar"),
+      ],
+      vec![
+        rule("cache", RuleKind::Dir, RuleState::Delete),
+        rule("ignored", RuleKind::Dir, RuleState::Ignore),
+      ],
+    );
+    remote
+      .files
+      .iter_mut()
+      .find(|file| file.path == "config/once.toml")
+      .unwrap()
+      .once = true;
+    let compared = compare(&root, &baseline, &remote).await.unwrap();
+    let prepared = finish(compared, &root, &remote, &BTreeMap::new()).unwrap();
+    assert!(prepared
+      .diff
+      .conflicts
+      .iter()
+      .all(|conflict| conflict.baseline.is_none() && conflict.hunks.is_empty()));
+    let choices = prepared
+      .diff
+      .conflicts
+      .iter()
+      .map(|conflict| (conflict.path.clone(), ConflictChoice::TakeRemote))
+      .collect();
+    let operations = resolve(&prepared, &choices);
+    assert!(operations
+      .iter()
+      .any(|op| op.path == "config/a.toml" && op.write == Some(key("value = 2\n"))));
+    assert!(operations
+      .iter()
+      .any(|op| op.path == "mods/new.jar" && op.write.is_some()));
+    assert!(operations
+      .iter()
+      .any(|op| op.path == "cache/old" && op.write.is_none()));
+    assert!(!operations
+      .iter()
+      .any(|op| op.path == "config/once.toml" || op.path == "ignored/local"));
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
   async fn untouched_files_update_and_edited_ones_conflict() {
     let root = instance(&[("mods/a.jar", "a1-edited"), ("mods/b.jar", "b1")]);
     let baseline = baseline(&[("mods/a.jar", "a1"), ("mods/b.jar", "b1")]);

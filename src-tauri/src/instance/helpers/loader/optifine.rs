@@ -7,8 +7,6 @@ use crate::instance::models::misc::{Instance, InstanceError, InstanceSubdirType,
 use crate::launch::helpers::file_validator::convert_library_name_to_path;
 use crate::launch::helpers::jre_selector::select_java_runtime;
 use crate::launcher_config::models::JavaInfo;
-use crate::launcher_config::models::LauncherConfig;
-use crate::resource::helpers::misc::get_source_priority_list;
 use crate::resource::helpers::misc::{convert_url_to_target_source, get_download_api};
 use crate::resource::models::{OptiFineResourceInfo, ResourceType, SourceType};
 use crate::tasks::commands::schedule_progressive_task_group;
@@ -58,9 +56,13 @@ pub async fn download_optifine_libraries(
   app: &AppHandle,
   priority: &[SourceType],
   instance: &Instance,
-  client_info: &McClientInfo,
+  client_info: &mut McClientInfo,
 ) -> USTBLResult<()> {
-  let mut client_info = client_info.clone();
+  let existing_client = client_info
+    .patches
+    .iter()
+    .any(|patch| patch.id == "optifine")
+    .then(|| client_info.clone());
   let optifine = instance
     .optifine
     .as_ref()
@@ -77,7 +79,10 @@ pub async fn download_optifine_libraries(
   };
 
   let mut task_params: Vec<PTaskParam> = vec![];
-  let installer_coord = format!("net.minecraftforge:optifine:{}", optifine.filename);
+  let installer_coord = format!(
+    "net.minecraftforge:optifine:{}-installer",
+    optifine.filename
+  );
   let installer_rel = convert_library_name_to_path(&installer_coord, None)?;
   let installer_path = lib_dir.join(&installer_rel);
 
@@ -267,20 +272,30 @@ pub async fn download_optifine_libraries(
     client_info.main_class = Some(lw_main.clone());
   }
 
-  if !task_params.is_empty() {
-    schedule_progressive_task_group(
-      app.clone(),
-      format!("optifine-libraries?{}", instance.id),
-      task_params,
-      true,
-    )
-    .await?;
-  }
-
   let vjson_path = instance
     .version_path
     .join(format!("{}.json", instance.name));
+  if let Some(existing) = existing_client {
+    *client_info = existing;
+  }
   fs::write(vjson_path, serde_json::to_vec_pretty(&client_info)?)?;
+
+  let empty = task_params.is_empty();
+  let group = schedule_progressive_task_group(
+    app.clone(),
+    format!("optifine-libraries?{}", instance.id),
+    task_params,
+    true,
+  )
+  .await?;
+  if empty {
+    // Bundled launchwrapper needs no downloads, but still needs the patcher.
+    use crate::tasks::monitor::TaskMonitor;
+    use std::pin::Pin;
+    app
+      .state::<Pin<Box<TaskMonitor>>>()
+      .finish_empty_group(&group.task_group);
+  }
 
   Ok(())
 }
@@ -386,14 +401,6 @@ pub async fn finish_optifine_install(
   }
 
   remove_entry_from_zip(&optifine_path, "META-INF/mods.toml")?;
-
-  let priority_list = {
-    let launcher_config_state = app.state::<Mutex<LauncherConfig>>();
-    let launcher_config = launcher_config_state.lock()?;
-    get_source_priority_list(&launcher_config)
-  };
-
-  download_optifine_libraries(app, &priority_list, instance, client_info).await?;
 
   Ok(())
 }

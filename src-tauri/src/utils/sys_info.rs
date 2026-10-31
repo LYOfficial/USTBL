@@ -22,7 +22,10 @@ pub async fn send_statistics(version: String, os: String, sha256: String) {
     format!("USTBL-{}", version)
   };
 
-  _ = reqwest::Client::new()
+  let Ok(client) = reqwest::Client::builder().no_gzip().build() else {
+    return;
+  };
+  _ = client
     .post("https://mc.sjtu.cn/api-sjmcl/statistics")
     .json(&json!({
       "version": reported_version,

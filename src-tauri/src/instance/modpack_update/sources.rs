@@ -630,6 +630,17 @@ pub fn campus_line_status(lines: &[CampusLine], origin: &InstanceOrigin) -> Camp
 
 // ---- network ----------------------------------------------------------------
 
+/// The client campus JSON endpoints are read through. Unlike the shared
+/// client it accepts a gzipped response: the version detail is several
+/// megabytes of JSON and the platform compresses it. Downloads and pack
+/// Range reads keep using the shared client, which never asks for gzip.
+pub fn campus_client(app: &AppHandle) -> reqwest::Client {
+  app
+    .try_state::<crate::utils::web::CampusClient>()
+    .map(|client| client.0.clone())
+    .unwrap_or_else(|| crate::utils::web::build_campus_client(app))
+}
+
 fn remote_dir(root: &Path) -> PathBuf {
   root.join(UPDATE_DIR).join("remote")
 }
@@ -658,7 +669,7 @@ async fn resolve_campus_location(app: &AppHandle, param: &mut DownloadParam) -> 
   let Some(endpoint) = campus_location_url(param.src.as_str()) else {
     return Ok(());
   };
-  let client = app.state::<reqwest::Client>();
+  let client = campus_client(app);
   let location: CampusLocation = client
     .get(endpoint)
     .send()
@@ -720,7 +731,7 @@ async fn campus_get<T: serde::de::DeserializeOwned>(
   app: &AppHandle,
   path: &str,
 ) -> USTBLResult<Option<T>> {
-  let client = app.state::<reqwest::Client>();
+  let client = campus_client(app);
   let response = client.get(format!("{CAMPUS_API}{path}")).send().await?;
   if response.status() == reqwest::StatusCode::NOT_FOUND {
     return Ok(None);
@@ -759,7 +770,7 @@ pub async fn campus_project_gone(app: &AppHandle, project_ref: &str) -> Option<b
   if !campus_project_queryable(project_ref) {
     return None;
   }
-  let client = app.state::<reqwest::Client>();
+  let client = campus_client(app);
   let response = client
     .get(format!("{CAMPUS_API}/projects/{project_ref}"))
     .send()
@@ -783,7 +794,7 @@ pub async fn campus_project_for_light_check(
   app: &AppHandle,
   project_ref: &str,
 ) -> USTBLResult<Option<CampusProject>> {
-  let client = app.state::<reqwest::Client>();
+  let client = campus_client(app);
   let response = client
     .get(format!("{CAMPUS_API}/projects/{project_ref}"))
     .send()

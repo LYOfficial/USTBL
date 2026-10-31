@@ -1,19 +1,19 @@
 //! Tauri commands for following a modpack: check, plan, apply, recover.
 
 use super::apply::{
-  apply, can_roll_back_last, ensure_unlink_safe, materialize_remote_file, prepare_packs,
-  recover_checked, roll_back_last_checked, Progress, Recovery, UpdateEnv, UpdateGuard,
-  UpdateRequest,
+  apply, can_roll_back_last, ensure_unlink_safe, materialize_remote_file, pack_wanted,
+  prepare_packs, recover_checked, roll_back_last_checked, wrap_locate, Progress, Recovery, Stage,
+  UpdateEnv, UpdateGuard, UpdateRequest,
 };
-use super::diff::{Conflict, ConflictChoice, FileChange};
+use super::diff::{Conflict, ConflictChoice, Diff, FileChange};
 use super::merge::merge_with_choices;
 use super::notice::{read_update_notice, write_update_notice, UpdateNotice};
 use super::plan::{
-  compare, count_local_changes, finish, invalidate_scan_cache, local_changes, requires_reinstall,
-  resolve, LocalChange,
+  compare, count_local_changes, finish, invalidate_scan_cache, local_changes,
+  requires_reinstall, resolve, LocalChange, Prepared,
 };
 use super::plan_cache::{self, PlanCache};
-use super::remote::ComponentPack;
+use super::remote::{ComponentPack, RemoteModpack};
 use super::restore::restore_component_profile;
 use super::sources::{download_param, latest_version, resolve_remote, LatestVersion};
 use crate::error::USTBLResult;
@@ -37,6 +37,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_opener::reveal_item_in_dir;
 
@@ -169,6 +170,35 @@ fn ensure_not_running(app: &AppHandle, instance_id: &str) -> USTBLResult<()> {
   Ok(())
 }
 
+/// Instances an install or an update is being planned or applied to, from
+/// the command's first step (prepare included) until it answers. The
+/// `UpdateGuard` only covers the transaction on disk; this one covers the
+/// whole run, so a second request is told busy instead of re-planning.
+fn active_plans() -> &'static Mutex<std::collections::HashSet<PathBuf>> {
+  static ACTIVE: OnceLock<Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
+  ACTIVE.get_or_init(Default::default)
+}
+
+struct PlanGuard(PathBuf);
+
+impl PlanGuard {
+  fn acquire(root: &Path) -> USTBLResult<Self> {
+    let mut active = active_plans().lock()?;
+    if !active.insert(root.to_path_buf()) {
+      return Err(InstanceError::ModpackUpdateBusy.into());
+    }
+    Ok(Self(root.to_path_buf()))
+  }
+}
+
+impl Drop for PlanGuard {
+  fn drop(&mut self) {
+    if let Ok(mut active) = active_plans().lock() {
+      active.remove(&self.0);
+    }
+  }
+}
+
 /// The baseline is the record of what the modpack installed. Without a
 /// matching one the instance cannot be compared safely.
 async fn load_baseline(target: &Target) -> USTBLResult<ModpackBaseline> {
@@ -204,6 +234,33 @@ struct AppEnv {
   /// The loader of the version being installed.
   loader: BaselineLoader,
   loader_install_pending: AtomicBool,
+  started: Instant,
+}
+
+impl AppEnv {
+  fn preparing(app: &AppHandle, target: &Target) -> Self {
+    let reporter = Self {
+      app: app.clone(),
+      instance_id: target.instance.id.clone(),
+      label: String::new(),
+      loader: BaselineLoader {
+        loader_type: target.instance.mod_loader.loader_type,
+        version: target.instance.mod_loader.version.clone(),
+      },
+      loader_install_pending: AtomicBool::new(false),
+      started: Instant::now(),
+    };
+    reporter.progress(Stage::Preparing);
+    reporter
+  }
+
+  fn progress(&self, stage: Stage) {
+    self.report(Progress {
+      stage,
+      done: 0,
+      total: 1,
+    });
+  }
 }
 
 #[async_trait]
@@ -281,6 +338,12 @@ impl UpdateEnv for AppEnv {
   }
 
   fn report(&self, progress: Progress) {
+    if progress.done == 0 {
+      log::info!(
+        "modpack progress: instance={} stage={:?} elapsed_ms={}",
+        self.instance_id, progress.stage, self.started.elapsed().as_millis()
+      );
+    }
     let _ = self.app.emit_to(
       "main",
       PROGRESS_EVENT,
@@ -666,7 +729,17 @@ pub async fn prepare_modpack_update(
 /// baseline and the local files are unchanged since the last plan.
 async fn prepare_inner(app: &AppHandle, instance_id: &str) -> USTBLResult<UpdatePlan> {
   let target = target(app, instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let _guard = PlanGuard::acquire(&target.root)?;
+  prepare_target(app, instance_id, &target).await
+}
+
+async fn prepare_target(
+  app: &AppHandle,
+  instance_id: &str,
+  target: &Target,
+) -> USTBLResult<UpdatePlan> {
   ensure_not_running(app, instance_id)?;
+  let _reporter = AppEnv::preparing(app, target);
   let baseline = load_baseline(&target).await?;
   if recover_checked(&target.root, || ensure_not_running(app, instance_id))? != Recovery::Nothing {
     // Recovery moved the files, so any cached plan describes another state.
@@ -877,6 +950,165 @@ fn plan_of(origin: &InstanceOrigin, prepared: PlannedRun) -> UpdatePlan {
   }
 }
 
+/// Everything `install_campus_modpack` needs from one fetch of the version
+/// detail: the plan it shows in the log, and the plan the apply runs. An
+/// install answers every conflict with the remote side, so the plan the
+/// dialog would show is never built; both are computed once, from the same
+/// remote, and the apply below never asks the platform again.
+struct InstallPlan {
+  plan: UpdatePlan,
+  prepared: Prepared,
+  remote: RemoteModpack,
+}
+
+/// Compare the newest version against the fresh instance and compute the
+/// apply's plan in one pass. The baseline is empty, so every shipped file is
+/// an addition and every file in the way is answered with the remote side;
+/// the conflict and merge steps of `plan_prepared` can never fire, which is
+/// what makes one comparison enough. Locating the shipped files in the packs
+/// starts the moment the manifest arrives and runs while the instance is
+/// hashed; `apply` reuses what it located.
+async fn plan_fresh_install(
+  app: &AppHandle,
+  target: &Target,
+  reporter: &AppEnv,
+) -> USTBLResult<InstallPlan> {
+  debug_assert!(is_fresh(&target.origin));
+  let details_started = Instant::now();
+  // The listing answers first, so a line that disappeared between the
+  // install click and here says so before the version detail is fetched.
+  match light_check(app, target).await? {
+    LightCheck::Available { .. } => {}
+    LightCheck::UpToDate => return Err(InstanceError::ModpackUpdateStale.into()),
+    LightCheck::LineGone | LightCheck::ProjectGone => {
+      return Err(InstanceError::ModpackUpdateLineGone.into());
+    }
+  }
+  let latest = resolve_latest_for_plan(app, target).await?;
+  let baseline = ModpackBaseline::build(
+    &target.origin,
+    BaselineLoader {
+      loader_type: target.instance.mod_loader.loader_type,
+      version: target.instance.mod_loader.version.clone(),
+    },
+    Vec::new(),
+  );
+  let remote = resolve_remote(
+    app,
+    &target.origin,
+    &target.root,
+    &target.instance.name,
+    &latest,
+  )
+  .await?;
+  log::info!(
+    "modpack install details: instance={} version={} elapsed_ms={}",
+    target.instance.id, remote.version_id, details_started.elapsed().as_millis()
+  );
+  if requires_reinstall(&baseline, &remote, true) {
+    let plan = UpdatePlan {
+      from_version_id: target.origin.version_id.clone(),
+      to_version_id: remote.version_id.clone(),
+      to_label: remote.label.clone(),
+      changes: Vec::new(),
+      conflicts: Vec::new(),
+      auto_merged: Vec::new(),
+      loader_change: None,
+      reinstall_required: true,
+      fast_forward: false,
+      plan_hash: String::new(),
+    };
+    return Ok(InstallPlan {
+      plan,
+      prepared: Prepared {
+        diff: Diff::default(),
+        plan_hash: String::new(),
+        merged_contents: BTreeMap::new(),
+        conflict_sources: BTreeMap::new(),
+        next_baseline: Vec::new(),
+        variants: BTreeMap::new(),
+        prune_dirs: BTreeMap::new(),
+        ignores: super::ignores::Ignores::default(),
+        ignores_on_disk: super::ignores::Ignores::default(),
+      },
+      remote,
+    });
+  }
+  // The manifest names every file the install writes; locating them can run
+  // while the instance is hashed and compared. The fetch reuses what the
+  // sessions located here. When the comparison wins, the wait for the locate
+  // is the locating stage.
+  let wanted = {
+    let shipped: Vec<&super::remote::RemoteFile> = remote
+      .files
+      .iter()
+      .chain(
+        remote
+          .component_pack
+          .as_ref()
+          .into_iter()
+          .flat_map(|pack| pack.files.iter()),
+      )
+      .collect();
+    pack_wanted(&shipped)
+  };
+  let locating = async move {
+    for (session, wanted) in wanted {
+      session.prepare(&wanted).await.map_err(wrap_locate)?;
+    }
+    Ok::<_, crate::error::USTBLError>(())
+  };
+  let planning = async {
+    let started = Instant::now();
+    let compared = compare(&target.root, &baseline, &remote).await?;
+    if !compared.both_variants.is_empty() {
+      log::info!(
+        "modpack install refused: instance={} both variants on disk: {}",
+        target.instance.id,
+        compared.both_variants.join(", "),
+      );
+      return Err(InstanceError::ModpackUpdateBothVariants.into());
+    }
+    let prepared = finish(compared, &target.root, &remote, &BTreeMap::new())?;
+    log::info!(
+      "modpack install compare: instance={} elapsed_ms={}",
+      target.instance.id, started.elapsed().as_millis()
+    );
+    reporter.progress(Stage::Locating);
+    Ok::<_, crate::error::USTBLError>(prepared)
+  };
+  let (prepared, ()) = tokio::try_join!(planning, locating)?;
+  let loader_change = (remote.loader != baseline.loader).then(|| LoaderChange {
+    from: baseline.loader.clone(),
+    to: remote.loader.clone(),
+  });
+  let plan = UpdatePlan {
+    from_version_id: target.origin.version_id.clone(),
+    to_version_id: remote.version_id.clone(),
+    to_label: remote.label.clone(),
+    fast_forward: fast_forward(
+      prepared
+        .diff
+        .changes
+        .iter()
+        .chain(&prepared.diff.auto_merged),
+      prepared.diff.conflicts.len(),
+      loader_change.is_some(),
+    ),
+    changes: prepared.diff.changes.clone(),
+    conflicts: prepared.diff.conflicts.clone(),
+    auto_merged: prepared.diff.auto_merged.clone(),
+    loader_change,
+    reinstall_required: false,
+    plan_hash: prepared.plan_hash.clone(),
+  };
+  Ok(InstallPlan {
+    plan,
+    prepared,
+    remote,
+  })
+}
+
 /// Fetch the installed version's copy of conflicting text files whose cached
 /// base is missing, so the conflict can be resolved block by block. Campus
 /// packs only; best effort, a failure leaves whole-file choices. Returns
@@ -917,6 +1149,7 @@ async fn recover_base_copies(
       label: remote.label.clone(),
       loader: remote.loader.clone(),
       loader_install_pending: AtomicBool::new(false),
+      started: Instant::now(),
     };
     let preview = target
       .root
@@ -933,6 +1166,7 @@ async fn recover_base_copies(
       .collect();
     let recovered = async {
       let mut recovered = false;
+      env.progress(Stage::Locating);
       prepare_packs(&files).await?;
       for file in files {
         let dest = preview.join(&file.path);
@@ -1050,6 +1284,7 @@ async fn materialize_text_candidates(
     label: remote.label.clone(),
     loader: remote.loader.clone(),
     loader_install_pending: AtomicBool::new(false),
+    started: Instant::now(),
   };
   let preview = target.root.join(super::remote::UPDATE_DIR).join("remote-preview");
   let _ = tokio::fs::remove_dir_all(&preview).await;
@@ -1059,6 +1294,7 @@ async fn materialize_text_candidates(
     .iter()
     .filter(|file| wanted.contains_key(file.path.as_str()))
     .collect();
+  env.progress(Stage::Locating);
   prepare_packs(&candidates).await?;
   for file in candidates {
     if !wanted.contains_key(file.path.as_str()) {
@@ -1084,6 +1320,18 @@ pub async fn apply_modpack_update(
   plan_hash: String,
   choices: BTreeMap<String, ConflictChoice>,
 ) -> USTBLResult<UpdateOutcome> {
+  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let guard = PlanGuard::acquire(&target.root)?;
+  apply_modpack_update_inner(app, instance_id, plan_hash, choices, guard).await
+}
+
+async fn apply_modpack_update_inner(
+  app: AppHandle,
+  instance_id: String,
+  plan_hash: String,
+  choices: BTreeMap<String, ConflictChoice>,
+  _plan_guard: PlanGuard,
+) -> USTBLResult<UpdateOutcome> {
   // What the player answered, before anything is checked: a Stale answer
   // below must not take the record of the choices with it. Paths, hunk
   // indexes and sides only; never file contents.
@@ -1099,6 +1347,7 @@ pub async fn apply_modpack_update(
   }
   let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   ensure_not_running(&app, &instance_id)?;
+  let reporter = AppEnv::preparing(&app, &target);
   let baseline = load_baseline(&target).await?;
   recover_checked(&target.root, || ensure_not_running(&app, &instance_id))?;
   let latest = latest_version(&app, &target.origin)
@@ -1164,6 +1413,7 @@ pub async fn apply_modpack_update(
     label: remote.label.clone(),
     loader: remote.loader.clone(),
     loader_install_pending: AtomicBool::new(false),
+    started: reporter.started,
   };
   let version_id = remote.version_id.clone();
   let mut apply_choices = choices.clone();
@@ -1240,18 +1490,121 @@ pub async fn install_campus_modpack(
   app: AppHandle,
   instance_id: String,
 ) -> USTBLResult<UpdateOutcome> {
+  let started = Instant::now();
+  log::info!("modpack install start: instance={instance_id}");
   // The instance was created moments ago; make sure the app knows it.
   refresh_and_update_instances(&app, false).await;
-  let plan = prepare_modpack_update(app.clone(), instance_id.clone()).await?;
+  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  ensure_not_running(&app, &instance_id)?;
+  // From here until the answer this instance is busy, plan and apply alike.
+  let _plan_guard = PlanGuard::acquire(&target.root)?;
+  let reporter = AppEnv {
+    app: app.clone(),
+    instance_id: instance_id.clone(),
+    label: String::new(),
+    loader: BaselineLoader {
+      loader_type: target.instance.mod_loader.loader_type,
+      version: target.instance.mod_loader.version.clone(),
+    },
+    loader_install_pending: AtomicBool::new(false),
+    started,
+  };
+  reporter.progress(Stage::Preparing);
+  if target.origin.platform != OriginPlatform::Campus || !is_fresh(&target.origin) {
+    // The one-shot install only knows the fresh campus case; anything else
+    // goes through plan and apply like the update dialog does.
+    let plan = prepare_target(&app, &instance_id, &target).await?;
+    if plan.reinstall_required {
+      return Err(InstanceError::ModpackUpdateReinstallRequired.into());
+    }
+    let choices = plan
+      .conflicts
+      .iter()
+      .map(|conflict| (conflict.path.clone(), ConflictChoice::TakeRemote))
+      .collect();
+    return apply_modpack_update_inner(app, instance_id, plan.plan_hash, choices, _plan_guard).await;
+  }
+  if recover_checked(&target.root, || ensure_not_running(&app, &instance_id))?
+    != Recovery::Nothing
+  {
+    plan_cache::clear_plan_cache(&target.root);
+  }
+  let planning_started = Instant::now();
+  let InstallPlan {
+    plan,
+    prepared,
+    remote,
+  } = plan_fresh_install(&app, &target, &reporter).await?;
   if plan.reinstall_required {
     return Err(InstanceError::ModpackUpdateReinstallRequired.into());
   }
-  let choices = plan
+  log::info!(
+    "modpack install planned: instance={instance_id} version={} changes={} conflicts={} plan_hash={} {:?} elapsed",
+    plan.to_version_id,
+    plan.changes.len(),
+    plan.conflicts.len(),
+    plan.plan_hash,
+    planning_started.elapsed(),
+  );
+  let choices: BTreeMap<String, ConflictChoice> = plan
     .conflicts
     .iter()
     .map(|conflict| (conflict.path.clone(), ConflictChoice::TakeRemote))
     .collect();
-  apply_modpack_update(app, instance_id, plan.plan_hash, choices).await
+  let env = AppEnv {
+    app: app.clone(),
+    instance_id: instance_id.clone(),
+    label: remote.label.clone(),
+    loader: remote.loader.clone(),
+    loader_install_pending: AtomicBool::new(false),
+    started,
+  };
+  let version_id = remote.version_id.clone();
+  let mut apply_choices = choices.clone();
+  let merged_contents = selected_hunk_contents(&prepared, &mut apply_choices)?;
+  log::info!(
+    "modpack install resolutions: instance={instance_id} plan_hash={} resolutions=[{}]",
+    plan.plan_hash,
+    describe_conflict_resolutions(&prepared.diff, &apply_choices).join(","),
+  );
+  let restore_components = remote.component_pack.is_some();
+  let components = if restore_components {
+    remote.components.clone()
+  } else {
+    None
+  };
+  let ignores = super::ignores::plan_update(&target.root, &prepared, &BTreeMap::new(), &apply_choices);
+  let result = apply(
+    &env,
+    UpdateRequest {
+      root: target.root.clone(),
+      instance_name: target.instance.name.clone(),
+      operations: resolve(&prepared, &apply_choices),
+      remote,
+      origin: target.origin.clone(),
+      previous_loader: BaselineLoader {
+        loader_type: target.instance.mod_loader.loader_type,
+        version: target.instance.mod_loader.version.clone(),
+      },
+      components,
+      restore_components,
+      merged_contents,
+      base_texts: BTreeMap::new(),
+      next_baseline: prepared.next_baseline.clone(),
+      ignores,
+    },
+  )
+  .await;
+  if result.is_err() {
+    // A rolled back update restored the files on disk; drop stale memory.
+    refresh_and_update_instances(&app, false).await;
+  }
+  plan_cache::clear_plan_cache(&target.root);
+  result?;
+  Ok(UpdateOutcome {
+    version_id,
+    loader_install_pending: env.loader_install_pending.load(Ordering::SeqCst),
+  })
 }
 
 /// Undo or finish an update that was interrupted. Returns whether anything
@@ -1280,6 +1633,19 @@ pub async fn recover_modpack_update(app: AppHandle, instance_id: String) -> USTB
 mod tests {
   use super::*;
   use crate::instance::models::misc::InstanceError;
+
+  #[test]
+  fn a_plan_guard_rejects_duplicates_and_moves_to_the_apply_without_relocking() {
+    let root = PathBuf::from(format!("campus-plan-{}", uuid::Uuid::new_v4()));
+    let held = PlanGuard::acquire(&root).unwrap();
+    assert_eq!(PlanGuard::acquire(&root).err().unwrap().0, "MODPACK_UPDATE_BUSY");
+    let apply = |guard: PlanGuard| {
+      assert!(PlanGuard::acquire(&root).is_err());
+      drop(guard);
+    };
+    apply(held);
+    assert!(PlanGuard::acquire(&root).is_ok());
+  }
 
   #[test]
   fn a_cancelled_preview_answers_with_the_cancelled_error() {

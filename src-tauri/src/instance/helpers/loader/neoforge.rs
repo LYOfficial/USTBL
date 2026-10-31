@@ -121,6 +121,12 @@ pub async fn download_neoforge_libraries(
   instance: &Instance,
   client_info: &mut McClientInfo,
 ) -> USTBLResult<()> {
+  // A retry rebuilds download tasks and the processor profile, not launch args.
+  let existing_client = client_info
+    .patches
+    .iter()
+    .any(|patch| patch.id == "neoforge")
+    .then(|| client_info.clone());
   let subdirs = get_instance_subdir_paths(
     app,
     instance,
@@ -396,6 +402,16 @@ pub async fn download_neoforge_libraries(
     PTaskParam::Upload(_) => true,
   });
 
+  // Completion can arrive as soon as the group is queued.
+  if let Some(existing) = existing_client {
+    *client_info = existing;
+  }
+  fs::write(
+    instance
+      .version_path
+      .join(format!("{}.json", instance.name)),
+    serde_json::to_vec_pretty(client_info)?,
+  )?;
   schedule_progressive_task_group(
     app.clone(),
     format!("neoforge-libraries?{}", instance.id),

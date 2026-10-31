@@ -107,7 +107,12 @@ export interface CampusModpackRecommendation {
   loaderType: string | null;
 }
 
-export type CampusInstallStage = "fetching" | "applying" | "finalizing";
+export type CampusInstallStage =
+  | "preparing"
+  | "locating"
+  | "fetching"
+  | "applying"
+  | "finalizing";
 
 export interface CampusInstallProgress {
   instanceId: string;

@@ -212,13 +212,29 @@ impl PackSession {
   }
 
   /// Ask the platform which packs hold `sha1s`. A pack the platform cannot
-  /// hand out (gone, or too many of them) is reported as unavailable.
+  /// hand out (gone, or too many of them) is reported as unavailable. Asking
+  /// for a subset again is a no-op, so an early locate (started before
+  /// the local files were hashed) is reused by the fetch that follows.
   pub async fn prepare(&self, sha1s: &[String]) -> USTBLResult<()> {
     let mut wanted = sha1s.to_vec();
     wanted.sort();
     wanted.dedup();
     let mut state = self.state.lock().await;
+    if state.located.is_some()
+      && wanted
+        .iter()
+        .all(|sha1| state.wanted.binary_search(sha1).is_ok())
+    {
+      return Ok(());
+    }
+    let started = std::time::Instant::now();
     state.located = Some(self.plan(&wanted).await?);
+    log::info!(
+      "modpack pack locate request: version={}, sha1s={}, elapsed_ms={}",
+      self.version_id,
+      wanted.len(),
+      started.elapsed().as_millis()
+    );
     state.wanted = wanted;
     state.generation += 1;
     Ok(())
@@ -329,11 +345,18 @@ impl PackSession {
       let mut to = from + 1;
       while to < items.len() && MERGE_GAP > 0 && MERGE_SPAN > 0 {
         let (prev, next) = (items[to - 1].0, items[to].0);
+        // Offsets are local to each pack and may restart below this group's start.
+        if next.pack != prev.pack {
+          break;
+        }
         let gap = next
           .data_offset
-          .saturating_sub(prev.data_offset + prev.compressed_size);
-        let span = next.data_offset + next.compressed_size - items[from].0.data_offset;
-        if next.pack != prev.pack || gap > MERGE_GAP || span > MERGE_SPAN {
+          .saturating_sub(prev.data_offset.saturating_add(prev.compressed_size));
+        let span = next
+          .data_offset
+          .saturating_sub(items[from].0.data_offset)
+          .saturating_add(next.compressed_size);
+        if gap > MERGE_GAP || span > MERGE_SPAN {
           break;
         }
         to += 1;
@@ -581,7 +604,11 @@ fn signed_request(
 #[async_trait]
 impl PackTransport for AppTransport {
   async fn locate(&self, version_id: i64, sha1s: &[String]) -> Result<Located, TransportError> {
-    let client = self.app.state::<reqwest::Client>();
+    // Locate is a campus JSON answer; the campus client accepts gzip for it.
+    // Range reads below must keep the shared client: reqwest skips
+    // Accept-Encoding when Range is set, but a Range answer must also keep
+    // its Content-Length, which gzip would strip.
+    let client = super::sources::campus_client(&self.app);
     let url = format!("{CAMPUS_API}/versions/{version_id}/locate");
     // Servers from before v3 reject a request without `mode`; they answer the
     // "update" shape, which is the only one used. Newer ones ignore the field.
@@ -1000,6 +1027,20 @@ mod tests {
   }
 
   #[tokio::test]
+  async fn preparing_the_same_files_again_reuses_the_first_locate() {
+    let (session, fake, _work) = session(Fake::new(&[("aa", b"x"), ("bb", b"y")]));
+    session.prepare(&["aa".into(), "bb".into()]).await.unwrap();
+    // The fetch often needs only a subset: identical local files and rules
+    // can remove entries from the manifest's early locate.
+    session.prepare(&["bb".into(), "aa".into()]).await.unwrap();
+    session.prepare(&["aa".into()]).await.unwrap();
+    session.prepare(&["aa".into()]).await.unwrap();
+    let calls = fake.calls();
+    assert_eq!(calls.iter().filter(|c| *c == "locate").count(), 1);
+    session.fetch("bb", &_work.join("b")).await.unwrap();
+  }
+
+  #[tokio::test]
   async fn fetching_before_preparing_or_an_unknown_file_is_invalid() {
     let (session, _fake, work) = session(Fake::new(&[("aa", b"x")]));
     assert!(session.fetch("aa", &work.join("a")).await.is_err());
@@ -1069,6 +1110,51 @@ mod tests {
     assert_eq!(stats.bytes.load(Ordering::Relaxed), span);
     assert_eq!(stats.merged.load(Ordering::Relaxed), 1);
     let _ = fs::remove_dir_all(work);
+  }
+
+  #[tokio::test]
+  async fn a_lower_offset_in_the_next_pack_starts_a_new_group_without_underflow() {
+    let (session, _, _) = session(Fake::new(&[]));
+    let entry = |pack, data_offset| EntryLocation {
+      pack,
+      data_offset,
+      compressed_size: 10,
+      size: 10,
+      compress_type: STORED,
+      crc32: 0,
+    };
+    let located = Located {
+      packs: vec![location(1), location(2)],
+      entries: HashMap::from([
+        ("aa".into(), entry(1, 1000)),
+        ("bb".into(), entry(1, 1010)),
+        ("cc".into(), entry(2, 0)),
+        ("dd".into(), entry(2, 10)),
+      ]),
+    };
+    let batch: Vec<_> = ["dd", "bb", "cc", "aa"]
+      .into_iter()
+      .map(|sha1| PackFetch {
+        sha1: sha1.into(),
+        dest: PathBuf::from(sha1),
+      })
+      .collect();
+    let groups = session.plan_groups(&located, 1, &batch).unwrap();
+    let grouped: Vec<Vec<_>> = groups
+      .iter()
+      .map(|group| {
+        group
+          .entries
+          .iter()
+          .map(|entry| entry.sha1.as_str())
+          .collect()
+      })
+      .collect();
+    assert_eq!(grouped, vec![vec!["aa", "bb"], vec!["cc", "dd"]]);
+    assert!(groups.iter().all(|group| group
+      .entries
+      .iter()
+      .all(|entry| entry.entry.pack == group.entries[0].entry.pack)));
   }
 
   #[tokio::test]

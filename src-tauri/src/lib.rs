@@ -337,6 +337,9 @@ pub async fn run() -> i32 {
 
       let client = build_ustbl_client(app.handle(), true);
       app.manage(client);
+      app.manage(utils::web::CampusClient(utils::web::build_campus_client(
+        app.handle(),
+      )));
 
       let launching_queue = Vec::<LaunchingState>::new();
       app.manage(Mutex::new(launching_queue));
