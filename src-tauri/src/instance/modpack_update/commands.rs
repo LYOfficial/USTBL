@@ -18,8 +18,9 @@ use super::remote::{ComponentPack, RemoteModpack};
 use super::restore::restore_component_profile;
 use super::sources::{download_param, latest_version, resolve_remote, LatestVersion, Payload};
 use crate::error::USTBLResult;
-use crate::instance::commands::switch_mod_loader;
+use crate::instance::commands::{remove_instance_blocking, switch_mod_loader};
 use crate::instance::helpers::client_json::McClientInfo;
+use crate::instance::helpers::loader::common::installer_task_group;
 use crate::instance::helpers::misc::{
   get_instance_game_config, get_instance_subdir_paths, refresh_and_update_instances,
 };
@@ -466,6 +467,26 @@ pub async fn discard_campus_modpack_install(
   let _guard = PlanGuard::acquire(&root)?;
   let record = load_campus_install_record(&root).ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let recovery = recover_checked(&root, || ensure_not_running(&app, &instance_id))?;
+  if recovery != Recovery::Nothing {
+    refresh_and_update_instances(&app, false).await;
+  }
+  // Recovery may have committed the first version; only then is it not fresh.
+  let instance = current_instance(&app, &instance_id)?;
+  if instance.origin.as_ref().is_some_and(is_fresh) {
+    // The guard is held, so no install job of this instance is running. The
+    // client and loader downloads are separate groups and still have to stop.
+    cancel_pending_install_downloads(&app, &instance, &record).await?;
+    plan_cache::clear_plan_cache(&root);
+    remove_campus_install_groups(&app, &instance_id, record.group.as_deref());
+    let app_for_delete = app.clone();
+    let id_for_delete = instance_id.clone();
+    let root_for_delete = root.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+      remove_instance_blocking(&app_for_delete, &id_for_delete, &root_for_delete, |_| {})
+    })
+    .await??;
+    return Ok(());
+  }
   for name in ["staging", "components", "remote"] {
     match fs::remove_dir_all(root.join(super::remote::UPDATE_DIR).join(name)) {
       Ok(()) => {}
@@ -487,8 +508,88 @@ pub async fn discard_campus_modpack_install(
   }
   plan_cache::clear_plan_cache(&root);
   remove_campus_install_groups(&app, &instance_id, record.group.as_deref());
-  if recovery != Recovery::Nothing {
-    refresh_and_update_instances(&app, false).await;
+  Ok(())
+}
+
+fn unfinished_download(desc: &PDesc<PTaskParam>) -> bool {
+  desc.status.is_in_progress() || desc.status.is_waiting() || desc.status.is_stopped()
+}
+
+fn writes_into(desc: &PDesc<PTaskParam>, root: &Path) -> bool {
+  matches!(&desc.payload, PTaskParam::Download(param) if param.dest.starts_with(root))
+}
+
+/// Groups that download for a pending install: the client (including its
+/// retries) and the loader installers. Descriptors outlive their group, so
+/// they are read from the descriptor list.
+fn pending_install_groups(
+  descriptors: Vec<PDesc<PTaskParam>>,
+  instance: &Instance,
+  linked_group: Option<&str>,
+) -> Vec<String> {
+  let installers = [
+    installer_task_group(&instance.id, false),
+    installer_task_group(&instance.id, true),
+  ];
+  let mut groups: Vec<String> = linked_group.map(str::to_owned).into_iter().collect();
+  let mut add = |group: &str| {
+    if !groups.iter().any(|name| name == group) {
+      groups.push(group.to_owned());
+    }
+  };
+  for task in &descriptors {
+    let Some(group) = task.task_group.as_deref() else {
+      continue;
+    };
+    let raw = group.rsplit_once('@').map_or(group, |(raw, _)| raw);
+    if installers.iter().any(|name| name == raw) {
+      add(group);
+    }
+  }
+  for task in campus_client_tasks(descriptors, instance, linked_group) {
+    if let Some(group) = task.task_group.as_deref() {
+      add(group);
+    }
+  }
+  groups
+}
+
+fn belongs_to_pending_install(desc: &PDesc<PTaskParam>, root: &Path, groups: &[String]) -> bool {
+  writes_into(desc, root)
+    || desc
+      .task_group
+      .as_ref()
+      .is_some_and(|group| groups.contains(group))
+}
+
+/// Stop every download that could still write into a first install about to
+/// be deleted, and wait for their jobs to end. Fails, so that nothing is
+/// deleted, when a task is still unfinished afterwards.
+async fn cancel_pending_install_downloads(
+  app: &AppHandle,
+  instance: &Instance,
+  record: &CampusInstallRecord,
+) -> USTBLResult<()> {
+  let monitor = app.state::<Pin<Box<TaskMonitor>>>();
+  let root = instance.version_path.clone();
+  let groups = pending_install_groups(
+    monitor.task_descriptors(),
+    instance,
+    record.client_group.as_deref(),
+  );
+  let jobs = monitor.cancel_tasks_where(|desc| belongs_to_pending_install(desc, &root, &groups));
+  for job in jobs {
+    let _ = job.await;
+  }
+  for group in &groups {
+    monitor.cancel_progressive_task_group(group.clone());
+  }
+  if monitor
+    .task_descriptors()
+    .iter()
+    .any(|desc| unfinished_download(desc) && belongs_to_pending_install(desc, &root, &groups))
+  {
+    return Err(InstanceError::ModpackUpdateBusy.into());
   }
   Ok(())
 }
@@ -3380,6 +3481,80 @@ mod tests {
       Some(retry),
     );
     assert_eq!(selected.len(), 1);
+  }
+
+  fn download_task(
+    group: &str,
+    path: impl Into<PathBuf>,
+    status: crate::tasks::streams::desc::PStatus,
+  ) -> PDesc<PTaskParam> {
+    PDesc::new(
+      0,
+      Some(group.into()),
+      10,
+      PTaskParam::Download(DownloadParam {
+        src: "https://example.com/file".parse().unwrap(),
+        dest: path.into(),
+        filename: None,
+        sha1: None,
+        custom_headers: None,
+        transfer_options: Default::default(),
+      }),
+      status,
+    )
+  }
+
+  #[test]
+  fn discarding_selects_only_downloads_that_write_for_this_instance() {
+    use crate::tasks::streams::desc::PStatus::{Failed, InProgress, Stopped, Waiting};
+    let instance = Instance {
+      id: "games:a".into(),
+      name: "pack".into(),
+      version_path: PathBuf::from("games/versions/pack"),
+      ..Default::default()
+    };
+    let root = instance.version_path.clone();
+    let client = "game-client?pack@1";
+    let retry = "retry-game-client?pack@2";
+    let installer = "loader-installer?games:a@3";
+    let descriptors = vec![
+      download_task(client, "games/libraries/lib.jar", Failed),
+      download_task(retry, "games/libraries/lib2.jar", InProgress),
+      download_task(retry, root.join("pack.jar"), Waiting),
+      download_task(installer, "games/libraries/forge.jar", Stopped),
+      download_task("mod-update", root.join("mods/x.jar"), InProgress),
+      download_task("mod-update", "games/versions/other/mods/y.jar", InProgress),
+      download_task("game-client?other@4", "other/o.jar", InProgress),
+      download_task("loader-installer?games:ab@5", "z.jar", InProgress),
+    ];
+    let groups = pending_install_groups(descriptors.clone(), &instance, Some(client));
+    assert_eq!(groups, [client, installer, retry]);
+    let mine: Vec<_> = descriptors
+      .iter()
+      .enumerate()
+      .filter(|(_, desc)| belongs_to_pending_install(desc, &root, &groups))
+      .collect();
+    // Other instances' tasks and the same-prefix installer group are left
+    // alone; the failed library belongs but is not unfinished.
+    let indexes: Vec<_> = mine.iter().map(|(index, _)| *index).collect();
+    assert_eq!(indexes, [0, 1, 2, 3, 4]);
+    let unfinished = mine.iter().filter(|(_, d)| unfinished_download(d));
+    assert_eq!(unfinished.count(), 4);
+  }
+
+  #[test]
+  fn only_a_first_install_is_deleted_on_discard() {
+    let mut origin = InstanceOrigin {
+      platform: OriginPlatform::Modrinth,
+      project_id: "p".into(),
+      version_id: String::new(),
+      game_version: "1.21.1".into(),
+      loader_type: ModLoaderType::Fabric,
+      follow: true,
+    };
+    assert!(is_fresh(&origin));
+    origin.version_id = "v1".into();
+    assert!(!is_fresh(&origin));
   }
 
   #[test]

@@ -264,30 +264,46 @@ pub async fn delete_instance(
   };
 
   tauri::async_runtime::spawn_blocking(move || -> USTBLResult<()> {
-    delete_instance_files(&version_path, |progress| {
+    remove_instance_blocking(&app, &instance_id, &version_path, |progress| {
       let _ = on_progress.send(progress);
-    })?;
-    crate::instance::modpack_update::plan::invalidate_scan_cache(&version_path);
-
-    let next_instance_id = {
-      let binding = app.state::<Mutex<HashMap<String, Instance>>>();
-      let mut instances = binding.lock()?;
-      instances.remove(&instance_id);
-      instances.keys().next().cloned().unwrap_or_default()
-    };
-    let binding = app.state::<Mutex<LauncherConfig>>();
-    let mut config = binding.lock()?;
-    if config.states.shared.selected_instance_id == instance_id {
-      config.partial_update(
-        &app,
-        "states.shared.selected_instance_id",
-        &serde_json::to_string(&next_instance_id)?,
-      )?;
-      config.save()?;
-    }
-    Ok(())
+    })
   })
   .await?
+}
+
+/// Delete an instance's files, forget it and move the selection off it.
+/// Blocking; shared by `delete_instance` and discarding a first install.
+pub(crate) fn remove_instance_blocking(
+  app: &AppHandle,
+  instance_id: &str,
+  version_path: &Path,
+  report: impl FnMut(InstanceDeletionProgress),
+) -> USTBLResult<()> {
+  delete_instance_files(version_path, report)?;
+  crate::instance::modpack_update::plan::invalidate_scan_cache(version_path);
+
+  let next_instance_id = {
+    let binding = app.state::<Mutex<HashMap<String, Instance>>>();
+    let mut instances = binding.lock()?;
+    forget_instance(&mut instances, instance_id)
+  };
+  let binding = app.state::<Mutex<LauncherConfig>>();
+  let mut config = binding.lock()?;
+  if config.states.shared.selected_instance_id == instance_id {
+    config.partial_update(
+      app,
+      "states.shared.selected_instance_id",
+      &serde_json::to_string(&next_instance_id)?,
+    )?;
+    config.save()?;
+  }
+  Ok(())
+}
+
+/// Drop the instance from the table; returns the ID to select instead.
+fn forget_instance(instances: &mut HashMap<String, Instance>, instance_id: &str) -> String {
+  instances.remove(instance_id);
+  instances.keys().next().cloned().unwrap_or_default()
 }
 
 #[tauri::command]
@@ -2043,6 +2059,31 @@ mod origin_tests {
     )
     .await
     .is_none());
+  }
+}
+
+#[cfg(test)]
+mod removal_tests {
+  use super::*;
+
+  #[test]
+  fn forgetting_an_instance_removes_only_its_entry_and_picks_another() {
+    let entry = |id: &str| {
+      (
+        id.to_string(),
+        Instance {
+          id: id.into(),
+          ..Default::default()
+        },
+      )
+    };
+    let mut instances: HashMap<String, Instance> = [entry("a"), entry("b")].into();
+    assert_eq!(forget_instance(&mut instances, "a"), "b");
+    assert!(!instances.contains_key("a") && instances.contains_key("b"));
+    assert_eq!(forget_instance(&mut instances, "b"), "");
+    assert!(instances.is_empty());
+    // An instance that was never in the table (no jar yet) is a no-op.
+    assert_eq!(forget_instance(&mut instances, "pending"), "");
   }
 }
 

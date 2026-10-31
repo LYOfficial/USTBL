@@ -530,6 +530,34 @@ impl TaskMonitor {
     self.ths.read().unwrap().get(&task_id).cloned()
   }
 
+  /// Cancel every unfinished task that `belongs` selects, abort the jobs
+  /// still running them and hand those jobs back, so the caller can wait until
+  /// they have ended. Modpack transactions are never touched: they must
+  /// finish or roll back.
+  pub fn cancel_tasks_where(&self, belongs: impl Fn(&PTaskDesc) -> bool) -> Vec<JoinHandle<()>> {
+    let mut jobs = Vec::new();
+    for (id, handle) in self.phs.read().unwrap().iter() {
+      let desc = handle.read().unwrap().desc.clone();
+      let unfinished =
+        desc.status.is_in_progress() || desc.status.is_waiting() || desc.status.is_stopped();
+      if !unfinished
+        || desc
+          .task_group
+          .as_deref()
+          .is_some_and(is_modpack_transaction)
+        || !belongs(&desc)
+      {
+        continue;
+      }
+      handle.write().unwrap().mark_cancelled();
+      if let Some(job) = self.tasks.lock().unwrap().remove(id) {
+        job.abort();
+        jobs.push(job);
+      }
+    }
+    jobs
+  }
+
   pub fn cancel_progressive_task_group(&self, task_group: String) {
     if is_modpack_transaction(&task_group) {
       return;
