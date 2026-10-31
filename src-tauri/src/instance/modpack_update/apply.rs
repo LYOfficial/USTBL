@@ -186,6 +186,24 @@ pub trait UpdateEnv: Send + Sync {
   /// Point the instance at the new version once its files are in place.
   async fn commit_origin(&self, version_id: &str) -> USTBLResult<()>;
   fn report(&self, progress: Progress);
+  /// Whether the caller asked to abandon the run. Only honoured until
+  /// `begin_commit` succeeds.
+  fn cancel_requested(&self) -> bool {
+    false
+  }
+  /// Resolves once the caller asks to abandon the run; never, by default.
+  async fn cancelled(&self) {
+    std::future::pending::<()>().await
+  }
+  /// Called once, right before the journal is written. Fails when the run was
+  /// cancelled; otherwise the run can no longer be cancelled.
+  fn begin_commit(&self) -> USTBLResult<()> {
+    Ok(())
+  }
+}
+
+fn cancelled_error() -> crate::error::USTBLError {
+  InstanceError::ModpackInstallInterrupted.into()
 }
 
 pub struct UpdateRequest {
@@ -718,6 +736,9 @@ pub async fn apply(env: &dyn UpdateEnv, request: UpdateRequest) -> USTBLResult<(
 
 async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
   let root = &request.root;
+  if env.cancel_requested() {
+    return Err(cancelled_error());
+  }
   // The plan was made against these ignores; others on disk mean it is stale.
   if let Some(update) = &request.ignores {
     if super::ignores::read(root) != update.from {
@@ -858,7 +879,11 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
     bytes_done: 0,
     bytes_total: 0,
   });
-  prepare_packs(&wanted).await?;
+  tokio::select! {
+    biased;
+    result = prepare_packs(&wanted) => result?,
+    () = env.cancelled() => return Err(cancelled_error()),
+  }
   // Plan every session's merged groups up front: all of its files, wherever
   // they sit in `to_fetch`, are grouped by pack offset. Each group becomes
   // one unit of fetch work, so the groups run concurrently.
@@ -906,6 +931,9 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
   let mut running = FuturesUnordered::new();
   let mut first_error = None;
   let fetching_result: USTBLResult<()> = loop {
+    if first_error.is_none() && env.cancel_requested() {
+      first_error = Some(cancelled_error());
+    }
     while first_error.is_none() && running.len() < FETCH_CONCURRENCY {
       let Some(unit) = pending.next() else {
         break;
@@ -938,7 +966,16 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
         result.map(|()| (files, bytes))
       });
     }
-    let Some(result) = running.next().await else {
+    let next = tokio::select! {
+      biased;
+      next = running.next() => next,
+      // Stop scheduling and drain what is in flight; `fetch` ends promptly.
+      () = env.cancelled(), if first_error.is_none() => {
+        first_error = Some(cancelled_error());
+        continue;
+      }
+    };
+    let Some(result) = next else {
       break first_error.map_or(Ok(()), Err);
     };
     match result {
@@ -987,7 +1024,9 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
     }
   }
 
-  // Phase 2: write the journal and save the files the update rewrites.
+  // Phase 2: write the journal and save the files the update rewrites. From
+  // here on the run cannot be cancelled.
+  env.begin_commit()?;
   env.report(Progress {
     stage: Stage::Applying,
     done: 0,
@@ -1218,10 +1257,29 @@ mod tests {
     restored: Mutex<Vec<String>>,
     committed: Mutex<Vec<String>>,
     root: PathBuf,
+    cancel: std::sync::atomic::AtomicBool,
+    cancel_after_fetches: Option<usize>,
+    cancel_in_commit: bool,
+    committing: std::sync::atomic::AtomicBool,
   }
 
   #[async_trait]
   impl UpdateEnv for FakeEnv {
+    fn cancel_requested(&self) -> bool {
+      self.cancel.load(Ordering::SeqCst)
+    }
+    async fn cancelled(&self) {
+      while !self.cancel_requested() {
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+      }
+    }
+    fn begin_commit(&self) -> USTBLResult<()> {
+      if self.cancel_requested() {
+        return Err(cancelled_error());
+      }
+      self.committing.store(true, Ordering::SeqCst);
+      Ok(())
+    }
     async fn fetch(&self, param: DownloadParam) -> USTBLResult<()> {
       let (url, dest) = (param.src.as_str(), &param.dest);
       if self.fail_url.as_deref() == Some(url) {
@@ -1233,6 +1291,9 @@ mod tests {
       self.fetched.lock().unwrap().push(url.to_string());
       fs::create_dir_all(dest.parent().unwrap()).unwrap();
       fs::write(dest, &self.contents[url]).unwrap();
+      if self.cancel_after_fetches == Some(self.fetched.lock().unwrap().len()) {
+        self.cancel.store(true, Ordering::SeqCst);
+      }
       Ok(())
     }
     async fn switch_loader(&self, loader: &BaselineLoader) -> USTBLResult<()> {
@@ -1256,6 +1317,9 @@ mod tests {
     async fn commit_origin(&self, version_id: &str) -> USTBLResult<()> {
       if self.fail_commit {
         return Err(crate::error::USTBLError("commit".into()));
+      }
+      if self.cancel_in_commit {
+        self.cancel.store(true, Ordering::SeqCst);
       }
       self.committed.lock().unwrap().push(version_id.into());
       Ok(())
@@ -1610,6 +1674,81 @@ mod tests {
     // A failure before the journal keeps verified files for the next attempt.
     assert!(staging_dir(&root.0).exists());
     assert!(env.switched.lock().unwrap().is_empty());
+  }
+
+  #[tokio::test]
+  async fn a_run_cancelled_before_it_starts_fetches_and_writes_nothing() {
+    let root = setup();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let file = url_file("mods/a.jar", "a", &mut env);
+    let operations = vec![write_op(&file), remove_op("mods/gone.jar")];
+    env.cancel.store(true, Ordering::SeqCst);
+
+    let error = apply(&env, request(&root, vec![file], operations, "0.15.0"))
+      .await
+      .unwrap_err();
+
+    assert_eq!(
+      error.0,
+      InstanceError::ModpackInstallInterrupted.to_string()
+    );
+    assert!(env.fetched.lock().unwrap().is_empty());
+    assert!(!env.committing.load(Ordering::SeqCst));
+    assert!(!journal_path(&root.0).exists());
+    assert_eq!(root.read("mods/gone.jar").as_deref(), Some("gone"));
+  }
+
+  #[tokio::test]
+  async fn a_cancel_while_fetching_stops_before_the_journal_even_when_every_file_arrived() {
+    let root = setup();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let first = url_file("mods/a.jar", "a", &mut env);
+    let second = url_file("mods/b.jar", "b", &mut env);
+    env.cancel_after_fetches = Some(1);
+    let operations = vec![
+      write_op(&first),
+      write_op(&second),
+      remove_op("mods/gone.jar"),
+    ];
+
+    assert!(apply(
+      &env,
+      request(&root, vec![first, second], operations, "0.15.0")
+    )
+    .await
+    .is_err());
+
+    assert!(!env.committing.load(Ordering::SeqCst));
+    assert!(!journal_path(&root.0).exists());
+    assert!(env.committed.lock().unwrap().is_empty());
+    assert_eq!(root.read("mods/gone.jar").as_deref(), Some("gone"));
+    assert_eq!(root.read("mods/a.jar"), None);
+  }
+
+  #[tokio::test]
+  async fn a_cancel_after_the_commit_point_does_not_stop_the_run() {
+    let root = setup();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      cancel_in_commit: true,
+      ..Default::default()
+    };
+    let file = url_file("mods/a.jar", "a", &mut env);
+    let operations = vec![write_op(&file), remove_op("mods/gone.jar")];
+    let update = request(&root, vec![file], operations, "0.15.0");
+
+    apply(&env, update).await.unwrap();
+
+    assert!(env.cancel_requested());
+    assert!(env.committing.load(Ordering::SeqCst));
+    assert_eq!(root.read("mods/a.jar").as_deref(), Some("a"));
+    assert_eq!(root.read("mods/gone.jar"), None);
   }
 
   #[tokio::test]

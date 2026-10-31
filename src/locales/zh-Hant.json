@@ -1327,6 +1327,7 @@
     "selectDirectory": "選擇遊戲目錄"
   },
   "InstanceDetailsLayout": {
+    "installing": "實例安裝中",
     "secMenu": {
       "createShortcut": "建立啟動捷徑",
       "exportModPack": "匯出為模組包",

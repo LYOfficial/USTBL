@@ -1327,6 +1327,7 @@
     "selectDirectory": "Select Game Directory"
   },
   "InstanceDetailsLayout": {
+    "installing": "Instance is installing",
     "secMenu": {
       "createShortcut": "Create Launch Shortcut",
       "exportModPack": "Export as Modpack",

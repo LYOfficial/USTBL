@@ -23,6 +23,7 @@ import {
 } from "@/models/instance/misc";
 import { WorldInfo } from "@/models/instance/world";
 import { InstanceService } from "@/services/instance";
+import { isInstallingInstance } from "@/utils/installing-instance";
 import { updateByKeyPath } from "@/utils/partial";
 
 export interface InstanceContextType {
@@ -171,7 +172,11 @@ export const InstanceContextProvider: React.FC<{
       );
       if (summary && summary?.id) {
         setInstanceSummary(summary);
-        handleRetrieveInstanceGameConfig(instanceId);
+        // An installing instance is not known to the backend's instance
+        // table yet, so its game config cannot be read.
+        if (!isInstallingInstance(summary)) {
+          handleRetrieveInstanceGameConfig(instanceId);
+        }
       }
     }
   }, [instanceId, getInstanceList, handleRetrieveInstanceGameConfig]);
@@ -553,8 +558,15 @@ export const InstanceContextProvider: React.FC<{
     handleRetrieveScreenshotList
   );
 
+  // Load the resource lists once the list has told what the instance is, and
+  // again when an install finishes. An installing instance has none to read.
+  const canLoadResources =
+    !!instanceId &&
+    instanceSummary?.id === instanceId &&
+    !isInstallingInstance(instanceSummary);
+
   useEffect(() => {
-    if (instanceId) {
+    if (instanceId && canLoadResources) {
       getLocalModList(true).then((mods) => {
         if (mods === GetStateFlag.Cancelled) return;
         setLocalMods(mods);
@@ -585,7 +597,7 @@ export const InstanceContextProvider: React.FC<{
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [instanceId]);
+  }, [instanceId, canLoadResources]);
 
   // const getInstanceGameConfig = useGetState(
   //   instanceGameConfig,

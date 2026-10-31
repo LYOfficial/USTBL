@@ -34,6 +34,8 @@ const {
   compareCampusInstallStages,
   campusInstallTaskIndeterminate,
   campusInstallGroupLabel,
+  campusInstallGroupInstanceId,
+  canDiscardRunningInstall,
 } = load("src/utils/campus-install-task.ts");
 
 test("campus install cards expose active, paused, complete and failure states", () => {
@@ -361,4 +363,59 @@ test("unexpected task termination has a localized failure reason in every locale
       "failed"
     );
   }
+});
+
+test("a running install can be abandoned until it starts applying", () => {
+  const group = "modpack-install?Pack [games:Pack]@1";
+  const task = (filename, status) => ({ payload: { filename }, status });
+  const card = (status, descs) => ({
+    taskGroup: group,
+    status,
+    taskDescs: descs,
+  });
+  const waiting = [task("Fetching", "InProgress"), task("Applying", "Waiting")];
+  assert.equal(campusInstallGroupInstanceId(group), "games:Pack");
+  assert.equal(campusInstallGroupInstanceId("game-client?Pack@1"), null);
+  assert.equal(
+    canDiscardRunningInstall("games:Pack", [card("Started", waiting)], {}),
+    true
+  );
+  // The progress event is the earlier signal.
+  assert.equal(
+    canDiscardRunningInstall("games:Pack", [card("Started", waiting)], {
+      [group]: { instanceId: "games:Pack", stage: "applying" },
+    }),
+    false
+  );
+  assert.equal(
+    canDiscardRunningInstall("games:Pack", [card("Started", waiting)], {
+      [group]: { instanceId: "games:Pack", stage: "finalizing" },
+    }),
+    false
+  );
+  assert.equal(
+    canDiscardRunningInstall(
+      "games:Pack",
+      [card("Started", [task("Applying", "InProgress")])],
+      {}
+    ),
+    false
+  );
+  // Another instance's install, or a card that is not running, does not count.
+  assert.equal(
+    canDiscardRunningInstall(
+      "games:Other",
+      [card("Started", [task("Applying", "InProgress")])],
+      {}
+    ),
+    true
+  );
+  assert.equal(
+    canDiscardRunningInstall(
+      "games:Pack",
+      [card("Failed", [task("Applying", "Failed")])],
+      {}
+    ),
+    true
+  );
 });

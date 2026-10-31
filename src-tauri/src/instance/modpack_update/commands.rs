@@ -464,7 +464,19 @@ pub async fn discard_campus_modpack_install(
 ) -> USTBLResult<()> {
   let instance = current_instance(&app, &instance_id)?;
   let root = instance.version_path;
-  let _guard = PlanGuard::acquire(&root)?;
+  let _guard = match PlanGuard::acquire(&root) {
+    Ok(guard) => guard,
+    Err(busy) => {
+      // Only a running first install can be abandoned. The job stops at its
+      // next safe point and releases the guard; past the commit point the
+      // request is refused with `ModpackUpdateBusy`.
+      let Some(control) = install_control(&instance_id) else {
+        return Err(busy);
+      };
+      control.request_cancel()?;
+      wait_for_plan_guard(&root).await?
+    }
+  };
   let record = load_campus_install_record(&root).ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let recovery = recover_checked(&root, || ensure_not_running(&app, &instance_id))?;
   if recovery != Recovery::Nothing {
@@ -814,6 +826,147 @@ impl Drop for PlanGuard {
   }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InstallPhase {
+  Running,
+  CancelRequested,
+  /// `apply` is about to write its journal; the install can only finish.
+  Committing,
+}
+
+/// Cooperative cancellation of one running first install. A cancel request and
+/// the move into the commit are decided under one lock, so exactly one wins.
+struct InstallControl {
+  phase: Mutex<InstallPhase>,
+  wake: tokio::sync::Notify,
+}
+
+impl InstallControl {
+  fn new() -> Arc<Self> {
+    Arc::new(Self {
+      phase: Mutex::new(InstallPhase::Running),
+      wake: tokio::sync::Notify::new(),
+    })
+  }
+
+  /// Refused with `ModpackUpdateBusy` once the install passed the point where
+  /// it can still be abandoned.
+  fn request_cancel(&self) -> USTBLResult<()> {
+    let mut phase = self.phase.lock()?;
+    if *phase == InstallPhase::Committing {
+      return Err(InstanceError::ModpackUpdateBusy.into());
+    }
+    *phase = InstallPhase::CancelRequested;
+    drop(phase);
+    self.wake.notify_waiters();
+    Ok(())
+  }
+
+  fn begin_commit(&self) -> USTBLResult<()> {
+    let mut phase = self.phase.lock()?;
+    if *phase == InstallPhase::CancelRequested {
+      return Err(InstanceError::ModpackInstallInterrupted.into());
+    }
+    *phase = InstallPhase::Committing;
+    Ok(())
+  }
+
+  fn cancel_requested(&self) -> bool {
+    self
+      .phase
+      .lock()
+      .is_ok_and(|phase| *phase == InstallPhase::CancelRequested)
+  }
+
+  async fn cancelled(&self) {
+    loop {
+      let notified = self.wake.notified();
+      if self.cancel_requested() {
+        return;
+      }
+      notified.await;
+    }
+  }
+}
+
+fn install_controls() -> &'static Mutex<HashMap<String, Arc<InstallControl>>> {
+  static CONTROLS: OnceLock<Mutex<HashMap<String, Arc<InstallControl>>>> = OnceLock::new();
+  CONTROLS.get_or_init(Default::default)
+}
+
+fn install_control(instance_id: &str) -> Option<Arc<InstallControl>> {
+  install_controls().lock().ok()?.get(instance_id).cloned()
+}
+
+/// Keeps an install's control registered while its job runs.
+struct InstallControlGuard {
+  instance_id: String,
+  control: Arc<InstallControl>,
+}
+
+impl InstallControlGuard {
+  fn register(instance_id: &str) -> Self {
+    let control = InstallControl::new();
+    if let Ok(mut controls) = install_controls().lock() {
+      controls.insert(instance_id.to_string(), control.clone());
+    }
+    Self {
+      instance_id: instance_id.to_string(),
+      control,
+    }
+  }
+}
+
+impl Drop for InstallControlGuard {
+  fn drop(&mut self) {
+    if let Ok(mut controls) = install_controls().lock() {
+      // A resumed install may have registered its own control already.
+      if controls
+        .get(&self.instance_id)
+        .is_some_and(|control| Arc::ptr_eq(control, &self.control))
+      {
+        controls.remove(&self.instance_id);
+      }
+    }
+  }
+}
+
+/// Stop at a safe point when the player abandoned the install.
+fn ensure_install_not_cancelled(instance_id: &str) -> USTBLResult<()> {
+  if install_control(instance_id).is_some_and(|control| control.cancel_requested()) {
+    return Err(InstanceError::ModpackInstallInterrupted.into());
+  }
+  Ok(())
+}
+
+/// Run `work` until it ends or the player abandons the install. `work` is
+/// dropped on cancel, so it may only write into the instance's own directory.
+async fn until_install_cancelled<T>(
+  instance_id: &str,
+  work: impl std::future::Future<Output = USTBLResult<T>>,
+) -> USTBLResult<T> {
+  let Some(control) = install_control(instance_id) else {
+    return work.await;
+  };
+  tokio::select! {
+    biased;
+    result = work => result,
+    () = control.cancelled() => Err(InstanceError::ModpackInstallInterrupted.into()),
+  }
+}
+
+/// After asking a running install to stop: wait for its job to release the
+/// plan guard, which is its last act.
+async fn wait_for_plan_guard(root: &Path) -> USTBLResult<PlanGuard> {
+  for _ in 0..300 {
+    match PlanGuard::acquire(root) {
+      Ok(guard) => return Ok(guard),
+      Err(_) => tokio::time::sleep(std::time::Duration::from_millis(100)).await,
+    }
+  }
+  Err(InstanceError::ModpackUpdateBusy.into())
+}
+
 /// The baseline is the record of what the modpack installed. Without a
 /// matching one the instance cannot be compared safely.
 async fn load_baseline(target: &Target) -> USTBLResult<ModpackBaseline> {
@@ -1016,7 +1169,25 @@ impl UpdateEnv for AppEnv {
     ensure_not_running(&self.app, &self.instance_id)
   }
   async fn fetch(&self, param: DownloadParam) -> USTBLResult<()> {
-    download_param(&self.app, param).await
+    until_install_cancelled(&self.instance_id, download_param(&self.app, param)).await
+  }
+
+  fn cancel_requested(&self) -> bool {
+    ensure_install_not_cancelled(&self.instance_id).is_err()
+  }
+
+  async fn cancelled(&self) {
+    match install_control(&self.instance_id) {
+      Some(control) => control.cancelled().await,
+      None => std::future::pending::<()>().await,
+    }
+  }
+
+  fn begin_commit(&self) -> USTBLResult<()> {
+    match install_control(&self.instance_id) {
+      Some(control) => control.begin_commit(),
+      None => Ok(()),
+    }
   }
 
   async fn switch_loader(&self, loader: &BaselineLoader) -> USTBLResult<()> {
@@ -2499,6 +2670,7 @@ async fn start_campus_modpack_install(
 ) -> USTBLResult<CampusInstallStarted> {
   let instance = current_instance(&app, &instance_id)?;
   let guard = PlanGuard::acquire(&instance.version_path)?;
+  let control = InstallControlGuard::register(&instance_id);
   let old_record = load_campus_install_record(&instance.version_path);
   if instance.origin.as_ref().is_none_or(|origin| {
     !is_campus_install(origin, old_record.as_ref()) || (old_record.is_none() && !is_fresh(origin))
@@ -2560,6 +2732,19 @@ async fn start_campus_modpack_install(
       retry_client,
     ))
     .await;
+    if result.is_err() && control.control.cancel_requested() {
+      // The player abandoned the install: no failure record and no result
+      // event. The discard command removes the groups and the instance. The
+      // card is closed here so it cannot stay running if that fails.
+      log::info!("campus install cancelled: instance={instance_for_error}");
+      task_handles.fail(&InstanceError::ModpackInstallInterrupted.to_string());
+      app_for_job
+        .state::<Pin<Box<TaskMonitor>>>()
+        .finish_job_group(&group_for_job, anchor, false);
+      drop(control);
+      drop(_guard);
+      return;
+    }
     if let Err(error) = &result {
       log::warn!("campus install failed: {error:?}");
       task_handles.fail(&error.0);
@@ -2578,6 +2763,7 @@ async fn start_campus_modpack_install(
         .state::<Pin<Box<TaskMonitor>>>()
         .finish_job_group(&group_for_job, anchor, true);
     }
+    drop(control);
     drop(_guard);
     let _ = app_for_job.emit_to(
       "main",
@@ -2671,6 +2857,7 @@ async fn install_campus_modpack_inner(
   // Pending installs may be resumed while their client download is still
   // active (including restored download tasks after a launcher restart).
   loop {
+    ensure_install_not_cancelled(&instance_id)?;
     let descriptors = campus_client_tasks(
       app.state::<Pin<Box<TaskMonitor>>>().task_descriptors(),
       &instance,
@@ -2777,7 +2964,8 @@ async fn install_campus_modpack_inner(
     plan,
     prepared,
     remote,
-  } = plan_fresh_install(&app, &target, &reporter).await?;
+  } = until_install_cancelled(&instance_id, plan_fresh_install(&app, &target, &reporter)).await?;
+  ensure_install_not_cancelled(&instance_id)?;
   if let Some(loader_type) = fresh_identity_loader(
     &target.origin,
     &remote.game_version,
@@ -3867,5 +4055,109 @@ mod tests {
     assert!(!plan.fast_forward);
     assert!(plan.changes.is_empty());
     assert_eq!(plan.plan_hash, "hh");
+  }
+
+  #[test]
+  fn a_cancelled_install_cannot_enter_the_commit() {
+    let control = InstallControl::new();
+    control.request_cancel().unwrap();
+    assert!(control.cancel_requested());
+    assert_eq!(
+      control.begin_commit().unwrap_err().0,
+      InstanceError::ModpackInstallInterrupted.to_string()
+    );
+  }
+
+  #[test]
+  fn an_install_past_the_commit_point_refuses_to_be_cancelled() {
+    let control = InstallControl::new();
+    control.begin_commit().unwrap();
+    assert_eq!(
+      control.request_cancel().unwrap_err().0,
+      InstanceError::ModpackUpdateBusy.to_string()
+    );
+    assert!(!control.cancel_requested());
+    assert!(control.begin_commit().is_ok());
+  }
+
+  #[test]
+  fn a_cancel_and_the_commit_race_has_exactly_one_winner() {
+    for _ in 0..200 {
+      let control = InstallControl::new();
+      let (a, b) = (control.clone(), control.clone());
+      let cancel = std::thread::spawn(move || a.request_cancel().is_ok());
+      let commit = std::thread::spawn(move || b.begin_commit().is_ok());
+      let (cancelled, committed) = (cancel.join().unwrap(), commit.join().unwrap());
+      assert_ne!(cancelled, committed);
+      assert_eq!(control.cancel_requested(), cancelled);
+    }
+  }
+
+  #[tokio::test]
+  async fn waiting_for_a_cancel_wakes_up_when_it_is_requested() {
+    let control = InstallControl::new();
+    let waiting = {
+      let control = control.clone();
+      tokio::spawn(async move { control.cancelled().await })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    assert!(!waiting.is_finished());
+    control.request_cancel().unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), waiting)
+      .await
+      .unwrap()
+      .unwrap();
+    // A request made before anyone waits is seen at once.
+    control.cancelled().await;
+  }
+
+  #[tokio::test]
+  async fn work_is_dropped_when_the_install_is_cancelled() {
+    let id = format!("games:cancel-{}", uuid::Uuid::new_v4());
+    let registered = InstallControlGuard::register(&id);
+    let control = registered.control.clone();
+    let canceller = tokio::spawn(async move {
+      tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+      control.request_cancel().unwrap();
+    });
+    let result: USTBLResult<()> = until_install_cancelled(&id, async {
+      tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+      Ok(())
+    })
+    .await;
+    canceller.await.unwrap();
+    assert_eq!(
+      result.unwrap_err().0,
+      InstanceError::ModpackInstallInterrupted.to_string()
+    );
+    assert!(ensure_install_not_cancelled(&id).is_err());
+    drop(registered);
+    assert!(ensure_install_not_cancelled(&id).is_ok());
+  }
+
+  #[test]
+  fn a_resumed_install_keeps_its_control_when_the_old_one_is_dropped() {
+    let id = format!("games:resume-{}", uuid::Uuid::new_v4());
+    let old = InstallControlGuard::register(&id);
+    let new = InstallControlGuard::register(&id);
+    drop(old);
+    assert!(Arc::ptr_eq(&install_control(&id).unwrap(), &new.control));
+    drop(new);
+    assert!(install_control(&id).is_none());
+  }
+
+  #[tokio::test]
+  async fn a_discard_waits_until_the_install_job_releases_the_guard() {
+    let root = std::env::temp_dir().join(format!("ustbl-wait-guard-{}", uuid::Uuid::new_v4()));
+    let guard = PlanGuard::acquire(&root).unwrap();
+    let release = tokio::spawn(async move {
+      tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+      drop(guard);
+    });
+    let taken = wait_for_plan_guard(&root).await.unwrap();
+    release.await.unwrap();
+    assert!(PlanGuard::acquire(&root).is_err());
+    drop(taken);
+    assert!(PlanGuard::acquire(&root).is_ok());
   }
 }

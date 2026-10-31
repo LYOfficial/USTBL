@@ -1327,6 +1327,7 @@
     "selectDirectory": "Sélectionner le répertoire du jeu"
   },
   "InstanceDetailsLayout": {
+    "installing": "Installation de l'instance en cours",
     "secMenu": {
       "createShortcut": "Créer un raccourci de lancement",
       "exportModPack": "Exporter en tant que modpack",

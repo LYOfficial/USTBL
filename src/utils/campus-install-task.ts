@@ -64,6 +64,48 @@ export const campusInstallGroupLabel = (group: string): string => {
   return identity < 0 ? name : name.slice(0, identity);
 };
 
+// "modpack-install?<label> [<instance id>]@<time>": the instance id as the
+// backend wrote it into the group name.
+export const campusInstallGroupInstanceId = (group: string): string | null => {
+  const end = group.lastIndexOf("@");
+  const name = group.slice(group.indexOf("?") + 1, end < 0 ? undefined : end);
+  const start = name.lastIndexOf(" [");
+  return start < 0 || !name.endsWith("]")
+    ? null
+    : name.slice(start + 2, name.length - 1);
+};
+
+const pastCommitStages = ["applying", "finalizing"];
+
+/**
+ * Whether a running first install can still be abandoned. The backend stops
+ * accepting the request once it starts writing into the instance (its
+ * "applying" stage), so the button follows the same stage and stays the
+ * backend's decision in the end.
+ */
+export const canDiscardRunningInstall = (
+  instanceId: string,
+  tasks: TaskGroupDesc[],
+  progress: Record<string, Pick<CampusInstallProgress, "instanceId" | "stage">>
+): boolean => {
+  const running = tasks.filter(
+    (group) =>
+      isCampusInstallGroup(group.taskGroup) &&
+      String(group.status) === "Started" &&
+      (progress[group.taskGroup]?.instanceId ??
+        campusInstallGroupInstanceId(group.taskGroup)) === instanceId
+  );
+  return !running.some(
+    (group) =>
+      pastCommitStages.includes(progress[group.taskGroup]?.stage ?? "") ||
+      group.taskDescs.some(
+        (task) =>
+          campusInstallStageKey(task.payload.filename) === "applying" &&
+          String(task.status) !== "Waiting"
+      )
+  );
+};
+
 const installStages = [
   "waitingclient",
   "preparing",

@@ -29,6 +29,7 @@ import { UnfinishedPublishes } from "@/components/unfinished-publishes";
 import { useLauncherConfig } from "@/contexts/config";
 import { useSharedModals } from "@/contexts/shared-modal";
 import { destOf, parseTaskGroup, useTaskContext } from "@/contexts/task";
+import { useDiscardCampusInstall } from "@/hooks/discard-campus-install";
 import {
   GTaskEventStatusEnums,
   TaskDesc,
@@ -39,10 +40,12 @@ import {
 } from "@/models/task";
 import {
   campusInstallCardState,
+  campusInstallGroupInstanceId,
   campusInstallGroupLabel,
   campusInstallProgressView,
   campusInstallStageKey,
   campusInstallTaskIndeterminate,
+  canDiscardRunningInstall,
   isCampusInstallGroup,
   localizeCampusInstallError,
 } from "@/utils/campus-install-task";
@@ -71,6 +74,8 @@ export const DownloadTasksPage = () => {
     handleResumeProgressiveTaskGroup,
     handleClearHistoryTaskGroups,
   } = useTaskContext();
+
+  const { discard, discarding } = useDiscardCampusInstall();
 
   const [taskGroupList, setTaskGroupList] = useState<
     [TaskGroupDesc, boolean][]
@@ -162,6 +167,10 @@ export const DownloadTasksPage = () => {
 
   const canPause = (group: TaskGroupDesc) =>
     !isModpackTransferGroup(group.taskGroup);
+
+  const runningInstallId = (taskGroup: string) =>
+    installProgress[taskGroup]?.instanceId ??
+    campusInstallGroupInstanceId(taskGroup);
 
   return (
     <Section
@@ -355,6 +364,29 @@ export const DownloadTasksPage = () => {
                             }
                           />
                         </Tooltip>
+                      )}
+
+                    {isCampusInstallGroup(group.taskGroup) &&
+                      group.status === GTaskEventStatusEnums.Started &&
+                      runningInstallId(group.taskGroup) && (
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          colorScheme="red"
+                          isDisabled={
+                            discarding ||
+                            !canDiscardRunningInstall(
+                              runningInstallId(group.taskGroup)!,
+                              tasks,
+                              installProgress
+                            )
+                          }
+                          onClick={() =>
+                            discard(runningInstallId(group.taskGroup)!)
+                          }
+                        >
+                          {t("DownloadTasksPage.unfinishedInstall.discard")}
+                        </Button>
                       )}
 
                     <IconButton

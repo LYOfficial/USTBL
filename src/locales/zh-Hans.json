@@ -1327,6 +1327,7 @@
     "selectDirectory": "选择游戏目录"
   },
   "InstanceDetailsLayout": {
+    "installing": "实例安装中",
     "secMenu": {
       "createShortcut": "创建启动快捷方式",
       "exportModPack": "导出为整合包",

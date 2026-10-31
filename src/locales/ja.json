@@ -1327,6 +1327,7 @@
     "selectDirectory": "ゲームディレクトリ選択"
   },
   "InstanceDetailsLayout": {
+    "installing": "インスタンスをインストール中",
     "secMenu": {
       "createShortcut": "起動ショートカットを作成",
       "exportModPack": "モッドパックエクスポート",
