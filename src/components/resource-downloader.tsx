@@ -57,6 +57,11 @@ import { GameClientResourceInfo, OtherResourceInfo } from "@/models/resource";
 import { ResourceService } from "@/services/resource";
 import { ISOToDate } from "@/utils/datetime";
 import { translateTag } from "@/utils/resource";
+import {
+  createRequestGate,
+  mergeTranslations,
+  pendingTranslationIds,
+} from "@/utils/resource-translation";
 import { formatDisplayCount } from "@/utils/string";
 
 interface ResourceDownloaderProps {
@@ -330,6 +335,12 @@ const ResourceDownloader: React.FC<ResourceDownloaderProps> = ({
 
   const searchQueryRef = useRef(searchQuery);
   const pageRef = useRef(0);
+  const translationGate = useMemo(() => createRequestGate(), []);
+  // A ref keeps a change of this setting from re-running the search.
+  const showZhTransRef = useRef(false);
+  showZhTransRef.current =
+    config.general.general.language === "zh-Hans" &&
+    config.general.functionality.resourceTranslation;
 
   const tagList = (tagLists[resourceType] || modpackTagList)[downloadSource];
   const sortByList = sortByLists[downloadSource];
@@ -368,6 +379,9 @@ const ResourceDownloader: React.FC<ResourceDownloaderProps> = ({
       isLoadMore: boolean = false
     ) => {
       if (page === 0) setIsLoadingResourceList(true);
+      // A new search invalidates translations still in flight for the old list.
+      const translationToken =
+        page === 0 ? translationGate.next() : translationGate.current();
 
       ResourceService.fetchResourceListByName(
         resourceType,
@@ -388,6 +402,24 @@ const ResourceDownloader: React.FC<ResourceDownloaderProps> = ({
               setResourceList((prevList) => [...prevList, ...resourceData]);
             }
             setHasMore(response.data.total > (page + 1) * pageSize);
+
+            // Descriptions are translated after the list is on screen.
+            const pendingIds = pendingTranslationIds(resourceData);
+            if (showZhTransRef.current && pendingIds.length > 0) {
+              ResourceService.translateResourceDescriptions(
+                downloadSource as OtherResourceSource,
+                pendingIds
+              ).then((translation) => {
+                if (
+                  translation.status === "success" &&
+                  translationGate.isCurrent(translationToken)
+                ) {
+                  setResourceList((prevList) =>
+                    mergeTranslations(prevList, translation.data)
+                  );
+                }
+              });
+            }
           } else {
             setResourceList([]);
             toast({
@@ -401,7 +433,7 @@ const ResourceDownloader: React.FC<ResourceDownloaderProps> = ({
           setIsLoadingResourceList(false);
         });
     },
-    [toast]
+    [toast, translationGate]
   );
 
   const loadMore = () => {
