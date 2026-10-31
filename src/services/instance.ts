@@ -447,12 +447,12 @@ export class InstanceService {
   /**
    * Finish the mod loader installation.
    * @param {string} instanceId - The ID of the instance to mark the mod loader as installed.
-   * @returns {Promise<InvokeResponse<void>>}
+   * @returns {Promise<InvokeResponse<boolean>>} False while another runtime group is active.
    */
   @responseHandler("instance")
   static async finishModLoaderInstall(
     instanceId: string
-  ): Promise<InvokeResponse<void>> {
+  ): Promise<InvokeResponse<boolean>> {
     return await invoke("finish_mod_loader_install", {
       instanceId,
     });

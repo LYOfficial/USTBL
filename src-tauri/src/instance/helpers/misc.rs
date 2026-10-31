@@ -4,6 +4,9 @@ use crate::instance::helpers::client_json::{libraries_to_info, patches_to_info, 
 use crate::instance::helpers::loader::forge::download_forge_libraries;
 use crate::instance::helpers::loader::neoforge::download_neoforge_libraries;
 use crate::instance::helpers::loader::optifine::download_optifine_libraries;
+use crate::instance::helpers::loader_lifecycle::{
+  claim_download, recover_interrupted, LOADER_LIFECYCLE,
+};
 use crate::instance::models::misc::{
   Instance, InstanceError, InstanceSubdirType, ModLoader, ModLoaderStatus, ModLoaderType, OptiFine,
 };
@@ -167,48 +170,34 @@ async fn refresh_instance(
       let launcher_config = launcher_config_state.lock()?;
       get_source_priority_list(&launcher_config)
     };
-    if let Err(e) = {
+    if let Err(e) = async {
       match cfg_read.mod_loader.status {
-        ModLoaderStatus::NotDownloaded => {
+        ModLoaderStatus::NotDownloaded | ModLoaderStatus::DownloadFailed => {
           match cfg_read.mod_loader.loader_type {
             ModLoaderType::Forge => {
-              cfg_read.mod_loader.status = ModLoaderStatus::Downloading;
-              download_forge_libraries(app, &priority_list, &cfg_read, &mut client_data).await?;
+              if claim_download(&mut cfg_read, false).await? {
+                download_forge_libraries(app, &priority_list, &cfg_read, &mut client_data).await?;
+              }
             }
             ModLoaderType::NeoForge => {
-              cfg_read.mod_loader.status = ModLoaderStatus::Downloading;
-              download_neoforge_libraries(app, &priority_list, &cfg_read, &mut client_data).await?;
+              if claim_download(&mut cfg_read, false).await? {
+                download_neoforge_libraries(app, &priority_list, &cfg_read, &mut client_data)
+                  .await?;
+              }
             }
             _ => {}
           }
-          let vjson_path = cfg_read
-            .version_path
-            .join(format!("{}.json", cfg_read.name));
-          fs::write(vjson_path, serde_json::to_vec_pretty(&client_data)?)?;
-
-          Ok(())
+          Ok::<(), crate::error::USTBLError>(())
         }
-        ModLoaderStatus::DownloadFailed => match cfg_read.mod_loader.loader_type {
-          ModLoaderType::Forge => {
-            cfg_read.mod_loader.status = ModLoaderStatus::Downloading;
-            download_forge_libraries(app, &priority_list, &cfg_read, &mut client_data).await
-          }
-          ModLoaderType::NeoForge => {
-            cfg_read.mod_loader.status = ModLoaderStatus::Downloading;
-            download_neoforge_libraries(app, &priority_list, &cfg_read, &mut client_data).await
-          }
-          _ => Ok(()),
-        },
         ModLoaderStatus::Downloading | ModLoaderStatus::Installing => {
-          if is_first_run {
-            // The instance failed to install mod loader during last run.
-            cfg_read.mod_loader.status = ModLoaderStatus::DownloadFailed;
-          }
-          Ok(())
+          recover_interrupted(&mut cfg_read.mod_loader.status, is_first_run);
+          Ok::<(), crate::error::USTBLError>(())
         }
         ModLoaderStatus::Installed => Ok(()),
       }
-    } {
+    }
+    .await
+    {
       log::warn!("Failed to install mod loader for {}: {:?}", name, e);
       cfg_read.mod_loader.status = ModLoaderStatus::DownloadFailed;
       cfg_read.save_json_cfg().await?;
@@ -226,35 +215,26 @@ async fn refresh_instance(
       let launcher_config = launcher_config_state.lock()?;
       get_source_priority_list(&launcher_config)
     };
-    if let Err(e) = {
+    if let Err(e) = async {
       match cfg_read.optifine.as_ref().unwrap().status {
         ModLoaderStatus::Downloading | ModLoaderStatus::Installing => {
-          if is_first_run {
-            // The instance failed to install OptiFine during last run.
-            if let Some(optifine_cfg) = &mut cfg_read.optifine {
-              optifine_cfg.status = ModLoaderStatus::DownloadFailed;
-            }
+          recover_interrupted(
+            &mut cfg_read.optifine.as_mut().unwrap().status,
+            is_first_run,
+          );
+          Ok::<(), crate::error::USTBLError>(())
+        }
+        ModLoaderStatus::NotDownloaded | ModLoaderStatus::DownloadFailed => {
+          if claim_download(&mut cfg_read, true).await? {
+            download_optifine_libraries(app, &priority_list, &cfg_read, &mut client_data).await?;
           }
           Ok(())
         }
-        ModLoaderStatus::NotDownloaded => {
-          cfg_read.optifine.as_mut().unwrap().status = ModLoaderStatus::Downloading;
-          download_optifine_libraries(app, &priority_list, &cfg_read, &mut client_data).await?;
-
-          let vjson_path = cfg_read
-            .version_path
-            .join(format!("{}.json", cfg_read.name));
-          fs::write(vjson_path, serde_json::to_vec_pretty(&client_data)?)?;
-
-          Ok(())
-        }
-        ModLoaderStatus::DownloadFailed => {
-          cfg_read.optifine.as_mut().unwrap().status = ModLoaderStatus::Downloading;
-          download_optifine_libraries(app, &priority_list, &cfg_read, &mut client_data).await
-        }
         ModLoaderStatus::Installed => Ok(()),
       }
-    } {
+    }
+    .await
+    {
       log::warn!("Failed to install OptiFine for {}: {:?}", name, e);
       if let Some(optifine_cfg) = &mut cfg_read.optifine {
         optifine_cfg.status = ModLoaderStatus::DownloadFailed;
@@ -326,6 +306,16 @@ pub async fn refresh_instances(
   game_directory: &GameDirectory,
   is_first_run: bool,
 ) -> USTBLResult<Vec<Instance>> {
+  LOADER_LIFECYCLE
+    .run(refresh_instances_inner(app, game_directory, is_first_run))
+    .await
+}
+
+async fn refresh_instances_inner(
+  app: &AppHandle,
+  game_directory: &GameDirectory,
+  is_first_run: bool,
+) -> USTBLResult<Vec<Instance>> {
   let mut instances = vec![];
   // traverse the "versions" directory
   let versions_dir = game_directory.dir.join("versions");
@@ -387,7 +377,7 @@ pub async fn refresh_instances(
   Ok(instances)
 }
 
-pub async fn refresh_all_instances(
+async fn refresh_all_instances(
   app: &AppHandle,
   game_directories: &[GameDirectory],
   is_first_run: bool,
@@ -396,7 +386,7 @@ pub async fn refresh_all_instances(
 
   for game_directory in game_directories {
     let dir_name = game_directory.name.clone();
-    match refresh_instances(app, game_directory, is_first_run).await {
+    match refresh_instances_inner(app, game_directory, is_first_run).await {
       Ok(vs) => {
         for mut instance in vs {
           let composed_id = format!("{}:{}", dir_name, instance.name);
@@ -412,6 +402,12 @@ pub async fn refresh_all_instances(
 }
 
 pub async fn refresh_and_update_instances(app: &AppHandle, is_first_run: bool) {
+  LOADER_LIFECYCLE
+    .run(refresh_and_update_instances_inner(app, is_first_run))
+    .await;
+}
+
+async fn refresh_and_update_instances_inner(app: &AppHandle, is_first_run: bool) {
   // get launcher config -> local game directories
   let local_game_directories = {
     let binding = app.state::<Mutex<LauncherConfig>>();

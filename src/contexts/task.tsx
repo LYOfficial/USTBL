@@ -1,4 +1,4 @@
-import { ToastId, useToast as useChakraToast } from "@chakra-ui/react";
+import { useToast as useChakraToast } from "@chakra-ui/react";
 import { emit } from "@tauri-apps/api/event";
 import React, {
   createContext,
@@ -38,6 +38,7 @@ import {
   runCampusInstall,
   takePendingCampusInstall,
 } from "@/utils/campus-install";
+import { takeLoaderCompletions } from "@/utils/loader-completion";
 import { takePendingModpackOrigin } from "@/utils/modpack-origin";
 
 interface TaskContextType {
@@ -72,7 +73,49 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
   const [tasks, setTasks] = useState<TaskGroupDesc[]>([]);
   const [generalPercent, setGeneralPercent] = useState<number>();
   const { t } = useTranslation();
-  const loadingToastRef = React.useRef<ToastId | null>(null);
+  const loaderCompletionClaims = React.useRef(new Map<string, Set<string>>());
+  const loaderInstallsInFlight = React.useRef(new Set<string>());
+  const [loaderCompletionTick, setLoaderCompletionTick] = useState(0);
+
+  useEffect(() => {
+    for (const instanceId of takeLoaderCompletions(
+      tasks,
+      loaderCompletionClaims.current,
+      loaderInstallsInFlight.current
+    )) {
+      loaderInstallsInFlight.current.add(instanceId);
+      const instanceName = getInstanceList()?.find(
+        (i) => i.id === instanceId
+      )?.name;
+      const loadingToast = toast({
+        title: t("Services.instance.finishModLoaderInstall.loading", {
+          instanceName,
+        }),
+        status: "loading",
+      });
+      InstanceService.finishModLoaderInstall(instanceId)
+        .then((response) => {
+          if (response.status === "success" && !response.data) return;
+          toast({
+            title: response.message,
+            description:
+              response.status === "success" ? undefined : response.details,
+            status: response.status === "success" ? "success" : "error",
+          });
+          if (response.status === "success") getInstanceList(true);
+        })
+        .catch((error) =>
+          logger.error("Failed to finish loader install:", error)
+        )
+        .finally(() => {
+          closeToast(loadingToast);
+          loaderInstallsInFlight.current.delete(instanceId);
+          // A second runtime group may have finished while this invocation
+          // waited for the backend's scan to publish the instance.
+          setLoaderCompletionTick((tick) => tick + 1);
+        });
+    }
+  }, [tasks, loaderCompletionTick, getInstanceList, toast, t, closeToast]);
 
   const updateGroupInfo = useCallback((group: TaskGroupDesc) => {
     if (group.status === GTaskEventStatusEnums.Completed) {
@@ -448,6 +491,22 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
 
           const { name, version } = parseTaskGroup(payload.taskGroup);
 
+          // OptiFine may bundle every runtime dependency, leaving an empty
+          // group: it has no Created task event to add its card to the list.
+          if (
+            name === "optifine-libraries" &&
+            !newTasks.some((task) => task.taskGroup === payload.taskGroup)
+          ) {
+            newTasks = [
+              ...newTasks,
+              {
+                taskGroup: payload.taskGroup,
+                taskDescs: [],
+                status: payload.event,
+              },
+            ];
+          }
+
           // Publishing reports its own result when it ends.
           if (name !== "modpack-publish")
             toast({
@@ -482,45 +541,6 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
                 }
                 break;
               }
-              case "forge-libraries":
-              case "neoforge-libraries":
-              case "optifine-libraries":
-                if (version) {
-                  let instanceName = getInstanceList()?.find(
-                    (i) => i.id === version
-                  )?.name;
-                  if (loadingToastRef.current) return newTasks;
-                  loadingToastRef.current = toast({
-                    title: t(
-                      "Services.instance.finishModLoaderInstall.loading",
-                      {
-                        instanceName,
-                      }
-                    ),
-                    status: "loading",
-                  });
-                  InstanceService.finishModLoaderInstall(version).then(
-                    (response) => {
-                      if (loadingToastRef.current) {
-                        closeToast(loadingToastRef.current);
-                        loadingToastRef.current = null;
-                      }
-                      if (response.status === "success") {
-                        toast({
-                          title: response.message,
-                          status: "success",
-                        });
-                      } else {
-                        toast({
-                          title: response.message,
-                          description: response.details,
-                          status: "error",
-                        });
-                      }
-                    }
-                  );
-                }
-                break;
               case "mod":
               case "mod-update":
                 emit("instance:refresh-resource-list", OtherResourceType.Mod);

@@ -9,6 +9,9 @@ use crate::instance::helpers::loader::forge::InstallProfile;
 use crate::instance::helpers::loader::optifine::{
   download_optifine_installer, finish_optifine_install,
 };
+use crate::instance::helpers::loader_lifecycle::{
+  claim_install, complete_install, LOADER_LIFECYCLE,
+};
 use crate::instance::helpers::misc::{
   get_instance_game_config, get_instance_subdir_path_by_id, get_instance_subdir_paths,
   refresh_and_update_instances, unify_instance_name,
@@ -1322,14 +1325,6 @@ pub async fn create_instance(
     }
   }
 
-  schedule_progressive_task_group(
-    app.clone(),
-    format!("game-client?{}", name),
-    task_params,
-    true,
-  )
-  .await?;
-
   // Optionally skip first-screen options by adding options.txt (available for zh-Hans only)
   let (language, skip_first_screen_options) = {
     let launcher_config = launcher_config_state.lock()?;
@@ -1392,95 +1387,112 @@ pub async fn create_instance(
     .map_err(|_| InstanceError::FileCreationFailed)?;
   }
 
+  // A cached client can finish immediately. Publish all metadata first so its
+  // completion refresh cannot read an unfinished instance (all import paths).
+  schedule_progressive_task_group(
+    app.clone(),
+    format!("game-client?{}", name),
+    task_params,
+    true,
+  )
+  .await?;
   dir_guard.commit(); // disarm the cleanup guard on success
   Ok(())
 }
 
 #[tauri::command]
-pub async fn finish_mod_loader_install(app: AppHandle, instance_id: String) -> USTBLResult<()> {
-  let instance = {
-    let binding = app.state::<Mutex<HashMap<String, Instance>>>();
-    let state = binding.lock()?;
-    state
-      .get(&instance_id)
-      .ok_or(InstanceError::InstanceNotFoundByID)?
-      .clone()
+pub async fn finish_mod_loader_install(app: AppHandle, instance_id: String) -> USTBLResult<bool> {
+  finish_mod_loader_install_inner(&app, &instance_id).await
+}
+
+async fn finish_mod_loader_install_inner(app: &AppHandle, instance_id: &str) -> USTBLResult<bool> {
+  // Keep only the claim under the lifecycle lock. The processors may run for
+  // minutes and must not block instance-list refreshes.
+  let claimed = LOADER_LIFECYCLE
+    .run(async {
+      let snapshot = {
+        let binding = app.state::<Mutex<HashMap<String, Instance>>>();
+        let state = binding.lock()?;
+        state
+          .get(instance_id)
+          .ok_or(InstanceError::InstanceNotFoundByID)?
+          .clone()
+      };
+      let mut instance = snapshot.load_json_cfg().await?;
+      {
+        use crate::tasks::events::GEventStatus;
+        use crate::tasks::monitor::TaskMonitor;
+        use std::pin::Pin;
+        let groups = app.state::<Pin<Box<TaskMonitor>>>().state_list();
+        if groups.iter().any(|group| {
+          let key = group
+            .task_group
+            .rsplit_once('@')
+            .map_or(group.task_group.as_str(), |(key, _)| key);
+          key.split_once('?').is_some_and(|(name, id)| {
+            id == instance_id
+              && matches!(
+                name,
+                "forge-libraries" | "neoforge-libraries" | "optifine-libraries"
+              )
+              && matches!(group.status, GEventStatus::Started | GEventStatus::Stopped)
+          })
+        }) {
+          return Ok::<
+            Option<(
+              Instance,
+              crate::instance::helpers::loader_lifecycle::InstallSteps,
+            )>,
+            crate::error::USTBLError,
+          >(None);
+        }
+      }
+      Ok(
+        claim_install(&mut instance)
+          .await?
+          .map(|steps| (instance, steps)),
+      )
+    })
+    .await?;
+  let Some((mut instance, steps)) = claimed else {
+    return Ok(false);
   };
 
-  match instance.mod_loader.status {
-    // prevent duplicated installation
-    ModLoaderStatus::DownloadFailed => {
-      return Err(InstanceError::ProcessorExecutionFailed.into());
+  // The marker is already durable; run the expensive work without the global
+  // lock. A concurrent refresh sees Installing and leaves it untouched.
+  let process_result = async {
+    let client_info_dir = instance
+      .version_path
+      .join(format!("{}.json", instance.name));
+    let client_info = load_json_async::<McClientInfo>(&client_info_dir).await?;
+    let install_profile_dir = instance.version_path.join("install_profile.json");
+    if steps.loader && install_profile_dir.exists() {
+      let install_profile = load_json_async::<InstallProfile>(&install_profile_dir).await?;
+      execute_processors(app, &instance, &client_info, &install_profile).await?;
     }
-    ModLoaderStatus::Installing => {
-      return Err(InstanceError::InstallationDuplicated.into());
+    if steps.optifine {
+      finish_optifine_install(app, &instance, &client_info).await?;
     }
-    ModLoaderStatus::Installed => {
-      return Ok(());
-    }
-    _ => {}
+    Ok(())
   }
+  .await;
 
-  {
-    let binding = app.state::<Mutex<HashMap<String, Instance>>>();
-    let mut state = binding.lock()?;
-    let instance = state
-      .get_mut(&instance_id)
-      .ok_or(InstanceError::InstanceNotFoundByID)?;
-    instance.mod_loader.status = ModLoaderStatus::Installing;
-  };
-
-  let client_info_dir = instance
-    .version_path
-    .join(format!("{}.json", instance.name));
-  let client_info = load_json_async::<McClientInfo>(&client_info_dir).await?;
-
-  let install_profile_dir = instance.version_path.join("install_profile.json");
-  if install_profile_dir.exists() {
-    let install_profile = load_json_async::<InstallProfile>(&install_profile_dir).await?;
-    execute_processors(&app, &instance, &client_info, &install_profile).await?;
-  }
-
-  if let Some(optifine) = &instance.optifine {
-    match optifine.status {
-      // prevent duplicated installation
-      ModLoaderStatus::DownloadFailed => {
-        return Err(InstanceError::ProcessorExecutionFailed.into());
-      }
-      ModLoaderStatus::Installing => {
-        return Err(InstanceError::InstallationDuplicated.into());
-      }
-      ModLoaderStatus::Installed => {
-        return Ok(());
-      }
-      _ => {}
-    }
-    {
+  // Only the final status write and publication to the in-memory map are
+  // serialized. This also publishes DownloadFailed when processors fail.
+  LOADER_LIFECYCLE
+    .run(async {
+      let result = complete_install(&mut instance, steps, process_result).await;
       let binding = app.state::<Mutex<HashMap<String, Instance>>>();
       let mut state = binding.lock()?;
-      let instance = state
-        .get_mut(&instance_id)
+      let current = state
+        .get_mut(instance_id)
         .ok_or(InstanceError::InstanceNotFoundByID)?;
-      instance.optifine.as_mut().unwrap().status = ModLoaderStatus::Installing;
-    };
-    finish_optifine_install(&app, &instance, &client_info).await?;
-  }
-
-  let instance = {
-    let binding = app.state::<Mutex<HashMap<String, Instance>>>();
-    let mut state = binding.lock()?;
-    let instance = state
-      .get_mut(&instance_id)
-      .ok_or(InstanceError::InstanceNotFoundByID)?;
-    instance.mod_loader.status = ModLoaderStatus::Installed;
-    if let Some(optifine) = &mut instance.optifine {
-      optifine.status = ModLoaderStatus::Installed;
-    }
-    instance.clone()
-  };
-  instance.save_json_cfg().await?;
-
-  Ok(())
+      current.mod_loader = instance.mod_loader;
+      current.optifine = instance.optifine;
+      result
+    })
+    .await
+    .map(|()| true)
 }
 
 #[tauri::command]
@@ -1625,6 +1637,12 @@ pub(crate) async fn switch_mod_loader(
   )
   .await?;
 
+  save_json_async(&version_info, &json_path).await?;
+  instance
+    .save_json_cfg()
+    .await
+    .map_err(|_| InstanceError::FileCreationFailed)?;
+
   schedule_progressive_task_group(
     app.clone(),
     format!(
@@ -1635,12 +1653,6 @@ pub(crate) async fn switch_mod_loader(
     true,
   )
   .await?;
-
-  save_json_async(&version_info, &json_path).await?;
-  instance
-    .save_json_cfg()
-    .await
-    .map_err(|_| InstanceError::FileCreationFailed)?;
 
   Ok(())
 }
