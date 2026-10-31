@@ -224,33 +224,56 @@ static SUGGESTED_REGEX_BLACKLIST: LazyLock<RegexSet> = LazyLock::new(|| {
 
 /// List all files that can be offered to the user in the modpack export tree UI.
 pub fn list_files(instance: &Instance) -> USTBLResult<ModpackFileList> {
-  let root = &instance.version_path;
+  list_files_at(&instance.version_path, &instance.name)
+}
+
+/// `list_files` for an instance directory and name.
+pub fn list_files_at(root: &Path, instance_name: &str) -> USTBLResult<ModpackFileList> {
+  list_files_in(root, instance_name, None)
+}
+
+/// Directories whose new files count as local changes of a modpack instance.
+pub const CONTENT_DIRS: [&str; 3] = ["mods", "resourcepacks", "shaderpacks"];
+
+/// `list_files` limited to the content directories. It applies the same
+/// filters as the full listing, so both agree on what a file is.
+pub fn list_content_files(root: &Path, instance_name: &str) -> USTBLResult<ModpackFileList> {
+  list_files_in(root, instance_name, Some(&CONTENT_DIRS))
+}
+
+fn is_listed_entry(root: &Path, name: &str, path: &Path) -> bool {
+  let rel_path = match path.strip_prefix(root) {
+    Ok(rel) => rel,
+    Err(_) => return false,
+  };
+  let rel_str = rel_path.to_string_lossy().replace('\\', "/");
+
+  if BLACKLIST.contains(rel_str.as_str()) || is_launcher_metadata_path(rel_str.as_str(), name) {
+    return false;
+  }
+  if REGEX_BLACKLIST.is_match(rel_str.as_str()) {
+    return false;
+  }
+  true
+}
+
+fn list_files_in(root: &Path, name: &str, only: Option<&[&str]>) -> USTBLResult<ModpackFileList> {
   if !root.exists() {
     return Err(InstanceError::FileNotFoundError.into());
   }
 
-  let name = &instance.name;
   let mut files = Vec::new();
   let mut unchecked_files = Vec::new();
   let mut suggested = BTreeSet::new();
 
-  let walker = WalkDir::new(root).into_iter();
-  let iter = walker.filter_entry(|entry| {
-    let path = entry.path();
-
-    let rel_path = match path.strip_prefix(root) {
-      Ok(rel) => rel,
-      Err(_) => return false,
-    };
-    let rel_str = rel_path.to_string_lossy().replace('\\', "/");
-
-    if BLACKLIST.contains(rel_str.as_str()) || is_launcher_metadata_path(rel_str.as_str(), name) {
-      return false;
-    }
-    if REGEX_BLACKLIST.is_match(rel_str.as_str()) {
-      return false;
-    }
-    true
+  let starts: Vec<PathBuf> = match only {
+    Some(dirs) => dirs.iter().map(|dir| root.join(dir)).collect(),
+    None => vec![root.to_path_buf()],
+  };
+  let iter = starts.into_iter().flat_map(|start| {
+    WalkDir::new(start)
+      .into_iter()
+      .filter_entry(|entry| is_listed_entry(root, name, entry.path()))
   });
 
   for entry in iter {

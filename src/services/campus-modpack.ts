@@ -7,7 +7,7 @@ import {
   CampusModpackProject,
   CampusModpackRecommendation,
   CampusNewProject,
-  CampusPreviousRelease,
+  CampusPublishDefaults,
   CampusPublishFile,
   CampusPublishFinished,
   CampusPublishProgress,
@@ -170,15 +170,16 @@ export class CampusModpackService {
   }
 
   /**
-   * The files and rules the line's current release lists; null when the line
-   * has no release yet. Any other failure is an error, never "no release".
+   * The publish tree to open with: the instance's files, starting from what
+   * the project line's current release lists. `project` is null for a new
+   * project. Failing to read the release is an error, never "no release".
    */
   @responseHandler("instance")
-  static async fetchCampusModpackPreviousRelease(
+  static async prepareCampusModpackPublishTree(
     instanceId: string,
-    project: string
-  ): Promise<InvokeResponse<CampusPreviousRelease | null>> {
-    return await invoke("fetch_campus_modpack_previous_release", {
+    project: string | null
+  ): Promise<InvokeResponse<CampusPublishDefaults>> {
+    return await invoke("prepare_campus_modpack_publish_tree", {
       instanceId,
       project,
     });

@@ -20,17 +20,6 @@ export interface PublishFileEntry {
   once: boolean;
 }
 
-export interface PreviousRelease {
-  files: PublishFileEntry[];
-  rules: PublishRule[];
-}
-
-/** A suggested-blacklist entry at the level the blacklist names it. */
-export interface SuggestedEntry {
-  path: string;
-  kind: "file" | "dir";
-}
-
 export interface DiskFile {
   /** The enabled name. */
   path: string;
@@ -66,47 +55,13 @@ export interface PublishPayload {
   conflicts: string[];
 }
 
-export const DISABLED_SUFFIX = ".disabled";
-export const MODS_PREFIX = "mods/";
 export const MAX_RULES = 2000;
 
+/** Matches the lowercased keys the launcher's starting state uses. */
 export const keyOf = (path: string): string => path.toLowerCase();
 
 const isUnder = (key: string, dirKey: string): boolean =>
   key.startsWith(`${dirKey}/`);
-
-/**
- * Turn the listed files into enabled names. `mods/x.jar.disabled` becomes
- * `mods/x.jar` flagged disabled; a `.disabled` file elsewhere cannot be
- * expressed in a manifest and is left out.
- */
-export const normalizeDiskFiles = (all: string[]): DiskFile[] => {
-  const byKey = new Map<string, DiskFile>();
-  const order: string[] = [];
-  const put = (path: string, disabled: boolean) => {
-    const key = keyOf(path);
-    const existing = byKey.get(key);
-    if (existing) {
-      existing.conflict = true;
-      if (!disabled) {
-        existing.path = path;
-        existing.disabled = false;
-      }
-      return;
-    }
-    byKey.set(key, { path, disabled, conflict: false });
-    order.push(key);
-  };
-  for (const path of all) {
-    if (keyOf(path).endsWith(DISABLED_SUFFIX)) {
-      const base = path.slice(0, path.length - DISABLED_SUFFIX.length);
-      if (base !== "" && keyOf(base).startsWith(MODS_PREFIX)) put(base, true);
-    } else {
-      put(path, false);
-    }
-  }
-  return order.map((key) => byKey.get(key)!);
-};
 
 interface RuleIndex {
   files: Map<string, PublishRule>;
@@ -136,116 +91,6 @@ const coveringRule = (
     cut = key.lastIndexOf("/", cut - 1);
   }
   return undefined;
-};
-
-const dirKeysOf = (keys: Set<string>): Set<string> => {
-  const dirs = new Set<string>();
-  keys.forEach((key) => {
-    let cut = key.lastIndexOf("/");
-    while (cut > 0 && !dirs.has(key.slice(0, cut))) {
-      dirs.add(key.slice(0, cut));
-      cut = key.lastIndexOf("/", cut - 1);
-    }
-  });
-  return dirs;
-};
-
-const stripGhosts = (
-  ghosts: GhostEntry[],
-  diskKeys: Set<string>,
-  diskDirs: Set<string>
-): GhostEntry[] => {
-  const taken = new Set<string>();
-  const fileGhosts = new Set(
-    ghosts.filter((g) => g.kind === "file").map((g) => keyOf(g.path))
-  );
-  return ghosts.filter((ghost) => {
-    const key = keyOf(ghost.path);
-    if (taken.has(key) || diskKeys.has(key)) return false;
-    if (ghost.kind === "file" && diskDirs.has(key)) return false;
-    let cut = key.lastIndexOf("/");
-    while (cut > 0) {
-      const parent = key.slice(0, cut);
-      if (diskKeys.has(parent) || fileGhosts.has(parent)) return false;
-      cut = key.lastIndexOf("/", cut - 1);
-    }
-    taken.add(key);
-    return true;
-  });
-};
-
-export interface InitialModelInput {
-  /** Every listed file of the instance, `.disabled` names included. */
-  all: string[];
-  previous: PreviousRelease | null;
-  suggested: SuggestedEntry[];
-}
-
-/**
- * The tree the dialog opens with (§4 defaults): the previous release's rules
- * carry over as they are, files it listed stay ticked with their `once`, new
- * files follow the nearest rule or are ticked, and a suggested-blacklist entry
- * the previous release never mentioned gets one ignore rule at its own level.
- */
-export const createInitialModel = ({
-  all,
-  previous,
-  suggested,
-}: InitialModelInput): { context: PublishContext; draft: PublishDraft } => {
-  const files = normalizeDiskFiles(all);
-  const diskKeys = new Set(files.map((file) => keyOf(file.path)));
-  const diskDirs = dirKeysOf(diskKeys);
-  const prevFiles = previous?.files ?? [];
-  const rules: PublishRule[] = (previous?.rules ?? []).map((rule) => ({
-    ...rule,
-  }));
-
-  const ghostCandidates: GhostEntry[] = [];
-  for (const entry of prevFiles) {
-    if (!diskKeys.has(keyOf(entry.path))) {
-      ghostCandidates.push({ path: entry.path, kind: "file" });
-    }
-  }
-  for (const rule of rules) {
-    const key = keyOf(rule.path);
-    const present =
-      rule.kind === "file" ? diskKeys.has(key) : diskDirs.has(key);
-    if (!present) ghostCandidates.push({ path: rule.path, kind: rule.kind });
-  }
-  const ghosts = stripGhosts(ghostCandidates, diskKeys, diskDirs);
-
-  const prevByKey = new Map(prevFiles.map((f) => [keyOf(f.path), f]));
-  const mentioned = (entry: SuggestedEntry): boolean => {
-    const key = keyOf(entry.path);
-    const inside = (other: string) => other === key || isUnder(other, key);
-    return (
-      prevFiles.some((f) => inside(keyOf(f.path))) ||
-      rules.some((rule) => {
-        const ruleKey = keyOf(rule.path);
-        return (
-          inside(ruleKey) || (rule.kind === "dir" && isUnder(key, ruleKey))
-        );
-      })
-    );
-  };
-  for (const entry of suggested) {
-    if (!mentioned(entry)) {
-      rules.push({ path: entry.path, kind: entry.kind, state: "ignore" });
-    }
-  }
-
-  const index = indexRules(rules);
-  const included = new Set<string>();
-  const once = new Set<string>();
-  for (const file of files) {
-    const key = keyOf(file.path);
-    const prev = prevByKey.get(key);
-    if (!prev) continue;
-    if (prev.once) once.add(key);
-    if (!index.files.has(key) && coveringRule(index, key)) included.add(key);
-  }
-
-  return { context: { files, ghosts }, draft: { rules, included, once } };
 };
 
 export interface PublishView {

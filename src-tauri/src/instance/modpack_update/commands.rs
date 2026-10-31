@@ -9,10 +9,11 @@ use super::diff::{Conflict, ConflictChoice, Diff, FileChange};
 use super::merge::merge_with_choices;
 use super::notice::{read_update_notice, write_update_notice, UpdateNotice};
 use super::plan::{
-  compare, count_local_changes, finish, invalidate_scan_cache, local_changes,
-  requires_reinstall, resolve, LocalChange, Prepared,
+  compare, count_local_changes, finish, invalidate_scan_cache, requires_reinstall, resolve,
+  Prepared,
 };
 use super::plan_cache::{self, PlanCache};
+use super::release;
 use super::remote::{ComponentPack, RemoteModpack};
 use super::restore::restore_component_profile;
 use super::sources::{download_param, latest_version, resolve_remote, LatestVersion, Payload};
@@ -58,6 +59,33 @@ use tauri_plugin_opener::reveal_item_in_dir;
 
 const PROGRESS_EVENT: &str = "modpack-update:progress";
 
+/// A missing release record is repaired at most twice per process for one
+/// instance/version: the initial lookup and one retry. This keeps an offline
+/// instance usable without retrying a failed request on every render.
+static RELEASE_FETCH_ATTEMPTS: std::sync::LazyLock<Mutex<HashMap<String, u8>>> =
+  std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn release_fetch_allowed(root: &Path, version_id: &str) -> bool {
+  let key = format!("{}\0{version_id}", root.to_string_lossy());
+  let mut attempts = RELEASE_FETCH_ATTEMPTS
+    .lock()
+    .unwrap_or_else(|poisoned| poisoned.into_inner());
+  let attempt = attempts.entry(key).or_default();
+  if *attempt >= 2 {
+    return false;
+  }
+  *attempt += 1;
+  true
+}
+
+fn release_fetch_succeeded(root: &Path, version_id: &str) {
+  let key = format!("{}\0{version_id}", root.to_string_lossy());
+  RELEASE_FETCH_ATTEMPTS
+    .lock()
+    .unwrap_or_else(|poisoned| poisoned.into_inner())
+    .remove(&key);
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum CheckStatus {
@@ -95,7 +123,7 @@ pub struct UpdateCheck {
   pub reason: Option<String>,
   /// The previous update left a backup that can still be rolled back.
   pub can_roll_back: bool,
-  /// How many managed files differ from the install; set by the local scan.
+  /// Counted local changes against the last release; set by the local scan.
   pub local_changes: Option<usize>,
   /// The platform confirmed the followed project is gone, so this check
   /// detached the instance from it. Only set on the check that unlinked.
@@ -1113,6 +1141,7 @@ async fn light_check(app: &AppHandle, target: &Target) -> USTBLResult<LightCheck
 async fn unlink_origin(app: &AppHandle, instance_id: &str, target: &Target) -> USTBLResult<()> {
   ensure_unlink_safe(&target.root)?;
   fs::remove_file(target.root.join(BASELINE_FILE_NAME)).ok();
+  release::remove(&target.root).ok();
   super::ignores::remove(&target.root);
   plan_cache::clear_plan_cache(&target.root);
   store_instance(app, instance_id, |instance| {
@@ -1193,16 +1222,67 @@ pub async fn set_modpack_follow(
   .await
 }
 
-/// The managed files changed here since the modpack installed them, with
-/// line diffs for text files. Works offline: only the local record is used.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModpackChangeDetail {
+  pub version_id: String,
+  pub label: String,
+  pub incomplete: bool,
+  pub entries: Vec<super::changes::ChangeDetailEntry>,
+}
+
+/// The local changes against the release the instance last matched, with line
+/// diffs for modified text files. Works offline; a campus instance without a
+/// saved release record fetches it once (see `incomplete`).
 #[tauri::command]
-pub async fn list_modpack_local_changes(
+pub async fn list_modpack_change_detail(
   app: AppHandle,
   instance_id: String,
-) -> USTBLResult<Vec<LocalChange>> {
+) -> USTBLResult<ModpackChangeDetail> {
   let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let baseline = load_baseline(&target).await?;
-  local_changes(&target.root, &baseline, true).await
+  let (mut release, fallback) = release::release_for(&target.root, &baseline);
+  let mut incomplete = false;
+  if fallback && target.origin.platform == OriginPlatform::Campus {
+    let version_id = baseline.origin.version_id.clone();
+    let mut origin = target.origin.clone();
+    origin.version_id = version_id.clone();
+    // Not while an update runs, and not on every render after a failure. The
+    // lock is held until the record is written.
+    let fetched = match UpdateGuard::acquire(&target.root) {
+      Ok(guard) if release_fetch_allowed(&target.root, &version_id) => {
+        super::sources::campus_base_remote(&app, &origin, &target.root, &target.instance.name)
+          .await
+          .ok()
+          .map(|remote| (guard, remote))
+      }
+      _ => None,
+    };
+    match fetched {
+      Some((_guard, remote)) => {
+        release = release::Release::from_remote(&remote);
+        if let Err(error) = release::write(&target.root, &release).await {
+          log::warn!("cannot save local release record: {error}");
+        } else {
+          release_fetch_succeeded(&target.root, &version_id);
+        }
+      }
+      None => incomplete = true,
+    }
+  }
+  let listed = tokio::task::spawn_blocking({
+    let instance = target.instance.clone();
+    move || crate::instance::helpers::modpack::export::list_files(&instance)
+  })
+  .await
+  .map_err(|error| crate::error::USTBLError(error.to_string()))??;
+  let entries = super::changes::classify(&target.root, &baseline, &release, &listed).await?;
+  Ok(ModpackChangeDetail {
+    version_id: release.version_id,
+    label: release.label,
+    incomplete,
+    entries,
+  })
 }
 
 /// Map the ignore store's refusals onto the update errors: a request that no
@@ -1239,6 +1319,27 @@ pub async fn ignore_modpack_local_change(
   Ok(())
 }
 
+#[tauri::command]
+pub async fn ignore_modpack_added_file(
+  app: AppHandle,
+  instance_id: String,
+  path: String,
+) -> USTBLResult<()> {
+  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let _guard = UpdateGuard::acquire(&target.root)?;
+  let baseline = load_baseline(&target).await?;
+  let (release, _) = release::release_for(&target.root, &baseline);
+  let listed = tokio::task::spawn_blocking({
+    let instance = target.instance.clone();
+    move || crate::instance::helpers::modpack::export::list_files(&instance)
+  })
+  .await
+  .map_err(|error| crate::error::USTBLError(error.to_string()))??;
+  super::changes::ignore_added_file(&target.root, &baseline, &release, &listed, &path)
+    .await
+    .map_err(ignore_error)
+}
+
 /// The ignored spots and files of this instance, for the undo list.
 #[tauri::command]
 pub async fn list_modpack_ignores(
@@ -1247,8 +1348,9 @@ pub async fn list_modpack_ignores(
 ) -> USTBLResult<Vec<super::ignores::IgnoredItem>> {
   let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let baseline = load_baseline(&target).await?;
+  let (release, _) = release::release_for(&target.root, &baseline);
   let root = target.root.clone();
-  tokio::task::spawn_blocking(move || super::ignores::list(&root, &baseline))
+  tokio::task::spawn_blocking(move || super::ignores::list_for_release(&root, &baseline, &release))
     .await
     .map_err(|e| crate::error::USTBLError(e.to_string()).into())
 }
@@ -1265,12 +1367,16 @@ pub async fn unignore_modpack_local_change(
   let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let _guard = UpdateGuard::acquire(&target.root)?;
   let baseline = load_baseline(&target).await?;
+  let was_added = super::ignores::read(&target.root).ignores_added(&path);
   let root = target.root.clone();
-  tokio::task::spawn_blocking(move || super::ignores::undo(&root, &baseline, &path, range))
+  let undo_path = path.clone();
+  tokio::task::spawn_blocking(move || super::ignores::undo(&root, &baseline, &undo_path, range))
     .await
     .map_err(|e| crate::error::USTBLError(e.to_string()))?
     .map_err(ignore_error)?;
-  plan_cache::clear_plan_cache(&target.root);
+  if !was_added {
+    plan_cache::clear_plan_cache(&target.root);
+  }
   Ok(())
 }
 
@@ -2126,7 +2232,13 @@ async fn apply_modpack_update_inner(
     "modpack update apply resolutions: instance={instance_id} plan_hash={plan_hash} resolutions=[{}]",
     describe_conflict_resolutions(&prepared.diff, &apply_choices).join(","),
   );
-  let ignores = super::ignores::plan_update(&target.root, &prepared, &base_texts, &apply_choices);
+  let ignores = super::ignores::plan_update(
+    &target.root,
+    &prepared,
+    &remote,
+    &base_texts,
+    &apply_choices,
+  );
   let result = apply(
     &env,
     UpdateRequest {
@@ -2530,8 +2642,13 @@ async fn install_campus_modpack_inner(
   } else {
     None
   };
-  let ignores =
-    super::ignores::plan_update(&target.root, &prepared, &BTreeMap::new(), &apply_choices);
+  let ignores = super::ignores::plan_update(
+    &target.root,
+    &prepared,
+    &remote,
+    &BTreeMap::new(),
+    &apply_choices,
+  );
   let result = apply(
     &env,
     UpdateRequest {

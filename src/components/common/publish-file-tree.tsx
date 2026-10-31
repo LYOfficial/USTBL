@@ -121,19 +121,31 @@ const PublishFileTree: React.FC<PublishFileTreeProps> = ({
 
             return (
               <HStack spacing={2} fontSize="xs-sm" w="100%">
-                <Button
-                  size="xs"
-                  variant={state === "include" ? "solid" : "outline"}
-                  colorScheme={style.colorScheme}
-                  leftIcon={style.icon}
-                  minW="16"
-                  flexShrink={0}
-                  aria-label={description}
-                  title={description}
-                  onClick={apply}
+                <Tooltip
+                  label={
+                    <>
+                      <Text>{t(`PublishModpackModal.tree.hint.${state}`)}</Text>
+                      <Text mt={1} opacity={0.8}>
+                        {t("PublishModpackModal.tree.clickTo", {
+                          next: label(next),
+                        })}
+                      </Text>
+                    </>
+                  }
                 >
-                  {label(state)}
-                </Button>
+                  <Button
+                    size="xs"
+                    variant={state === "include" ? "solid" : "outline"}
+                    colorScheme={style.colorScheme}
+                    leftIcon={style.icon}
+                    minW="16"
+                    flexShrink={0}
+                    aria-label={description}
+                    onClick={apply}
+                  >
+                    {label(state)}
+                  </Button>
+                </Tooltip>
                 <Text
                   className="ellipsis-text"
                   opacity={data.ghost ? 0.7 : 1}

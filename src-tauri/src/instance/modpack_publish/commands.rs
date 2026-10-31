@@ -27,6 +27,7 @@ use crate::instance::modpack_update::commands::fast_forward;
 use crate::instance::modpack_update::commands::store_instance;
 use crate::instance::modpack_update::diff::FileKey;
 use crate::instance::modpack_update::plan::{compare, Compared};
+use crate::instance::modpack_update::release;
 use crate::instance::modpack_update::remote::RemoteRule;
 use crate::instance::modpack_update::sources::{
   campus_base_remote, campus_client, loader_slug, CAMPUS_API,
@@ -376,6 +377,10 @@ where
 pub struct PreviousFile {
   pub path: String,
   #[serde(default)]
+  pub sha1: String,
+  #[serde(default)]
+  pub size: u64,
+  #[serde(default)]
   pub disabled: bool,
   #[serde(default)]
   pub once: bool,
@@ -390,12 +395,13 @@ pub struct PreviousRelease {
   pub files: Vec<PreviousFile>,
   #[serde(default)]
   pub rules: Vec<RemoteRule>,
+  #[serde(default)]
+  pub rules_manifest: bool,
 }
 
 /// The files and rules the line's current release lists, so the publish dialog
 /// starts from them. `None` when the project has no release on this line; any
 /// other failure is an error, since publishing on top of a guess would lose rules.
-#[tauri::command]
 pub async fn fetch_campus_modpack_previous_release(
   app: AppHandle,
   instance_id: String,
@@ -431,6 +437,45 @@ pub async fn fetch_campus_modpack_previous_release(
 fn previous_release_of(manifest: &Value) -> USTBLResult<PreviousRelease> {
   serde_json::from_value(manifest.clone())
     .map_err(|_| InstanceError::ModpackUpdateRemoteInvalid.into())
+}
+
+#[tauri::command]
+pub async fn prepare_campus_modpack_publish_tree(
+  app: AppHandle,
+  instance_id: String,
+  project: Option<String>,
+) -> USTBLResult<super::defaults::PublishDefaults> {
+  let instance = instance_of(&app, &instance_id)?;
+  let previous = match project {
+    Some(project) => {
+      fetch_campus_modpack_previous_release(app.clone(), instance_id, project).await?
+    }
+    None => None,
+  };
+  let list = tokio::task::spawn_blocking(move || {
+    crate::instance::helpers::modpack::export::list_files(&instance)
+  })
+  .await
+  .map_err(|error| USTBLError(error.to_string()))??;
+  let suggested = list
+    .suggested
+    .iter()
+    .filter_map(|entry| {
+      Some(super::defaults::SuggestedEntry {
+        path: entry.path.clone(),
+        kind: match entry.kind.as_str() {
+          "file" => crate::instance::modpack_update::remote::RuleKind::File,
+          "dir" => crate::instance::modpack_update::remote::RuleKind::Dir,
+          _ => return None,
+        },
+      })
+    })
+    .collect::<Vec<_>>();
+  Ok(super::defaults::create_initial_model(
+    &list.all,
+    previous.as_ref(),
+    &suggested,
+  ))
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1059,6 +1104,11 @@ async fn try_adopt(
     baseline = baseline.with_components(components);
   }
   baseline.save(&instance.version_path).await?;
+  release::write(
+    &instance.version_path,
+    &release::Release::from_remote(&remote),
+  )
+  .await?;
   let label = version_number.to_string();
   store_instance(app, &instance.id, move |stored| {
     adopt_instance_identity(stored, new_origin, label);

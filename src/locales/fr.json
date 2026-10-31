@@ -3234,7 +3234,15 @@
       "disabled": "Désactivé",
       "missing": "Absent du disque",
       "conflict": "Les fichiers activé et désactivé existent tous les deux",
-      "toggle": "{{name}} : actuellement {{state}}, cliquez pour passer à {{next}}"
+      "toggle": "{{name}} : actuellement {{state}}, cliquez pour passer à {{next}}",
+      "hint": {
+        "include": "Publié avec cette version et géré par le modpack : installé s'il manque, mis à jour vers cette version s'il existe. Les modifications du joueur sont fusionnées, avec un conflit signalé si la fusion échoue.",
+        "ignore": "Cette version ne touche pas ce fichier : les joueurs gardent ce qu'ils ont, ceux qui ne l'ont pas ne le reçoivent pas.",
+        "delete": "Les fichiers des joueurs à cet emplacement sont supprimés (pour un dossier, les fichiers qu'il contient), y compris ceux qu'ils ont ajoutés eux-mêmes. Ils sont sauvegardés avant et la suppression peut être annulée par retour arrière.",
+        "remove": "Cette version ne le contient plus : supprimé chez les joueurs qui ne l'ont pas modifié, question posée à la mise à jour pour ceux qui l'ont modifié, rien ne change là où le modpack ne le gère pas.",
+        "mixed": "Les fichiers qu'il contient ont des états différents."
+      },
+      "clickTo": "Cliquez pour passer à {{next}}"
     },
     "skipped": "{{count}} fichier(s) du lanceur exclu(s)",
     "adoption": {
@@ -3286,7 +3294,7 @@
       "needsRepair": "Cette instance ne peut pas être comparée tant qu'elle n'est pas réparée",
       "unknown": "Impossible d'obtenir les informations de mise à jour. Réessayez plus tard",
       "waitingLoader": "En attente de la fin de l'installation du chargeur de mods avant de vérifier les mises à jour",
-      "localChanges": "Vous avez modifié {{count}} fichier(s) géré(s) par le pack ; la mise à jour demandera pour chacun"
+      "localChanges": "Modifications locales : {{count}}"
     },
     "label": {
       "current": "Version actuelle : {{current}}"
@@ -3363,18 +3371,28 @@
       "title": "Modifications locales : {{name}}"
     },
     "loading": "Comparaison des fichiers locaux…",
-    "empty": "Tous les fichiers gérés par le modpack correspondent à l'installation",
-    "summary": "{{count}} fichiers gérés par le modpack diffèrent de l'installation. Le contenu est comparé après normalisation ; les fichiers qui ne diffèrent que par les fins de ligne ou les horodatages ne sont pas comptés.",
-    "kind": {
+    "empty": "Aucune modification depuis la version précédente",
+    "comparedTo": "Comparé à : {{label}}",
+    "summary": "Modifications locales : {{count}}",
+    "countingRule": "Comptent comme modifications locales : les fichiers modifiés ou supprimés, ceux dont l'état activé diffère, et les nouveaux fichiers dans mods, resourcepacks et shaderpacks. Les nouveaux fichiers ailleurs, les modifications des fichiers « première installation seulement » et les nouveaux fichiers qui ne seront pas publiés sont listés mais non comptés. Le contenu est comparé après normalisation ; les différences de fins de ligne ou d'horodatage ne comptent pas.",
+    "filterHint": "Cliquez sur une catégorie pour n'afficher qu'elle ; cliquez à nouveau pour annuler.",
+    "incomplete": "Détail incomplet : la liste des fichiers de la version précédente n'a pas pu être chargée, la comparaison se fait uniquement avec l'installation. Des nouveaux fichiers et des changements d'activation peuvent manquer.",
+    "class": {
       "modified": "Modifié",
       "deleted": "Supprimé",
-      "disabled": "Désactivé",
-      "enabled": "Activé"
+      "toggled": "Activation changée",
+      "onceChanged": "Modification « première installation »",
+      "added": "Nouveau",
+      "addedExcluded": "Nouveau (non publié)"
     },
+    "notCounted": "Non compté",
+    "disabled": "Désactivé",
+    "toggledTag": "Activation différente aussi",
     "hint": {
       "deleted": "Ce fichier a été supprimé localement",
-      "disabled": "Ce fichier a été désactivé localement (.disabled)",
-      "enabled": "Ce fichier a été réactivé localement"
+      "toggled": "Activé ou désactivé autrement que dans la version précédente",
+      "onceChanged": "Fichier « première installation seulement » : la modification ne concerne que les nouvelles installations et ne compte pas comme modification locale",
+      "added": "Absent de la version précédente. Taille : {{size}}"
     },
     "noDiff": {
       "notText": "Fichier non texte ou trop volumineux ; contenu non comparé",
@@ -3386,16 +3404,30 @@
     },
     "ignore": {
       "spot": "Ignorer cet endroit",
-      "file": "Ignorer tout le fichier"
+      "file": "Ignorer tout le fichier",
+      "added": "Ignorer",
+      "spotHint": "Cette modification n'est plus affichée ni comptée comme modification locale. Les mises à jour conservent votre contenu ici ; si la nouvelle version modifie aussi cet endroit, un choix vous est toujours demandé (le vôtre est conservé par défaut). Sans effet sur la publication.",
+      "fileHint": "Les modifications de ce fichier ne sont plus affichées ni comptées comme modifications locales. Les mises à jour se font normalement et les conflits restent signalés ; si une nouvelle version ne contient plus ce fichier, il est supprimé sans demander. Sans effet sur la publication.",
+      "addedHint": "Ce fichier n'est plus affiché comme nouveau ni compté comme modification locale. Les mises à jour se font normalement, cet ignoré n'y change rien. Sans effet sur la publication : son inclusion se choisit toujours dans la fenêtre de publication."
+    },
+    "excluded": {
+      "title": "Nouveaux, non publiés ({{count}})",
+      "description": "Ces fichiers sont absents de la version précédente et une règle de publication ou la liste noire suggérée les exclut : la publication les laisse de côté par défaut. Ils ne comptent pas comme modifications locales."
     },
     "ignored": {
-      "title": "Ignorés ({{count}} fichiers)",
-      "description": "Les modifications ignorées ne comptent pas comme modifications locales. Les mises à jour conservent votre contenu ; si la nouvelle version modifie aussi le même endroit, un choix vous est tout de même demandé (votre version est conservée par défaut).",
+      "title": "Ignorés ({{count}})",
+      "description": "Les éléments ignorés ne sont pas affichés plus haut et ne comptent pas comme modifications locales. Les mises à jour conservent votre contenu dans les modifications ignorées ; si la nouvelle version modifie aussi le même endroit, un choix vous est tout de même demandé (votre version est conservée par défaut). Ignorer un nouveau fichier n'agit que sur l'affichage et le décompte.",
       "wholeFile": "Fichier entier",
       "spots": "Endroits : {{count}}",
       "lines": "Lignes {{from}}–{{to}}",
       "undo": "Annuler",
-      "undoAll": "Tout annuler"
+      "undoAll": "Tout annuler",
+      "stillPublished": "Toujours publiés",
+      "stillPublishedHint": "Ignorer n'a pas d'effet sur la publication : ces fichiers et modifications sont publiés selon leur état dans la fenêtre de publication, où vous choisissez ce qui est inclus.",
+      "addedFile": "Nouveau fichier",
+      "undoHint": "Annuler cet ignoré : de nouveau affiché et compté (sauf si sa catégorie n'est pas comptée) ; les mises à jour ne le traitent plus comme ignoré.",
+      "undoAllHint": "Annuler tous les ignorés de ce fichier : de nouveau affiché et compté (sauf si sa catégorie n'est pas comptée) ; les mises à jour ne le traitent plus comme ignoré.",
+      "undoAddedHint": "Annuler l'ignoré : de nouveau affiché comme nouveau, et compté s'il se trouve dans mods, resourcepacks ou shaderpacks."
     },
     "publishHint": {
       "noPermission": "La publication nécessite la permission de gestion des modpacks du campus",

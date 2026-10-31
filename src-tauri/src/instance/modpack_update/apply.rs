@@ -302,6 +302,7 @@ fn meta_files(instance_name: &str, restoring_components: bool) -> Vec<String> {
     INSTANCE_CONFIG_FILE.to_string(),
     format!("{instance_name}.json"),
     super::ignores::meta_name(),
+    super::release::meta_name(),
   ];
   if restoring_components {
     names.extend([
@@ -1076,6 +1077,9 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
       baseline = baseline.with_components(chain.clone());
     }
     baseline.save(root).await.map_err(io_error)?;
+    super::release::write(root, &super::release::Release::from_remote(&request.remote))
+      .await
+      .map_err(io_error)?;
     if let Some(update) = &request.ignores {
       super::ignores::write(root, &update.to).map_err(io_error)?;
     }
@@ -1141,6 +1145,7 @@ mod tests {
   use super::*;
   use crate::instance::models::misc::{ModLoaderType, OriginPlatform};
   use crate::instance::modpack_update::diff::FileKey;
+  use crate::instance::modpack_update::release;
   use sha1::{Digest, Sha1};
   use std::io::Write;
 
@@ -2154,6 +2159,15 @@ mod tests {
       prune_dirs: Vec::new(),
     };
     let operations = vec![write_op(&remanaged), delete, flip];
+    let old_release = release::Release {
+      schema: release::RELEASE_SCHEMA,
+      version_id: "1".into(),
+      label: "old".into(),
+      files: Vec::new(),
+      rules: Vec::new(),
+      rules_manifest: false,
+    };
+    release::write(&root.0, &old_release).await.unwrap();
 
     assert!(
       apply(&env, request(&root, vec![remanaged], operations, "0.16.0"))
@@ -2165,6 +2179,7 @@ mod tests {
     assert_eq!(root.read("mods/dormant.jar").as_deref(), Some("stale"));
     assert_eq!(root.read("mods/flip.jar").as_deref(), Some("flip"));
     assert_eq!(root.read("mods/flip.jar.disabled"), None);
+    assert_eq!(release::read(&root.0), Some(old_release));
     assert!(root.0.join("mods/old").exists());
     assert!(!journal_path(&root.0).exists());
   }
@@ -2668,10 +2683,12 @@ mod tests {
     assert!(!root.0.parent().unwrap().join("evil.jar").exists());
   }
 
-  /// "Take remote" on every conflict, a text file answered block by block
-  /// included, leaves nothing for the local scan to report afterwards.
+  /// "Take remote" on every conflict leaves no modified file. The 2 that
+  /// remain are the two mods `setup()` puts in the instance (`mods/old.jar`,
+  /// `mods/gone.jar`), which the new release does not list, so they read as
+  /// added files.
   #[tokio::test]
-  async fn taking_every_remote_side_leaves_no_local_changes() {
+  async fn taking_every_remote_side_leaves_only_preexisting_added_files() {
     use crate::instance::helpers::modpack::baseline::BaselineFile;
     use crate::instance::modpack_update::commands::selected_hunk_contents;
     use crate::instance::modpack_update::diff::ConflictChoice;
@@ -2738,7 +2755,7 @@ mod tests {
     apply(&env, update).await.unwrap();
 
     let baseline = ModpackBaseline::load(&root.0).await.unwrap();
-    assert_eq!(count_local_changes(&root.0, &baseline).await.unwrap(), 0);
+    assert_eq!(count_local_changes(&root.0, &baseline).await.unwrap(), 2);
     assert_eq!(root.read("mods/a.jar").as_deref(), Some("a2"));
     assert_eq!(root.read("mods/b.jar").as_deref(), Some("b2"));
     assert_eq!(root.read("config/c.toml").as_deref(), Some(remote_text));
@@ -2794,7 +2811,8 @@ mod tests {
     apply(&env, update).await.unwrap();
 
     let baseline = ModpackBaseline::load(&root.0).await.unwrap();
-    assert_eq!(count_local_changes(&root.0, &baseline).await.unwrap(), 1);
+    // The kept file and the two mods from setup() that the release lacks.
+    assert_eq!(count_local_changes(&root.0, &baseline).await.unwrap(), 3);
     let changes = local_changes(&root.0, &baseline, true).await.unwrap();
     assert_eq!(changes.len(), 1);
     assert_eq!(changes[0].path, "config/c.toml");
@@ -2852,7 +2870,8 @@ mod tests {
       Some("x = 2\ny = 1\nz = 3\n")
     );
     let baseline = ModpackBaseline::load(&root.0).await.unwrap();
-    assert_eq!(count_local_changes(&root.0, &baseline).await.unwrap(), 1);
+    // The kept file and the two mods from setup() that the release lacks.
+    assert_eq!(count_local_changes(&root.0, &baseline).await.unwrap(), 3);
     let changes = local_changes(&root.0, &baseline, true).await.unwrap();
     assert_eq!(changes.len(), 1);
     assert_eq!(changes[0].path, "config/c.toml");

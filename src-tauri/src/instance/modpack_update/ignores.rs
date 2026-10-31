@@ -8,12 +8,13 @@
 use super::diff::{scan_path, Conflict, ConflictChoice, LocalState, DISABLED_SUFFIX};
 use super::merge::MergeConflict;
 use super::plan::Prepared;
-use super::remote::UPDATE_DIR;
+use super::release::Release;
+use super::remote::{RemoteModpack, UPDATE_DIR};
 use super::text_diff::{edits, lines_of, Edit};
 use crate::instance::helpers::modpack::baseline::{BaselineFile, ModpackBaseline};
 use crate::instance::helpers::modpack::{base_store, text};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -57,6 +58,9 @@ pub struct Ignores {
   pub schema: u32,
   #[serde(default)]
   pub files: BTreeMap<String, IgnoreEntry>,
+  /// Newly added files have no installed baseline to anchor their ignore.
+  #[serde(default)]
+  pub added: BTreeSet<String>,
 }
 
 impl Default for Ignores {
@@ -64,6 +68,7 @@ impl Default for Ignores {
     Self {
       schema: SCHEMA,
       files: BTreeMap::new(),
+      added: BTreeSet::new(),
     }
   }
 }
@@ -77,7 +82,7 @@ pub struct IgnoresUpdate {
 
 impl Ignores {
   pub fn is_empty(&self) -> bool {
-    self.files.is_empty()
+    self.files.is_empty() && self.added.is_empty()
   }
 
   pub fn parse(bytes: &[u8]) -> Self {
@@ -117,8 +122,34 @@ impl Ignores {
     Self {
       schema: SCHEMA,
       files,
+      added: self.added.clone(),
     }
   }
+
+  /// The added-file ignores that still apply: the file is not in the release
+  /// and some variant of it is on disk. Records keep the spelling they were
+  /// made with; a record that does not match the disk spelling is stale.
+  pub fn validated_added(&self, root: &Path, release: &Release) -> BTreeSet<String> {
+    let listed = release.index();
+    self
+      .added
+      .iter()
+      .filter(|path| !listed.contains_key(&path.to_lowercase()) && on_disk(root, path))
+      .cloned()
+      .collect()
+  }
+
+  /// Whether the added file is ignored. Paths compare without case.
+  pub fn ignores_added(&self, path: &str) -> bool {
+    self
+      .added
+      .iter()
+      .any(|added| added.eq_ignore_ascii_case(path))
+  }
+}
+
+fn on_disk(root: &Path, path: &str) -> bool {
+  root.join(path).is_file() || root.join(format!("{path}{DISABLED_SUFFIX}")).is_file()
 }
 
 fn canonical(entry: &IgnoreEntry) -> IgnoreEntry {
@@ -165,6 +196,16 @@ pub fn read(root: &Path) -> Ignores {
 /// The stored records that still apply to this baseline.
 pub fn read_valid(root: &Path, baseline: &ModpackBaseline) -> Ignores {
   read(root).validated(baseline)
+}
+
+pub fn read_valid_for_release(
+  root: &Path,
+  baseline: &ModpackBaseline,
+  release: &Release,
+) -> Ignores {
+  let mut ignores = read_valid(root, baseline);
+  ignores.added = ignores.validated_added(root, release);
+  ignores
 }
 
 pub fn write(root: &Path, ignores: &Ignores) -> io::Result<()> {
@@ -309,6 +350,7 @@ pub fn after_update(
   Ignores {
     schema: SCHEMA,
     files,
+    added: prev.added.clone(),
   }
 }
 
@@ -318,6 +360,7 @@ pub fn after_update(
 pub fn plan_update(
   root: &Path,
   prepared: &Prepared,
+  remote: &RemoteModpack,
   remote_texts: &BTreeMap<String, Vec<u8>>,
   choices: &BTreeMap<String, ConflictChoice>,
 ) -> Option<IgnoresUpdate> {
@@ -352,6 +395,16 @@ pub fn plan_update(
       remap_entry(path, entry, &base, remote, &taken)
     },
   );
+  // An added file stops being one when the new version lists it, once-only
+  // files included.
+  let entered: HashSet<String> = remote
+    .files
+    .iter()
+    .map(|file| file.path.to_lowercase())
+    .collect();
+  let mut to = to;
+  to.added
+    .retain(|path| !entered.contains(&path.to_lowercase()) && on_disk(root, path));
   (to != prepared.ignores_on_disk).then(|| IgnoresUpdate {
     from: prepared.ignores_on_disk.clone(),
     to,
@@ -576,6 +629,26 @@ pub fn add(
   Ok(())
 }
 
+/// Keep a file the player added as the player's own. The path is the enabled
+/// name; the caller has checked it is currently an added file.
+pub fn add_added(
+  root: &Path,
+  baseline: &ModpackBaseline,
+  release: &Release,
+  path: &str,
+) -> Result<(), IgnoreError> {
+  if release.index().contains_key(&path.to_lowercase()) || !on_disk(root, path) {
+    return Err(IgnoreError::Mismatch);
+  }
+  let mut ignores = read_valid_for_release(root, baseline, release);
+  ignores
+    .added
+    .retain(|added| !added.eq_ignore_ascii_case(path));
+  ignores.added.insert(path.to_string());
+  write(root, &ignores)?;
+  Ok(())
+}
+
 /// Undo an ignore: one range, or the whole record (`None`).
 pub fn undo(
   root: &Path,
@@ -586,7 +659,14 @@ pub fn undo(
   let mut ignores = read_valid(root, baseline);
   match range {
     None => {
-      ignores.files.remove(path).ok_or(IgnoreError::Mismatch)?;
+      let before = ignores.added.len();
+      ignores
+        .added
+        .retain(|added| !added.eq_ignore_ascii_case(path));
+      let was_added = ignores.added.len() != before;
+      if ignores.files.remove(path).is_none() && !was_added {
+        return Err(IgnoreError::Mismatch);
+      }
     }
     Some(region) => {
       let entry = ignores.files.get_mut(path).ok_or(IgnoreError::Mismatch)?;
@@ -619,10 +699,11 @@ pub struct IgnoredItem {
   pub base_sha1: String,
   pub whole: bool,
   pub regions: Vec<IgnoredRegion>,
+  #[serde(default)]
+  pub added: bool,
 }
 
-pub fn list(root: &Path, baseline: &ModpackBaseline) -> Vec<IgnoredItem> {
-  let ignores = read_valid(root, baseline);
+fn list_from(root: &Path, ignores: Ignores) -> Vec<IgnoredItem> {
   let mut items = Vec::new();
   for (path, entry) in &ignores.files {
     let mut regions = Vec::new();
@@ -654,9 +735,30 @@ pub fn list(root: &Path, baseline: &ModpackBaseline) -> Vec<IgnoredItem> {
       base_sha1: entry.base_sha1.clone(),
       whole: entry.whole,
       regions,
+      added: false,
     });
   }
+  items.extend(ignores.added.into_iter().map(|path| IgnoredItem {
+    path,
+    base_sha1: String::new(),
+    whole: true,
+    regions: Vec::new(),
+    added: true,
+  }));
   items
+}
+
+#[cfg(test)]
+pub fn list(root: &Path, baseline: &ModpackBaseline) -> Vec<IgnoredItem> {
+  list_from(root, read_valid(root, baseline))
+}
+
+pub fn list_for_release(
+  root: &Path,
+  baseline: &ModpackBaseline,
+  release: &Release,
+) -> Vec<IgnoredItem> {
+  list_from(root, read_valid_for_release(root, baseline, release))
 }
 
 fn slice(lines: &[String], start: usize, end: usize) -> Vec<String> {
@@ -860,6 +962,7 @@ mod tests {
           },
         ),
       ]),
+      added: BTreeSet::new(),
     };
     let valid = stored.validated(&baseline);
     assert_eq!(
@@ -876,6 +979,7 @@ mod tests {
     let ignores = Ignores {
       schema: SCHEMA,
       files: BTreeMap::from([("a.toml".to_string(), entry(vec![region(1, 2)]))]),
+      added: BTreeSet::new(),
     };
     let bytes = ignores.to_bytes().unwrap();
     assert_eq!(Ignores::parse(&bytes), ignores);
@@ -901,6 +1005,7 @@ mod tests {
           },
         ),
       ]),
+      added: BTreeSet::new(),
     };
     let next = vec![
       BaselineFile::managed(
@@ -1035,5 +1140,43 @@ mod tests {
     assert!(every.ignored);
     assert_eq!(every.ignored_hunks, vec![0, 1]);
     assert_eq!(lines("x\ny").len(), 2);
+  }
+
+  #[test]
+  fn added_file_ignores_round_trip_and_are_removed_when_invalid() {
+    let root = std::env::temp_dir().join(format!("ustbl-added-ignore-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(root.join("mods")).unwrap();
+    std::fs::write(root.join("mods/new.jar"), b"new").unwrap();
+    let baseline = baseline_with("config/base.toml", "aa");
+    let release = Release {
+      schema: 1,
+      version_id: "1".into(),
+      label: "one".into(),
+      files: vec![],
+      rules: vec![],
+      rules_manifest: false,
+    };
+    assert!(add_added(&root, &baseline, &release, "mods/new.jar").is_ok());
+    let stored = read(&root);
+    assert_eq!(stored.added, BTreeSet::from(["mods/new.jar".into()]));
+    let listed = list(&root, &baseline);
+    assert_eq!(listed[0].path, "mods/new.jar");
+    assert!(listed[0].added);
+
+    let valid = read_valid_for_release(&root, &baseline, &release);
+    assert_eq!(valid.added.len(), 1);
+    std::fs::remove_file(root.join("mods/new.jar")).unwrap();
+    assert!(read_valid_for_release(&root, &baseline, &release)
+      .added
+      .is_empty());
+    assert!(add_added(&root, &baseline, &release, "mods/missing.jar").is_err());
+    let _ = std::fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn old_ignore_json_without_added_field_still_parses() {
+    let parsed = Ignores::parse(br#"{"schema":1,"files":{}}"#);
+    assert!(parsed.files.is_empty());
+    assert!(parsed.added.is_empty());
   }
 }

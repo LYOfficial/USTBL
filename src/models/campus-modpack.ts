@@ -59,10 +59,20 @@ export interface CampusPublishRule {
   state: "ignore" | "delete";
 }
 
-/** What the line's current release lists. */
-export interface CampusPreviousRelease {
-  files: CampusPublishFile[];
+/**
+ * The publish tree's starting state, worked out by the launcher from the
+ * files on disk and the line's current release.
+ */
+export interface CampusPublishDefaults {
+  /** Enabled names; `conflict` when both variants are on disk. */
+  files: { path: string; disabled: boolean; conflict: boolean }[];
+  /** Paths the current release mentions that are not on disk any more. */
+  ghosts: { path: string; kind: "file" | "dir" }[];
   rules: CampusPublishRule[];
+  /** Lowercased paths of the files ticked explicitly. */
+  included: string[];
+  /** Lowercased paths of the files that install only once. */
+  once: string[];
 }
 
 export interface CampusNewProject {

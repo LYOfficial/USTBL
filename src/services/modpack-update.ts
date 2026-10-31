@@ -1,9 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
+  ModpackChangeDetail,
   ModpackConflictChoice,
   ModpackIgnoredItem,
-  ModpackLocalChange,
   ModpackUpdateCheck,
   ModpackUpdateFinished,
   ModpackUpdatePlan,
@@ -88,14 +88,27 @@ export class ModpackUpdateService {
   }
 
   /**
-   * The managed files changed since the modpack installed them, with line
-   * diffs for text files. Local only; the platform is not asked.
+   * Every local change against the release the instance last matched, with
+   * line diffs for modified text files. Works offline; a campus instance
+   * without a saved release record fetches it once (else `incomplete`).
    */
   @responseHandler("instance")
-  static async listModpackLocalChanges(
+  static async listModpackChangeDetail(
     instanceId: string
-  ): Promise<InvokeResponse<ModpackLocalChange[]>> {
-    return await invoke("list_modpack_local_changes", { instanceId });
+  ): Promise<InvokeResponse<ModpackChangeDetail>> {
+    return await invoke("list_modpack_change_detail", { instanceId });
+  }
+
+  /**
+   * Keep a file the release does not list as the player's own. Only the
+   * display and the count change; `path` must be a current added file.
+   */
+  @responseHandler("instance")
+  static async ignoreModpackAddedFile(
+    instanceId: string,
+    path: string
+  ): Promise<InvokeResponse<null>> {
+    return await invoke("ignore_modpack_added_file", { instanceId, path });
   }
 
   /**
@@ -125,7 +138,10 @@ export class ModpackUpdateService {
     return await invoke("list_modpack_ignores", { instanceId });
   }
 
-  /** Take an ignore back: one spot, or everything recorded for the file. */
+  /**
+   * Take an ignore back: one spot, or everything recorded for the file (an
+   * added file's ignore has no spots).
+   */
   @responseHandler("instance")
   static async unignoreModpackLocalChange(
     instanceId: string,

@@ -104,7 +104,9 @@ pub fn plan_hash(
   hasher.update(b"\0");
   hasher.update(serde_json::to_vec(next_baseline).unwrap_or_default());
   hasher.update(b"\0");
-  hasher.update(serde_json::to_vec(ignores).unwrap_or_default());
+  let mut hash_ignores = ignores.clone();
+  hash_ignores.added.clear();
+  hasher.update(serde_json::to_vec(&hash_ignores).unwrap_or_default());
   hex::encode(hasher.finalize())
 }
 
@@ -129,10 +131,11 @@ pub fn requires_reinstall(baseline: &ModpackBaseline, remote: &RemoteModpack, fr
   baseline.component_refs().as_ref() != Some(wanted)
 }
 
-/// How many files the modpack manages differ from what it installed. A file the
-/// player switched off counts, since that is a deliberate local change.
+/// How many local changes the instance shows: managed files that differ from
+/// the release it matched (a file the player switched off counts) plus files
+/// added to the content directories. The same decision as the change list.
 pub async fn count_local_changes(root: &Path, baseline: &ModpackBaseline) -> USTBLResult<usize> {
-  Ok(local_changes(root, baseline, false).await?.len())
+  super::changes::count(root, baseline).await
 }
 
 /// Forget this instance's scan entries (deleted, or stopped following).
@@ -1192,6 +1195,27 @@ mod tests {
         .unwrap()
         .plan_hash
     );
+
+    let prepared = prepare_with_contents(&root, &baseline, &remote_v2, &BTreeMap::new())
+      .await
+      .unwrap();
+    let plain = plan_hash(
+      &remote_v2,
+      &prepared.diff,
+      &prepared.next_baseline,
+      &Ignores::default(),
+    );
+    let mut with_added_ignore = Ignores::default();
+    with_added_ignore.added.insert("mods/unmanaged.jar".into());
+    assert_eq!(
+      plain,
+      plan_hash(
+        &remote_v2,
+        &prepared.diff,
+        &prepared.next_baseline,
+        &with_added_ignore
+      )
+    );
     let _ = fs::remove_dir_all(root);
   }
 
@@ -1325,7 +1349,7 @@ mod tests {
     fs::write(root.join("mods/same.jar"), "same").unwrap();
     fs::write(root.join("mods/edited.jar"), "edited-by-player").unwrap();
     fs::write(root.join("mods/off.jar.disabled"), "off").unwrap();
-    // Not listed in the baseline, so not the modpack's business.
+    // Not listed in the baseline: counted as an added mod.
     fs::write(root.join("mods/mine.jar"), "mine").unwrap();
     let installed = baseline(&[
       ("mods/same.jar", "same"),
@@ -1334,10 +1358,17 @@ mod tests {
       ("mods/gone.jar", "gone"),
     ]);
 
-    // edited, switched off, deleted
+    // edited, switched off, deleted, and the mod the player added
+    assert_eq!(count_local_changes(&root, &installed).await.unwrap(), 4);
+    fs::remove_file(root.join("mods/mine.jar")).unwrap();
     assert_eq!(count_local_changes(&root, &installed).await.unwrap(), 3);
-    let clean = baseline(&[("mods/same.jar", "same")]);
-    assert_eq!(count_local_changes(&root, &clean).await.unwrap(), 0);
+    let clean = baseline(&[
+      ("mods/same.jar", "same"),
+      ("mods/edited.jar", "edited-by-player"),
+      ("mods/off.jar", "off"),
+    ]);
+    // `off.jar` still sits at the other variant than the baseline recorded.
+    assert_eq!(count_local_changes(&root, &clean).await.unwrap(), 1);
     let _ = fs::remove_dir_all(root);
   }
 
@@ -2052,7 +2083,8 @@ mod tests {
     let merged = String::from_utf8(prepared.merged_contents["config/a.toml"].clone()).unwrap();
     assert!(merged.contains("b=20") && merged.contains("i=99"));
     // The range survives the update, against the new installed content.
-    let update = ignores::plan_update(&root, &prepared, &contents, &BTreeMap::new()).unwrap();
+    let update =
+      ignores::plan_update(&root, &prepared, &remote, &contents, &BTreeMap::new()).unwrap();
     let entry = &update.to.files["config/a.toml"];
     assert_eq!(entry.base_sha1, key(&remote_text).sha1);
     assert_eq!(entry.regions, vec![ignores::Region { start: 1, end: 2 }]);
@@ -2079,8 +2111,46 @@ mod tests {
     assert_eq!(after.diff.changes.len(), 1);
     assert_eq!(after.diff.changes[0].kind, ChangeKind::Delete);
     // The file goes away, and its record with it.
-    let update = ignores::plan_update(&root, &after, &BTreeMap::new(), &BTreeMap::new()).unwrap();
+    let update =
+      ignores::plan_update(&root, &after, &remote, &BTreeMap::new(), &BTreeMap::new()).unwrap();
     assert!(update.from.files.contains_key("config/a.toml"));
     assert!(update.to.is_empty());
     let _ = fs::remove_dir_all(root);
-  }}
+  }
+
+  #[tokio::test]
+  async fn an_added_file_ignore_is_dropped_when_the_new_version_lists_the_file() {
+    let root = instance(&[
+      ("config/a.toml", "a=1\n"),
+      ("mods/mine.jar", "mine"),
+      ("mods/other.jar", "other"),
+    ]);
+    let installed = baseline(&[("config/a.toml", "a=1\n")]);
+    let current = crate::instance::modpack_update::release::Release::from_baseline(&installed, "1");
+    for path in ["mods/mine.jar", "mods/other.jar"] {
+      ignores::add_added(&root, &installed, &current, path).unwrap();
+    }
+
+    // The new version lists `mine.jar` as a first-install file only.
+    let mut next = remote(&[("config/a.toml", "a=1\n"), ("mods/mine.jar", "mine")]);
+    next.files[1].once = true;
+    let prepared = prepare_with_contents(&root, &installed, &next, &BTreeMap::new())
+      .await
+      .unwrap();
+    let choices = BTreeMap::new();
+    let update = ignores::plan_update(&root, &prepared, &next, &BTreeMap::new(), &choices).unwrap();
+    assert_eq!(
+      update.to.added.iter().cloned().collect::<Vec<_>>(),
+      vec!["mods/other.jar".to_string()]
+    );
+
+    // A version that lists neither keeps both records, so nothing is rewritten.
+    let same = remote(&[("config/a.toml", "a=1\n")]);
+    let prepared = prepare_with_contents(&root, &installed, &same, &BTreeMap::new())
+      .await
+      .unwrap();
+    let update = ignores::plan_update(&root, &prepared, &same, &BTreeMap::new(), &choices);
+    assert!(update.is_none());
+    let _ = fs::remove_dir_all(root);
+  }
+}

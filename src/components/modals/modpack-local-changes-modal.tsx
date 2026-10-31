@@ -4,7 +4,9 @@ import {
   Badge,
   Box,
   Button,
+  Collapse,
   HStack,
+  Icon,
   Modal,
   ModalBody,
   ModalCloseButton,
@@ -17,42 +19,99 @@ import {
   Text,
   Tooltip,
   VStack,
+  Wrap,
+  WrapItem,
+  useDisclosure,
 } from "@chakra-ui/react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { LuChevronDown, LuChevronRight } from "react-icons/lu";
 import { DiffFile, DiffHunks, regionHunk } from "@/components/common/diff-view";
+import TreeView, { TreeNode } from "@/components/common/tree-view";
 import { useLauncherConfig } from "@/contexts/config";
 import { useGlobalData } from "@/contexts/global-data";
 import { useSharedModals } from "@/contexts/shared-modal";
 import { useToast } from "@/contexts/toast";
 import {
+  ModpackChangeClass,
+  ModpackChangeDetail,
+  ModpackChangeDetailEntry,
   ModpackIgnoredItem,
-  ModpackLocalChange,
-  ModpackLocalChangeKind,
 } from "@/models/modpack-update";
 import { InvokeResponse } from "@/models/response";
 import { VustbAccount, isVustbManager } from "@/models/vustb";
 import { AccountService } from "@/services/account";
 import { ModpackUpdateService } from "@/services/modpack-update";
+import {
+  CLASS_ORDER,
+  ChangeTreeNode,
+  OPEN_LIMIT,
+  buildChangeTree,
+  countByClass,
+  countedTotal,
+  expandedDepth,
+  filterEntries,
+  revealPath,
+  splitByGroup,
+} from "@/utils/modpack-change-detail";
+import { formatByteSize } from "@/utils/string";
 
 interface ModpackLocalChangesModalProps extends Omit<ModalProps, "children"> {
   instanceId: string;
   instanceName: string;
 }
 
-const KIND_COLORS: Record<ModpackLocalChangeKind, string> = {
+const CLASS_COLORS: Record<ModpackChangeClass, string> = {
   modified: "orange",
   deleted: "red",
-  disabled: "gray",
-  enabled: "gray",
+  toggled: "gray",
+  onceChanged: "purple",
+  added: "green",
+  addedExcluded: "gray",
 };
 
-/** Beyond this many files, the diffs start folded. */
-const OPEN_LIMIT = 5;
+/** A titled section that folds, for the groups under the tree. */
+const ChangeGroup: React.FC<{
+  title: string;
+  tags?: React.ReactNode;
+  description: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}> = ({ title, tags, description, defaultOpen = false, children }) => {
+  const { isOpen, onToggle } = useDisclosure({ defaultIsOpen: defaultOpen });
+  return (
+    <VStack align="stretch" spacing={2}>
+      <HStack spacing={2}>
+        <HStack
+          as="button"
+          type="button"
+          spacing={1}
+          onClick={onToggle}
+          aria-expanded={isOpen}
+        >
+          <Icon as={isOpen ? LuChevronDown : LuChevronRight} />
+          <Text fontSize="xs-sm" fontWeight="medium">
+            {title}
+          </Text>
+        </HStack>
+        {tags}
+      </HStack>
+      <Collapse in={isOpen} animateOpacity={false}>
+        <VStack align="stretch" spacing={2}>
+          <Text fontSize="xs" className="secondary-text">
+            {description}
+          </Text>
+          {children}
+        </VStack>
+      </Collapse>
+    </VStack>
+  );
+};
 
 /**
- * What the player changed in the managed files since the modpack installed
- * them, as a diff against the install. A manager can go on to publish.
+ * What differs here from the release the instance last matched, grouped by
+ * directory and class (plan 《整合包本地改动明细》§5). A manager can go on to
+ * publish.
  */
 const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
   instanceId,
@@ -66,27 +125,32 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
   const { openSharedModal } = useSharedModals();
   const { modpackChecks, checkModpackUpdate } = useGlobalData();
 
-  const [changes, setChanges] = useState<ModpackLocalChange[] | null>(null);
+  const [detail, setDetail] = useState<ModpackChangeDetail | null>(null);
+  const [failed, setFailed] = useState(false);
   const [ignored, setIgnored] = useState<ModpackIgnoredItem[]>([]);
+  const [filter, setFilter] = useState<ModpackChangeClass | null>(null);
   const [busy, setBusy] = useState(false);
   const [vustbAccount, setVustbAccount] = useState<VustbAccount | null>(null);
 
   const load = useCallback(
     async (keepShown = false) => {
-      if (!keepShown) setChanges(null);
+      if (!keepShown) {
+        setDetail(null);
+        setFailed(false);
+      }
       const [response, ignores] = await Promise.all([
-        ModpackUpdateService.listModpackLocalChanges(instanceId),
+        ModpackUpdateService.listModpackChangeDetail(instanceId),
         ModpackUpdateService.listModpackIgnores(instanceId),
       ]);
       if (response.status === "success") {
-        setChanges(response.data);
+        setDetail(response.data);
       } else {
         toast({
           title: response.message,
           description: response.details,
           status: "error",
         });
-        setChanges([]);
+        if (!keepShown) setFailed(true);
       }
       if (ignores.status === "success") setIgnored(ignores.data);
     },
@@ -145,6 +209,24 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
     [instanceId, load, toast, checkModpackUpdate]
   );
 
+  const entries = useMemo(() => detail?.entries ?? [], [detail]);
+  const counts = useMemo(() => countByClass(entries), [entries]);
+  const shown = useMemo(
+    () => splitByGroup(filterEntries(entries, filter)),
+    [entries, filter]
+  );
+  // TreeView resets its expansion whenever `nodes` changes identity.
+  const tree = useMemo(() => {
+    const convert = (list: ChangeTreeNode[]): TreeNode<ChangeTreeNode>[] =>
+      list.map((node) => ({
+        id: node.path.toLowerCase(),
+        data: node,
+        children: convert(node.children),
+      }));
+    return convert(buildChangeTree(shown.main));
+  }, [shown.main]);
+  const openFiles = shown.main.length <= OPEN_LIMIT;
+
   const isManager = isVustbManager(vustbAccount);
   // Publishing goes on top of the latest version; behind it the platform
   // refuses, so the player updates first.
@@ -160,46 +242,250 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
     openSharedModal("publish-modpack", { instanceId, instanceName });
   };
 
-  const renderBody = (change: ModpackLocalChange) => {
-    if (change.kind !== "modified") {
-      return (
-        <Text fontSize="xs" className="secondary-text" px={3} py={2}>
-          {t(`ModpackLocalChangesModal.hint.${change.kind}`)}
-        </Text>
-      );
-    }
-    if (change.hunks && change.hunks.length > 0) {
-      return (
-        <DiffHunks
-          hunks={change.hunks}
-          renderEditAction={(edit) => (
-            <Button
-              size="xs"
-              variant="outline"
-              isDisabled={busy}
-              onClick={() =>
-                changeIgnores(() =>
-                  ModpackUpdateService.ignoreModpackLocalChange(
-                    instanceId,
-                    change.path,
-                    change.baseline.sha1,
-                    { start: edit.start, end: edit.end }
-                  )
-                )
-              }
-            >
-              {t("ModpackLocalChangesModal.ignore.spot")}
-            </Button>
-          )}
-        />
-      );
-    }
+  const ignoreFileButton = (entry: ModpackChangeDetailEntry) => {
+    const added = entry.class === "added" || entry.class === "addedExcluded";
+    const baseSha1 = entry.baseline?.sha1;
     return (
-      <Text fontSize="xs" className="secondary-text" px={3} py={2}>
-        {t(`ModpackLocalChangesModal.noDiff.${change.noDiff ?? "notText"}`)}
-      </Text>
+      <Tooltip
+        label={t(
+          added
+            ? "ModpackLocalChangesModal.ignore.addedHint"
+            : "ModpackLocalChangesModal.ignore.fileHint"
+        )}
+      >
+        <Button
+          size="xs"
+          variant="ghost"
+          isDisabled={busy || (!added && !baseSha1)}
+          onClick={() =>
+            changeIgnores(() =>
+              added
+                ? ModpackUpdateService.ignoreModpackAddedFile(
+                    instanceId,
+                    entry.path
+                  )
+                : ModpackUpdateService.ignoreModpackLocalChange(
+                    instanceId,
+                    entry.path,
+                    baseSha1 ?? ""
+                  )
+            )
+          }
+        >
+          {t(
+            added
+              ? "ModpackLocalChangesModal.ignore.added"
+              : "ModpackLocalChangesModal.ignore.file"
+          )}
+        </Button>
+      </Tooltip>
     );
   };
+
+  const renderBody = (entry: ModpackChangeDetailEntry) => {
+    const note = (text: string) => (
+      <Text fontSize="xs" className="secondary-text" px={3} py={2}>
+        {text}
+      </Text>
+    );
+    switch (entry.class) {
+      case "modified":
+        if (entry.hunks && entry.hunks.length > 0) {
+          const baseSha1 = entry.baseline?.sha1;
+          return (
+            <DiffHunks
+              hunks={entry.hunks}
+              renderEditAction={(edit) => (
+                <Tooltip label={t("ModpackLocalChangesModal.ignore.spotHint")}>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    isDisabled={busy || !baseSha1}
+                    onClick={() =>
+                      changeIgnores(() =>
+                        ModpackUpdateService.ignoreModpackLocalChange(
+                          instanceId,
+                          entry.path,
+                          baseSha1 ?? "",
+                          { start: edit.start, end: edit.end }
+                        )
+                      )
+                    }
+                  >
+                    {t("ModpackLocalChangesModal.ignore.spot")}
+                  </Button>
+                </Tooltip>
+              )}
+            />
+          );
+        }
+        return note(
+          t(`ModpackLocalChangesModal.noDiff.${entry.noDiff ?? "notText"}`)
+        );
+      case "added":
+      case "addedExcluded":
+        return entry.size !== undefined
+          ? note(
+              t("ModpackLocalChangesModal.hint.added", {
+                size: formatByteSize(entry.size),
+              })
+            )
+          : null;
+      default:
+        return note(t(`ModpackLocalChangesModal.hint.${entry.class}`));
+    }
+  };
+
+  const renderEntry = (entry: ModpackChangeDetailEntry, label: string) => {
+    const reveal = revealPath(entry);
+    return (
+      <Box opacity={entry.counted ? 1 : 0.75}>
+        <DiffFile
+          path={label}
+          hunks={entry.hunks}
+          defaultOpen={openFiles}
+          tags={
+            <>
+              <Badge colorScheme={CLASS_COLORS[entry.class]} flexShrink={0}>
+                {t(`ModpackLocalChangesModal.class.${entry.class}`)}
+              </Badge>
+              {entry.class === "modified" && entry.toggled && (
+                <Badge flexShrink={0}>
+                  {t("ModpackLocalChangesModal.toggledTag")}
+                </Badge>
+              )}
+              {entry.disabled && (
+                <Badge flexShrink={0}>
+                  {t("ModpackLocalChangesModal.disabled")}
+                </Badge>
+              )}
+              {!entry.counted && (
+                <Badge variant="outline" flexShrink={0}>
+                  {t("ModpackLocalChangesModal.notCounted")}
+                </Badge>
+              )}
+            </>
+          }
+          actions={
+            <>
+              {reveal && (
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  onClick={() => revealFile(reveal)}
+                >
+                  {t("UpdateModpackModal.choice.revealFile")}
+                </Button>
+              )}
+              {entry.class !== "onceChanged" && ignoreFileButton(entry)}
+            </>
+          }
+        >
+          {renderBody(entry)}
+        </DiffFile>
+      </Box>
+    );
+  };
+
+  const renderIgnored = (item: ModpackIgnoredItem) => (
+    <DiffFile
+      key={item.path}
+      path={item.path}
+      defaultOpen={false}
+      tags={
+        <Badge flexShrink={0}>
+          {item.added
+            ? t("ModpackLocalChangesModal.ignored.addedFile")
+            : item.whole
+              ? t("ModpackLocalChangesModal.ignored.wholeFile")
+              : t("ModpackLocalChangesModal.ignored.spots", {
+                  count: item.regions.length,
+                })}
+        </Badge>
+      }
+      actions={
+        <Tooltip
+          label={t(
+            item.added
+              ? "ModpackLocalChangesModal.ignored.undoAddedHint"
+              : "ModpackLocalChangesModal.ignored.undoAllHint"
+          )}
+        >
+          <Button
+            size="xs"
+            variant="ghost"
+            isDisabled={busy}
+            onClick={() =>
+              changeIgnores(() =>
+                ModpackUpdateService.unignoreModpackLocalChange(
+                  instanceId,
+                  item.path
+                )
+              )
+            }
+          >
+            {t(
+              item.added
+                ? "ModpackLocalChangesModal.ignored.undo"
+                : "ModpackLocalChangesModal.ignored.undoAll"
+            )}
+          </Button>
+        </Tooltip>
+      }
+    >
+      {!item.whole && item.regions.length > 0 && (
+        <VStack align="stretch" spacing={0}>
+          {item.regions.map((region, index) => (
+            <Box
+              key={`${region.start}-${region.end}`}
+              borderTopWidth={index > 0 ? "1px" : 0}
+            >
+              <HStack justify="space-between" px={3} py={1.5} spacing={2}>
+                <Text fontSize="xs" className="secondary-text">
+                  {t("ModpackLocalChangesModal.ignored.lines", {
+                    from: region.start + 1,
+                    to: Math.max(region.end, region.start + 1),
+                  })}
+                </Text>
+                <Tooltip label={t("ModpackLocalChangesModal.ignored.undoHint")}>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    isDisabled={busy}
+                    onClick={() =>
+                      changeIgnores(() =>
+                        ModpackUpdateService.unignoreModpackLocalChange(
+                          instanceId,
+                          item.path,
+                          { start: region.start, end: region.end }
+                        )
+                      )
+                    }
+                  >
+                    {t("ModpackLocalChangesModal.ignored.undo")}
+                  </Button>
+                </Tooltip>
+              </HStack>
+              <DiffHunks
+                hideHunkHeaders
+                hunks={[
+                  regionHunk(
+                    region.start + 1,
+                    region.baseLines,
+                    region.localLines
+                  ),
+                ]}
+              />
+            </Box>
+          ))}
+        </VStack>
+      )}
+    </DiffFile>
+  );
+
+  const showExcluded =
+    shown.excluded.length > 0 &&
+    (filter === null || filter === "addedExcluded");
 
   return (
     <Modal
@@ -215,176 +501,131 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
         </ModalHeader>
         <ModalCloseButton />
         <ModalBody>
-          {changes === null ? (
-            <VStack py={6} spacing={2}>
-              <Spinner size="sm" />
-              <Text fontSize="xs" className="secondary-text">
-                {t("ModpackLocalChangesModal.loading")}
-              </Text>
-            </VStack>
-          ) : changes.length === 0 ? (
-            <Text className="secondary-text">
-              {t("ModpackLocalChangesModal.empty")}
-            </Text>
+          {detail === null ? (
+            failed ? null : (
+              <VStack py={6} spacing={2}>
+                <Spinner size="sm" />
+                <Text fontSize="xs" className="secondary-text">
+                  {t("ModpackLocalChangesModal.loading")}
+                </Text>
+              </VStack>
+            )
           ) : (
             <VStack align="stretch" spacing={3}>
-              <Text fontSize="xs-sm">
-                {t("ModpackLocalChangesModal.summary", {
-                  count: changes.length,
-                })}
-              </Text>
-              {changes.map((change) => (
-                <DiffFile
-                  key={change.path}
-                  path={change.path}
-                  hunks={change.hunks}
-                  defaultOpen={changes.length <= OPEN_LIMIT}
-                  tags={
-                    <Badge
-                      colorScheme={KIND_COLORS[change.kind]}
-                      flexShrink={0}
-                    >
-                      {t(`ModpackLocalChangesModal.kind.${change.kind}`)}
-                    </Badge>
-                  }
-                  actions={
-                    <>
-                      {change.kind !== "deleted" && (
-                        <Button
-                          size="xs"
-                          variant="ghost"
-                          onClick={() =>
-                            revealFile(
-                              change.kind === "disabled"
-                                ? `${change.path}.disabled`
-                                : change.path
-                            )
-                          }
-                        >
-                          {t("UpdateModpackModal.choice.revealFile")}
-                        </Button>
-                      )}
-                      <Button
-                        size="xs"
-                        variant="ghost"
-                        isDisabled={busy}
-                        onClick={() =>
-                          changeIgnores(() =>
-                            ModpackUpdateService.ignoreModpackLocalChange(
-                              instanceId,
-                              change.path,
-                              change.baseline.sha1
-                            )
-                          )
-                        }
-                      >
-                        {t("ModpackLocalChangesModal.ignore.file")}
-                      </Button>
-                    </>
-                  }
-                >
-                  {renderBody(change)}
-                </DiffFile>
-              ))}
-            </VStack>
-          )}
-          {changes !== null && ignored.length > 0 && (
-            <VStack align="stretch" spacing={2} mt={4}>
-              <Text fontSize="xs-sm" fontWeight="medium">
-                {t("ModpackLocalChangesModal.ignored.title", {
-                  count: ignored.length,
-                })}
-              </Text>
-              <Text fontSize="xs" className="secondary-text">
-                {t("ModpackLocalChangesModal.ignored.description")}
-              </Text>
-              {ignored.map((item) => (
-                <DiffFile
-                  key={item.path}
-                  path={item.path}
-                  defaultOpen={false}
-                  tags={
-                    <Badge flexShrink={0}>
-                      {item.whole
-                        ? t("ModpackLocalChangesModal.ignored.wholeFile")
-                        : t("ModpackLocalChangesModal.ignored.spots", {
-                            count: item.regions.length,
-                          })}
-                    </Badge>
-                  }
-                  actions={
-                    <Button
-                      size="xs"
-                      variant="ghost"
-                      isDisabled={busy}
-                      onClick={() =>
-                        changeIgnores(() =>
-                          ModpackUpdateService.unignoreModpackLocalChange(
-                            instanceId,
-                            item.path
-                          )
-                        )
-                      }
-                    >
-                      {t("ModpackLocalChangesModal.ignored.undoAll")}
-                    </Button>
-                  }
-                >
-                  {!item.whole && (
-                    <VStack align="stretch" spacing={0}>
-                      {item.regions.map((region, index) => (
-                        <Box
-                          key={`${region.start}-${region.end}`}
-                          borderTopWidth={index > 0 ? "1px" : 0}
-                        >
-                          <HStack
-                            justify="space-between"
-                            px={3}
-                            py={1.5}
-                            spacing={2}
-                          >
-                            <Text fontSize="xs" className="secondary-text">
-                              {t("ModpackLocalChangesModal.ignored.lines", {
-                                from: region.start + 1,
-                                to: Math.max(region.end, region.start + 1),
-                              })}
-                            </Text>
+              <VStack align="stretch" spacing={1}>
+                <Text fontSize="xs" className="secondary-text">
+                  {t("ModpackLocalChangesModal.comparedTo", {
+                    label: detail.label,
+                  })}
+                </Text>
+                {detail.incomplete && (
+                  <Alert status="warning" fontSize="xs-sm">
+                    <AlertIcon />
+                    {t("ModpackLocalChangesModal.incomplete")}
+                  </Alert>
+                )}
+                {entries.length === 0 ? (
+                  <Text className="secondary-text">
+                    {t("ModpackLocalChangesModal.empty")}
+                  </Text>
+                ) : (
+                  <>
+                    <Text fontSize="xs-sm">
+                      {t("ModpackLocalChangesModal.summary", {
+                        count: countedTotal(entries),
+                      })}
+                    </Text>
+                    <Wrap spacing={1.5} pt={1}>
+                      {CLASS_ORDER.filter((name) => counts[name] > 0).map(
+                        (name) => (
+                          <WrapItem key={name}>
                             <Button
                               size="xs"
-                              variant="outline"
-                              isDisabled={busy}
+                              colorScheme={CLASS_COLORS[name]}
+                              variant={filter === name ? "solid" : "outline"}
+                              aria-pressed={filter === name}
                               onClick={() =>
-                                changeIgnores(() =>
-                                  ModpackUpdateService.unignoreModpackLocalChange(
-                                    instanceId,
-                                    item.path,
-                                    { start: region.start, end: region.end }
-                                  )
+                                setFilter((prev) =>
+                                  prev === name ? null : name
                                 )
                               }
                             >
-                              {t("ModpackLocalChangesModal.ignored.undo")}
+                              {t(`ModpackLocalChangesModal.class.${name}`)}{" "}
+                              {counts[name]}
                             </Button>
-                          </HStack>
-                          <DiffHunks
-                            hideHunkHeaders
-                            hunks={[
-                              regionHunk(
-                                region.start + 1,
-                                region.baseLines,
-                                region.localLines
-                              ),
-                            ]}
-                          />
-                        </Box>
-                      ))}
-                    </VStack>
+                          </WrapItem>
+                        )
+                      )}
+                    </Wrap>
+                    <Text fontSize="xs" className="secondary-text">
+                      {t("ModpackLocalChangesModal.filterHint")}{" "}
+                      {t("ModpackLocalChangesModal.countingRule")}
+                    </Text>
+                  </>
+                )}
+              </VStack>
+              {tree.length > 0 && (
+                <TreeView
+                  nodes={tree}
+                  defaultExpandedDepth={expandedDepth(shown.main.length)}
+                  renderNode={({ node: { data } }) =>
+                    data.entry ? (
+                      renderEntry(data.entry, data.name)
+                    ) : (
+                      <HStack spacing={2}>
+                        <Text fontSize="xs-sm" fontWeight="medium">
+                          {data.name}
+                        </Text>
+                        <Badge flexShrink={0}>{data.count}</Badge>
+                      </HStack>
+                    )
+                  }
+                />
+              )}
+              {showExcluded && (
+                <ChangeGroup
+                  key={`excluded-${filter}`}
+                  title={t("ModpackLocalChangesModal.excluded.title", {
+                    count: shown.excluded.length,
+                  })}
+                  description={t(
+                    "ModpackLocalChangesModal.excluded.description"
                   )}
-                </DiffFile>
-              ))}
+                  defaultOpen={filter === "addedExcluded"}
+                >
+                  {shown.excluded.map((entry) => (
+                    <Box key={entry.path}>{renderEntry(entry, entry.path)}</Box>
+                  ))}
+                </ChangeGroup>
+              )}
             </VStack>
           )}
-          {behind && isManager && changes && changes.length > 0 && (
+          {detail !== null && ignored.length > 0 && (
+            <Box mt={4}>
+              <ChangeGroup
+                title={t("ModpackLocalChangesModal.ignored.title", {
+                  count: ignored.length,
+                })}
+                tags={
+                  isManager && (
+                    <Tooltip
+                      label={t(
+                        "ModpackLocalChangesModal.ignored.stillPublishedHint"
+                      )}
+                    >
+                      <Badge colorScheme="orange" flexShrink={0}>
+                        {t("ModpackLocalChangesModal.ignored.stillPublished")}
+                      </Badge>
+                    </Tooltip>
+                  )
+                }
+                description={t("ModpackLocalChangesModal.ignored.description")}
+              >
+                {ignored.map(renderIgnored)}
+              </ChangeGroup>
+            </Box>
+          )}
+          {behind && isManager && entries.length > 0 && (
             <Alert status="info" mt={3} fontSize="xs-sm">
               <AlertIcon />
               {t("ModpackLocalChangesModal.publishHint.updateFirst")}
@@ -400,9 +641,7 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
             <Box>
               <Button
                 colorScheme={primaryColor}
-                isDisabled={
-                  !!publishBlocker || !changes || changes.length === 0
-                }
+                isDisabled={!!publishBlocker || entries.length === 0}
                 onClick={openPublish}
               >
                 {t("ModpackLocalChangesModal.button.publish")}

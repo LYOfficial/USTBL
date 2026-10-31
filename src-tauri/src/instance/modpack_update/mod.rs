@@ -1,4 +1,5 @@
 pub mod apply;
+pub mod changes;
 pub mod commands;
 pub mod decide;
 pub mod diff;
@@ -9,6 +10,7 @@ pub mod notice;
 pub mod packs;
 pub mod plan;
 pub mod plan_cache;
+pub mod release;
 pub mod remote;
 pub mod restore;
 pub mod sources;

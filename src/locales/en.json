@@ -3234,7 +3234,15 @@
       "disabled": "Disabled",
       "missing": "No longer on disk",
       "conflict": "Both the enabled and disabled file exist",
-      "toggle": "{{name}}: currently {{state}}, click to change to {{next}}"
+      "toggle": "{{name}}: currently {{state}}, click to change to {{next}}",
+      "hint": {
+        "include": "Ships with this version and is managed by the modpack: installed where missing, updated to this version where present. Player edits are merged, and a conflict is shown when they cannot be.",
+        "ignore": "This version leaves the file alone: players keep what they have, and players without it do not get it.",
+        "delete": "Players' files at this path are deleted (for a folder, the files under it), including files players added themselves. They are backed up first and can be rolled back.",
+        "remove": "This version no longer includes it: deleted for players who did not change it, asked about on update for players who did, and left alone where the modpack does not manage it.",
+        "mixed": "Files under it have different states."
+      },
+      "clickTo": "Click to change to {{next}}"
     },
     "skipped": "{{count}} launcher file(s) were left out",
     "adoption": {
@@ -3286,7 +3294,7 @@
       "needsRepair": "This instance cannot be compared for updates until it is repaired",
       "unknown": "Could not get update information. Try again later",
       "waitingLoader": "Waiting for the mod loader to finish installing before checking for updates",
-      "localChanges": "You changed {{count}} file(s) managed by the modpack; the update will ask about each"
+      "localChanges": "Local changes: {{count}}"
     },
     "label": {
       "current": "Current version: {{current}}"
@@ -3363,18 +3371,28 @@
       "title": "Local changes: {{name}}"
     },
     "loading": "Comparing local files…",
-    "empty": "All files managed by the modpack match the install",
-    "summary": "{{count}} files managed by the modpack differ from the install. Contents are compared after normalization; files that only differ in line endings or timestamps are not counted.",
-    "kind": {
+    "empty": "No changes since the previous release",
+    "comparedTo": "Compared with: {{label}}",
+    "summary": "Local changes: {{count}}",
+    "countingRule": "Counted as local changes: modified and deleted files, files whose enabled state differs, and new files under mods, resourcepacks and shaderpacks. New files elsewhere, changes to first-install-only files and new files that will not be published are listed but not counted. Contents are compared after normalization; differences only in line endings or timestamps do not count.",
+    "filterHint": "Click a category to show only it; click it again to clear.",
+    "incomplete": "Incomplete: the previous release's file list could not be loaded, so this compares with the install record only. New files and enabled-state changes may be missing.",
+    "class": {
       "modified": "Modified",
       "deleted": "Deleted",
-      "disabled": "Disabled",
-      "enabled": "Enabled"
+      "toggled": "Enabled state changed",
+      "onceChanged": "First-install change",
+      "added": "New",
+      "addedExcluded": "New (not published)"
     },
+    "notCounted": "Not counted",
+    "disabled": "Disabled",
+    "toggledTag": "Enabled state also differs",
     "hint": {
       "deleted": "This file was deleted locally",
-      "disabled": "This file was disabled locally (.disabled)",
-      "enabled": "This file was enabled again locally"
+      "toggled": "Enabled or disabled differently from the previous release",
+      "onceChanged": "A first-install-only file: the change only affects players who install fresh and is not counted as a local change",
+      "added": "Not in the previous release. Size: {{size}}"
     },
     "noDiff": {
       "notText": "Not a text file or too large; contents are not compared",
@@ -3386,16 +3404,30 @@
     },
     "ignore": {
       "spot": "Ignore this spot",
-      "file": "Ignore whole file"
+      "file": "Ignore whole file",
+      "added": "Ignore",
+      "spotHint": "This change is no longer shown or counted as a local change. Updates keep your content here; if the new version also changes this spot, you are still asked, with yours kept by default. Publishing is not affected.",
+      "fileHint": "This file's changes are no longer shown or counted as local changes. Updates run as usual and conflicts are still shown; if a new version no longer includes the file, it is deleted without asking. Publishing is not affected.",
+      "addedHint": "This file is no longer shown as new or counted as a local change. Updates run as usual; this ignore does not change them. Publishing is not affected: whether the file ships is still chosen in the publish dialog."
+    },
+    "excluded": {
+      "title": "New, not published ({{count}})",
+      "description": "These files are not in the previous release, and a publish rule or the suggested blacklist leaves them out, so publishing skips them by default. They are not counted as local changes."
     },
     "ignored": {
-      "title": "Ignored ({{count}} files)",
-      "description": "Ignored changes do not count as local changes. Updates keep your content; if the new version also changes the same spot, you are still asked to choose (your version is kept by default).",
+      "title": "Ignored ({{count}})",
+      "description": "Ignored items are not shown above and not counted as local changes. Updates keep your content in ignored changes; if the new version also changes the same spot, you are still asked (yours is kept by default). Ignoring a new file only affects what is shown and counted.",
       "wholeFile": "Whole file",
       "spots": "Spots: {{count}}",
       "lines": "Lines {{from}}–{{to}}",
       "undo": "Undo",
-      "undoAll": "Undo all"
+      "undoAll": "Undo all",
+      "stillPublished": "Still published",
+      "stillPublishedHint": "Ignoring does not affect publishing: these files and changes still ship according to their state in the publish dialog, where you choose what to include.",
+      "addedFile": "New file",
+      "undoHint": "Undo this ignore: it is shown and counted again (unless its category is not counted), and updates no longer treat it as ignored.",
+      "undoAllHint": "Undo every ignore on this file: it is shown and counted again (unless its category is not counted), and updates no longer treat it as ignored.",
+      "undoAddedHint": "Undo the ignore: the file is shown as new again, and counted again if it is under mods, resourcepacks or shaderpacks."
     },
     "publishHint": {
       "noPermission": "Publishing requires campus modpack management permission",

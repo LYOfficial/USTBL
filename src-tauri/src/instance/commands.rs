@@ -1404,6 +1404,15 @@ pub async fn create_instance(
       .save(&version_path)
       .await
       .map_err(|_| InstanceError::FileCreationFailed)?;
+    crate::instance::modpack_update::release::write(
+      &version_path,
+      &crate::instance::modpack_update::release::Release::from_baseline(
+        &baseline,
+        origin.version_id.clone(),
+      ),
+    )
+    .await
+    .map_err(|_| InstanceError::FileCreationFailed)?;
     let files = baseline.files.clone();
     tokio::task::spawn_blocking({
       let version_path = version_path.clone();
