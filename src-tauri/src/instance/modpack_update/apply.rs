@@ -28,7 +28,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
@@ -549,6 +549,63 @@ fn extract_entry_from(
   Ok(())
 }
 
+/// How many override files one archive unit extracts at most, and how many
+/// bytes. Bounds how long a unit runs without reporting progress or noticing a
+/// cancel.
+const ARCHIVE_UNIT_FILES: usize = 64;
+const ARCHIVE_UNIT_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Extract `entries` of one archive through a single open `ZipArchive`,
+/// checking `stop` before each file.
+fn extract_entries(
+  archive: &Path,
+  entries: Vec<(String, PathBuf, FileKey)>,
+  stop: &AtomicBool,
+) -> USTBLResult<()> {
+  let mut zip = zip::ZipArchive::new(fs::File::open(archive).at(archive).map_err(io_error)?)?;
+  for (entry, dest, key) in entries {
+    if stop.load(Ordering::SeqCst) {
+      return Err(cancelled_error());
+    }
+    extract_entry_from(&mut zip, &entry, &dest, &key)?;
+  }
+  Ok(())
+}
+
+/// Run [`extract_entries`] on the blocking pool. A cancel stops it before the
+/// next file; the unit is still awaited, because a blocking extractor cannot be
+/// aborted while a retry or discard starts using the staging.
+async fn extract_archive_unit(
+  env: &dyn UpdateEnv,
+  archive: &Path,
+  files: &[(&RemoteFile, PathBuf)],
+) -> USTBLResult<()> {
+  let entries: Vec<(String, PathBuf, FileKey)> = files
+    .iter()
+    .filter_map(|(file, dest)| match &file.source {
+      FileSource::ArchiveEntry { entry, .. } => {
+        Some((entry.clone(), dest.clone(), file.key.clone()))
+      }
+      _ => None,
+    })
+    .collect();
+  let stop = Arc::new(AtomicBool::new(false));
+  let archive = archive.to_path_buf();
+  let worker = tokio::task::spawn_blocking({
+    let stop = stop.clone();
+    move || extract_entries(&archive, entries, &stop)
+  });
+  tokio::pin!(worker);
+  let joined = tokio::select! {
+    joined = &mut worker => joined,
+    () = env.cancelled() => {
+      stop.store(true, Ordering::SeqCst);
+      worker.await
+    }
+  };
+  joined.map_err(|e| crate::error::USTBLError(e.to_string()))?
+}
+
 /// Tell every pack session which of its files are about to be fetched, so it
 /// can locate just those.
 pub async fn prepare_packs(files: &[&RemoteFile]) -> USTBLResult<()> {
@@ -656,11 +713,13 @@ pub async fn materialize_remote_file(
   stage_file(env, dest, file).await
 }
 
-/// One unit of fetch work: a single file from a download or an archive, or
-/// one group of pack entries a single merged Range request can cover. A
-/// group of one file is read on its own.
+/// One unit of fetch work: a single downloaded file, a batch of entries of one
+/// archive (extracted with a single open archive), or one group of pack
+/// entries a single merged Range request can cover. A group of one file is
+/// read on its own.
 enum FetchUnit<'a> {
   Single(&'a RemoteFile, PathBuf),
+  Archive(PathBuf, Vec<(&'a RemoteFile, PathBuf)>),
   Group(Arc<PackSession>, FetchGroup),
 }
 
@@ -668,9 +727,48 @@ impl FetchUnit<'_> {
   fn file_count(&self) -> usize {
     match self {
       FetchUnit::Single(..) => 1,
+      FetchUnit::Archive(_, files) => files.len(),
       FetchUnit::Group(_, group) => group.file_count(),
     }
   }
+}
+
+/// The archive entries of `to_fetch`, batched per archive in order of
+/// appearance and cut at [`ARCHIVE_UNIT_FILES`] files or [`ARCHIVE_UNIT_BYTES`]
+/// bytes.
+fn archive_units<'a>(to_fetch: &[(&'a RemoteFile, PathBuf)]) -> Vec<FetchUnit<'a>> {
+  let mut per_archive: Vec<(PathBuf, Vec<(&'a RemoteFile, PathBuf)>)> = Vec::new();
+  for (file, dest) in to_fetch {
+    let FileSource::ArchiveEntry { archive, .. } = &file.source else {
+      continue;
+    };
+    match per_archive.iter_mut().find(|(known, _)| known == archive) {
+      Some((_, files)) => files.push((file, dest.clone())),
+      None => per_archive.push((archive.clone(), vec![(file, dest.clone())])),
+    }
+  }
+  let mut units = Vec::new();
+  for (archive, files) in per_archive {
+    let mut batch: Vec<(&'a RemoteFile, PathBuf)> = Vec::new();
+    let mut bytes = 0u64;
+    for item in files {
+      if !batch.is_empty()
+        && (batch.len() >= ARCHIVE_UNIT_FILES || bytes + item.0.key.size > ARCHIVE_UNIT_BYTES)
+      {
+        units.push(FetchUnit::Archive(
+          archive.clone(),
+          std::mem::take(&mut batch),
+        ));
+        bytes = 0;
+      }
+      bytes += item.0.key.size;
+      batch.push(item);
+    }
+    if !batch.is_empty() {
+      units.push(FetchUnit::Archive(archive, batch));
+    }
+  }
+  units
 }
 
 /// Group `to_fetch` into fetch units. Every pack file goes to its session's
@@ -683,10 +781,11 @@ fn fetch_units<'a>(
 ) -> Vec<FetchUnit<'a>> {
   let mut units: Vec<FetchUnit<'a>> = Vec::new();
   for (file, dest) in to_fetch {
-    if !matches!(file.source, FileSource::Pack(_)) {
+    if matches!(file.source, FileSource::Download(_)) {
       units.push(FetchUnit::Single(file, dest.clone()));
     }
   }
+  units.extend(archive_units(to_fetch));
   for (session, groups) in planned {
     for group in groups {
       units.push(FetchUnit::Group(session.clone(), group));
@@ -1010,11 +1109,13 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
       let files = unit.file_count();
       let bytes = match &unit {
         FetchUnit::Single(file, _) => file.key.size,
+        FetchUnit::Archive(_, files) => files.iter().map(|(file, _)| file.key.size).sum(),
         FetchUnit::Group(_, group) => group.entries.iter().map(|file| file.entry.size).sum(),
       };
       running.push(async move {
         let result = match &unit {
           FetchUnit::Single(file, dest) => stage_file(env, dest.clone(), file).await,
+          FetchUnit::Archive(archive, files) => extract_archive_unit(env, archive, files).await,
           FetchUnit::Group(session, group) => {
             session.fetch_group(group).await?;
             let entries = group.entries.clone();
@@ -1991,6 +2092,134 @@ mod tests {
     assert!(!staging_dir(&root.0).join("mods/a.jar").exists());
   }
 
+  fn archive_files(archive: &Path, count: usize) -> Vec<RemoteFile> {
+    let mut zip = zip::ZipWriter::new(fs::File::create(archive).unwrap());
+    let mut files = Vec::new();
+    for index in 0..count {
+      let (entry, content) = (
+        format!("overrides/config/{index}.toml"),
+        format!("v{index}"),
+      );
+      zip
+        .start_file(&entry, zip::write::SimpleFileOptions::default())
+        .unwrap();
+      zip.write_all(content.as_bytes()).unwrap();
+      files.push(RemoteFile {
+        path: format!("config/{index}.toml"),
+        key: sha1_of(content.as_bytes()),
+        source: FileSource::ArchiveEntry {
+          archive: archive.to_path_buf(),
+          entry,
+        },
+        disabled: false,
+        once: false,
+      });
+    }
+    zip.finish().unwrap();
+    files
+  }
+
+  #[test]
+  fn archive_entries_are_batched_per_archive_and_cut_by_count_and_bytes() {
+    let root = Root::new();
+    let (first, second) = (root.0.join("a.zip"), root.0.join("b.zip"));
+    let mut files = archive_files(&first, ARCHIVE_UNIT_FILES * 2 + 1);
+    files.extend(archive_files(&second, 2));
+    let to_fetch: Vec<(&RemoteFile, PathBuf)> = files.iter().map(|f| (f, PathBuf::new())).collect();
+
+    let sizes: Vec<(PathBuf, usize)> = archive_units(&to_fetch)
+      .into_iter()
+      .map(|unit| match unit {
+        FetchUnit::Archive(archive, files) => (archive, files.len()),
+        _ => panic!("only archive units"),
+      })
+      .collect();
+    assert_eq!(
+      sizes,
+      vec![
+        (first.clone(), ARCHIVE_UNIT_FILES),
+        (first.clone(), ARCHIVE_UNIT_FILES),
+        (first, 1),
+        (second, 2),
+      ]
+    );
+
+    let mut big = archive_files(&root.0.join("c.zip"), 3);
+    for file in &mut big {
+      file.key.size = ARCHIVE_UNIT_BYTES / 2 + 1;
+    }
+    let to_fetch: Vec<(&RemoteFile, PathBuf)> = big.iter().map(|f| (f, PathBuf::new())).collect();
+    let counts: Vec<usize> = archive_units(&to_fetch)
+      .iter()
+      .map(FetchUnit::file_count)
+      .collect();
+    assert_eq!(counts, vec![1, 1, 1]);
+  }
+
+  #[tokio::test]
+  async fn many_archive_entries_are_applied_across_unit_boundaries() {
+    let root = setup();
+    let archive = root.0.join("pack.zip");
+    let files = archive_files(&archive, ARCHIVE_UNIT_FILES + 6);
+    let env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let operations: Vec<Operation> = files.iter().map(write_op).collect();
+
+    apply(&env, request(&root, files, operations, "0.15.0"))
+      .await
+      .unwrap();
+
+    for index in [
+      0,
+      ARCHIVE_UNIT_FILES - 1,
+      ARCHIVE_UNIT_FILES,
+      ARCHIVE_UNIT_FILES + 5,
+    ] {
+      assert_eq!(
+        root.read(&format!("config/{index}.toml")),
+        Some(format!("v{index}"))
+      );
+    }
+    let progress = env.progress.lock().unwrap();
+    let fetching: Vec<usize> = progress
+      .iter()
+      .filter(|p| matches!(p.stage, Stage::Fetching))
+      .map(|p| p.done)
+      .collect();
+    assert!(fetching.windows(2).all(|pair| pair[0] <= pair[1]));
+    assert_eq!(fetching.last(), Some(&(ARCHIVE_UNIT_FILES + 6)));
+  }
+
+  #[test]
+  fn a_stopped_archive_unit_extracts_nothing_more() {
+    let root = Root::new();
+    let archive = root.0.join("pack.zip");
+    let files = archive_files(&archive, 3);
+    let entries = |dir: &str| -> Vec<(String, PathBuf, FileKey)> {
+      files
+        .iter()
+        .map(|file| match &file.source {
+          FileSource::ArchiveEntry { entry, .. } => (
+            entry.clone(),
+            root.0.join(dir).join(&file.path),
+            file.key.clone(),
+          ),
+          _ => unreachable!(),
+        })
+        .collect()
+    };
+
+    let stop = AtomicBool::new(true);
+    let error = extract_entries(&archive, entries("stopped"), &stop).unwrap_err();
+    assert_eq!(error.0, cancelled_error().0);
+    assert!(!root.0.join("stopped/config/0.toml").exists());
+
+    stop.store(false, Ordering::SeqCst);
+    extract_entries(&archive, entries("done"), &stop).unwrap();
+    assert!(root.0.join("done/config/2.toml").is_file());
+  }
   #[tokio::test]
   async fn corrupt_archive_entries_are_rejected_while_extracting() {
     let root = setup();

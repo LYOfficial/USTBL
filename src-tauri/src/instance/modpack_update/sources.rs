@@ -483,9 +483,12 @@ pub fn write_remote_cache(root: &Path, cache: &RemoteCache) -> std::io::Result<(
   fs::rename(temp, path)
 }
 
-/// SHA-1 and size of one archive entry, streamed.
-pub fn hash_archive_entry(archive: &Path, entry: &str) -> USTBLResult<FileKey> {
-  let mut zip = zip::ZipArchive::new(File::open(archive).at(archive)?)?;
+/// SHA-1 and size of one entry of an open archive, streamed.
+fn hash_zip_entry(
+  zip: &mut zip::ZipArchive<File>,
+  archive: &Path,
+  entry: &str,
+) -> USTBLResult<FileKey> {
   let mut source = zip.by_name(entry)?;
   let mut hasher = Sha1::new();
   let mut buffer = vec![0u8; 64 * 1024];
@@ -616,11 +619,13 @@ pub async fn remote_from_archive(
   let overrides = tokio::task::spawn_blocking(move || -> USTBLResult<Vec<RemoteFile>> {
     let file = File::open(&archive_path)?;
     let entries = list_override_entries(&file, &overrides_paths, &name)?;
+    // One open archive for every entry, not one per entry.
+    let mut zip = zip::ZipArchive::new(file)?;
     entries
       .into_iter()
       .map(|(path, entry)| {
         Ok(RemoteFile {
-          key: hash_archive_entry(&archive_path, &entry)?,
+          key: hash_zip_entry(&mut zip, &archive_path, &entry)?,
           path,
           source: FileSource::ArchiveEntry {
             archive: archive_path.clone(),
@@ -1632,7 +1637,9 @@ mod tests {
       zip.write_all(b"hello").unwrap();
       zip.finish().unwrap();
     }
-    let key = hash_archive_entry(&path, "overrides/a.txt").unwrap();
+    let mut zip = zip::ZipArchive::new(File::open(&path).unwrap()).unwrap();
+    let key = hash_zip_entry(&mut zip, &path, "overrides/a.txt").unwrap();
+    drop(zip);
     let _ = fs::remove_file(&path);
     assert_eq!(key.size, 5);
     assert_eq!(key.sha1, "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d");
