@@ -6,7 +6,7 @@
 //! folder instead of being deleted. If anything fails, or the launcher dies
 //! half way, the journal is enough to put every file back.
 
-use super::diff::{Operation, DISABLED_SUFFIX};
+use super::diff::{FileKey, Operation, DISABLED_SUFFIX};
 use super::packs::{FetchGroup, PackFetch, PackSession};
 use super::remote::{ComponentPack, FileSource, RemoteFile, RemoteModpack, UPDATE_DIR};
 use crate::error::USTBLResult;
@@ -23,6 +23,7 @@ use crate::tasks::download::DownloadParam;
 use async_trait::async_trait;
 use futures::stream::{FuturesUnordered, StreamExt};
 use serde::{Deserialize, Serialize};
+use sha1::{Digest, Sha1};
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io;
@@ -176,7 +177,9 @@ pub trait UpdateEnv: Send + Sync {
   fn ensure_not_running(&self) -> USTBLResult<()> {
     Ok(())
   }
-  /// Download `param.src` to `param.dest`. The engine verifies the result itself.
+  /// Download `param.src` to `param.dest`. When `param.sha1` is set the
+  /// download must verify it and fail otherwise (`DownloadTask` does); the
+  /// engine then only checks the size.
   async fn fetch(&self, param: DownloadParam) -> USTBLResult<()>;
   /// Switch the instance to another loader version. Runs after the journal is
   /// written, so the instance files it rewrites are restored on failure.
@@ -495,14 +498,54 @@ fn recover_locked(root: &Path) -> USTBLResult<Recovery> {
   }
 }
 
-fn extract_entry(archive: &Path, entry: &str, dest: &Path) -> USTBLResult<()> {
+/// Writes through to `inner` while hashing what passes.
+struct HashingWriter<W> {
+  inner: W,
+  hasher: Sha1,
+  size: u64,
+}
+
+impl<W: io::Write> io::Write for HashingWriter<W> {
+  fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    let written = self.inner.write(buf)?;
+    self.hasher.update(&buf[..written]);
+    self.size += written as u64;
+    Ok(written)
+  }
+
+  fn flush(&mut self) -> io::Result<()> {
+    self.inner.flush()
+  }
+}
+
+/// Extract `entry` to `dest`, hashing it on the way out. A file that does not
+/// match `key` is removed and rejected.
+fn extract_entry(archive: &Path, entry: &str, dest: &Path, key: &FileKey) -> USTBLResult<()> {
   let mut zip = zip::ZipArchive::new(fs::File::open(archive).at(archive).map_err(io_error)?)?;
+  extract_entry_from(&mut zip, entry, dest, key)
+}
+
+fn extract_entry_from(
+  zip: &mut zip::ZipArchive<fs::File>,
+  entry: &str,
+  dest: &Path,
+  key: &FileKey,
+) -> USTBLResult<()> {
   let mut source = zip.by_name(entry)?;
   if let Some(parent) = dest.parent() {
     fs::create_dir_all(parent).at(parent).map_err(io_error)?;
   }
-  let mut out = fs::File::create(dest).at(dest).map_err(io_error)?;
+  let mut out = HashingWriter {
+    inner: fs::File::create(dest).at(dest).map_err(io_error)?,
+    hasher: Sha1::new(),
+    size: 0,
+  };
   io::copy(&mut source, &mut out).at(dest).map_err(io_error)?;
+  let HashingWriter { hasher, size, .. } = out;
+  if hex::encode(hasher.finalize()) != key.sha1 || size != key.size {
+    let _ = fs::remove_file(dest);
+    return Err(InstanceError::ModpackUpdateVerifyFailed.into());
+  }
   Ok(())
 }
 
@@ -569,13 +612,27 @@ async fn stage_file(env: &dyn UpdateEnv, dest: PathBuf, file: &RemoteFile) -> US
       let mut param = (**param).clone();
       param.dest = dest.clone();
       param.sha1 = Some(file.key.sha1.clone());
-      env.fetch(param).await?
+      env.fetch(param).await?;
+      // The download already checked the sha1; hashing again would read the
+      // whole file for nothing.
+      let size = fs::metadata(&dest).at(&dest).map_err(io_error)?.len();
+      if size != file.key.size {
+        let _ = fs::remove_file(&dest);
+        return Err(InstanceError::ModpackUpdateVerifyFailed.into());
+      }
+      return Ok(());
     }
     FileSource::ArchiveEntry { archive, entry } => {
-      let (archive, entry, dest) = (archive.clone(), entry.clone(), dest.clone());
-      tokio::task::spawn_blocking(move || extract_entry(&archive, &entry, &dest))
+      // Hashed while extracting.
+      let (archive, entry, dest, key) = (
+        archive.clone(),
+        entry.clone(),
+        dest.clone(),
+        file.key.clone(),
+      );
+      return tokio::task::spawn_blocking(move || extract_entry(&archive, &entry, &dest, &key))
         .await
-        .map_err(|e| crate::error::USTBLError(e.to_string()))??;
+        .map_err(|e| crate::error::USTBLError(e.to_string()))?;
     }
     FileSource::Pack(session) => session.fetch(&file.key.sha1, &dest).await?,
   }
@@ -1310,6 +1367,12 @@ mod tests {
       self.fetched.lock().unwrap().push(url.to_string());
       fs::create_dir_all(dest.parent().unwrap()).unwrap();
       fs::write(dest, &self.contents[url]).unwrap();
+      // Like `DownloadTask`: a set sha1 is checked, and a mismatch fails.
+      if let Some(sha1) = &param.sha1 {
+        if hash_file(dest).unwrap().0 != *sha1 {
+          return Err(crate::error::USTBLError("SHA1 mismatch".into()));
+        }
+      }
       if self.cancel_after_fetches == Some(self.fetched.lock().unwrap().len()) {
         self.cancel.store(true, Ordering::SeqCst);
       }
@@ -1898,12 +1961,86 @@ mod tests {
       .await
       .unwrap_err();
 
+    assert_eq!(error.0, "SHA1 mismatch");
+    assert_eq!(root.read("mods/gone.jar").as_deref(), Some("gone"));
+    assert_eq!(root.read("mods/a.jar"), None);
+  }
+
+  #[tokio::test]
+  async fn a_download_of_the_wrong_size_is_rejected_without_hashing_it_again() {
+    let root = setup();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let mut file = url_file("mods/a.jar", "a", &mut env);
+    // The sha1 matches, so only the size check can catch this.
+    file.key.size += 1;
+    let operations = vec![write_op(&file), remove_op("mods/gone.jar")];
+
+    let error = apply(&env, request(&root, vec![file], operations, "0.15.0"))
+      .await
+      .unwrap_err();
+
     assert_eq!(
       error.0,
       InstanceError::ModpackUpdateVerifyFailed.to_string()
     );
     assert_eq!(root.read("mods/gone.jar").as_deref(), Some("gone"));
     assert_eq!(root.read("mods/a.jar"), None);
+    assert!(!staging_dir(&root.0).join("mods/a.jar").exists());
+  }
+
+  #[tokio::test]
+  async fn corrupt_archive_entries_are_rejected_while_extracting() {
+    let root = setup();
+    let archive = root.0.join("pack.zip");
+    {
+      let mut zip = zip::ZipWriter::new(fs::File::create(&archive).unwrap());
+      zip
+        .start_file(
+          "overrides/config/a.toml",
+          zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+      zip.write_all(b"from-zip").unwrap();
+      zip.finish().unwrap();
+    }
+    let env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    for key in [
+      sha1_of(b"something else"),
+      FileKey {
+        size: 99,
+        ..sha1_of(b"from-zip")
+      },
+    ] {
+      let file = RemoteFile {
+        path: "config/a.toml".into(),
+        key,
+        source: FileSource::ArchiveEntry {
+          archive: archive.clone(),
+          entry: "overrides/config/a.toml".into(),
+        },
+        disabled: false,
+        once: false,
+      };
+      let operations = vec![write_op(&file), remove_op("mods/gone.jar")];
+
+      let error = apply(&env, request(&root, vec![file], operations, "0.15.0"))
+        .await
+        .unwrap_err();
+
+      assert_eq!(
+        error.0,
+        InstanceError::ModpackUpdateVerifyFailed.to_string()
+      );
+      assert_eq!(root.read("mods/gone.jar").as_deref(), Some("gone"));
+      assert_eq!(root.read("config/a.toml"), None);
+      assert!(!staging_dir(&root.0).join("config/a.toml").exists());
+    }
   }
 
   #[tokio::test]
