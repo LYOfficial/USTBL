@@ -7,6 +7,21 @@ export const isInstallingInstance = (instance?: InstanceSummary): boolean =>
 export const shouldCheckInstance = (instance?: InstanceSummary): boolean =>
   !!instance?.origin && !isInstallingInstance(instance);
 
+/**
+ * One campus project listing replaces a per-instance request once two or more
+ * followed campus instances are about to be checked. Paused instances make no
+ * request, so they do not count.
+ */
+export const shouldPrimeCampusListing = (
+  instances: InstanceSummary[]
+): boolean =>
+  instances.filter(
+    (instance) =>
+      shouldCheckInstance(instance) &&
+      instance.origin?.platform === "campus" &&
+      instance.origin.follow
+  ).length >= 2;
+
 export const installingCheck = (
   instance: InstanceSummary
 ): ModpackUpdateCheck => ({
