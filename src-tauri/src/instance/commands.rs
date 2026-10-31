@@ -39,7 +39,7 @@ use crate::instance::helpers::modpack::multimc::snapshot::{
 use crate::instance::helpers::mods::common::{
   compress_icon, get_mod_info_from_dir, get_mod_info_from_jar,
 };
-use crate::instance::helpers::mods::enrich::spawn_mod_info_refresh;
+use crate::instance::helpers::mods::enrich::{cancel_mod_info_refresh, spawn_mod_info_refresh};
 use crate::instance::helpers::mods::remote::apply_cached_infos;
 use crate::instance::helpers::options_txt::get_zh_hans_lang_tag;
 use crate::instance::helpers::resourcepack::{
@@ -277,6 +277,7 @@ pub(crate) fn remove_instance_blocking(
   version_path: &Path,
   report: impl FnMut(InstanceDeletionProgress),
 ) -> USTBLResult<()> {
+  cancel_mod_info_refresh(instance_id);
   delete_instance_files(version_path, report)?;
   crate::instance::modpack_update::plan::invalidate_scan_cache(version_path);
 
