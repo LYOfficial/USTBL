@@ -326,12 +326,6 @@ pub struct CurseForgeFingerprintMatch {
   pub file: Option<CurseForgeFile>,
 }
 
-#[derive(Deserialize, Debug)]
-pub struct CurseForgeTranslationRes {
-  #[serde(default)]
-  pub translated: String,
-}
-
 /// Attach CurseForge credentials, but only for the official host: the API key is
 /// a user secret and must not be handed to a third-party mirror.
 pub fn authenticated(
@@ -367,7 +361,6 @@ pub fn get_curseforge_api(
     }
     OtherResourceApiEndpoint::Categories => format!("{}/categories", api_base),
     // Modrinth-style endpoints have no CurseForge counterpart.
-    OtherResourceApiEndpoint::TranslateDesc => Err(ResourceError::NoDownloadApi)?,
   };
 
   Ok(url)

@@ -16,6 +16,7 @@ use crate::resource::helpers::modrinth::{
   fetch_remote_resource_by_id_modrinth, fetch_remote_resource_by_local_modrinth,
   fetch_resource_list_by_name_modrinth, fetch_resource_version_packs_modrinth,
 };
+use crate::resource::helpers::translation::translate_resource_descriptions as translate_descriptions_batch;
 use crate::resource::helpers::version_manifest::get_game_version_manifest;
 use crate::resource::models::{
   GameClientResourceInfo, ModLoaderResourceInfo, ModUpdateQuery, OptiFineResourceInfo,
@@ -25,6 +26,7 @@ use crate::resource::models::{
 use crate::tasks::commands::schedule_progressive_task_group;
 use crate::tasks::download::DownloadParam;
 use crate::tasks::PTaskParam;
+use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_http::reqwest;
@@ -104,6 +106,17 @@ pub async fn fetch_resource_list_by_name(
     }
     _ => Err(ResourceError::NoDownloadApi.into()),
   }
+}
+
+/// Translated descriptions for a page of search results, as `id -> text`.
+/// Ids without a translation (or whose request failed) are absent.
+#[tauri::command]
+pub async fn translate_resource_descriptions(
+  app: AppHandle,
+  download_source: OtherResourceSource,
+  resource_ids: Vec<String>,
+) -> USTBLResult<HashMap<String, String>> {
+  Ok(translate_descriptions_batch(&app, &download_source, &resource_ids).await)
 }
 
 #[tauri::command]

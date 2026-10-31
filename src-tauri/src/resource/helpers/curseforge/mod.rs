@@ -9,11 +9,14 @@ pub mod misc;
 
 use crate::error::USTBLResult;
 use crate::launcher_config::models::LauncherConfig;
-use crate::resource::helpers::mcim::{
-  acquire_mcim_api_permit_for, get_content_source_priority_list, ContentSource, MCIM_BASE,
+use crate::resource::helpers::mcim::{get_content_source_priority_list, ContentSource};
+use crate::resource::helpers::misc::{
+  apply_local_resource_enhancements, apply_other_resource_enhancements, version_pack_sort,
 };
-use crate::resource::helpers::misc::{apply_other_resource_enhancements, version_pack_sort};
 use crate::resource::helpers::mod_db::handle_search_query;
+use crate::resource::helpers::translation::{
+  apply_cached_translations, translate_resource_descriptions,
+};
 use crate::resource::models::{
   OtherResourceApiEndpoint, OtherResourceFileInfo, OtherResourceInfo, OtherResourceRequestType,
   OtherResourceSearchQuery, OtherResourceSearchRes, OtherResourceSource, OtherResourceVersionPack,
@@ -23,7 +26,7 @@ use misc::{
   class_id_of_resource_type, fetch_curseforge_json, game_versions_of, loaders_of_game_versions,
   make_curseforge_request, mod_loader_type_of, resolve_category_id, sort_field_of,
   CurseForgeDataRes, CurseForgeFile, CurseForgeFingerprintRes, CurseForgeListRes, CurseForgeMod,
-  CurseForgeTranslationRes, MAX_GAME_VERSION_REQUESTS, MINECRAFT_GAME_ID, PAGE_SIZE_MAX,
+  MAX_GAME_VERSION_REQUESTS, MINECRAFT_GAME_ID, PAGE_SIZE_MAX,
 };
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -140,9 +143,12 @@ pub async fn fetch_resource_list_by_name_curseforge(
     page_size,
   };
 
+  // Descriptions are translated in a second step (`translate_resource_descriptions`),
+  // so the list is returned as soon as the search itself is done.
   for resource_info in &mut search_result.list {
-    let _ = apply_other_resource_enhancements(app, resource_info).await;
+    apply_local_resource_enhancements(app, resource_info);
   }
+  apply_cached_translations(&mut search_result.list);
 
   Ok(search_result)
 }
@@ -391,27 +397,13 @@ pub async fn translate_description_curseforge(
   app: &AppHandle,
   resource_id: &str,
 ) -> USTBLResult<Option<String>> {
-  let client = app.state::<reqwest::Client>();
-  let url = format!(
-    "{}/translate/curseforge/{}",
-    MCIM_BASE,
-    urlencoding::encode(resource_id)
-  );
-
-  // Translation is requested once per browsed project, so it shares the mirror
-  // budget instead of fanning out freely.
-  let _permit = acquire_mcim_api_permit_for(&url).await;
-
-  let result = client
-    .get(&url)
-    .send()
-    .await
-    .map_err(|_| ResourceError::NetworkError)?
-    .json::<CurseForgeTranslationRes>()
-    .await
-    .map_err(|_| ResourceError::ParseError);
-
-  // Only return Ok(None) when translation fails, to avoid blocking major
-  // functionality.
-  Ok(result.ok().map(|response| response.translated))
+  // Goes through the shared batch translator so the result is cached; failures
+  // yield Ok(None) to avoid blocking major functionality.
+  let mut translations = translate_resource_descriptions(
+    app,
+    &OtherResourceSource::CurseForge,
+    &[resource_id.to_string()],
+  )
+  .await;
+  Ok(translations.remove(resource_id))
 }

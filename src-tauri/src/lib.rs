@@ -256,6 +256,7 @@ pub async fn run() -> i32 {
       resource::commands::fetch_mod_loader_version_list,
       resource::commands::fetch_optifine_version_list,
       resource::commands::fetch_resource_list_by_name,
+      resource::commands::translate_resource_descriptions,
       resource::commands::fetch_resource_version_packs,
       resource::commands::download_game_server,
       resource::commands::fetch_remote_resource_by_local,

@@ -1,9 +1,9 @@
 use crate::error::{USTBLError, USTBLResult};
 use crate::resource::helpers::mcim::{
   acquire_mcim_api_permit_for, get_content_source_priority_list, modrinth_api_base, ContentSource,
-  MCIM_BASE,
 };
 use crate::resource::helpers::misc::version_pack_sort;
+use crate::resource::helpers::translation::translate_resource_descriptions;
 use crate::resource::models::{
   OtherResourceApiEndpoint, OtherResourceDependency, OtherResourceFileInfo, OtherResourceInfo,
   OtherResourceRequestType, OtherResourceSearchRes, OtherResourceSource, OtherResourceVersionPack,
@@ -105,7 +105,7 @@ where
 }
 
 /// Modrinth API URL for the given endpoint, or `None` when the endpoint is
-/// served by another host (translation goes through MCIM directly).
+/// served by another host.
 pub fn get_modrinth_api(
   source: ContentSource,
   endpoint: OtherResourceApiEndpoint,
@@ -126,11 +126,6 @@ pub fn get_modrinth_api(
     OtherResourceApiEndpoint::ById => {
       let project_id = param.ok_or(ResourceError::ParseError)?;
       format!("{}/project/{}", base_url, project_id)
-    }
-    // Translation is an MCIM-only helper endpoint, not part of the official API.
-    OtherResourceApiEndpoint::TranslateDesc => {
-      let project_id = param.ok_or(ResourceError::ParseError)?;
-      format!("{}/translate/modrinth/{}", MCIM_BASE, project_id)
     }
     OtherResourceApiEndpoint::Categories => return Ok(None),
   };
@@ -192,11 +187,6 @@ structstruck::strike! {
     pub version_type: String,
     pub files: Vec<ModrinthFileInfo>,
   }
-}
-
-#[derive(Deserialize, Debug)]
-pub struct ModrinthTranslationRes {
-  pub translated: String,
 }
 
 fn normalize_modrinth_loader(loader: &str) -> Option<String> {
@@ -342,32 +332,15 @@ pub async fn translate_description_modrinth(
   app: &AppHandle,
   resource_id: &str,
 ) -> USTBLResult<Option<String>> {
-  let result = async {
-    let url = get_modrinth_api(
-      ContentSource::Mcim,
-      OtherResourceApiEndpoint::TranslateDesc,
-      Some(resource_id),
-    )?
-    .ok_or(ResourceError::NoDownloadApi)?;
-    let client = app.state::<reqwest::Client>();
-
-    // Translation is requested once per installed mod, so it shares the mirror
-    // budget instead of fanning out one request per mod at once.
-    let _permit = acquire_mcim_api_permit_for(&url).await;
-
-    let translation_res = client
-      .get(&url)
-      .send()
-      .await?
-      .json::<ModrinthTranslationRes>()
-      .await?;
-
-    Ok::<_, USTBLError>(translation_res.translated)
-  }
+  // Goes through the shared batch translator so the result is cached; failures
+  // yield Ok(None) to avoid blocking major functionality.
+  let mut translations = translate_resource_descriptions(
+    app,
+    &OtherResourceSource::Modrinth,
+    &[resource_id.to_string()],
+  )
   .await;
-
-  // Only return Ok(None) when translation fails, to avoid blocking major functionality
-  Ok(result.ok())
+  Ok(translations.remove(resource_id))
 }
 
 #[cfg(test)]

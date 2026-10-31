@@ -223,10 +223,9 @@ pub fn version_pack_sort(a: &OtherResourceVersionPack, b: &OtherResourceVersionP
   compare_versions_with_suffix(&version_a, &suffix_a, &version_b, &suffix_b).reverse()
 }
 
-pub async fn apply_other_resource_enhancements(
-  app: &AppHandle,
-  resource_info: &mut OtherResourceInfo,
-) -> USTBLResult<()> {
+/// Fill the fields that come from local data only (the mod name database), so it
+/// is safe to call for every search result without any network access.
+pub fn apply_local_resource_enhancements(app: &AppHandle, resource_info: &mut OtherResourceInfo) {
   // Extract data from cache in a limited scope to avoid holding lock across await
   let (translated_name, mcmod_id) = {
     if let Ok(cache) = app.state::<Mutex<ModDataBase>>().lock() {
@@ -250,6 +249,13 @@ pub async fn apply_other_resource_enhancements(
   if let Some(id) = mcmod_id {
     resource_info.mcmod_id = id;
   }
+}
+
+pub async fn apply_other_resource_enhancements(
+  app: &AppHandle,
+  resource_info: &mut OtherResourceInfo,
+) -> USTBLResult<()> {
+  apply_local_resource_enhancements(app, resource_info);
 
   // Get translated description
   let translated_desc = match resource_info.source {

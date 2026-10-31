@@ -1,8 +1,11 @@
 pub mod misc;
 
 use crate::error::USTBLResult;
-use crate::resource::helpers::misc::apply_other_resource_enhancements;
+use crate::resource::helpers::misc::{
+  apply_local_resource_enhancements, apply_other_resource_enhancements,
+};
 use crate::resource::helpers::mod_db::handle_search_query;
+use crate::resource::helpers::translation::apply_cached_translations;
 use crate::resource::models::{
   OtherResourceApiEndpoint, OtherResourceFileInfo, OtherResourceInfo, OtherResourceRequestType,
   OtherResourceSearchQuery, OtherResourceSearchRes, OtherResourceSource, OtherResourceVersionPack,
@@ -67,10 +70,13 @@ pub async fn fetch_resource_list_by_name_modrinth(
   )
   .await?;
 
+  // Descriptions are translated in a second step (`translate_resource_descriptions`),
+  // so the list is returned as soon as the search itself is done.
   let mut search_result: OtherResourceSearchRes = results.into();
   for resource_info in &mut search_result.list {
-    let _ = apply_other_resource_enhancements(app, resource_info).await;
+    apply_local_resource_enhancements(app, resource_info);
   }
+  apply_cached_translations(&mut search_result.list);
 
   Ok(search_result)
 }
