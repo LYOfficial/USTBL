@@ -73,6 +73,10 @@ pub enum ChangeKind {
   Retire,
 }
 
+fn is_false(value: &bool) -> bool {
+  !*value
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileChange {
@@ -82,6 +86,9 @@ pub struct FileChange {
   pub remote: Option<FileKey>,
   /// Size of the file leaving the disk, for deletions and updates.
   pub local_size: Option<u64>,
+  /// This write restores changes the player had ignored.
+  #[serde(default, skip_serializing_if = "is_false")]
+  pub restored: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Deserialize, Serialize)]
@@ -119,14 +126,6 @@ pub struct Conflict {
   #[serde(default)]
   pub local_disabled: Option<bool>,
   pub hunks: Vec<MergeConflict>,
-  /// The player ignored the local change here: the whole file, or every
-  /// block when ignored_hunks lists them all. Such a conflict defaults to
-  /// keeping the local side.
-  #[serde(default)]
-  pub ignored: bool,
-  /// Blocks (by index into hunks) whose local changes are all ignored.
-  #[serde(default)]
-  pub ignored_hunks: Vec<usize>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Default, Deserialize, Serialize)]
@@ -181,14 +180,13 @@ pub fn ship_managed(path: &str, b: &FileKey, r: &FileKey, local_key: Option<&Fil
     remote_disabled: None,
     local_disabled: local_key.is_some().then_some(false),
     hunks: Vec::new(),
-    ignored: false,
-    ignored_hunks: Vec::new(),
   };
   let write = |kind, remote: &FileKey| FileChange {
     path: path.to_string(),
     kind,
     remote: Some(remote.clone()),
     local_size: local_key.map(|key| key.size),
+    restored: false,
   };
   if b == r {
     // The new version did not touch it, so whatever the player did stays.
@@ -233,14 +231,13 @@ pub fn three_way(
       remote_disabled: None,
       local_disabled: local_key.is_some().then_some(false),
       hunks: Vec::new(),
-      ignored: false,
-      ignored_hunks: Vec::new(),
     };
     let write = |kind, remote: &FileKey| FileChange {
       path: path.clone(),
       kind,
       remote: Some(remote.clone()),
       local_size: local_key.as_ref().map(|key| key.size),
+      restored: false,
     };
 
     match (b, r) {
@@ -259,6 +256,7 @@ pub fn three_way(
           kind: ChangeKind::Delete,
           remote: None,
           local_size: Some(key.size),
+          restored: false,
         }),
         Some(_) => diff
           .conflicts
@@ -282,6 +280,9 @@ pub struct Operation {
   pub final_disabled: bool,
   /// The file only moves between its variants; `write` is `None`.
   pub rename: bool,
+  /// Write prepared local content from staging even when `write` is `None`.
+  /// This restores ignored ranges when an unmentioned file is kept locally.
+  pub write_local: bool,
   /// Directories to remove afterwards if empty, deepest last; each entry is
   /// walked up to and including itself. Only delete rules set this.
   pub prune_dirs: Vec<String>,

@@ -1,17 +1,18 @@
-//! Local ignores: spots of a managed file the player decided to keep as their
-//! own. An ignored spot is no local change, and an update merges around it.
+//! Local ignores: changes the player leaves to the launcher on the next update.
+//! Ignored changes are hidden from the local-change list. A whole-file record
+//! restores the shipped file; a range record first restores those installed
+//! lines in memory, then the ordinary three-way merge handles what remains.
 //!
 //! Spots are line ranges of the normalized installed text (`N(B)`, 0-based,
 //! half-open), recorded against the installed content's sha1. A record whose
 //! sha1 no longer matches the baseline is dropped when read.
 
-use super::diff::{scan_path, Conflict, ConflictChoice, LocalState, DISABLED_SUFFIX};
-use super::merge::MergeConflict;
+use super::diff::{scan_path, LocalState, DISABLED_SUFFIX};
 use super::plan::Prepared;
 use super::release::Release;
 use super::remote::{RemoteModpack, UPDATE_DIR};
 use super::text_diff::{edits, lines_of, Edit};
-use crate::instance::helpers::modpack::baseline::{BaselineFile, ModpackBaseline};
+use crate::instance::helpers::modpack::baseline::ModpackBaseline;
 use crate::instance::helpers::modpack::{base_store, text};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -20,7 +21,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 pub const IGNORES_FILE: &str = "ignores.json";
-const SCHEMA: u32 = 1;
+const SCHEMA: u32 = 2;
 
 /// The record's name relative to the instance, as the update transaction
 /// backs it up.
@@ -265,146 +266,43 @@ pub fn remove_region(regions: &mut Vec<Region>, region: Region) -> bool {
   regions.len() != before
 }
 
-/// Where the ranges sit in the new installed text.
-///
-/// `remote_edits` are the published version's changes against the installed
-/// text. A range that no change touches moves by the lines inserted or removed
-/// before it. A range a change touches follows that change: it becomes the
-/// union of itself and the touched changes, mapped to the new text, so the
-/// lines it ignored stay inside. A range touching a block the player settled
-/// as "new version" (`taken`, in installed-text lines) is dropped: the local
-/// text there is gone.
-pub fn map_regions(
-  regions: &[Region],
-  remote_edits: &[Edit],
-  taken: &[(usize, usize)],
-) -> Vec<Region> {
-  let mut mapped = Vec::new();
-  for region in regions {
-    if taken
-      .iter()
-      .any(|(start, end)| touches(region, *start, *end))
-    {
-      continue;
-    }
-    let hit: Vec<&Edit> = remote_edits
-      .iter()
-      .filter(|edit| touches(region, edit.start, edit.end))
-      .collect();
-    let (Some(first), Some(last)) = (hit.first(), hit.last()) else {
-      let delta: isize = remote_edits
-        .iter()
-        .filter(|edit| edit.end < region.start)
-        .map(|edit| (edit.new_end - edit.new_start) as isize - (edit.end - edit.start) as isize)
-        .sum();
-      mapped.push(Region {
-        start: (region.start as isize + delta) as usize,
-        end: (region.end as isize + delta) as usize,
-      });
-      continue;
-    };
-    let start = region.start.min(first.start) + first.new_start - first.start;
-    let end = region.end.max(last.end) + last.new_end - last.end;
-    mapped.push(Region { start, end });
-  }
-  merge_regions(mapped)
-}
-
-/// What an update does to the records. `remap` gives the ranges of a file
-/// whose installed content moved (`None`: the ranges cannot be carried).
-pub fn after_update(
-  prev: &Ignores,
-  next_baseline: &[BaselineFile],
-  remap: &mut dyn FnMut(&str, &IgnoreEntry) -> Option<Vec<Region>>,
-) -> Ignores {
-  let mut files = BTreeMap::new();
-  for (path, entry) in &prev.files {
-    let Some(next) = next_baseline
-      .iter()
-      .find(|file| file.path == *path && file.is_managed())
-    else {
-      continue;
-    };
-    if next.sha1 == entry.base_sha1 {
-      files.insert(path.clone(), entry.clone());
-    } else if entry.whole {
-      files.insert(
-        path.clone(),
-        IgnoreEntry {
-          base_sha1: next.sha1.clone(),
-          whole: true,
-          regions: Vec::new(),
-        },
-      );
-    } else if let Some(regions) = remap(path, entry).filter(|regions| !regions.is_empty()) {
-      files.insert(
-        path.clone(),
-        IgnoreEntry {
-          base_sha1: next.sha1.clone(),
-          whole: false,
-          regions,
-        },
-      );
-    }
-  }
+/// An update consumes every managed-file record: its ignored changes were
+/// restored, or the file left management. Added-file records are handled by
+/// the release and disk rules in `plan_update`.
+pub fn after_update(prev: &Ignores) -> Ignores {
   Ignores {
     schema: SCHEMA,
-    files,
+    files: BTreeMap::new(),
     added: prev.added.clone(),
   }
 }
 
 /// The ignores an update leaves behind, or `None` when the stored file stays
-/// as it is. `remote_texts` are the published texts of the files that were
-/// merged or conflicted; `choices` are the player's answers by `path#index`.
+/// as it is.
 pub fn plan_update(
   root: &Path,
   prepared: &Prepared,
   remote: &RemoteModpack,
-  remote_texts: &BTreeMap<String, Vec<u8>>,
-  choices: &BTreeMap<String, ConflictChoice>,
 ) -> Option<IgnoresUpdate> {
-  let to = after_update(
-    &prepared.ignores,
-    &prepared.next_baseline,
-    &mut |path, entry| {
-      let remote = remote_texts.get(path)?;
-      let base = base_store::load(root, &entry.base_sha1).ok().flatten()?;
-      if prepared
-        .diff
-        .auto_merged
-        .iter()
-        .any(|merged| merged.path == path)
-      {
-        return remap_entry(path, entry, &base, remote, &[]);
-      }
-      let conflict = prepared
-        .diff
-        .conflicts
-        .iter()
-        .find(|conflict| conflict.path == path && !conflict.hunks.is_empty())?;
-      let taken: Vec<&MergeConflict> = conflict
-        .hunks
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| {
-          choices.get(&format!("{path}#{index}")) == Some(&ConflictChoice::TakeRemote)
-        })
-        .map(|(_, hunk)| hunk)
-        .collect();
-      remap_entry(path, entry, &base, remote, &taken)
-    },
-  );
+  let mut to = after_update(&prepared.ignores);
   // An added file stops being one when the new version lists it, once-only
-  // files included.
+  // files included, or when this update deletes it.
   let entered: HashSet<String> = remote
     .files
     .iter()
     .map(|file| file.path.to_lowercase())
     .collect();
-  let mut to = to;
-  to.added
-    .retain(|path| !entered.contains(&path.to_lowercase()) && on_disk(root, path));
+  let deleted: HashSet<String> = prepared
+    .diff
+    .changes
+    .iter()
+    .filter(|change| change.kind == super::diff::ChangeKind::Delete)
+    .map(|change| change.path.to_lowercase())
+    .collect();
+  to.added.retain(|path| {
+    let folded = path.to_lowercase();
+    !entered.contains(&folded) && !deleted.contains(&folded) && on_disk(root, path)
+  });
   (to != prepared.ignores_on_disk).then(|| IgnoresUpdate {
     from: prepared.ignores_on_disk.clone(),
     to,
@@ -431,104 +329,57 @@ pub fn normalized_lines(path: &str, bytes: &[u8]) -> Option<Vec<String>> {
   text::normalize_text(path, bytes).map(|text| lines_of(&text))
 }
 
-/// Carry a file's ranges across an update from the installed text `base` to
-/// the published `remote`. `taken` are the settled-as-new-version blocks in
-/// raw merge lines.
-pub fn remap_entry(
+/// Restore the ignored edits in memory, leaving every other local edit alone.
+/// The returned bytes use the same rendering as the text merge: normalized
+/// lines, a final newline, and the local file's dominant line-ending style.
+pub fn restored_local(
+  root: &Path,
   path: &str,
   entry: &IgnoreEntry,
-  base: &[u8],
-  remote: &[u8],
-  taken: &[&MergeConflict],
-) -> Option<Vec<Region>> {
-  let base_lines = normalized_lines(path, base)?;
-  let remote_lines = normalized_lines(path, remote)?;
-  let shift = merge_line_shift(path, base);
-  let taken: Vec<(usize, usize)> = taken
-    .iter()
-    .map(|hunk| {
-      (
-        hunk.base_start.saturating_sub(shift),
-        hunk.base_end.saturating_sub(shift),
-      )
-    })
-    .collect();
-  Some(map_regions(
-    &entry.regions,
-    &edits(&base_lines, &remote_lines),
-    &taken,
-  ))
-}
+  state: &LocalState,
+) -> Option<Vec<u8>> {
+  if entry.whole || state.key().is_none() || matches!(state, LocalState::Both(..)) {
+    return None;
+  }
+  let base = base_store::load(root, &entry.base_sha1).ok().flatten()?;
+  let local = fs::read(root.join(variant_file(path, state))).ok()?;
+  let base_lines = normalized_lines(path, &base)?;
+  let local_lines = normalized_lines(path, &local)?;
+  let changes = edits(&base_lines, &local_lines);
+  if !changes.iter().any(|edit| is_ignored(entry, edit)) {
+    return None;
+  }
+  let mut restored = Vec::new();
+  let mut local_at = 0;
+  for edit in changes {
+    restored.extend_from_slice(&local_lines[local_at..edit.new_start]);
+    if is_ignored(entry, &edit) {
+      restored.extend_from_slice(&base_lines[edit.start..edit.end]);
+    } else {
+      restored.extend_from_slice(&local_lines[edit.new_start..edit.new_end]);
+    }
+    local_at = edit.new_end;
+  }
+  restored.extend_from_slice(&local_lines[local_at..]);
 
-/// Mark the conflict blocks the player ignored. A whole-file record flags the
-/// file and every block; a range record flags a block when all local changes
-/// inside it are ignored.
-pub fn annotate_conflict(
-  conflict: &mut Conflict,
-  entry: &IgnoreEntry,
-  base: Option<&[u8]>,
-  local: Option<&[u8]>,
-) {
-  if entry.whole {
-    conflict.ignored = true;
-    conflict.ignored_hunks = (0..conflict.hunks.len()).collect();
-    return;
+  let raw = std::str::from_utf8(&local).ok()?;
+  let (bom, raw) = raw
+    .strip_prefix('\u{feff}')
+    .map_or((false, raw), |raw| (true, raw));
+  let crlf = local.windows(2).filter(|pair| *pair == b"\r\n").count();
+  let lf = local.iter().filter(|byte| **byte == b'\n').count();
+  let ending = if crlf * 2 >= lf { "\r\n" } else { "\n" };
+  let mut output = String::new();
+  if bom {
+    output.push('\u{feff}');
   }
-  let (Some(base), Some(local)) = (base, local) else {
-    return;
-  };
-  let (Some(base_lines), Some(local_lines)) = (
-    normalized_lines(&conflict.path, base),
-    normalized_lines(&conflict.path, local),
-  ) else {
-    return;
-  };
-  let shift = merge_line_shift(&conflict.path, base);
-  let local_edits = edits(&base_lines, &local_lines);
-  for (index, hunk) in conflict.hunks.iter().enumerate() {
-    let (start, end) = (
-      hunk.base_start.saturating_sub(shift),
-      hunk.base_end.saturating_sub(shift),
-    );
-    let inside: Vec<&Edit> = local_edits
-      .iter()
-      .filter(|edit| edit.start <= end && start <= edit.end)
-      .collect();
-    if !inside.is_empty() && inside.iter().all(|edit| is_ignored(entry, edit)) {
-      conflict.ignored_hunks.push(index);
-    }
+  if merge_line_shift(path, &local) > 0 {
+    output.push_str(raw.lines().next().unwrap_or_default());
+    output.push('\n');
   }
-  conflict.ignored =
-    !conflict.hunks.is_empty() && conflict.ignored_hunks.len() == conflict.hunks.len();
-}
-
-/// Paths whose local content counts as unchanged for the decision: every
-/// difference from the installed content is ignored.
-pub fn unchanged_paths(
-  root: &Path,
-  ignores: &Ignores,
-  local: &BTreeMap<String, LocalState>,
-) -> BTreeSet<String> {
-  let mut found = BTreeSet::new();
-  for (path, entry) in &ignores.files {
-    let Some(state) = local.get(path) else {
-      continue;
-    };
-    if state.key().is_none() || matches!(state, LocalState::Both(..)) {
-      continue;
-    }
-    if entry.whole {
-      found.insert(path.clone());
-      continue;
-    }
-    let Some(changes) = local_edits(root, path, entry, state) else {
-      continue;
-    };
-    if all_ignored(entry, &changes) {
-      found.insert(path.clone());
-    }
-  }
-  found
+  output.push_str(&restored.join("\n"));
+  output.push('\n');
+  Some(output.replace('\n', ending).into_bytes())
 }
 
 fn variant_file(path: &str, state: &LocalState) -> String {
@@ -551,16 +402,6 @@ fn both_texts(
     normalized_lines(path, &base)?,
     normalized_lines(path, &local)?,
   ))
-}
-
-fn local_edits(
-  root: &Path,
-  path: &str,
-  entry: &IgnoreEntry,
-  state: &LocalState,
-) -> Option<Vec<Edit>> {
-  let (base, local) = both_texts(root, path, &entry.base_sha1, state)?;
-  Some(edits(&base, &local))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -703,6 +544,30 @@ pub struct IgnoredItem {
   pub added: bool,
 }
 
+/// Locate a recorded installed-text range in the current local text for the
+/// ignore list. This is display-only; update records are never carried forward.
+fn local_region(region: &Region, changes: &[Edit]) -> Region {
+  let hit: Vec<&Edit> = changes
+    .iter()
+    .filter(|edit| touches(region, edit.start, edit.end))
+    .collect();
+  let (Some(first), Some(last)) = (hit.first(), hit.last()) else {
+    let delta: isize = changes
+      .iter()
+      .filter(|edit| edit.end < region.start)
+      .map(|edit| (edit.new_end - edit.new_start) as isize - (edit.end - edit.start) as isize)
+      .sum();
+    return Region {
+      start: (region.start as isize + delta) as usize,
+      end: (region.end as isize + delta) as usize,
+    };
+  };
+  Region {
+    start: region.start.min(first.start) + first.new_start - first.start,
+    end: region.end.max(last.end) + last.new_end - last.end,
+  }
+}
+
 fn list_from(root: &Path, ignores: Ignores) -> Vec<IgnoredItem> {
   let mut items = Vec::new();
   for (path, entry) in &ignores.files {
@@ -713,8 +578,7 @@ fn list_from(root: &Path, ignores: Ignores) -> Vec<IgnoredItem> {
       for region in &entry.regions {
         let (base_lines, local_lines) = match &texts {
           Some((base, local)) => {
-            let seen = map_regions(&[*region], &edits(base, local), &[]);
-            let local_range = seen.first().copied().unwrap_or(*region);
+            let local_range = local_region(region, &edits(base, local));
             (
               slice(base, region.start, region.end),
               slice(local, local_range.start, local_range.end),
@@ -769,11 +633,8 @@ fn slice(lines: &[String], start: usize, end: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::instance::modpack_update::diff::{ConflictKind, FileKey};
-
-  fn lines(text: &str) -> Vec<String> {
-    text.lines().map(str::to_string).collect()
-  }
+  use crate::instance::helpers::modpack::baseline::BaselineFile;
+  use crate::instance::modpack_update::diff::FileKey;
 
   fn region(start: usize, end: usize) -> Region {
     Region { start, end }
@@ -855,66 +716,6 @@ mod tests {
     assert_eq!(regions, vec![region(1, 5)]);
   }
 
-  #[test]
-  fn ranges_shift_by_changes_before_them() {
-    // The remote adds two lines at 0 and drops one line at 3..4.
-    let remote = [edit(0, 0, 0, 2), edit(3, 4, 5, 5)];
-    let mapped = map_regions(&[region(6, 8), region(0, 0)], &remote, &[]);
-    // (0,0) touches the insertion at 0; (6,8) comes after both: +2 -1.
-    assert_eq!(mapped, vec![region(0, 2), region(7, 9)]);
-  }
-
-  #[test]
-  fn ranges_touching_a_remote_change_become_the_union_in_the_new_text() {
-    // old 4..10 is ignored; the remote rewrites 8..12 (4 lines) as 3 lines,
-    // after having added 1 line at 0.
-    let remote = [edit(0, 0, 0, 1), edit(8, 12, 9, 12)];
-    let mapped = map_regions(&[region(4, 10)], &remote, &[]);
-    assert_eq!(mapped, vec![region(5, 12)]);
-    // A change that only meets the range at its end counts as touching.
-    let meeting = [edit(10, 11, 10, 14)];
-    assert_eq!(
-      map_regions(&[region(4, 10)], &meeting, &[]),
-      vec![region(4, 14)]
-    );
-    // A change one line away does not.
-    let apart = [edit(11, 12, 11, 14)];
-    assert_eq!(
-      map_regions(&[region(4, 10)], &apart, &[]),
-      vec![region(4, 10)]
-    );
-  }
-
-  #[test]
-  fn mapping_by_shift_and_by_intersection_differ() {
-    let remote = [edit(5, 6, 5, 8)];
-    // Not touching: only the shift of what lies before it applies.
-    assert_eq!(
-      map_regions(&[region(8, 9)], &remote, &[]),
-      vec![region(10, 11)]
-    );
-    // Touching: the range grows with the new block.
-    assert_eq!(
-      map_regions(&[region(3, 6)], &remote, &[]),
-      vec![region(3, 8)]
-    );
-  }
-
-  #[test]
-  fn settling_a_conflict_as_the_new_version_drops_the_range() {
-    let remote = [edit(5, 6, 5, 7)];
-    let taken = [(5, 6)];
-    let mapped = map_regions(&[region(4, 6), region(9, 10)], &remote, &taken);
-    assert_eq!(mapped, vec![region(10, 11)]);
-  }
-
-  #[test]
-  fn mapped_ranges_that_meet_are_joined() {
-    let remote = [edit(3, 4, 3, 4)];
-    let mapped = map_regions(&[region(1, 3), region(4, 6)], &remote, &[]);
-    assert_eq!(mapped, vec![region(1, 6)]);
-  }
-
   fn baseline_with(path: &str, sha1: &str) -> ModpackBaseline {
     use crate::instance::helpers::modpack::baseline::{BaselineLoader, ModpackBaseline};
     use crate::instance::models::misc::{InstanceOrigin, ModLoaderType, OriginPlatform};
@@ -989,14 +790,11 @@ mod tests {
   }
 
   #[test]
-  fn after_an_update_whole_records_follow_and_ranges_are_mapped_or_dropped() {
+  fn an_update_consumes_managed_records_and_preserves_added_ones() {
     let prev = Ignores {
       schema: SCHEMA,
       files: BTreeMap::from([
-        ("keep.toml".to_string(), entry(vec![region(1, 2)])),
-        ("moved.toml".to_string(), entry(vec![region(1, 2)])),
-        ("lost.toml".to_string(), entry(vec![region(1, 2)])),
-        ("gone.toml".to_string(), entry(vec![region(1, 2)])),
+        ("range.toml".to_string(), entry(vec![region(1, 2)])),
         (
           "whole.toml".to_string(),
           IgnoreEntry {
@@ -1005,85 +803,11 @@ mod tests {
           },
         ),
       ]),
-      added: BTreeSet::new(),
+      added: BTreeSet::from(["mods/mine.jar".to_string()]),
     };
-    let next = vec![
-      BaselineFile::managed(
-        "keep.toml",
-        FileKey {
-          sha1: "aa".into(),
-          size: 1,
-        },
-        false,
-      ),
-      BaselineFile::managed(
-        "moved.toml",
-        FileKey {
-          sha1: "bb".into(),
-          size: 1,
-        },
-        false,
-      ),
-      BaselineFile::managed(
-        "lost.toml",
-        FileKey {
-          sha1: "bb".into(),
-          size: 1,
-        },
-        false,
-      ),
-      BaselineFile::dormant(
-        "gone.toml",
-        Some(FileKey {
-          sha1: "aa".into(),
-          size: 1,
-        }),
-        false,
-      ),
-      BaselineFile::managed(
-        "whole.toml",
-        FileKey {
-          sha1: "bb".into(),
-          size: 1,
-        },
-        false,
-      ),
-    ];
-    let mut asked = Vec::new();
-    let after = after_update(&prev, &next, &mut |path, _| {
-      asked.push(path.to_string());
-      (path == "moved.toml").then(|| vec![region(4, 5)])
-    });
-    assert_eq!(asked, vec!["lost.toml", "moved.toml"]);
-    assert_eq!(after.files["keep.toml"], entry(vec![region(1, 2)]));
-    assert_eq!(after.files["moved.toml"].base_sha1, "bb");
-    assert_eq!(after.files["moved.toml"].regions, vec![region(4, 5)]);
-    assert!(after.files["whole.toml"].whole);
-    assert_eq!(after.files["whole.toml"].base_sha1, "bb");
-    assert!(!after.files.contains_key("lost.toml"));
-    assert!(!after.files.contains_key("gone.toml"));
-  }
-
-  #[test]
-  fn remapping_reads_the_texts_and_the_taken_blocks() {
-    let base = b"a=1\nb=2\nc=3\nd=4\ne=5\n";
-    let remote = b"top\na=1\nb=2\nc=3\nd=four\ne=5\n";
-    let conflict = MergeConflict {
-      base_start: 3,
-      base_end: 4,
-      base: vec!["d=4".into()],
-      local: vec!["d=40".into()],
-      remote: vec!["d=four".into()],
-    };
-    let ignored = entry(vec![region(1, 2), region(3, 4)]);
-    // Kept local: the block's range follows the remote change.
-    let kept = remap_entry("config/a.toml", &ignored, base, remote, &[]).unwrap();
-    assert_eq!(kept, vec![region(2, 3), region(4, 5)]);
-    // Settled as the new version: the range at the block is dropped.
-    let taken = remap_entry("config/a.toml", &ignored, base, remote, &[&conflict]).unwrap();
-    assert_eq!(taken, vec![region(2, 3)]);
-    // Not text: nothing to carry.
-    assert!(remap_entry("mods/a.jar", &ignored, base, remote, &[]).is_none());
+    let after = after_update(&prev);
+    assert!(after.files.is_empty());
+    assert_eq!(after.added, prev.added);
   }
 
   #[test]
@@ -1092,54 +816,6 @@ mod tests {
     assert_eq!(merge_line_shift("config/a.properties", header), 1);
     assert_eq!(merge_line_shift("config/a.toml", header), 0);
     assert_eq!(merge_line_shift("config/a.toml", b"\xff"), 0);
-  }
-
-  fn conflict(path: &str, hunks: Vec<(usize, usize)>) -> Conflict {
-    Conflict {
-      path: path.into(),
-      kind: ConflictKind::ModifiedLocallyChangedRemotely,
-      baseline: None,
-      local: None,
-      remote: None,
-      remote_disabled: None,
-      local_disabled: None,
-      hunks: hunks
-        .into_iter()
-        .map(|(start, end)| MergeConflict {
-          base_start: start,
-          base_end: end,
-          base: Vec::new(),
-          local: Vec::new(),
-          remote: Vec::new(),
-        })
-        .collect(),
-      ignored: false,
-      ignored_hunks: Vec::new(),
-    }
-  }
-
-  #[test]
-  fn conflict_blocks_over_ignored_changes_are_flagged() {
-    let base = b"a\nb\nc\nd\ne\nf\ng\n";
-    // Local changed line 1 (b) and line 5 (f).
-    let local = b"a\nB\nc\nd\ne\nF\ng\n";
-    let ignored = entry(vec![region(1, 2)]);
-    let mut found = conflict("config/a.toml", vec![(1, 2), (5, 6)]);
-    annotate_conflict(&mut found, &ignored, Some(base), Some(local));
-    assert_eq!(found.ignored_hunks, vec![0]);
-    assert!(!found.ignored);
-    let mut all = conflict("config/a.toml", vec![(1, 2)]);
-    annotate_conflict(&mut all, &ignored, Some(base), Some(local));
-    assert!(all.ignored);
-    let whole = IgnoreEntry {
-      whole: true,
-      ..entry(Vec::new())
-    };
-    let mut every = conflict("config/a.toml", vec![(1, 2), (5, 6)]);
-    annotate_conflict(&mut every, &whole, None, None);
-    assert!(every.ignored);
-    assert_eq!(every.ignored_hunks, vec![0, 1]);
-    assert_eq!(lines("x\ny").len(), 2);
   }
 
   #[test]
@@ -1174,9 +850,11 @@ mod tests {
   }
 
   #[test]
-  fn old_ignore_json_without_added_field_still_parses() {
-    let parsed = Ignores::parse(br#"{"schema":1,"files":{}}"#);
-    assert!(parsed.files.is_empty());
-    assert!(parsed.added.is_empty());
+  fn schema_one_ignore_json_reads_as_empty() {
+    let parsed = Ignores::parse(
+      br#"{"schema":1,"files":{"a.toml":{"baseSha1":"aa","whole":true}},"added":["mods/a.jar"]}"#,
+    );
+    assert!(parsed.is_empty());
+    assert_eq!(parsed.schema, SCHEMA);
   }
 }

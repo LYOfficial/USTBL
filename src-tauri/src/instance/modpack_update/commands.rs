@@ -1337,7 +1337,9 @@ pub async fn ignore_modpack_added_file(
   .map_err(|error| crate::error::USTBLError(error.to_string()))??;
   super::changes::ignore_added_file(&target.root, &baseline, &release, &listed, &path)
     .await
-    .map_err(ignore_error)
+    .map_err(ignore_error)?;
+  plan_cache::clear_plan_cache(&target.root);
+  Ok(())
 }
 
 /// The ignored spots and files of this instance, for the undo list.
@@ -1367,16 +1369,13 @@ pub async fn unignore_modpack_local_change(
   let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let _guard = UpdateGuard::acquire(&target.root)?;
   let baseline = load_baseline(&target).await?;
-  let was_added = super::ignores::read(&target.root).ignores_added(&path);
   let root = target.root.clone();
   let undo_path = path.clone();
   tokio::task::spawn_blocking(move || super::ignores::undo(&root, &baseline, &undo_path, range))
     .await
     .map_err(|e| crate::error::USTBLError(e.to_string()))?
     .map_err(ignore_error)?;
-  if !was_added {
-    plan_cache::clear_plan_cache(&target.root);
-  }
+  plan_cache::clear_plan_cache(&target.root);
   Ok(())
 }
 
@@ -1639,7 +1638,7 @@ pub(crate) fn fast_forward<'a>(
   conflicts: usize,
   loader_change: bool,
 ) -> bool {
-  !changes.any(|change| change.kind != super::diff::ChangeKind::Retire)
+  !changes.any(|change| change.restored || change.kind != super::diff::ChangeKind::Retire)
     && conflicts == 0
     && !loader_change
 }
@@ -1757,6 +1756,7 @@ async fn plan_fresh_install(
         plan_hash: String::new(),
         merged_contents: BTreeMap::new(),
         conflict_sources: BTreeMap::new(),
+        restored_locals: BTreeMap::new(),
         next_baseline: Vec::new(),
         variants: BTreeMap::new(),
         prune_dirs: BTreeMap::new(),
@@ -1968,6 +1968,14 @@ pub(super) fn selected_hunk_contents(
   choices: &mut BTreeMap<String, ConflictChoice>,
 ) -> USTBLResult<BTreeMap<String, Vec<u8>>> {
   let mut result = prepared.merged_contents.clone();
+  for conflict in &prepared.diff.conflicts {
+    if conflict.hunks.is_empty() && choices.get(&conflict.path) != Some(&ConflictChoice::TakeRemote)
+    {
+      if let Some(bytes) = prepared.restored_locals.get(&conflict.path) {
+        result.insert(conflict.path.clone(), bytes.clone());
+      }
+    }
+  }
   for (path, (base, local, remote)) in &prepared.conflict_sources {
     let hunk_count = prepared
       .diff
@@ -2232,13 +2240,7 @@ async fn apply_modpack_update_inner(
     "modpack update apply resolutions: instance={instance_id} plan_hash={plan_hash} resolutions=[{}]",
     describe_conflict_resolutions(&prepared.diff, &apply_choices).join(","),
   );
-  let ignores = super::ignores::plan_update(
-    &target.root,
-    &prepared,
-    &remote,
-    &base_texts,
-    &apply_choices,
-  );
+  let ignores = super::ignores::plan_update(&target.root, &prepared, &remote);
   let result = apply(
     &env,
     UpdateRequest {
@@ -2642,13 +2644,7 @@ async fn install_campus_modpack_inner(
   } else {
     None
   };
-  let ignores = super::ignores::plan_update(
-    &target.root,
-    &prepared,
-    &remote,
-    &BTreeMap::new(),
-    &apply_choices,
-  );
+  let ignores = super::ignores::plan_update(&target.root, &prepared, &remote);
   let result = apply(
     &env,
     UpdateRequest {
@@ -3472,6 +3468,7 @@ mod tests {
       kind,
       remote: None,
       local_size: None,
+      restored: false,
     };
     let none: &[FileChange] = &[];
     assert!(fast_forward(none.iter(), 0, false));
@@ -3481,6 +3478,9 @@ mod tests {
     // A plan that only retires entries has no file action: it fast-forwards,
     // and the retirements still write the baseline when applied.
     assert!(fast_forward([change(ChangeKind::Retire)].iter(), 0, false));
+    let mut restored = change(ChangeKind::Retire);
+    restored.restored = true;
+    assert!(!fast_forward([restored].iter(), 0, false));
   }
 
   /// The JSON the update dialog sends for "use the new version on the first
@@ -3534,8 +3534,6 @@ mod tests {
           remote_disabled: None,
           local_disabled: Some(false),
           hunks: vec![hunk(0), hunk(4)],
-          ignored: false,
-          ignored_hunks: Vec::new(),
         },
         super::super::diff::Conflict {
           path: "mods/b.jar".into(),
@@ -3546,8 +3544,6 @@ mod tests {
           remote_disabled: None,
           local_disabled: Some(false),
           hunks: Vec::new(),
-          ignored: false,
-          ignored_hunks: Vec::new(),
         },
       ],
       ..Default::default()

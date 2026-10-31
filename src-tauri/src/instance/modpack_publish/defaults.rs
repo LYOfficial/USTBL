@@ -114,7 +114,7 @@ fn dir_keys(keys: &HashSet<String>) -> HashSet<String> {
   dirs
 }
 
-fn covering_rule<'a>(rules: &'a [RemoteRule], path: &str) -> Option<&'a RemoteRule> {
+pub(crate) fn covering_rule<'a>(rules: &'a [RemoteRule], path: &str) -> Option<&'a RemoteRule> {
   let folded = key(path);
   rules
     .iter()

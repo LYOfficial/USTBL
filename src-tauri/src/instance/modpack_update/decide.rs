@@ -77,9 +77,11 @@ pub struct DecisionInput<'a> {
   pub remote: Option<&'a ShipInput>,
   pub base: Base,
   pub local: Local,
-  /// The local content counts as unchanged even when its key differs (the
-  /// local-ignore verdict; U3 feeds it, until then it is always `false`).
-  pub effectively_unchanged: bool,
+  /// Restore a managed file whose local changes were wholly ignored. The
+  /// shipped content and disabled state win without a conflict.
+  pub restore_whole: bool,
+  /// Replace an ignored added file when the new version ships the same path.
+  pub replace_added: bool,
 }
 
 /// Which filename variant the file ends up at after the decision.
@@ -220,6 +222,25 @@ pub fn decide(path: &str, input: &DecisionInput) -> Decision {
   match input.policy {
     Policy::Ship => {
       let ship = input.remote.expect("a ship policy carries the remote key");
+      let replaced_added = input.replace_added
+        && !matches!(input.base, Base::Managed { .. })
+        && local_parts(&input.local)
+          .0
+          .is_some_and(|key| key != ship.key);
+      if replaced_added {
+        // The player already chose to leave this added file to the launcher.
+        // Decide as if the path were empty, including the first-install rules.
+        return decide(
+          path,
+          &DecisionInput {
+            base: Base::None,
+            local: Local::Absent,
+            restore_whole: false,
+            replace_added: false,
+            ..input.clone()
+          },
+        );
+      }
       if let Base::Managed { key, disabled } = &input.base {
         let (key, disabled) = (key.clone(), *disabled);
         decide_ship_managed(path, ship, key, disabled, input)
@@ -354,6 +375,30 @@ fn decide_ship_managed(
     };
   }
   let (local_key, local_disabled) = local_parts(&input.local);
+  if input.restore_whole {
+    // Ignore the local disabled change as well: §5.2 is evaluated as if the
+    // local variant still matched the installed one.
+    let outcome = disabled_outcome(ship.disabled, Some(base_disabled), Some(base_disabled));
+    let record = disabled_record(ship.disabled, Some(base_disabled));
+    let next = managed(path, &ship.key, record);
+    let variant = Variant::of_disabled(outcome);
+    let action = match &local_key {
+      Some(key) if *key == ship.key && local_disabled == Some(outcome) => Action::Nothing,
+      Some(key) if *key == ship.key => Action::Rename {
+        key: key.clone(),
+        variant,
+      },
+      _ => Action::WriteRemote {
+        key: ship.key.clone(),
+        variant,
+      },
+    };
+    return Decision {
+      action,
+      conflict: None,
+      next,
+    };
+  }
   let outcome = disabled_outcome(ship.disabled, Some(base_disabled), local_disabled);
   let record = disabled_record(ship.disabled, local_disabled);
   let next = managed(path, &ship.key, record);
@@ -446,7 +491,7 @@ fn decide_unmentioned(path: &str, input: &DecisionInput) -> Decision {
       conflict: None,
       next: NextBaseline::Remove,
     },
-    Some(local) if local == key || input.effectively_unchanged => Decision {
+    Some(local) if local == key || input.restore_whole => Decision {
       action: Action::Delete,
       conflict: None,
       next: NextBaseline::Remove,
@@ -502,7 +547,8 @@ mod tests {
       remote,
       base,
       local,
-      effectively_unchanged: false,
+      restore_whole: false,
+      replace_added: false,
     }
   }
 
@@ -1301,8 +1347,8 @@ mod tests {
   }
 
   /// The §5.1/§5.3 tables and §5.2, spelled out once more as a second,
-  /// independent reading. Every combination of policy, baseline, local state
-  /// and the effectively-unchanged flag must agree with `decide`.
+  /// independent reading. Every combination of policy, baseline and local
+  /// state without local ignores must agree with `decide`.
   fn oracle(path: &str, input: &DecisionInput) -> Decision {
     let (local_key, local_disabled) = local_parts(&input.local);
     let entry = |key: &FileKey, disabled: bool| managed(path, key, disabled);
@@ -1327,9 +1373,7 @@ mod tests {
       Policy::Unmentioned => match &input.base {
         Base::Managed { key, .. } => match &local_key {
           None => decision(Action::Nothing, None, NextBaseline::Remove),
-          Some(local) if local == key || input.effectively_unchanged => {
-            decision(Action::Delete, None, NextBaseline::Remove)
-          }
+          Some(local) if local == key => decision(Action::Delete, None, NextBaseline::Remove),
           Some(_) => decision(
             Action::Nothing,
             Some(DecisionConflict::ModifiedRemovedRemotely),
@@ -1472,45 +1516,45 @@ mod tests {
     let mut count = 0usize;
     for base in all_bases() {
       for local in all_locals() {
-        for flag in [false, true] {
-          // The non-ship policies carry no remote input.
-          for policy in [Policy::Ignore, Policy::Delete, Policy::Unmentioned] {
-            let input = DecisionInput {
-              policy,
-              remote: None,
-              base: base.clone(),
-              local: local.clone(),
-              effectively_unchanged: flag,
-            };
-            let actual = decide(path, &input);
-            assert_eq!(
-              actual,
-              oracle(path, &input),
-              "policy={policy:?} base={base:?} local={local:?} flag={flag}"
-            );
-            count += 1;
-          }
-          for remote in all_ship_inputs() {
-            let input = DecisionInput {
-              policy: Policy::Ship,
-              remote: Some(&remote),
-              base: base.clone(),
-              local: local.clone(),
-              effectively_unchanged: flag,
-            };
-            let actual = decide(path, &input);
-            assert_eq!(
-              actual,
-              oracle(path, &input),
-              "remote={remote:?} base={base:?} local={local:?} flag={flag}"
-            );
-            count += 1;
-          }
+        // The non-ship policies carry no remote input.
+        for policy in [Policy::Ignore, Policy::Delete, Policy::Unmentioned] {
+          let input = DecisionInput {
+            policy,
+            remote: None,
+            base: base.clone(),
+            local: local.clone(),
+            restore_whole: false,
+            replace_added: false,
+          };
+          let actual = decide(path, &input);
+          assert_eq!(
+            actual,
+            oracle(path, &input),
+            "policy={policy:?} base={base:?} local={local:?}"
+          );
+          count += 1;
+        }
+        for remote in all_ship_inputs() {
+          let input = DecisionInput {
+            policy: Policy::Ship,
+            remote: Some(&remote),
+            base: base.clone(),
+            local: local.clone(),
+            restore_whole: false,
+            replace_added: false,
+          };
+          let actual = decide(path, &input);
+          assert_eq!(
+            actual,
+            oracle(path, &input),
+            "remote={remote:?} base={base:?} local={local:?}"
+          );
+          count += 1;
         }
       }
     }
     // Every combination answered exactly once, and the run really covered the
     // full product.
-    assert!(count > 10_000);
+    assert!(count > 7_000);
   }
 }

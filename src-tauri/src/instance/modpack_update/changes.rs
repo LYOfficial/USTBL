@@ -8,7 +8,7 @@ use super::ignores::{self, IgnoreError, Ignores};
 use super::local_scan::collect_states_cached;
 use super::plan::{local_changes, scan_cache, LocalChange, LocalChangeKind, NoDiffReason};
 use super::release::Release;
-use super::remote::RuleKind;
+use super::remote::{RuleKind, RuleState};
 use crate::error::USTBLResult;
 use crate::instance::helpers::modpack::baseline::{hash_file, ModpackBaseline};
 use crate::instance::helpers::modpack::export::CONTENT_DIRS;
@@ -36,6 +36,9 @@ pub struct ChangeDetailEntry {
   pub class: ChangeClass,
   /// Whether the entry counts toward the instance's local-change number.
   pub counted: bool,
+  /// The nearest previous-release rule covering an added file.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub rule: Option<RuleState>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub size: Option<u64>,
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -59,6 +62,7 @@ impl ChangeDetailEntry {
       path: path.to_string(),
       class,
       counted,
+      rule: None,
       size: None,
       baseline: None,
       local: None,
@@ -267,6 +271,12 @@ pub async fn compute_changes(
     };
     let mut entry =
       ChangeDetailEntry::new(&file.path, class, published && in_content_dir(&file.path));
+    entry.rule = release
+      .rules
+      .iter()
+      .find(|rule| rule.kind == RuleKind::File && rule.path.eq_ignore_ascii_case(&file.path))
+      .or_else(|| defaults::covering_rule(&release.rules, &file.path))
+      .map(|rule| rule.state);
     entry.disabled = file.disabled;
     if with_diff {
       entry.size = size_on_disk(root, &file.path, file.disabled);
@@ -808,6 +818,99 @@ mod tests {
     );
     ignores::undo(&root, &baseline, "MODS/FOO.JAR", None).unwrap();
     assert_eq!(count(&root, &baseline).await.unwrap(), 1);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn added_entries_carry_the_nearest_ignore_or_delete_rule() {
+    let root = instance(&[
+      ("config/ignored/a.toml", "i"),
+      ("config/deleted/a.toml", "d"),
+      ("other/free.toml", "f"),
+    ]);
+    let baseline = baseline_of(&[]);
+    let release = release_of(
+      vec![],
+      vec![
+        RemoteRule {
+          path: "config".into(),
+          kind: RuleKind::Dir,
+          state: RuleState::Ignore,
+        },
+        RemoteRule {
+          path: "config/deleted".into(),
+          kind: RuleKind::Dir,
+          state: RuleState::Delete,
+        },
+        RemoteRule {
+          path: "config/ignored/a.toml".into(),
+          kind: RuleKind::File,
+          state: RuleState::Ignore,
+        },
+      ],
+    );
+    let entries = detail(&root, &baseline, &release).await;
+    assert_eq!(
+      find(&entries, "config/ignored/a.toml").unwrap().rule,
+      Some(RuleState::Ignore)
+    );
+    assert_eq!(
+      find(&entries, "config/deleted/a.toml").unwrap().rule,
+      Some(RuleState::Delete)
+    );
+    assert_eq!(find(&entries, "other/free.toml").unwrap().rule, None);
+    assert_eq!(count(&root, &baseline).await.unwrap(), 0);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn schema_one_records_are_invisible_to_lists_details_and_counts() {
+    let root = instance(&[("config/a.toml", "local"), ("mods/new.jar", "new")]);
+    let baseline = baseline_of(&[("config/a.toml", "base")]);
+    let release = Release::from_baseline(&baseline, "7");
+    let old = serde_json::json!({
+      "schema": 1,
+      "files": {
+        "config/a.toml": {
+          "baseSha1": baseline.files[0].sha1,
+          "whole": true,
+          "regions": []
+        }
+      },
+      "added": ["mods/new.jar"]
+    });
+    fs::create_dir_all(root.join(".ustbl-update")).unwrap();
+    fs::write(
+      root.join(".ustbl-update/ignores.json"),
+      serde_json::to_vec_pretty(&old).unwrap(),
+    )
+    .unwrap();
+
+    assert!(ignores::read(&root).is_empty());
+    assert!(ignores::list_for_release(&root, &baseline, &release).is_empty());
+    let entries = detail(&root, &baseline, &release).await;
+    assert_eq!(
+      find(&entries, "config/a.toml").unwrap().class,
+      ChangeClass::Modified
+    );
+    assert_eq!(
+      find(&entries, "mods/new.jar").unwrap().class,
+      ChangeClass::Added
+    );
+    assert_eq!(count(&root, &baseline).await.unwrap(), 2);
+
+    ignores::add(
+      &root,
+      &baseline,
+      "config/a.toml",
+      &baseline.files[0].sha1,
+      None,
+    )
+    .unwrap();
+    let overwritten = ignores::read(&root);
+    assert_eq!(overwritten.schema, 2);
+    assert!(overwritten.files.contains_key("config/a.toml"));
+    assert!(overwritten.added.is_empty());
     let _ = fs::remove_dir_all(root);
   }
 }

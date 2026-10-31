@@ -641,7 +641,7 @@ fn commit_files(root: &Path, operations: &[Operation], journal: &Journal) -> io:
     if op.moves_disabled {
       move_file(&root.join(&disabled), &backup.join("files").join(&disabled))?;
     }
-    if let Some(_key) = &operation.write {
+    if operation.write.is_some() || operation.write_local {
       let staged = staging_dir(root).join(&op.path);
       if operation.final_disabled {
         move_file(&staged, &root.join(&disabled))?;
@@ -730,6 +730,11 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
     .iter()
     .map(|file| (file.path.as_str(), file))
     .collect();
+  if request.operations.iter().any(|operation| {
+    operation.write_local && !request.merged_contents.contains_key(&operation.path)
+  }) {
+    return Err(InstanceError::ModpackUpdateStale.into());
+  }
 
   // Phase 1: fetch and verify everything into staging. A matching manifest is
   // deliberately kept across pre-journal failures so a retry can reuse files.
@@ -1014,8 +1019,11 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
         path: operation.path.clone(),
         had_original: has_enabled,
         moves_disabled: has_disabled,
-        writes_enabled: Some(operation.write.is_some() && !operation.final_disabled),
-        writes_disabled: operation.write.is_some() && operation.final_disabled,
+        writes_enabled: Some(
+          (operation.write.is_some() || operation.write_local) && !operation.final_disabled,
+        ),
+        writes_disabled: (operation.write.is_some() || operation.write_local)
+          && operation.final_disabled,
         pruned_dirs: operation.prune_dirs.clone(),
       }
     })
@@ -1338,6 +1346,7 @@ mod tests {
       write: Some(file.key.clone()),
       final_disabled: false,
       rename: false,
+      write_local: false,
       prune_dirs: Vec::new(),
     }
   }
@@ -1348,6 +1357,7 @@ mod tests {
       write: None,
       final_disabled: false,
       rename: false,
+      write_local: false,
       prune_dirs: Vec::new(),
     }
   }
@@ -2052,6 +2062,7 @@ mod tests {
         write: None,
         final_disabled: true,
         rename: true,
+        write_local: false,
         prune_dirs: Vec::new(),
       },
       Operation {
@@ -2059,6 +2070,7 @@ mod tests {
         write: None,
         final_disabled: false,
         rename: true,
+        write_local: false,
         prune_dirs: Vec::new(),
       },
     ];
@@ -2107,6 +2119,7 @@ mod tests {
       write: None,
       final_disabled: false,
       rename: false,
+      write_local: false,
       prune_dirs: vec!["mods/old".into()],
     };
     let operations = vec![delete("mods/old/a.jar"), delete("mods/old/sub/b.jar")];
@@ -2149,6 +2162,7 @@ mod tests {
       write: None,
       final_disabled: false,
       rename: false,
+      write_local: false,
       prune_dirs: vec!["mods/old".into()],
     };
     let flip = Operation {
@@ -2156,6 +2170,7 @@ mod tests {
       write: None,
       final_disabled: true,
       rename: true,
+      write_local: false,
       prune_dirs: Vec::new(),
     };
     let operations = vec![write_op(&remanaged), delete, flip];
@@ -2880,5 +2895,79 @@ mod tests {
       .iter()
       .any(|hunk| hunk.lines.iter().any(|line| line.text == "x = 2")));
     assert_eq!(changes[0].no_diff, None);
+  }
+
+  #[tokio::test]
+  async fn a_restored_file_is_backed_up_and_rolls_back_with_its_ignore_record() {
+    use crate::instance::helpers::modpack::baseline::BaselineFile;
+    use crate::instance::modpack_update::ignores;
+    use crate::instance::modpack_update::plan::{prepare_with_contents, resolve};
+
+    let root = setup();
+    root.write("config/c.toml", "x = 2\n");
+    let base_text = "x = 1\n";
+    let installed = ModpackBaseline::build(
+      &origin("1"),
+      loader("0.15.0"),
+      vec![BaselineFile::managed(
+        "config/c.toml",
+        sha1_of(base_text.as_bytes()),
+        false,
+      )],
+    );
+    base_store::store(&root.0, &installed.files[0], base_text.as_bytes()).unwrap();
+    ignores::add(
+      &root.0,
+      &installed,
+      "config/c.toml",
+      &installed.files[0].sha1,
+      None,
+    )
+    .unwrap();
+
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let remote_files = vec![url_file("config/c.toml", base_text, &mut env)];
+    let mut update = request(&root, remote_files, Vec::new(), "0.15.0");
+    let prepared = prepare_with_contents(&root.0, &installed, &update.remote, &BTreeMap::new())
+      .await
+      .unwrap();
+    assert_eq!(prepared.diff.changes.len(), 1);
+    assert!(prepared.diff.changes[0].restored);
+    update.operations = resolve(&prepared, &BTreeMap::new());
+    update.merged_contents = prepared.merged_contents.clone();
+    update.next_baseline = prepared.next_baseline.clone();
+    update.ignores = ignores::plan_update(&root.0, &prepared, &update.remote);
+    update.plan_hash = prepared.plan_hash.clone();
+
+    apply(&env, update).await.unwrap();
+
+    assert_eq!(root.read("config/c.toml").as_deref(), Some(base_text));
+    assert_eq!(
+      root
+        .0
+        .join(UPDATE_DIR)
+        .join("last-backup/files/config/c.toml")
+        .is_file(),
+      true
+    );
+    assert_eq!(
+      fs::read_to_string(
+        root
+          .0
+          .join(UPDATE_DIR)
+          .join("last-backup/files/config/c.toml")
+      )
+      .unwrap(),
+      "x = 2\n"
+    );
+    assert!(ignores::read(&root.0).files.is_empty());
+
+    assert!(roll_back_last(&root.0).unwrap());
+    assert_eq!(root.read("config/c.toml").as_deref(), Some("x = 2\n"));
+    let restored = ignores::read(&root.0);
+    assert!(restored.files["config/c.toml"].whole);
   }
 }
