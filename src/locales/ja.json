@@ -1186,7 +1186,8 @@
     },
     "versionIsolation": {
       "settings": {
-        "title": "バージョン分離を有効化"
+        "title": "バージョン分離を有効化",
+        "description": "ロックされたモッドパックとモッド付きインスタンスはこの設定の影響を受けません"
       }
     },
     "moreOptions": {
@@ -1309,6 +1310,7 @@
     "secMenu": {
       "createShortcut": "起動ショートカットを作成",
       "exportModPack": "モッドパックエクスポート",
+      "exportModPackDisabled": "このインスタンスは共有ゲームディレクトリを使用しているため、エクスポートできません",
       "star": "このインスタンスをスター",
       "unstar": "このインスタンスを非スター",
       "publishModPack": "キャンパスModパックに公開"
@@ -1367,6 +1369,13 @@
       "details": "詳細を見る"
     }
   },
+  "VersionIsolationConfirmDialog": {
+    "title": "バージョン分離を変更",
+    "body": "インスタンスは「{{from}}」から「{{to}}」に切り替わります。既存のワールド、モッド、設定は移動しません。",
+    "globalBody": "次のインスタンスがゲームディレクトリを切り替えます。既存のワールド、モッド、設定は移動しません：\n{{instances}}",
+    "lockWarning": "このインスタンスにはローダーがインストールされているか、モッドパック由来です。分離に切り替えるとロックされ、共有ディレクトリに戻せなくなります。",
+    "willLockSuffix": "（ロックされます）"
+  },
   "InstanceSettingsPage": {
     "name": "インスタンス名称",
     "description": "インスタンス情報",
@@ -1375,6 +1384,15 @@
     "restoreSettings": "限定設定をリセット",
     "restoreSettingsDesc": "以下の設定をグローバル設定にリセット",
     "restore": "リセット",
+    "versionIsolation": {
+      "title": "バージョン分離",
+      "on": "オン",
+      "off": "オフ",
+      "locked": "オン · モッドパックまたはモッド付きインスタンス、常に分離",
+      "instance": "{{state}} · このインスタンスの設定",
+      "global": "{{state}} · グローバル設定に従う",
+      "goGlobal": "グローバルゲーム設定へ"
+    },
     "errorMessage": {
       "error-1": "インスタンス名称が必須",
       "error-2": "インスタンス名が無効",

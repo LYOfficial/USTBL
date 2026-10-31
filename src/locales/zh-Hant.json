@@ -1186,7 +1186,8 @@
     },
     "versionIsolation": {
       "settings": {
-        "title": "啟用實例隔離"
+        "title": "啟用實例隔離",
+        "description": "已鎖定的整合包和模組實例不受此開關影響"
       }
     },
     "moreOptions": {
@@ -1309,6 +1310,7 @@
     "secMenu": {
       "createShortcut": "建立啟動捷徑",
       "exportModPack": "匯出為模組包",
+      "exportModPackDisabled": "此實例使用共用遊戲目錄，無法匯出",
       "star": "星標此實例",
       "unstar": "取消星標",
       "publishModPack": "發佈到校園整合包"
@@ -1367,6 +1369,13 @@
       "details": "詳情"
     }
   },
+  "VersionIsolationConfirmDialog": {
+    "title": "切換版本隔離",
+    "body": "實例將從「{{from}}」改用「{{to}}」。現有世界、模組和設定不會移動。",
+    "globalBody": "以下實例將切換遊戲目錄；現有世界、模組和設定不會移動：\n{{instances}}",
+    "lockWarning": "此實例已安裝載入器或來自整合包，改為隔離後將被鎖定，之後不能再改回共用目錄。",
+    "willLockSuffix": "（將鎖定）"
+  },
   "InstanceSettingsPage": {
     "name": "實例名稱",
     "description": "實例描述",
@@ -1375,6 +1384,15 @@
     "restoreSettings": "重設以下特定設定",
     "restoreSettingsDesc": "將以下特定設定重設為全域性遊戲設定",
     "restore": "重設",
+    "versionIsolation": {
+      "title": "版本隔離",
+      "on": "開啟",
+      "off": "關閉",
+      "locked": "開啟 · 整合包或模組實例，始終隔離",
+      "instance": "{{state}} · 本實例設定",
+      "global": "{{state}} · 跟隨全域性設定",
+      "goGlobal": "前往全域性遊戲設定"
+    },
     "errorMessage": {
       "error-1": "實例名稱不能為空",
       "error-2": "實例名稱不合法",

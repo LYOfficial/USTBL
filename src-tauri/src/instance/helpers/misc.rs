@@ -15,6 +15,7 @@ use crate::launcher_config::models::{GameConfig, GameDirectory, LauncherConfig};
 use crate::resource::helpers::misc::get_source_priority_list;
 use crate::storage::load_json_async;
 use sanitize_filename;
+use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
@@ -24,13 +25,60 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 use zip::ZipArchive;
 
-pub fn get_instance_game_config(app: &AppHandle, instance: &Instance) -> GameConfig {
-  if instance.use_spec_game_config {
-    if let Some(v) = &instance.spec_game_config {
-      return v.clone();
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum IsolationSource {
+  Locked,
+  Instance,
+  Global,
+}
+
+impl IsolationSource {
+  pub fn as_str(self) -> &'static str {
+    match self {
+      Self::Locked => "locked",
+      Self::Instance => "instance",
+      Self::Global => "global",
     }
   }
-  get_global_game_config(app)
+}
+
+/// Whether an instance has pack or loader files that only work in its own directory.
+pub fn owns_files(instance: &Instance) -> bool {
+  instance.origin.is_some()
+    || instance.modpack_version.is_some()
+    || instance.mod_loader.loader_type != ModLoaderType::Unknown
+    || instance.optifine.is_some()
+}
+
+pub fn resolve_isolation(instance: &Instance, global: &GameConfig) -> (bool, IsolationSource) {
+  if instance.isolation_locked {
+    return (true, IsolationSource::Locked);
+  }
+  if instance.use_spec_game_config {
+    if let Some(spec) = &instance.spec_game_config {
+      return (spec.version_isolation, IsolationSource::Instance);
+    }
+  }
+  (global.version_isolation, IsolationSource::Global)
+}
+
+pub fn should_lock_on_refresh(instance: &Instance, version_isolated: bool) -> bool {
+  !instance.isolation_locked && owns_files(instance) && version_isolated
+}
+
+pub fn get_instance_game_config(app: &AppHandle, instance: &Instance) -> GameConfig {
+  let global = get_global_game_config(app);
+  let mut config = if instance.use_spec_game_config {
+    instance
+      .spec_game_config
+      .clone()
+      .unwrap_or_else(|| global.clone())
+  } else {
+    global.clone()
+  };
+  config.version_isolation = resolve_isolation(instance, &global).0;
+  config
 }
 
 pub fn get_instance_subdir_paths(
@@ -267,7 +315,7 @@ async fn refresh_instance(
     .is_some_and(|o| o.status == ModLoaderStatus::Installed);
   let optifine_filename = optifine_info.as_ref().map(|info| info.filename.clone());
   let optifine_version = optifine_info.map(|info| info.r#type.to_string());
-  let instance = Instance {
+  let mut instance = Instance {
     name,
     version: game_version.unwrap_or_default(),
     version_path,
@@ -293,6 +341,12 @@ async fn refresh_instance(
     },
     ..cfg_read
   };
+  if should_lock_on_refresh(
+    &instance,
+    get_instance_game_config(app, &instance).version_isolation,
+  ) {
+    instance.isolation_locked = true;
+  }
   // ignore error here, for now
   instance.save_json_cfg().await?;
 
@@ -417,6 +471,144 @@ async fn refresh_and_update_instances_inner(app: &AppHandle, is_first_run: bool)
   let binding = app.state::<Mutex<HashMap<String, Instance>>>();
   let mut state = binding.lock().unwrap();
   *state = instances;
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn instance_with(
+    locked: bool,
+    use_spec: bool,
+    spec_isolated: Option<bool>,
+    owns_files: bool,
+  ) -> Instance {
+    let mut instance = Instance {
+      isolation_locked: locked,
+      use_spec_game_config: use_spec,
+      ..Default::default()
+    };
+    if let Some(version_isolation) = spec_isolated {
+      instance.spec_game_config = Some(GameConfig {
+        version_isolation,
+        ..Default::default()
+      });
+    }
+    if owns_files {
+      instance.modpack_version = Some("1.0.0".into());
+    }
+    instance
+  }
+
+  #[test]
+  fn resolve_isolation_uses_locked_before_instance_or_global() {
+    for spec_isolated in [false, true] {
+      for global_isolated in [false, true] {
+        let instance = instance_with(true, true, Some(spec_isolated), true);
+        let global = GameConfig {
+          version_isolation: global_isolated,
+          ..Default::default()
+        };
+        assert_eq!(
+          resolve_isolation(&instance, &global),
+          (true, IsolationSource::Locked)
+        );
+      }
+    }
+  }
+
+  #[test]
+  fn resolve_isolation_uses_instance_setting_when_enabled() {
+    for spec_isolated in [false, true] {
+      for global_isolated in [false, true] {
+        let instance = instance_with(false, true, Some(spec_isolated), true);
+        let global = GameConfig {
+          version_isolation: global_isolated,
+          ..Default::default()
+        };
+        assert_eq!(
+          resolve_isolation(&instance, &global),
+          (spec_isolated, IsolationSource::Instance)
+        );
+      }
+    }
+  }
+
+  #[test]
+  fn resolve_isolation_uses_global_when_instance_setting_is_disabled() {
+    for spec_isolated in [false, true] {
+      for global_isolated in [false, true] {
+        let instance = instance_with(false, false, Some(spec_isolated), true);
+        let global = GameConfig {
+          version_isolation: global_isolated,
+          ..Default::default()
+        };
+        assert_eq!(
+          resolve_isolation(&instance, &global),
+          (global_isolated, IsolationSource::Global)
+        );
+      }
+    }
+  }
+
+  #[test]
+  fn refresh_lock_requires_owned_files_and_isolation() {
+    let owned = instance_with(false, false, None, true);
+    assert!(should_lock_on_refresh(&owned, true));
+    assert!(!should_lock_on_refresh(&owned, false));
+    assert!(!should_lock_on_refresh(
+      &instance_with(false, false, None, false),
+      true
+    ));
+    assert!(!should_lock_on_refresh(
+      &instance_with(true, false, None, true),
+      true
+    ));
+  }
+
+  #[test]
+  fn owns_files_detects_each_source() {
+    assert!(!owns_files(&Instance::default()));
+
+    let mut instance = Instance::default();
+    instance.origin = Some(crate::instance::models::misc::InstanceOrigin {
+      platform: crate::instance::models::misc::OriginPlatform::Campus,
+      project_id: "project".into(),
+      version_id: "version".into(),
+      game_version: "1.21.1".into(),
+      loader_type: ModLoaderType::Unknown,
+      follow: true,
+    });
+    assert!(owns_files(&instance));
+
+    instance.origin = None;
+    instance.modpack_version = Some("1.0.0".into());
+    assert!(owns_files(&instance));
+
+    instance.modpack_version = None;
+    instance.mod_loader.loader_type = ModLoaderType::Fabric;
+    assert!(owns_files(&instance));
+
+    instance.mod_loader.loader_type = ModLoaderType::Unknown;
+    instance.optifine = Some(OptiFine::default());
+    assert!(owns_files(&instance));
+  }
+
+  #[test]
+  fn isolation_source_serializes_to_lowercase() {
+    assert_eq!(
+      serde_json::to_string(&IsolationSource::Locked).unwrap(),
+      "\"locked\""
+    );
+    assert_eq!(
+      serde_json::to_string(&IsolationSource::Instance).unwrap(),
+      "\"instance\""
+    );
+    assert_eq!(
+      serde_json::to_string(&IsolationSource::Global).unwrap(),
+      "\"global\""
+    );
+  }
 }
 
 #[cfg(any(target_os = "windows", target_os = "linux"))]

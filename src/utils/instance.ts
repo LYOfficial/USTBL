@@ -50,6 +50,12 @@ export const getInstanceIconSrc = (
     : src;
 };
 
+export const ownsInstanceFiles = (instance: InstanceSummary): boolean =>
+  instance.origin != null ||
+  instance.modpackVersion != null ||
+  instance.modLoader.loaderType !== ModLoaderType.Unknown ||
+  instance.optifine != null;
+
 export const parseModLoaderVersion = (version: string): string => {
   const patterns = [
     {

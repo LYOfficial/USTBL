@@ -1186,7 +1186,8 @@
     },
     "versionIsolation": {
       "settings": {
-        "title": "Enable Version Isolation"
+        "title": "Enable Version Isolation",
+        "description": "Locked modpack and modded instances are not affected by this switch"
       }
     },
     "moreOptions": {
@@ -1309,6 +1310,7 @@
     "secMenu": {
       "createShortcut": "Create Launch Shortcut",
       "exportModPack": "Export as Modpack",
+      "exportModPackDisabled": "This instance uses a shared game directory and cannot be exported",
       "star": "Star this instance",
       "unstar": "Unstar",
       "publishModPack": "Publish to Campus Modpacks"
@@ -1367,6 +1369,13 @@
       "details": "Details"
     }
   },
+  "VersionIsolationConfirmDialog": {
+    "title": "Change Version Isolation",
+    "body": "The instance will switch from “{{from}}” to “{{to}}”. Existing worlds, mods, and configurations will not be moved.",
+    "globalBody": "The following instances will switch game directories. Existing worlds, mods, and configurations will not be moved:\n{{instances}}",
+    "lockWarning": "This instance has a loader or comes from a modpack. Switching to isolation will lock it, and it cannot be switched back to a shared directory.",
+    "willLockSuffix": " (will be locked)"
+  },
   "InstanceSettingsPage": {
     "name": "Instance Name",
     "description": "Instance Description",
@@ -1375,6 +1384,15 @@
     "restoreSettings": "Restore specific settings",
     "restoreSettingsDesc": "Restore the following specific settings to the global game settings.",
     "restore": "Restore",
+    "versionIsolation": {
+      "title": "Version Isolation",
+      "on": "On",
+      "off": "Off",
+      "locked": "On · Modpack or modded instance; always isolated",
+      "instance": "{{state}} · This instance's setting",
+      "global": "{{state}} · Follows global settings",
+      "goGlobal": "Go to Global Game Settings"
+    },
     "errorMessage": {
       "error-1": "Instance name cannot be empty",
       "error-2": "Instance name is invalid",

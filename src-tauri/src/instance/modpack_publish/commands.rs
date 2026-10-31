@@ -1061,15 +1061,22 @@ async fn try_adopt(
   baseline.save(&instance.version_path).await?;
   let label = version_number.to_string();
   store_instance(app, &instance.id, move |stored| {
-    stored.origin = Some(new_origin);
-    stored.modpack_version = Some(label);
+    adopt_instance_identity(stored, new_origin, label);
   })
   .await?;
   Ok(Adoption::Followed)
 }
+
+fn adopt_instance_identity(instance: &mut Instance, origin: InstanceOrigin, version: String) {
+  instance.origin = Some(origin);
+  instance.modpack_version = Some(version);
+  instance.isolation_locked = true;
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::instance::models::misc::ModLoaderType;
   use crate::instance::modpack_update::remote::{RemoteModpack, RuleKind, RuleState};
   use std::path::PathBuf;
 
@@ -1081,6 +1088,38 @@ mod tests {
       fs::write(file, content).unwrap();
     }
     root
+  }
+
+  #[test]
+  fn adopted_instances_stay_locked_after_unlinking() {
+    let mut instance = Instance::default();
+    adopt_instance_identity(
+      &mut instance,
+      InstanceOrigin {
+        platform: OriginPlatform::Campus,
+        project_id: "project".into(),
+        version_id: "version".into(),
+        game_version: "1.21.1".into(),
+        loader_type: ModLoaderType::Unknown,
+        follow: true,
+      },
+      "1.0.0".into(),
+    );
+    assert!(instance.isolation_locked);
+
+    instance.origin = None;
+    instance.modpack_version = None;
+    let global = crate::launcher_config::models::GameConfig {
+      version_isolation: false,
+      ..Default::default()
+    };
+    assert_eq!(
+      crate::instance::helpers::misc::resolve_isolation(&instance, &global),
+      (
+        true,
+        crate::instance::helpers::misc::IsolationSource::Locked
+      )
+    );
   }
 
   fn picked(path: &str) -> PublishFile {

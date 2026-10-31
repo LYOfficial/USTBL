@@ -1186,7 +1186,8 @@
     },
     "versionIsolation": {
       "settings": {
-        "title": "启用版本隔离"
+        "title": "启用版本隔离",
+        "description": "已锁定的整合包和模组实例不受此开关影响"
       }
     },
     "moreOptions": {
@@ -1309,6 +1310,7 @@
     "secMenu": {
       "createShortcut": "创建启动快捷方式",
       "exportModPack": "导出为整合包",
+      "exportModPackDisabled": "实例使用共用游戏目录，无法导出",
       "star": "星标此实例",
       "unstar": "取消星标",
       "publishModPack": "发布到校园整合包"
@@ -1367,6 +1369,13 @@
       "details": "详情"
     }
   },
+  "VersionIsolationConfirmDialog": {
+    "title": "切换版本隔离",
+    "body": "实例将从“{{from}}”改用“{{to}}”。现有存档、模组和配置不会移动。",
+    "globalBody": "以下实例将切换游戏目录；现有存档、模组和配置不会移动：\n{{instances}}",
+    "lockWarning": "该实例装有加载器或来自整合包，改为隔离后将被锁定，之后不能再改回共用目录。",
+    "willLockSuffix": "（将锁定）"
+  },
   "InstanceSettingsPage": {
     "name": "实例名称",
     "description": "实例描述",
@@ -1375,6 +1384,15 @@
     "restoreSettings": "重置以下特定设置",
     "restoreSettingsDesc": "将以下特定设置重置为全局游戏设置",
     "restore": "重置",
+    "versionIsolation": {
+      "title": "版本隔离",
+      "on": "开",
+      "off": "关",
+      "locked": "开 · 整合包或模组实例，始终隔离",
+      "instance": "{{state}} · 本实例设置",
+      "global": "{{state}} · 跟随全局设置",
+      "goGlobal": "前往全局游戏设置"
+    },
     "errorMessage": {
       "error-1": "实例名称不能为空",
       "error-2": "实例名称不合法",
