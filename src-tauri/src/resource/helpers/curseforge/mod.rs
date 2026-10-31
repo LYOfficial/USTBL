@@ -9,6 +9,7 @@ pub mod misc;
 
 use crate::error::USTBLResult;
 use crate::launcher_config::models::LauncherConfig;
+use crate::resource::helpers::hashing::curseforge_fingerprint_file_async;
 use crate::resource::helpers::mcim::{get_content_source_priority_list, ContentSource};
 use crate::resource::helpers::misc::{
   apply_local_resource_enhancements, apply_other_resource_enhancements, version_pack_sort,
@@ -30,7 +31,7 @@ use misc::{
 };
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
-use std::fs;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_http::reqwest;
@@ -337,16 +338,9 @@ pub async fn fetch_remote_resource_by_local_curseforge(
   app: &AppHandle,
   file_path: &str,
 ) -> USTBLResult<OtherResourceFileInfo> {
-  let content = fs::read(file_path).map_err(|_| ResourceError::FileOperationError)?;
-
-  let fingerprint = murmur2::murmur2(
-    &content
-      .iter()
-      .copied()
-      .filter(|byte| !matches!(byte, 0x09 | 0x0a | 0x0d | 0x20))
-      .collect::<Vec<u8>>(),
-    1,
-  );
+  let fingerprint = curseforge_fingerprint_file_async(PathBuf::from(file_path))
+    .await
+    .map_err(|_| ResourceError::FileOperationError)?;
 
   let priority = content_source_priority(app);
   let body = CurseForgeFingerprintsBody {

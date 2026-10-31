@@ -1,4 +1,5 @@
 pub mod curseforge;
+pub mod hashing;
 pub mod loader_meta;
 pub mod mcim;
 pub mod misc;

@@ -1,6 +1,7 @@
 pub mod misc;
 
 use crate::error::USTBLResult;
+use crate::resource::helpers::hashing::sha1_file_async;
 use crate::resource::helpers::misc::{
   apply_local_resource_enhancements, apply_other_resource_enhancements,
 };
@@ -12,14 +13,11 @@ use crate::resource::models::{
   OtherResourceVersionPackQuery, ResourceError,
 };
 use crate::tasks::download::DownloadParam;
-use hex;
 use misc::{
   make_modrinth_request_with_fallbacks, map_modrinth_file_to_version_pack, ModrinthProject,
   ModrinthSearchRes, ModrinthVersionPack,
 };
-use sha1::{Digest, Sha1};
 use std::collections::HashMap;
-use std::fs;
 use std::path::PathBuf;
 use tauri::AppHandle;
 use url::Url;
@@ -129,12 +127,9 @@ pub async fn fetch_remote_resource_by_local_modrinth(
   app: &AppHandle,
   file_path: &str,
 ) -> USTBLResult<OtherResourceFileInfo> {
-  let file_content = fs::read(file_path).map_err(|_| ResourceError::ParseError)?;
-
-  let mut hasher = Sha1::new();
-  hasher.update(&file_content);
-  let hash = hasher.finalize();
-  let hash_string = hex::encode(hash);
+  let hash_string = sha1_file_async(PathBuf::from(file_path))
+    .await
+    .map_err(|_| ResourceError::ParseError)?;
 
   let mut params = HashMap::new();
   params.insert("algorithm".to_string(), "sha1".to_string());
