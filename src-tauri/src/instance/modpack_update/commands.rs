@@ -35,6 +35,7 @@ use crate::instance::models::misc::{
 };
 use crate::launch::models::LaunchingState;
 use crate::launch::helpers::file_validator::{get_invalid_assets, get_invalid_library_files};
+use crate::launcher_config::commands::retrieve_launcher_config;
 use crate::resource::helpers::misc::{download_source_candidates, get_source_priority_list};
 use crate::resource::models::{ModLoaderResourceInfo, ResourceType};
 use crate::tasks::download::DownloadParam;
@@ -1172,6 +1173,16 @@ impl UpdateEnv for AppEnv {
   fn ensure_not_running(&self) -> USTBLResult<()> {
     ensure_not_running(&self.app, &self.instance_id)
   }
+  fn download_concurrency(&self) -> usize {
+    retrieve_launcher_config(self.app.clone()).map_or(8, |config| {
+      let transmission = config.download.transmission;
+      crate::tasks::monitor::download_concurrency(
+        transmission.auto_concurrent,
+        transmission.concurrent_count,
+      )
+    })
+  }
+
   async fn fetch(&self, param: DownloadParam) -> USTBLResult<()> {
     until_install_cancelled(&self.instance_id, download_param(&self.app, param)).await
   }

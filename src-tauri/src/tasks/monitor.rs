@@ -37,6 +37,16 @@ pub struct TaskMonitor {
   pub download_rate_limiter: Option<Limiter>,
 }
 
+/// How many downloads run side by side: the available parallelism when the
+/// setting is automatic, the configured count otherwise.
+pub fn download_concurrency(auto_concurrent: bool, concurrent_count: usize) -> usize {
+  if auto_concurrent {
+    std::thread::available_parallelism().unwrap().into()
+  } else {
+    concurrent_count
+  }
+}
+
 impl TaskMonitor {
   pub fn new(app_handle: AppHandle) -> Self {
     let config = retrieve_launcher_config(app_handle.clone()).unwrap();
@@ -47,13 +57,10 @@ impl TaskMonitor {
       phs: RwLock::new(HashMap::new()),
       ths: RwLock::new(HashMap::new()),
       tasks: Arc::new(Mutex::new(HashMap::new())),
-      concurrency: Arc::new(Semaphore::new(
-        if config.download.transmission.auto_concurrent {
-          std::thread::available_parallelism().unwrap().into()
-        } else {
-          config.download.transmission.concurrent_count
-        },
-      )),
+      concurrency: Arc::new(Semaphore::new(download_concurrency(
+        config.download.transmission.auto_concurrent,
+        config.download.transmission.concurrent_count,
+      ))),
       tx,
       rx,
       group_map: Arc::new(RwLock::new(HashMap::new())),

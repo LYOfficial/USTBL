@@ -24,7 +24,7 @@ use async_trait::async_trait;
 use futures::stream::{FuturesUnordered, StreamExt};
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -176,6 +176,10 @@ pub trait UpdateEnv: Send + Sync {
   /// guard is held, so a launch cannot slip in after the check.
   fn ensure_not_running(&self) -> USTBLResult<()> {
     Ok(())
+  }
+  /// How many downloads may run side by side while fetching files.
+  fn download_concurrency(&self) -> usize {
+    FETCH_CONCURRENCY
   }
   /// Download `param.src` to `param.dest`. When `param.sha1` is set the
   /// download must verify it and fail otherwise (`DownloadTask` does); the
@@ -1095,17 +1099,41 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
   let fetching = Instant::now();
   // Driven by hand rather than with `buffer_unordered`: the combinator's
   // closure makes the future fail the `Send` check of the command handler.
-  let mut pending = fetch_units(&to_fetch, planned).into_iter();
+  // Downloads follow the download settings. Archive extraction and pack
+  // requests keep their own fixed limit, so a campus pack never opens more
+  // pack connections than before.
+  let download_limit = env.download_concurrency().max(1);
+  let (mut pending_downloads, mut pending_other): (VecDeque<_>, VecDeque<_>) =
+    fetch_units(&to_fetch, planned)
+      .into_iter()
+      .partition(|unit| matches!(unit, FetchUnit::Single(..)));
+  let (mut downloads_running, mut others_running) = (0usize, 0usize);
+  let (mut downloaded_files, mut downloaded_bytes) = (0usize, 0u64);
+  let mut downloads_finished = None;
   let mut running = FuturesUnordered::new();
   let mut first_error = None;
   let fetching_result: USTBLResult<()> = loop {
     if first_error.is_none() && env.cancel_requested() {
       first_error = Some(cancelled_error());
     }
-    while first_error.is_none() && running.len() < FETCH_CONCURRENCY {
-      let Some(unit) = pending.next() else {
+    while first_error.is_none() {
+      let is_download = downloads_running < download_limit && !pending_downloads.is_empty();
+      let unit = if is_download {
+        pending_downloads.pop_front()
+      } else if others_running < FETCH_CONCURRENCY {
+        pending_other.pop_front()
+      } else {
+        None
+      };
+      let Some(unit) = unit else {
         break;
       };
+      let is_download = matches!(unit, FetchUnit::Single(..));
+      if is_download {
+        downloads_running += 1;
+      } else {
+        others_running += 1;
+      }
       let files = unit.file_count();
       let bytes = match &unit {
         FetchUnit::Single(file, _) => file.key.size,
@@ -1113,27 +1141,30 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
         FetchUnit::Group(_, group) => group.entries.iter().map(|file| file.entry.size).sum(),
       };
       running.push(async move {
-        let result = match &unit {
-          FetchUnit::Single(file, dest) => stage_file(env, dest.clone(), file).await,
-          FetchUnit::Archive(archive, files) => extract_archive_unit(env, archive, files).await,
-          FetchUnit::Group(session, group) => {
-            session.fetch_group(group).await?;
-            let entries = group.entries.clone();
-            tokio::task::spawn_blocking(move || {
-              for entry in entries {
-                let (sha1, size) = hash_file(&entry.dest).map_err(io_error)?;
-                if sha1 != entry.sha1 || size != entry.entry.size {
-                  let _ = fs::remove_file(&entry.dest);
-                  return Err(InstanceError::ModpackUpdateVerifyFailed.into());
+        let result: USTBLResult<()> = async {
+          match &unit {
+            FetchUnit::Single(file, dest) => stage_file(env, dest.clone(), file).await,
+            FetchUnit::Archive(archive, files) => extract_archive_unit(env, archive, files).await,
+            FetchUnit::Group(session, group) => {
+              session.fetch_group(group).await?;
+              let entries = group.entries.clone();
+              tokio::task::spawn_blocking(move || {
+                for entry in entries {
+                  let (sha1, size) = hash_file(&entry.dest).map_err(io_error)?;
+                  if sha1 != entry.sha1 || size != entry.entry.size {
+                    let _ = fs::remove_file(&entry.dest);
+                    return Err(InstanceError::ModpackUpdateVerifyFailed.into());
+                  }
                 }
-              }
-              Ok(())
-            })
-            .await
-            .map_err(|error| crate::error::USTBLError(error.to_string()))?
+                Ok(())
+              })
+              .await
+              .map_err(|error| crate::error::USTBLError(error.to_string()))?
+            }
           }
-        };
-        result.map(|()| (files, bytes))
+        }
+        .await;
+        (is_download, result.map(|()| (files, bytes)))
       });
     }
     let next = tokio::select! {
@@ -1145,11 +1176,21 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
         continue;
       }
     };
-    let Some(result) = next else {
+    let Some((was_download, result)) = next else {
       break first_error.map_or(Ok(()), Err);
     };
+    if was_download {
+      downloads_running -= 1;
+    } else {
+      others_running -= 1;
+    }
     match result {
       Ok((files, bytes)) => {
+        if was_download {
+          downloaded_files += files;
+          downloaded_bytes += bytes;
+          downloads_finished = Some(fetching.elapsed());
+        }
         done += files;
         bytes_done += bytes;
         env.report(Progress {
@@ -1169,6 +1210,12 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
       }
     }
   };
+  if let Some(elapsed) = downloads_finished {
+    log::info!(
+      "modpack download fetch: {downloaded_files} files, {downloaded_bytes} bytes, \
+       {download_limit} concurrent, {elapsed:?} elapsed"
+    );
+  }
   // The measurement behind the "merged or not" comparison, per pack session.
   for session in sessions {
     let stats = session.stats();
@@ -1438,10 +1485,17 @@ mod tests {
     cancel_after_fetches: Option<usize>,
     cancel_in_commit: bool,
     committing: std::sync::atomic::AtomicBool,
+    download_limit: Option<usize>,
+    slow_downloads: bool,
+    downloads_in_flight: std::sync::atomic::AtomicUsize,
+    downloads_peak: std::sync::atomic::AtomicUsize,
   }
 
   #[async_trait]
   impl UpdateEnv for FakeEnv {
+    fn download_concurrency(&self) -> usize {
+      self.download_limit.unwrap_or(FETCH_CONCURRENCY)
+    }
     fn cancel_requested(&self) -> bool {
       self.cancel.load(Ordering::SeqCst)
     }
@@ -1466,6 +1520,12 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
       }
       self.fetched.lock().unwrap().push(url.to_string());
+      if self.slow_downloads {
+        let now = self.downloads_in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+        self.downloads_peak.fetch_max(now, Ordering::SeqCst);
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        self.downloads_in_flight.fetch_sub(1, Ordering::SeqCst);
+      }
       fs::create_dir_all(dest.parent().unwrap()).unwrap();
       fs::write(dest, &self.contents[url]).unwrap();
       // Like `DownloadTask`: a set sha1 is checked, and a mismatch fails.
@@ -3039,6 +3099,83 @@ mod tests {
     assert_eq!(root.read("mods/c.jar").as_deref(), Some("gamma"));
   }
 
+  async fn peak_downloads(limit: Option<usize>, count: usize) -> usize {
+    let root = setup();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      download_limit: limit,
+      slow_downloads: true,
+      ..Default::default()
+    };
+    let files: Vec<RemoteFile> = (0..count)
+      .map(|index| {
+        url_file(
+          &format!("mods/m{index}.jar"),
+          &format!("m{index}"),
+          &mut env,
+        )
+      })
+      .collect();
+    let operations = files.iter().map(write_op).collect();
+
+    apply(&env, request(&root, files, operations, "0.15.0"))
+      .await
+      .unwrap();
+
+    assert_eq!(root.read("mods/m0.jar").as_deref(), Some("m0"));
+    assert_eq!(env.fetched.lock().unwrap().len(), count);
+    env.downloads_peak.load(Ordering::SeqCst)
+  }
+
+  #[tokio::test]
+  async fn downloads_follow_the_download_concurrency() {
+    assert_eq!(peak_downloads(Some(3), 20).await, 3);
+    assert_eq!(peak_downloads(Some(1), 5).await, 1);
+    assert_eq!(peak_downloads(Some(20), 20).await, 20);
+    // A zero setting must not stall the fetch.
+    assert_eq!(peak_downloads(Some(0), 4).await, 1);
+  }
+
+  #[tokio::test]
+  async fn pack_groups_keep_their_own_limit_whatever_the_download_setting() {
+    let root = setup();
+    let env = FakeEnv {
+      root: root.0.clone(),
+      download_limit: Some(64),
+      ..Default::default()
+    };
+    let owned: Vec<(String, Vec<u8>)> = (0..24)
+      .map(|index| {
+        (
+          format!("mods/p{index}.jar"),
+          format!("pack-{index}").into_bytes(),
+        )
+      })
+      .collect();
+    let contents: Vec<(&str, &[u8])> = owned
+      .iter()
+      .map(|(path, data)| (path.as_str(), data.as_slice()))
+      .collect();
+    let sha1s = sha1s_of(&contents);
+    let gap = crate::instance::modpack_update::packs::MERGE_GAP as usize + 1;
+    let transport = Arc::new(MultiFilePack::spaced(
+      &sha1s
+        .iter()
+        .map(|(sha1, data)| (sha1.as_str(), *data))
+        .collect::<Vec<(&str, &[u8])>>(),
+      &vec![gap; contents.len() - 1],
+    ));
+    let session = PackSession::new(transport.clone(), 3);
+    let remote_files = pack_remote_files(&contents, &session);
+    let operations = remote_files.iter().map(write_op).collect();
+
+    apply(&env, request(&root, remote_files, operations, "0.15.0"))
+      .await
+      .unwrap();
+
+    let peak = transport.peak.load(Ordering::SeqCst);
+    assert!(peak > 1 && peak <= FETCH_CONCURRENCY, "peak was {peak}");
+  }
   #[tokio::test]
   async fn distant_groups_are_fetched_concurrently() {
     let root = setup();
