@@ -985,17 +985,25 @@ async fn load_baseline(target: &Target) -> USTBLResult<ModpackBaseline> {
 /// Change an instance's saved config (identity, shown version) and keep the
 /// in-memory copy in step. Starts from the file on disk, because the loader
 /// switch and the importer write the instance file on their own.
+///
+/// The whole read, change, save and publish runs under LOADER_LIFECYCLE, like
+/// the instance list scans and the loader claims and completions, so none of
+/// them can save an older copy over this change (or the other way round). The
+/// lock is not reentrant: never call this from code that already holds it.
 pub async fn store_instance(
   app: &AppHandle,
   instance_id: &str,
   change: impl FnOnce(&mut Instance),
 ) -> USTBLResult<()> {
-  let mut instance = current_instance(app, instance_id)?.load_json_cfg().await?;
-  change(&mut instance);
-  instance.save_json_cfg().await?;
-  let binding = app.state::<Mutex<HashMap<String, Instance>>>();
-  binding.lock()?.insert(instance_id.to_string(), instance);
-  Ok(())
+  crate::instance::helpers::loader_lifecycle::LOADER_LIFECYCLE
+    .run(async {
+      let at = current_instance(app, instance_id)?;
+      let instance = crate::instance::helpers::loader_lifecycle::edit_config(&at, change).await?;
+      let binding = app.state::<Mutex<HashMap<String, Instance>>>();
+      binding.lock()?.insert(instance_id.to_string(), instance);
+      Ok(())
+    })
+    .await
 }
 
 struct AppEnv {

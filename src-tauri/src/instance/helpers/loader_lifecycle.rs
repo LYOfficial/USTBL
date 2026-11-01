@@ -1,8 +1,12 @@
 use crate::error::USTBLResult;
 use crate::instance::models::misc::{Instance, InstanceError, ModLoaderStatus, ModLoaderType};
 
-/// Scans publish a whole instance map. Keep their read/modify/save/publish cycle
-/// serialized with loader claims and final state publication, but not processors.
+/// Serializes every read/modify/save of an instance's ustblcfg.json that starts
+/// from the file on disk: instance-list scans, loader claims and completions,
+/// and `store_instance`. Each of them must read the file inside the lock, so a
+/// save never overwrites a change made after its read. Processors run outside.
+/// The mutex is not reentrant: code running under it must not call `run` again,
+/// which includes `store_instance`.
 pub(crate) struct LoaderLifecycle(tokio::sync::Mutex<()>);
 
 impl LoaderLifecycle {
@@ -113,14 +117,32 @@ pub(crate) async fn claim_install(instance: &mut Instance) -> USTBLResult<Option
 }
 
 /// Persist the processor result while holding LOADER_LIFECYCLE. The processor
-/// itself deliberately runs outside the lock because it may take minutes.
+/// itself deliberately runs outside the lock because it may take minutes, and
+/// other writers (a modpack install committing its origin) save the config in
+/// the meantime. So `claimed`, the snapshot taken at claim time, is only used to
+/// locate the config: the file is read again and only the claimed statuses change.
+///
+/// Returns the config as saved, for publishing the loader fields to memory, or
+/// `None` when it could not be read (for example the instance was deleted while
+/// the processors ran). Nothing is written then, so the config file is never
+/// recreated.
 pub(crate) async fn complete_install(
-  instance: &mut Instance,
+  claimed: &Instance,
   steps: InstallSteps,
   result: USTBLResult<()>,
-) -> USTBLResult<()> {
+) -> (Option<Instance>, USTBLResult<()>) {
+  let mut fresh = match claimed.load_json_cfg().await {
+    Ok(fresh) => fresh,
+    Err(error) => {
+      log::warn!(
+        "Not saving the loader install result of {:?}: {error}",
+        claimed.version_path
+      );
+      return (None, result.and(Err(error.into())));
+    }
+  };
   set_install_status(
-    instance,
+    &mut fresh,
     steps,
     if result.is_ok() {
       ModLoaderStatus::Installed
@@ -128,8 +150,35 @@ pub(crate) async fn complete_install(
       ModLoaderStatus::DownloadFailed
     },
   );
+  match fresh.save_json_cfg().await {
+    Ok(()) => (Some(fresh), result),
+    Err(error) => (Some(fresh), result.and(Err(error.into()))),
+  }
+}
+
+/// Read the config at `at` from disk, apply `change` and save it. Call while
+/// holding LOADER_LIFECYCLE, so the read cannot go stale before the save.
+pub(crate) async fn edit_config(
+  at: &Instance,
+  change: impl FnOnce(&mut Instance),
+) -> USTBLResult<Instance> {
+  let mut instance = at.load_json_cfg().await?;
+  change(&mut instance);
   instance.save_json_cfg().await?;
-  result
+  Ok(instance)
+}
+
+/// Mark a failed library download from the file on disk, not from the snapshot
+/// the caller holds. Call while holding LOADER_LIFECYCLE.
+pub(crate) async fn fail_download(claimed: &Instance, optifine: bool) -> USTBLResult<()> {
+  let mut fresh = claimed.load_json_cfg().await?;
+  let steps = InstallSteps {
+    loader: !optifine,
+    optifine,
+  };
+  set_install_status(&mut fresh, steps, ModLoaderStatus::DownloadFailed);
+  fresh.save_json_cfg().await?;
+  Ok(())
 }
 
 fn set_install_status(instance: &mut Instance, steps: InstallSteps, status: ModLoaderStatus) {
@@ -137,7 +186,10 @@ fn set_install_status(instance: &mut Instance, steps: InstallSteps, status: ModL
     instance.mod_loader.status = status.clone();
   }
   if steps.optifine {
-    instance.optifine.as_mut().unwrap().status = status;
+    match instance.optifine.as_mut() {
+      Some(optifine) => optifine.status = status,
+      None => log::warn!("OptiFine entry is gone from {:?}", instance.version_path),
+    }
   }
 }
 
@@ -286,9 +338,7 @@ mod tests {
     let ((), processor_result) = tokio::join!(refresh, processor);
     lifecycle
       .run(async {
-        complete_install(&mut instance, steps, processor_result)
-          .await
-          .unwrap();
+        complete(&instance, steps, processor_result).await.unwrap();
       })
       .await;
     let duplicate = lifecycle
@@ -308,9 +358,9 @@ mod tests {
   #[tokio::test]
   async fn optifine_finishes_when_the_main_loader_is_already_installed() {
     let fixture = Fixture::new(ModLoaderStatus::Downloading, true).await;
-    let mut instance = fixture.0.clone();
     let runs = &AtomicUsize::new(0);
     for _ in 0..2 {
+      let mut instance = fixture.0.load_json_cfg().await.unwrap();
       if let Some(steps) = claim_install(&mut instance).await.unwrap() {
         assert_eq!(
           steps,
@@ -320,14 +370,19 @@ mod tests {
           }
         );
         runs.fetch_add(1, Ordering::SeqCst);
-        complete_install(&mut instance, steps, Ok(()))
-          .await
-          .unwrap();
+        complete(&instance, steps, Ok(())).await.unwrap();
       }
     }
     assert_eq!(runs.load(Ordering::SeqCst), 1);
     assert_eq!(
-      instance.optifine.unwrap().status,
+      fixture
+        .0
+        .load_json_cfg()
+        .await
+        .unwrap()
+        .optifine
+        .unwrap()
+        .status,
       ModLoaderStatus::Installed
     );
   }
@@ -353,16 +408,15 @@ mod tests {
     instance.save_json_cfg().await.unwrap();
     let runs = &AtomicUsize::new(0);
     for _ in 0..2 {
+      let mut instance = fixture.0.load_json_cfg().await.unwrap();
       if let Some(steps) = claim_install(&mut instance).await.unwrap() {
         assert!(steps.loader && steps.optifine);
         runs.fetch_add(1, Ordering::SeqCst);
-        complete_install(&mut instance, steps, Ok(()))
-          .await
-          .unwrap();
+        complete(&instance, steps, Ok(())).await.unwrap();
       }
     }
     assert_eq!(runs.load(Ordering::SeqCst), 1);
-    let saved = instance.load_json_cfg().await.unwrap();
+    let saved = fixture.0.load_json_cfg().await.unwrap();
     assert_eq!(saved.mod_loader.status, ModLoaderStatus::Installed);
     assert_eq!(saved.optifine.unwrap().status, ModLoaderStatus::Installed);
   }
@@ -374,19 +428,231 @@ mod tests {
     let runs = AtomicUsize::new(0);
     let steps = claim_install(&mut instance).await.unwrap().unwrap();
     runs.fetch_add(1, Ordering::SeqCst);
-    assert!(complete_install(
-      &mut instance,
+    assert!(complete(
+      &instance,
       steps,
       Err(InstanceError::ProcessorExecutionFailed.into())
     )
     .await
     .is_err());
-    assert!(claim_install(&mut instance).await.is_err());
+    let mut instance = fixture.0.load_json_cfg().await.unwrap();
+    assert!(matches!(
+      claim_install(&mut instance).await,
+      Err(error) if error.0 == InstanceError::ProcessorExecutionFailed.to_string()
+    ));
     assert_eq!(runs.load(Ordering::SeqCst), 1);
     assert_eq!(
       instance.load_json_cfg().await.unwrap().mod_loader.status,
       ModLoaderStatus::DownloadFailed
     );
     assert!(claim_download(&mut instance, false).await.unwrap());
+  }
+
+  async fn complete(
+    claimed: &Instance,
+    steps: InstallSteps,
+    result: USTBLResult<()>,
+  ) -> USTBLResult<()> {
+    complete_install(claimed, steps, result).await.1
+  }
+
+  async fn write_origin(fixture: &Fixture, version_id: &str, modpack_version: Option<&str>) {
+    use crate::instance::models::misc::{InstanceOrigin, OriginPlatform};
+    let mut on_disk = fixture.0.load_json_cfg().await.unwrap();
+    on_disk.modpack_version = modpack_version.map(String::from);
+    on_disk.origin = Some(InstanceOrigin {
+      platform: OriginPlatform::CurseForge,
+      project_id: "925200".into(),
+      version_id: version_id.into(),
+      game_version: "1.21.1".into(),
+      loader_type: ModLoaderType::NeoForge,
+      follow: true,
+    });
+    on_disk.save_json_cfg().await.unwrap();
+  }
+
+  /// What a modpack install does between the claim and the completion.
+  async fn commit_origin_on_disk(fixture: &Fixture) {
+    write_origin(fixture, "9190157", Some("1.0")).await;
+  }
+
+  fn assert_origin_kept(instance: &Instance) {
+    assert_eq!(instance.modpack_version.as_deref(), Some("1.0"));
+    assert_eq!(instance.origin.as_ref().unwrap().version_id, "9190157");
+  }
+
+  #[tokio::test]
+  async fn completion_keeps_changes_saved_after_the_claim() {
+    let cases: [(USTBLResult<()>, ModLoaderStatus); 2] = [
+      (Ok(()), ModLoaderStatus::Installed),
+      (
+        Err(InstanceError::ProcessorExecutionFailed.into()),
+        ModLoaderStatus::DownloadFailed,
+      ),
+    ];
+    for (result, expected) in cases {
+      let fixture = Fixture::new(ModLoaderStatus::Downloading, false).await;
+      write_origin(&fixture, "", None).await;
+      let mut claimed = fixture.0.load_json_cfg().await.unwrap();
+      let steps = claim_install(&mut claimed).await.unwrap().unwrap();
+      assert!(claimed.origin.as_ref().unwrap().version_id.is_empty());
+      commit_origin_on_disk(&fixture).await;
+      let failed = result.is_err();
+      let (saved, result) = complete_install(&claimed, steps, result).await;
+      assert_eq!(result.is_err(), failed);
+      let saved = saved.unwrap();
+      assert_eq!(saved.mod_loader.status, expected);
+      assert_origin_kept(&saved);
+      let on_disk = fixture.0.load_json_cfg().await.unwrap();
+      assert_eq!(on_disk.mod_loader.status, expected);
+      assert_origin_kept(&on_disk);
+    }
+  }
+
+  /// A scan reads the file, tells the test it holds that copy, waits for the
+  /// go-ahead, then saves the whole instance.
+  async fn scan_cycle(
+    fixture: &Fixture,
+    read: tokio::sync::oneshot::Sender<()>,
+    go: tokio::sync::oneshot::Receiver<()>,
+  ) {
+    let mut scanned = fixture.0.load_json_cfg().await.unwrap();
+    read.send(()).unwrap();
+    go.await.unwrap();
+    scanned.description = "scanned".into();
+    scanned.save_json_cfg().await.unwrap();
+  }
+
+  async fn store_cycle(fixture: &Fixture) {
+    edit_config(&fixture.0, |instance| {
+      instance.modpack_version = Some("1.0".into());
+    })
+    .await
+    .unwrap();
+  }
+
+  #[tokio::test]
+  async fn stored_changes_are_not_overwritten_by_a_concurrent_scan() {
+    use tokio::sync::oneshot;
+
+    // Without the lock the order is fixed as: scan reads, store reads and
+    // saves, scan saves. The scan's stale copy wins and the change is lost.
+    let fixture = Fixture::new(ModLoaderStatus::Installed, false).await;
+    let (read_tx, read_rx) = oneshot::channel();
+    let (go_tx, go_rx) = oneshot::channel();
+    let scan = scan_cycle(&fixture, read_tx, go_rx);
+    tokio::pin!(scan);
+    tokio::select! {
+      biased;
+      _ = &mut scan => unreachable!("the scan waits for the go-ahead"),
+      _ = read_rx => {}
+    }
+    store_cycle(&fixture).await;
+    go_tx.send(()).unwrap();
+    scan.await;
+    assert_eq!(
+      fixture.0.load_json_cfg().await.unwrap().modpack_version,
+      None
+    );
+
+    // With the lock the store is queued behind the scan while the scan holds
+    // its stale copy, so it reads only after the scan has saved.
+    let fixture = Fixture::new(ModLoaderStatus::Installed, false).await;
+    let lifecycle = LoaderLifecycle::new();
+    let (read_tx, read_rx) = oneshot::channel();
+    let (go_tx, go_rx) = oneshot::channel();
+    let scan = lifecycle.run(scan_cycle(&fixture, read_tx, go_rx));
+    let store = lifecycle.run(store_cycle(&fixture));
+    tokio::pin!(scan, store);
+    tokio::select! {
+      biased;
+      _ = &mut scan => unreachable!("the scan waits for the go-ahead"),
+      _ = read_rx => {}
+    }
+    // One poll puts the store in the queue for the lock; it must not get past it.
+    tokio::select! {
+      biased;
+      _ = &mut store => unreachable!("the scan still holds the lock"),
+      _ = std::future::ready(()) => {}
+    }
+    go_tx.send(()).unwrap();
+    tokio::join!(scan, store);
+    let saved = fixture.0.load_json_cfg().await.unwrap();
+    assert_eq!(saved.modpack_version.as_deref(), Some("1.0"));
+    assert_eq!(saved.description, "scanned");
+  }
+  #[tokio::test]
+  async fn completion_does_not_recreate_a_deleted_instance() {
+    let fixture = Fixture::new(ModLoaderStatus::Downloading, false).await;
+    let mut claimed = fixture.0.load_json_cfg().await.unwrap();
+    let steps = claim_install(&mut claimed).await.unwrap().unwrap();
+    std::fs::remove_dir_all(&fixture.0.version_path).unwrap();
+    let cases: [USTBLResult<()>; 2] = [Ok(()), Err(InstanceError::ProcessorExecutionFailed.into())];
+    for result in cases {
+      let failed = result.is_err();
+      let (saved, result) = complete_install(&claimed, steps, result).await;
+      assert!(saved.is_none());
+      assert!(result.is_err());
+      if failed {
+        assert_eq!(
+          result.unwrap_err().0,
+          InstanceError::ProcessorExecutionFailed.to_string()
+        );
+      }
+      assert!(!fixture.0.version_path.exists());
+    }
+  }
+
+  #[tokio::test]
+  async fn completion_tolerates_an_optifine_entry_that_is_gone() {
+    let fixture = Fixture::new(ModLoaderStatus::Downloading, true).await;
+    let mut claimed = fixture.0.load_json_cfg().await.unwrap();
+    claimed.mod_loader.status = ModLoaderStatus::Downloading;
+    claimed.save_json_cfg().await.unwrap();
+    let steps = claim_install(&mut claimed).await.unwrap().unwrap();
+    assert!(steps.loader && steps.optifine);
+    let mut on_disk = fixture.0.load_json_cfg().await.unwrap();
+    on_disk.optifine = None;
+    on_disk.save_json_cfg().await.unwrap();
+    complete(&claimed, steps, Ok(())).await.unwrap();
+    let saved = fixture.0.load_json_cfg().await.unwrap();
+    assert_eq!(saved.mod_loader.status, ModLoaderStatus::Installed);
+    assert!(saved.optifine.is_none());
+  }
+
+  #[tokio::test]
+  async fn a_failed_download_marks_only_its_component_on_the_current_file() {
+    for optifine in [false, true] {
+      let fixture = Fixture::new(ModLoaderStatus::Downloading, optifine).await;
+      write_origin(&fixture, "", None).await;
+      let mut claimed = fixture.0.load_json_cfg().await.unwrap();
+      if optifine {
+        claimed.mod_loader.status = ModLoaderStatus::Installed;
+        claimed.save_json_cfg().await.unwrap();
+      }
+      commit_origin_on_disk(&fixture).await;
+      // `claimed` is older than the file: it must not be written back.
+      fail_download(&claimed, optifine).await.unwrap();
+      let saved = fixture.0.load_json_cfg().await.unwrap();
+      assert_origin_kept(&saved);
+      if optifine {
+        assert_eq!(saved.mod_loader.status, ModLoaderStatus::Installed);
+        assert_eq!(
+          saved.optifine.unwrap().status,
+          ModLoaderStatus::DownloadFailed
+        );
+      } else {
+        assert_eq!(saved.mod_loader.status, ModLoaderStatus::DownloadFailed);
+      }
+    }
+  }
+
+  #[tokio::test]
+  async fn a_failed_download_does_not_recreate_a_deleted_instance() {
+    let fixture = Fixture::new(ModLoaderStatus::Downloading, false).await;
+    let claimed = fixture.0.clone();
+    std::fs::remove_dir_all(&fixture.0.version_path).unwrap();
+    assert!(fail_download(&claimed, false).await.is_err());
+    assert!(!fixture.0.version_path.exists());
   }
 }
