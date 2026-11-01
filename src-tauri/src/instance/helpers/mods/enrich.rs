@@ -9,8 +9,9 @@
 //!
 //! There is at most one refresh per instance: starting another one for the same
 //! instance cancels the running one, and a refresh that has been replaced never
-//! emits. Every payload names its instance, and every update names the jar by
-//! path, so the frontend can drop what no longer applies.
+//! emits. Deleting the instance cancels its refresh the same way. Every payload
+//! names its instance, and every update names the jar by path, so the frontend
+//! can drop what no longer applies.
 
 use crate::instance::helpers::mods::remote::{
   hash_mods, refresh_curseforge_infos, refresh_remote_infos,
@@ -81,6 +82,15 @@ impl JobRegistry {
     }
   }
 
+  /// Abort the refresh running for the instance and forget it. A task that is
+  /// attached afterwards finds no registration and is aborted by `attach`, and
+  /// `is_current` turns false, so nothing more is emitted for the instance.
+  pub fn cancel(&mut self, instance_id: &str) {
+    if let Some(handle) = self.jobs.remove(instance_id).and_then(|job| job.handle) {
+      handle.abort();
+    }
+  }
+
   pub fn is_current(&self, instance_id: &str, generation: u64) -> bool {
     self
       .jobs
@@ -144,6 +154,14 @@ pub fn spawn_mod_info_refresh(app: &AppHandle, instance_id: &str, pending: Vec<P
     jobs().finish(&task_instance, generation);
   });
   jobs().attach(instance_id, generation, task.abort_handle());
+}
+
+/// Stop the background refresh of an instance that is being deleted. The abort
+/// takes effect at the task's next `.await`; work already running in
+/// `spawn_blocking` (hashing, writing the cache) finishes, but nothing is
+/// emitted afterwards.
+pub fn cancel_mod_info_refresh(instance_id: &str) {
+  jobs().cancel(instance_id);
 }
 
 /// One refresh runs in two steps. The Modrinth answers are sent as soon as they
@@ -267,6 +285,43 @@ mod tests {
     let task = idle_task();
     registry.attach("a", stale, task.abort_handle());
     assert!(task.await.unwrap_err().is_cancelled());
+  }
+
+  #[tokio::test]
+  async fn cancelling_aborts_the_running_refresh_and_stops_its_emits() {
+    let mut registry = JobRegistry::default();
+    let generation = registry.begin("a");
+    let task = idle_task();
+    registry.attach("a", generation, task.abort_handle());
+
+    registry.cancel("a");
+    assert!(task.await.unwrap_err().is_cancelled());
+    assert!(!registry.is_current("a", generation));
+  }
+
+  #[tokio::test]
+  async fn a_task_attached_after_cancelling_is_aborted() {
+    let mut registry = JobRegistry::default();
+    let generation = registry.begin("a");
+    registry.cancel("a");
+
+    let task = idle_task();
+    registry.attach("a", generation, task.abort_handle());
+    assert!(task.await.unwrap_err().is_cancelled());
+    assert!(!registry.is_current("a", generation));
+  }
+
+  #[tokio::test]
+  async fn cancelling_leaves_other_instances_and_unknown_ids_alone() {
+    let mut registry = JobRegistry::default();
+    let b = registry.begin("b");
+    let task = idle_task();
+    registry.attach("b", b, task.abort_handle());
+
+    registry.cancel("a");
+    assert!(registry.is_current("b", b));
+    assert!(!task.is_finished());
+    task.abort();
   }
 
   #[test]

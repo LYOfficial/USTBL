@@ -33,8 +33,8 @@ use crate::instance::models::misc::{
   Instance, InstanceError, InstanceOrigin, ModLoader, ModLoaderStatus, ModLoaderType,
   OriginPlatform,
 };
-use crate::launch::models::LaunchingState;
 use crate::launch::helpers::file_validator::{get_invalid_assets, get_invalid_library_files};
+use crate::launch::models::LaunchingState;
 use crate::launcher_config::commands::retrieve_launcher_config;
 use crate::resource::helpers::misc::{download_source_candidates, get_source_priority_list};
 use crate::resource::models::{ModLoaderResourceInfo, ResourceType};
@@ -652,13 +652,9 @@ pub async fn recover_publish_base(
   });
   origin.project_id = project.to_string();
   origin.version_id = version_id.to_string();
-  let remote = super::sources::campus_base_remote(
-    app,
-    &origin,
-    &instance.version_path,
-    &instance.name,
-  )
-  .await?;
+  let remote =
+    super::sources::campus_base_remote(app, &origin, &instance.version_path, &instance.name)
+      .await?;
   let local_size = [
     instance.version_path.join(path),
     instance
@@ -670,11 +666,13 @@ pub async fn recover_publish_base(
   let candidates: Vec<_> = remote
     .files
     .iter()
-    .map(|file| super::super::modpack_publish::changes::PublishBaseCandidate {
-      path: file.path.clone(),
-      sha1: file.key.sha1.clone(),
-      size: file.key.size,
-    })
+    .map(
+      |file| super::super::modpack_publish::changes::PublishBaseCandidate {
+        path: file.path.clone(),
+        sha1: file.key.sha1.clone(),
+        size: file.key.size,
+      },
+    )
     .collect();
   let Some(index) = super::super::modpack_publish::changes::select_publish_base(
     false,
@@ -1272,7 +1270,9 @@ impl UpdateEnv for AppEnv {
     if progress.done == 0 {
       log::info!(
         "modpack progress: instance={} stage={:?} elapsed_ms={}",
-        self.instance_id, progress.stage, self.started.elapsed().as_millis()
+        self.instance_id,
+        progress.stage,
+        self.started.elapsed().as_millis()
       );
     }
     if let Some(tasks) = &self.tasks {
@@ -1889,7 +1889,13 @@ async fn prepare_target(
       .await
       .map_err(|e| crate::error::USTBLError(e.to_string()))??
   };
-  let cache = PlanCache::new(from_version_id, baseline_sha1, paths, fingerprint, plan.clone());
+  let cache = PlanCache::new(
+    from_version_id,
+    baseline_sha1,
+    paths,
+    fingerprint,
+    plan.clone(),
+  );
   if let Err(error) = plan_cache::write_plan_cache(&target.root, &cache) {
     log::warn!("cannot write modpack plan cache: {error:?}");
   }
@@ -2122,7 +2128,9 @@ async fn plan_fresh_install(
   .await?;
   log::info!(
     "modpack install details: instance={} version={} elapsed_ms={}",
-    target.instance.id, remote.version_id, details_started.elapsed().as_millis()
+    target.instance.id,
+    remote.version_id,
+    details_started.elapsed().as_millis()
   );
   if requires_reinstall(&baseline, &remote, true) {
     let plan = UpdatePlan {
@@ -2192,7 +2200,8 @@ async fn plan_fresh_install(
     let prepared = finish(compared, &target.root, &remote, &BTreeMap::new())?;
     log::info!(
       "modpack install compare: instance={} elapsed_ms={}",
-      target.instance.id, started.elapsed().as_millis()
+      target.instance.id,
+      started.elapsed().as_millis()
     );
     reporter.progress(Stage::Locating);
     Ok::<_, crate::error::USTBLError>(prepared)
@@ -2413,7 +2422,10 @@ async fn materialize_text_candidates(
     started: Instant::now(),
     tasks: None,
   };
-  let preview = target.root.join(super::remote::UPDATE_DIR).join("remote-preview");
+  let preview = target
+    .root
+    .join(super::remote::UPDATE_DIR)
+    .join("remote-preview");
   let _ = tokio::fs::remove_dir_all(&preview).await;
   let mut result = BTreeMap::new();
   let candidates: Vec<_> = remote
@@ -3320,11 +3332,10 @@ async fn install_beside_client(
   })
 }
 
-async fn resume_campus_client(
-  app: &AppHandle,
-  instance: &Instance,
-) -> USTBLResult<Option<String>> {
-  let json_path = instance.version_path.join(format!("{}.json", instance.name));
+async fn resume_campus_client(app: &AppHandle, instance: &Instance) -> USTBLResult<Option<String>> {
+  let json_path = instance
+    .version_path
+    .join(format!("{}.json", instance.name));
   let client: McClientInfo = crate::storage::load_json_async(&json_path).await?;
   let priority = {
     let config = app.state::<Mutex<crate::launcher_config::models::LauncherConfig>>();
@@ -3334,9 +3345,12 @@ async fn resume_campus_client(
   let dirs = get_instance_subdir_paths(
     app,
     instance,
-    &[&crate::instance::models::misc::InstanceSubdirType::Libraries,
-      &crate::instance::models::misc::InstanceSubdirType::Assets],
-  ).ok_or(InstanceError::InvalidSourcePath)?;
+    &[
+      &crate::instance::models::misc::InstanceSubdirType::Libraries,
+      &crate::instance::models::misc::InstanceSubdirType::Assets,
+    ],
+  )
+  .ok_or(InstanceError::InvalidSourcePath)?;
   let [libraries, assets] = dirs.as_slice() else {
     return Err(InstanceError::InvalidSourcePath.into());
   };
@@ -3604,10 +3618,8 @@ mod tests {
       let sink = StageSink::default();
       let mut id = 0;
       let mut created = Vec::new();
-      let tasks = CampusInstallTasks::with_handles(
-        "modpack-update?test@1".into(),
-        true,
-        |name, total| {
+      let tasks =
+        CampusInstallTasks::with_handles("modpack-update?test@1".into(), true, |name, total| {
           created.push(name.to_owned());
           id += 1;
           Arc::new(RwLock::new(PHandle::new(
@@ -3615,15 +3627,16 @@ mod tests {
               id,
               Some("modpack-update?test@1".into()),
               total,
-              PTaskParam::Upload(UploadParam { filename: name.into() }),
+              PTaskParam::Upload(UploadParam {
+                filename: name.into(),
+              }),
               PStatus::Waiting,
             ),
             std::time::Duration::from_secs(1),
             root.join(format!("{id}.json")),
             Reporter::new(total, std::time::Duration::from_secs(1), sink.clone()),
           )))
-        },
-      );
+        });
       assert_eq!(created, ["Preparing", "Locating", "Fetching", "Applying"]);
       assert_eq!(tasks.all().len(), 4);
       CampusInstallTasks::complete(&tasks.preparing);
@@ -4221,7 +4234,10 @@ mod tests {
   fn a_plan_guard_rejects_duplicates_and_moves_to_the_apply_without_relocking() {
     let root = PathBuf::from(format!("campus-plan-{}", uuid::Uuid::new_v4()));
     let held = PlanGuard::acquire(&root).unwrap();
-    assert_eq!(PlanGuard::acquire(&root).err().unwrap().0, "MODPACK_UPDATE_BUSY");
+    assert_eq!(
+      PlanGuard::acquire(&root).err().unwrap().0,
+      "MODPACK_UPDATE_BUSY"
+    );
     let apply = |guard: PlanGuard| {
       assert!(PlanGuard::acquire(&root).is_err());
       drop(guard);

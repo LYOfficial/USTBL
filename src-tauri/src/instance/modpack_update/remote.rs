@@ -19,7 +19,16 @@ use std::sync::{Arc, OnceLock};
 
 pub fn safe_relative_path(path: &str) -> USTBLResult<PathBuf> {
   let path = PathBuf::from(path);
-  if path.is_absolute() || path.components().any(|component| matches!(component, std::path::Component::ParentDir | std::path::Component::RootDir | std::path::Component::Prefix(_))) {
+  if path.is_absolute()
+    || path.components().any(|component| {
+      matches!(
+        component,
+        std::path::Component::ParentDir
+          | std::path::Component::RootDir
+          | std::path::Component::Prefix(_)
+      )
+    })
+  {
     return Err(InstanceError::ModpackUpdateRemoteInvalid.into());
   }
   Ok(path)
@@ -399,7 +408,11 @@ impl RemoteModpack {
   /// The shipped file whose path folds to `path`, in the manifest's own
   /// spelling. Path comparisons fold case everywhere (《方案》§3).
   pub fn file_of(&self, path: &str) -> Option<&RemoteFile> {
-    self.index().files.get(&path.to_lowercase()).map(|i| &self.files[*i])
+    self
+      .index()
+      .files
+      .get(&path.to_lowercase())
+      .map(|i| &self.files[*i])
   }
 
   /// The remote's side of a shipped path, for the decision function.

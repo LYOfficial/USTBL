@@ -459,9 +459,7 @@ pub async fn start_vustb_friend_message_stream(app: AppHandle) -> USTBLResult<()
                 while let Some(end) = buffer.find("\n\n") {
                   let event = buffer[..end].to_string();
                   buffer.drain(..end + 2);
-                  let data = event
-                    .lines()
-                    .find_map(|line| line.strip_prefix("data: "));
+                  let data = event.lines().find_map(|line| line.strip_prefix("data: "));
                   let Some(data) = data else { continue };
                   let Ok(value) = serde_json::from_str::<serde_json::Value>(data) else {
                     continue;

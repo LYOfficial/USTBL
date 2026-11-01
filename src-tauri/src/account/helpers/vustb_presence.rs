@@ -98,9 +98,21 @@ pub async fn monitor(app: AppHandle) {
           let state = (friend.online, friend.instance_name.clone());
           if let Some((was_online, old_instance)) = previous.get(&friend.id).cloned() {
             if !was_online && state.0 {
-              crate::show_tray_popup(&app, "notification", Some(format!("{} 上线了", friend.display_name)));
+              crate::show_tray_popup(
+                &app,
+                "notification",
+                Some(format!("{} 上线了", friend.display_name)),
+              );
             } else if state.0 && old_instance != state.1 && state.1.is_some() {
-              crate::show_tray_popup(&app, "notification", Some(format!("{} 正在玩 {}", friend.display_name, state.1.clone().unwrap_or_default())));
+              crate::show_tray_popup(
+                &app,
+                "notification",
+                Some(format!(
+                  "{} 正在玩 {}",
+                  friend.display_name,
+                  state.1.clone().unwrap_or_default()
+                )),
+              );
             }
           }
           previous.insert(friend.id, state);

@@ -145,17 +145,38 @@ mod tests {
 
   #[test]
   fn gtnh_and_mechanomania_instances_require_java_25() {
-    assert!(instance_requires_java_25(&instance_with("GT New Horizons", None)));
-    assert!(instance_requires_java_25(&instance_with("北科整合包", Some("gtnh"))));
-    assert!(instance_requires_java_25(&instance_with("Mechanomania 航空学", None)));
-    assert!(instance_requires_java_25(&instance_with("custom", Some("mechanomania"))));
-    assert!(instance_requires_java_25(&instance_with("航空学整合包", None)));
+    assert!(instance_requires_java_25(&instance_with(
+      "GT New Horizons",
+      None
+    )));
+    assert!(instance_requires_java_25(&instance_with(
+      "北科整合包",
+      Some("gtnh")
+    )));
+    assert!(instance_requires_java_25(&instance_with(
+      "Mechanomania 航空学",
+      None
+    )));
+    assert!(instance_requires_java_25(&instance_with(
+      "custom",
+      Some("mechanomania")
+    )));
+    assert!(instance_requires_java_25(&instance_with(
+      "航空学整合包",
+      None
+    )));
   }
 
   #[test]
   fn ordinary_instances_do_not_require_java_25() {
-    assert!(!instance_requires_java_25(&instance_with("Vanilla 1.21.4", None)));
-    assert!(!instance_requires_java_25(&instance_with("Fabric", Some("fabric-api"))));
+    assert!(!instance_requires_java_25(&instance_with(
+      "Vanilla 1.21.4",
+      None
+    )));
+    assert!(!instance_requires_java_25(&instance_with(
+      "Fabric",
+      Some("fabric-api")
+    )));
   }
 
   fn runtime(major: i32) -> JavaInfo {

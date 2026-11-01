@@ -66,11 +66,18 @@ pub fn text_conflicts(
 fn line_ending(bytes: &[u8]) -> &'static str {
   let crlf = bytes.windows(2).filter(|pair| *pair == b"\r\n").count();
   let lf = bytes.iter().filter(|byte| **byte == b'\n').count();
-  if crlf * 2 >= lf { "\r\n" } else { "\n" }
+  if crlf * 2 >= lf {
+    "\r\n"
+  } else {
+    "\n"
+  }
 }
 
 fn valid_format(path: &str, text: &str) -> bool {
-  let Some(extension) = path.rsplit_once('.').map(|(_, ext)| ext.to_ascii_lowercase()) else {
+  let Some(extension) = path
+    .rsplit_once('.')
+    .map(|(_, ext)| ext.to_ascii_lowercase())
+  else {
     return true;
   };
   match extension.as_str() {
@@ -97,18 +104,20 @@ fn valid_format(path: &str, text: &str) -> bool {
 }
 
 /// Merge three eligible text files and preserve the local file's line ending style.
-pub fn merge_text(path: &str, base: &[u8], local: &[u8], remote: &[u8]) -> Result<Vec<u8>, TextMergeError> {
+pub fn merge_text(
+  path: &str,
+  base: &[u8],
+  local: &[u8],
+  remote: &[u8],
+) -> Result<Vec<u8>, TextMergeError> {
   let to_lines = |bytes: &[u8]| {
     std::str::from_utf8(bytes)
       .map(|text| text.replace("\r\n", "\n").replace('\r', "\n"))
       .map(|text| text.lines().map(str::to_owned).collect::<Vec<_>>())
   };
-  let (base_text, local_text, remote_text) = (
-    to_lines(base),
-    to_lines(local),
-    to_lines(remote),
-  );
-  let (Ok(base_text), Ok(local_text), Ok(remote_text)) = (base_text, local_text, remote_text) else {
+  let (base_text, local_text, remote_text) = (to_lines(base), to_lines(local), to_lines(remote));
+  let (Ok(base_text), Ok(local_text), Ok(remote_text)) = (base_text, local_text, remote_text)
+  else {
     return Err(TextMergeError::InvalidText);
   };
   if !valid_format(path, &base_text.join("\n"))
@@ -326,7 +335,10 @@ fn three_way_with_budget(
     }
   }
   accepted.sort_by_key(|edit| (edit.base_start, edit.base_end));
-  MergeResult { lines: apply_hunks(base, &accepted), conflicts }
+  MergeResult {
+    lines: apply_hunks(base, &accepted),
+    conflicts,
+  }
 }
 
 /// Merge while replacing only the selected conflict hunks with the remote
@@ -437,7 +449,11 @@ mod tests {
 
   #[test]
   fn non_overlapping_changes_are_combined() {
-    let result = three_way(&lines("a\nb\nc\nd"), &lines("A\nb\nc\nd"), &lines("a\nb\nC\nd"));
+    let result = three_way(
+      &lines("a\nb\nc\nd"),
+      &lines("A\nb\nc\nd"),
+      &lines("a\nb\nC\nd"),
+    );
     assert!(result.conflicts.is_empty());
     assert_eq!(result.lines, lines("A\nb\nC\nd"));
   }
@@ -445,8 +461,18 @@ mod tests {
   #[test]
   fn overlapping_and_adjacent_changes_conflict() {
     let base = lines("a\nb\nc\nd");
-    assert_eq!(three_way(&base, &lines("a\nB\nc\nd"), &lines("a\nX\nc\nd")).conflicts.len(), 1);
-    assert_eq!(three_way(&base, &lines("a\nB\nc\nd"), &lines("a\nb\nC\nd")).conflicts.len(), 1);
+    assert_eq!(
+      three_way(&base, &lines("a\nB\nc\nd"), &lines("a\nX\nc\nd"))
+        .conflicts
+        .len(),
+      1
+    );
+    assert_eq!(
+      three_way(&base, &lines("a\nB\nc\nd"), &lines("a\nb\nC\nd"))
+        .conflicts
+        .len(),
+      1
+    );
   }
 
   #[test]

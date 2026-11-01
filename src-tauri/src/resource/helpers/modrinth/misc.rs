@@ -107,10 +107,14 @@ where
   Err(last_error.unwrap_or_else(|| ResourceError::NoDownloadApi.into()))
 }
 
-/// Versions per `POST /version_files` request.
-pub const VERSION_FILES_BATCH_SIZE: usize = 500;
-/// Projects per `GET /projects?ids=` request; ids travel in the URL.
-pub const PROJECTS_BATCH_SIZE: usize = 100;
+/// Hashes per `POST /version_files` request. Kept small because the mirror is
+/// slow per connection and large replies take long; the caller runs the batches
+/// in parallel.
+pub const VERSION_FILES_BATCH_SIZE: usize = 125;
+/// Projects per `GET /projects?ids=` request; ids travel in the URL. Kept small
+/// for the same reason as [`VERSION_FILES_BATCH_SIZE`]: the replies are large
+/// and the caller runs the batches in parallel.
+pub const PROJECTS_BATCH_SIZE: usize = 25;
 
 /// The part of a version object needed to find the project a file belongs to.
 #[derive(Deserialize, Debug)]
@@ -150,8 +154,9 @@ pub fn projects_by_id(reply: Vec<ModrinthProjectBrief>) -> HashMap<String, Modri
     .collect()
 }
 
-/// Which project each SHA-1 belongs to, one `POST /version_files` per
-/// [`VERSION_FILES_BATCH_SIZE`] hashes. A hash the first source lacks is asked
+/// Which project each SHA-1 belongs to, for up to [`VERSION_FILES_BATCH_SIZE`]
+/// hashes in one `POST /version_files` per source. The caller splits larger lists
+/// and runs the batches in parallel. A hash the first source lacks is asked
 /// again from the next source (MCIM only knows what it has cached); a hash is
 /// reported as not found only when the last source answered without it. Hashes
 /// no source could answer for are in neither field of the outcome.
@@ -161,33 +166,27 @@ pub async fn fetch_project_ids_by_hashes_modrinth(
 ) -> LookupOutcome<String, String> {
   let client = app.state::<ApiClient>();
   let sources = content_source_priority(app);
-  let mut outcome = LookupOutcome::default();
-  for chunk in hashes.chunks(VERSION_FILES_BATCH_SIZE) {
-    outcome.extend(
-      lookup_across_sources(&sources, chunk, |source, asked: Vec<String>| {
-        let client = &client;
-        async move {
-          let url = format!("{}/version_files", modrinth_api_base(source));
-          let body = serde_json::json!({ "hashes": asked, "algorithm": "sha1" });
-          match make_modrinth_request::<HashMap<String, ModrinthVersionRef>, serde_json::Value>(
-            client,
-            &url,
-            OtherResourceRequestType::Post(&body),
-          )
-          .await
-          {
-            Ok(reply) => Some(project_ids_by_hash(reply)),
-            Err(error) => {
-              log::warn!("Modrinth {} via {:?} failed: {:?}", url, source, error);
-              None
-            }
-          }
+  lookup_across_sources(&sources, hashes, |source, asked: Vec<String>| {
+    let client = &client;
+    async move {
+      let url = format!("{}/version_files", modrinth_api_base(source));
+      let body = serde_json::json!({ "hashes": asked, "algorithm": "sha1" });
+      match make_modrinth_request::<HashMap<String, ModrinthVersionRef>, serde_json::Value>(
+        client,
+        &url,
+        OtherResourceRequestType::Post(&body),
+      )
+      .await
+      {
+        Ok(reply) => Some(project_ids_by_hash(reply)),
+        Err(error) => {
+          log::warn!("Modrinth {} via {:?} failed: {:?}", url, source, error);
+          None
         }
-      })
-      .await,
-    );
-  }
-  outcome
+      }
+    }
+  })
+  .await
 }
 
 /// Projects for up to [`PROJECTS_BATCH_SIZE`] ids, with the same source-by-source

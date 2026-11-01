@@ -7,9 +7,9 @@
 //! is listed, and the local file stays unless the caller explicitly chooses the
 //! remote one.
 
+use super::merge::MergeConflict;
 use crate::file_error::AtPath;
 use crate::instance::helpers::modpack::baseline::hash_file;
-use super::merge::MergeConflict;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
