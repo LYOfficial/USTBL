@@ -19,7 +19,7 @@ use std::sync::{LazyLock, Mutex};
 use std::time::SystemTime;
 use zip::result::ZipError;
 use zip::write::SimpleFileOptions;
-use zip::{CompressionMethod, DateTime, HasZipMetadata, ZipArchive, ZipWriter};
+use zip::{CompressionMethod, DateTime, System, ZipArchive, ZipWriter};
 
 /// A zip error; its I/O cases name `path`, the pack file being written or read.
 fn zip_error(path: &Path) -> impl Fn(ZipError) -> USTBLError + '_ {
@@ -131,6 +131,7 @@ pub fn build_pack(objects: &[PackObject], dest: &Path) -> USTBLResult<()> {
     let options = SimpleFileOptions::default()
       .compression_method(method)
       .last_modified_time(DateTime::default())
+      .system(System::Unix)
       .unix_permissions(0o644)
       .large_file(true);
     zip
@@ -239,7 +240,8 @@ pub fn verify_pack(path: &Path, expected_sha1: Option<&str>) -> USTBLResult<Veri
   let mut previous_name: Option<String> = None;
   for i in 0..zip.len() {
     let mut entry = zip.by_index(i)?;
-    let name = entry.name().to_string();
+    let name = entry.name().map_err(|_| bad())?.to_string();
+    let data_start = entry.data_start().ok_or_else(bad)?;
     let object_sha1 = name
       .strip_prefix("objects/")
       .filter(|sha1| sha1.len() == 40)
@@ -248,10 +250,10 @@ pub fn verify_pack(path: &Path, expected_sha1: Option<&str>) -> USTBLResult<Veri
       &name,
       previous_name.as_deref(),
       entry.encrypted(),
-      entry.get_metadata().using_data_descriptor,
+      entry.flags().is_using_data_descriptor(),
       entry.compression(),
       entry.header_start(),
-      entry.data_start(),
+      data_start,
       expected_header_start,
     ) {
       return Err(bad());
@@ -274,7 +276,7 @@ pub fn verify_pack(path: &Path, expected_sha1: Option<&str>) -> USTBLResult<Veri
       return Err(bad());
     }
 
-    expected_header_start = entry.data_start() + entry.compressed_size();
+    expected_header_start = data_start + entry.compressed_size();
   }
   // The central directory starts right where the last entry's data ends.
   if !zip.is_empty() && zip.central_directory_start() != expected_header_start {
@@ -364,7 +366,7 @@ mod tests {
     for object in &objects {
       let name = format!("objects/{}", object.sha1);
       let entry = zip.by_name(&name).unwrap();
-      let measured = entry.data_start() - entry.header_start();
+      let measured = entry.data_start().unwrap() - entry.header_start();
       assert_eq!(
         measured,
         local_header_len(&name, entry.header_start()),
@@ -434,7 +436,7 @@ mod tests {
           .unwrap();
         zip.write_all(&fs::read(&object.path).unwrap()).unwrap();
       }
-      zip.set_comment("not empty");
+      zip.set_comment("not empty").unwrap();
       zip.finish().unwrap();
     }
     let (sha1, _) = hash_file(&dest).unwrap();
@@ -565,7 +567,7 @@ mod tests {
     let mut file = fs::OpenOptions::new().write(true).open(&dest).unwrap();
     let mut zip = zip::ZipArchive::new(File::open(&dest).unwrap()).unwrap();
     let entry = zip.by_index(0).unwrap();
-    let data_start = entry.data_start();
+    let data_start = entry.data_start().unwrap();
     drop(entry);
     drop(zip);
     file.seek(std::io::SeekFrom::Start(data_start)).unwrap();

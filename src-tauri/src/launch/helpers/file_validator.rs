@@ -398,10 +398,10 @@ pub async fn extract_native_libraries(
       for index in 0..jar.len() {
         let mut entry = jar.by_index(index)?;
         if entry.is_dir()
-          || entry.name().starts_with("META-INF/")
+          || entry.name().is_ok_and(|name| name.starts_with("META-INF/"))
           || excludes
             .iter()
-            .any(|prefix| entry.name().starts_with(prefix))
+            .any(|prefix| entry.name().is_ok_and(|name| name.starts_with(prefix)))
         {
           continue;
         }
