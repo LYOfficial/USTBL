@@ -3,6 +3,7 @@ pub mod changes;
 pub mod commands;
 pub mod decide;
 pub mod diff;
+pub mod download_allowlist;
 pub mod ignores;
 pub mod local_scan;
 pub mod memory;

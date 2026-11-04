@@ -201,6 +201,13 @@ export interface ModpackOptionalFile {
   name: string;
 }
 
+/** Download addresses of a local modpack that Modrinth does not approve. */
+export interface ModpackUnofficialDownloads {
+  /** Files with at least one such address. */
+  fileCount: number;
+  addresses: string[];
+}
+
 export interface ModpackUpdateOutcome {
   versionId: string;
   loaderInstallPending: boolean;

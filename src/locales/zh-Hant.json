@@ -1342,6 +1342,12 @@
       "author": "作者",
       "modLoader": "模組載入器",
       "gameVersion": "遊戲版本"
+    },
+    "unofficial": {
+      "title": "整合包包含非官方下載位址",
+      "description": "此整合包要從以下不在 Modrinth 認可範圍內的位址下載 {{count}} 個檔案。這些檔案未經平台審核，可能不安全，請僅在信任整合包作者時繼續。",
+      "trust": "信任並繼續",
+      "cancel": "取消匯入"
     }
   },
   "InstanceBasicSettings": {

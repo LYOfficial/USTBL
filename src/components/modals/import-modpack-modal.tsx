@@ -1,4 +1,5 @@
 import {
+  Box,
   Button,
   Center,
   Modal,
@@ -32,7 +33,10 @@ import { useGlobalData } from "@/contexts/global-data";
 import { useToast } from "@/contexts/toast";
 import { ModLoaderType } from "@/enums/instance";
 import { ModpackMetaInfo } from "@/models/instance/misc";
-import { ModpackOptionalFile } from "@/models/modpack-update";
+import {
+  ModpackOptionalFile,
+  ModpackUnofficialDownloads,
+} from "@/models/modpack-update";
 import { defaultModLoaderResourceInfo } from "@/models/resource";
 import { CampusModpackService } from "@/services/campus-modpack";
 import { InstanceService } from "@/services/instance";
@@ -72,6 +76,12 @@ const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
     isOpen: isOptionalOpen,
     onOpen: onOptionalOpen,
     onClose: onOptionalClose,
+  } = useDisclosure();
+  const [unofficial, setUnofficial] = useState<ModpackUnofficialDownloads>();
+  const {
+    isOpen: isUnofficialOpen,
+    onOpen: onUnofficialOpen,
+    onClose: onUnofficialClose,
   } = useDisclosure();
 
   // The list is a convenience: when it cannot be read the pack installs with
@@ -129,96 +139,127 @@ const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
     ];
   }, [modpack]);
 
-  const handleImportModpack = useCallback(async () => {
-    if (!modpack || isDirNameInvalid(name) !== 0 || !gameDirectory) return;
-    try {
-      setIsBtnLoading(true);
-      // first get client resource info
-      const versionResp = await ResourceService.fetchGameVersionSpecific(
-        modpack.clientVersion
-      );
-      if (versionResp.status !== "success") {
-        toast({
-          title: versionResp.message,
-          description: versionResp.details,
-          status: "error",
-        });
-        return;
-      }
-      const clientResourceInfo = versionResp.data;
-
-      // The instance is created empty with the archive as its origin. The
-      // update engine installs the pack once the game client is ready, like
-      // any other modpack install.
-      const label = modpack.version || modpack.name;
-      const createResp = await InstanceService.createInstance(
-        gameDirectory,
-        name,
-        description,
-        iconSrc,
-        clientResourceInfo,
-        defaultModLoaderResourceInfo,
-        undefined,
-        false,
-        undefined,
-        {
-          platform: "local",
-          projectId: modpack.name,
-          versionId: "",
-          expectedSha1: "",
-          label,
-          loaderType: modpack.modLoader?.loaderType ?? ModLoaderType.Unknown,
-          localPath: path,
+  const handleImportModpack = useCallback(
+    async (confirmed = false) => {
+      if (!modpack || isDirNameInvalid(name) !== 0 || !gameDirectory) return;
+      try {
+        setIsBtnLoading(true);
+        // Read at click time, not on open, so a click can never outrun the
+        // check. When the list cannot be read the import goes on: an archive
+        // that cannot be parsed fails the import itself.
+        if (!confirmed) {
+          const unofficialResp =
+            await ModpackUpdateService.listLocalModpackUnofficialDownloads(
+              path
+            );
+          if (
+            unofficialResp.status === "success" &&
+            unofficialResp.data.fileCount > 0
+          ) {
+            setUnofficial(unofficialResp.data);
+            onUnofficialOpen();
+            return;
+          }
         }
-      );
-      if (createResp.status !== "success") {
-        toast({
-          title: createResp.message,
-          description: createResp.details,
-          status: "error",
-        });
-        return;
-      }
-      const instanceId = `${gameDirectory.name}:${name}`;
-      const registered =
-        await CampusModpackService.registerCampusModpackInstall(
-          instanceId,
-          label,
-          optionalPicks
+        // first get client resource info
+        const versionResp = await ResourceService.fetchGameVersionSpecific(
+          modpack.clientVersion
         );
-      if (registered.status !== "success") {
-        toast({
-          title: t("Services.instance.installCampusModpack.error.title"),
-          description: localizeCampusInstallError(
-            t,
-            String(registered.raw_error ?? registered.details ?? "")
-          ),
-          status: "error",
-        });
-        return;
+        if (versionResp.status !== "success") {
+          toast({
+            title: versionResp.message,
+            description: versionResp.details,
+            status: "error",
+          });
+          return;
+        }
+        const clientResourceInfo = versionResp.data;
+
+        // The instance is created empty with the archive as its origin. The
+        // update engine installs the pack once the game client is ready, like
+        // any other modpack install.
+        const label = modpack.version || modpack.name;
+        const createResp = await InstanceService.createInstance(
+          gameDirectory,
+          name,
+          description,
+          iconSrc,
+          clientResourceInfo,
+          defaultModLoaderResourceInfo,
+          undefined,
+          false,
+          undefined,
+          {
+            platform: "local",
+            projectId: modpack.name,
+            versionId: "",
+            expectedSha1: "",
+            label,
+            loaderType: modpack.modLoader?.loaderType ?? ModLoaderType.Unknown,
+            localPath: path,
+          }
+        );
+        if (createResp.status !== "success") {
+          toast({
+            title: createResp.message,
+            description: createResp.details,
+            status: "error",
+          });
+          return;
+        }
+        const instanceId = `${gameDirectory.name}:${name}`;
+        const registered =
+          await CampusModpackService.registerCampusModpackInstall(
+            instanceId,
+            label,
+            optionalPicks
+          );
+        if (registered.status !== "success") {
+          toast({
+            title: t("Services.instance.installCampusModpack.error.title"),
+            description: localizeCampusInstallError(
+              t,
+              String(registered.raw_error ?? registered.details ?? "")
+            ),
+            status: "error",
+          });
+          return;
+        }
+        getInstanceList(true);
+        runCampusInstall({ instanceId, label }, toast, t);
+        onClose();
+        router.push("/downloads");
+      } catch (error) {
+        logger.error("Error creating instance:", error);
+      } finally {
+        setIsBtnLoading(false);
       }
-      getInstanceList(true);
-      runCampusInstall({ instanceId, label }, toast, t);
-      onClose();
-      router.push("/downloads");
-    } catch (error) {
-      logger.error("Error creating instance:", error);
-    } finally {
-      setIsBtnLoading(false);
-    }
-  }, [
-    description,
-    gameDirectory,
-    getInstanceList,
-    iconSrc,
-    onClose,
-    modpack,
-    name,
-    optionalPicks,
-    path,
-    router,
-    toast,
-  ]);
+    },
+    [
+      description,
+      gameDirectory,
+      getInstanceList,
+      iconSrc,
+      onClose,
+      onUnofficialOpen,
+      modpack,
+      name,
+      optionalPicks,
+      path,
+      router,
+      toast,
+    ]
+  );
+
+  const handleCancelUnofficial = useCallback(() => {
+    onUnofficialClose();
+    onClose();
+  }, [onUnofficialClose, onClose]);
+
+  const handleTrustUnofficial = useCallback(() => {
+    onUnofficialClose();
+    handleImportModpack(true);
+  }, [onUnofficialClose, handleImportModpack]);
 
   useEffect(() => {
     setIsPageLoading(true);
@@ -305,7 +346,7 @@ const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
           <ModalFooter>
             <Button
               colorScheme={primaryColor}
-              onClick={() => handleImportModpack()}
+              onClick={() => handleImportModpack(false)}
               isLoading={isBtnLoading || isPageLoading}
             >
               {t("General.import")}
@@ -335,6 +376,54 @@ const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
               />
             </VStack>
           </ModalBody>
+        </ModalContent>
+      </Modal>
+      <Modal
+        isOpen={isUnofficialOpen}
+        onClose={handleCancelUnofficial}
+        closeOnOverlayClick={false}
+        scrollBehavior="inside"
+        autoFocus={false}
+      >
+        <ModalOverlay />
+        <ModalContent>
+          <ModalHeader>{t("ImportModpackModal.unofficial.title")}</ModalHeader>
+          <ModalCloseButton />
+          <ModalBody>
+            <VStack align="stretch" spacing={3}>
+              <Text fontSize="xs-sm">
+                {t("ImportModpackModal.unofficial.description", {
+                  count: unofficial?.fileCount ?? 0,
+                })}
+              </Text>
+              <Box
+                maxH="40vh"
+                overflowY="auto"
+                borderWidth="1px"
+                borderRadius="md"
+                p={2}
+              >
+                {(unofficial?.addresses ?? []).map((address) => (
+                  <Text
+                    key={address}
+                    fontSize="xs"
+                    fontFamily="mono"
+                    wordBreak="break-all"
+                  >
+                    {address}
+                  </Text>
+                ))}
+              </Box>
+            </VStack>
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="ghost" onClick={handleCancelUnofficial}>
+              {t("ImportModpackModal.unofficial.cancel")}
+            </Button>
+            <Button colorScheme={primaryColor} onClick={handleTrustUnofficial}>
+              {t("ImportModpackModal.unofficial.trust")}
+            </Button>
+          </ModalFooter>
         </ModalContent>
       </Modal>
     </>

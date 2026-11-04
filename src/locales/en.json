@@ -1342,6 +1342,12 @@
       "author": "Author",
       "modLoader": "Mod Loader",
       "gameVersion": "Game Version"
+    },
+    "unofficial": {
+      "title": "The modpack contains unofficial download addresses",
+      "description": "This modpack downloads {{count}} files from the addresses below, which Modrinth does not approve. These files have not been reviewed by the platform and may be unsafe. Continue only if you trust the modpack author.",
+      "trust": "Trust and continue",
+      "cancel": "Cancel import"
     }
   },
   "InstanceBasicSettings": {

@@ -5,6 +5,7 @@ import {
   ModpackConflictChoice,
   ModpackIgnoredItem,
   ModpackOptionalFile,
+  ModpackUnofficialDownloads,
   ModpackUpdateCheck,
   ModpackUpdateFinished,
   ModpackUpdatePlan,
@@ -95,6 +96,18 @@ export class ModpackUpdateService {
     path: string
   ): Promise<InvokeResponse<ModpackOptionalFile[]>> {
     return await invoke("list_local_modpack_optional_files", { path });
+  }
+
+  /**
+   * The download addresses of a modpack archive picked from disk that are
+   * outside the approved hosts. Empty when the pack has none or is not a
+   * Modrinth pack.
+   */
+  @responseHandler("instance")
+  static async listLocalModpackUnofficialDownloads(
+    path: string
+  ): Promise<InvokeResponse<ModpackUnofficialDownloads>> {
+    return await invoke("list_local_modpack_unofficial_downloads", { path });
   }
 
   /**

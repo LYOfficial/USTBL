@@ -1342,6 +1342,12 @@
       "author": "Auteur",
       "modLoader": "Chargeur de mods",
       "gameVersion": "Version du jeu"
+    },
+    "unofficial": {
+      "title": "Le modpack contient des adresses de téléchargement non officielles",
+      "description": "Ce modpack télécharge {{count}} fichiers depuis les adresses ci-dessous, qui ne sont pas approuvées par Modrinth. Ces fichiers n'ont pas été vérifiés par la plateforme et peuvent être dangereux. Ne continuez que si vous faites confiance à l'auteur du modpack.",
+      "trust": "Faire confiance et continuer",
+      "cancel": "Annuler l'importation"
     }
   },
   "InstanceBasicSettings": {
