@@ -21,7 +21,7 @@ function load(file) {
   return module.exports;
 }
 
-const { applyExpansionRequest, syncExpandedState } = load(
+const { applyBulkExpansion, applyExpansionRequest, syncExpandedState } = load(
   "src/utils/tree-expansion.ts"
 );
 
@@ -75,4 +75,20 @@ test("the same expansion request is applied once by request identity", () => {
   history.set("a", false);
   applyExpansionRequest(history, request);
   assert.equal(history.get("a"), true);
+});
+
+test("expand all and collapse all are remembered for every branch", () => {
+  const history = new Map([["a", false], ["b", true]]);
+  const nodes = tree(["a", "b"]);
+  const branches = new Set(["a", "b"]);
+  applyBulkExpansion(history, branches, true);
+  assert.deepEqual(
+    [...syncExpandedState(history, new Set(), nodes, new Set())].sort(),
+    ["a", "b"]
+  );
+  applyBulkExpansion(history, branches, false);
+  assert.deepEqual(
+    [...syncExpandedState(history, new Set(), nodes, new Set(["a"]))],
+    []
+  );
 });

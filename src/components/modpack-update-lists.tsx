@@ -16,6 +16,7 @@ import {
   DiffHunks,
   regionHunk,
 } from "@/components/common/diff-view";
+import VirtualRows from "@/components/common/virtual-rows";
 import { ModpackFileDiffRow } from "@/components/modpack-file-diff";
 import {
   ModpackConflict,
@@ -46,6 +47,9 @@ const formatSize = (size?: number) => {
 
 const fileName = (path: string) => path.split("/").pop() ?? path;
 
+/** The most a group's list grows to before it scrolls, in px. */
+const GROUP_MAX_HEIGHT = 384;
+
 /** Which sizes a group's rows show; a name instead of a callback keeps props stable. */
 type SizeMode = "restored" | "added" | "updated" | "removed";
 
@@ -72,7 +76,7 @@ const renderSize = (
   }
 };
 
-/** One collapsible group of file changes, capped until "show all". */
+/** One collapsible group of file changes; a long group scrolls. */
 const ChangeGroup: React.FC<{
   title: string;
   colorScheme: string;
@@ -93,14 +97,14 @@ const ChangeGroup: React.FC<{
 }) => {
   const { t } = useTranslation();
   const [open, setOpen] = useState(defaultOpen);
-  const [showAll, setShowAll] = useState(false);
+  // Rows scroll out of the list and are destroyed, so their diffs are opened here.
+  const [openDiffs, setOpenDiffs] = useState<Set<string>>(new Set());
   // Sorting thousands of paths is only worth it for a group that is open.
   const sorted = useMemo(
     () => (open ? sortChangesByDiff(changes) : []),
     [open, changes]
   );
   if (changes.length === 0) return null;
-  const shown = showAll ? sorted : sorted.slice(0, 100);
   return (
     <Box borderWidth="1px" borderRadius="md">
       <HStack
@@ -125,55 +129,64 @@ const ChangeGroup: React.FC<{
               {description}
             </Text>
           )}
-          {shown.map((change) => (
-            <Box key={change.path}>
-              <HStack
-                justify="space-between"
-                spacing={3}
-                px={3}
-                py={1.5}
-                borderTopWidth="1px"
-              >
-                <Box minW={0}>
-                  <Text fontSize="sm" noOfLines={1} wordBreak="break-all">
-                    {fileName(change.path)}
-                  </Text>
-                  {change.path.includes("/") && (
+          <VirtualRows
+            rowCount={sorted.length}
+            rowKey={(index) => sorted[index].path}
+            layoutKey={sorted}
+            maxHeight={GROUP_MAX_HEIGHT}
+            renderRow={(index) => {
+              const change = sorted[index];
+              return (
+                <Box>
+                  <HStack
+                    justify="space-between"
+                    spacing={3}
+                    px={3}
+                    py={1.5}
+                    borderTopWidth="1px"
+                  >
+                    <Box minW={0}>
+                      <Text fontSize="sm" noOfLines={1} wordBreak="break-all">
+                        {fileName(change.path)}
+                      </Text>
+                      {change.path.includes("/") && (
+                        <Text
+                          fontSize="xs"
+                          className="secondary-text"
+                          noOfLines={1}
+                        >
+                          {change.path}
+                        </Text>
+                      )}
+                    </Box>
                     <Text
                       fontSize="xs"
                       className="secondary-text"
-                      noOfLines={1}
+                      flexShrink={0}
                     >
-                      {change.path}
+                      {renderSize(sizeMode, change, t)}
                     </Text>
+                  </HStack>
+                  {diff && canShowChangeDiff(change) && (
+                    <ModpackFileDiffRow
+                      instanceId={diff.instanceId}
+                      planHash={diff.planHash}
+                      path={change.path}
+                      open={openDiffs.has(change.path)}
+                      onOpenChange={(next) =>
+                        setOpenDiffs((prev) => {
+                          const copy = new Set(prev);
+                          if (next) copy.add(change.path);
+                          else copy.delete(change.path);
+                          return copy;
+                        })
+                      }
+                    />
                   )}
                 </Box>
-                <Text fontSize="xs" className="secondary-text" flexShrink={0}>
-                  {renderSize(sizeMode, change, t)}
-                </Text>
-              </HStack>
-              {diff && canShowChangeDiff(change) && (
-                <ModpackFileDiffRow
-                  instanceId={diff.instanceId}
-                  planHash={diff.planHash}
-                  path={change.path}
-                />
-              )}
-            </Box>
-          ))}
-          {!showAll && sorted.length > shown.length && (
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={() => setShowAll(true)}
-              borderTopWidth="1px"
-              borderRadius={0}
-            >
-              {t("UpdateModpackModal.plan.showAll", {
-                count: sorted.length - shown.length,
-              })}
-            </Button>
-          )}
+              );
+            }}
+          />{" "}
         </VStack>
       )}
     </Box>

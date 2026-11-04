@@ -857,6 +857,18 @@
     "clear": "清除篩選",
     "shown": "顯示 {{shown}} / {{total}}"
   },
+  "FilePanel": {
+    "change": {
+      "modified": "修改",
+      "added": "新增",
+      "onceChanged": "僅首次安裝·已改",
+      "deleted": "刪除",
+      "enable": "啟用",
+      "disable": "禁用"
+    },
+    "expandAll": "全部展開",
+    "collapseAll": "全部摺疊"
+  },
   "FileError": {
     "FILE_BLOCKED_BY_ANTIVIRUS": "檔案 {{file}} 被防毒軟體攔截。請在 Windows 安全性中允許該檔案，或把遊戲目錄加入排除項後重試。",
     "FILE_MISSING": "找不到檔案 {{file}}，可能已被刪除、移動或被防毒軟體隔離。請檢查後重試。",
@@ -3359,14 +3371,6 @@
         "mixed": "目錄下檔案設定有多種狀態"
       },
       "clickTo": "點擊切換為「{{next}}」",
-      "change": {
-        "modified": "修改",
-        "added": "新增",
-        "onceChanged": "僅首次安裝·已改",
-        "deleted": "刪除",
-        "enable": "啟用",
-        "disable": "禁用"
-      },
       "changeHint": {
         "modified": "內容和上一版不同。",
         "added": "上一版沒有這個檔案。",
@@ -3491,7 +3495,6 @@
       "restoreComponents": "新版本調整了遊戲元件，更新時會一併重建遊戲的版本設定與相依函式庫",
       "conflicts": "{{count}} 個檔案與你的修改衝突，預設套用新版，可以逐個處理",
       "autoMerged": "自動合併 {{count}}",
-      "showAll": "顯示全部（還有 {{count}} 項）",
       "fileDiff": {
         "show": "查看差異",
         "hide": "收起差異",
@@ -3525,8 +3528,6 @@
       "hunk": "第 {{number}} 處衝突（原檔案第 {{from}}-{{to}} 行）",
       "allKeepLocal": "全部保留本機",
       "allTakeRemote": "全部套用新版",
-      "expandAll": "全部展開",
-      "collapseAll": "全部摺疊",
       "localSide": "本機",
       "remoteSide": "新版本"
     },
@@ -3575,13 +3576,6 @@
     "comparedTo": "比對的版本：{{label}}",
     "countingRule": "列出本地改動：修改、刪除、啟用狀態，以及 mods、資源包、光影裡的新檔案。",
     "incomplete": "無法獲取上一版改動規則，請重試",
-    "class": {
-      "modified": "修改",
-      "deleted": "刪除",
-      "added": "新增",
-      "enable": "啟用",
-      "disable": "禁用"
-    },
     "disabled": "已停用",
     "noDiff": {
       "notText": "非文字或檔案太大，不顯示差異",

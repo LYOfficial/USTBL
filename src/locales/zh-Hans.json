@@ -857,6 +857,18 @@
     "clear": "清除筛选",
     "shown": "显示 {{shown}} / {{total}}"
   },
+  "FilePanel": {
+    "change": {
+      "modified": "修改",
+      "added": "新增",
+      "onceChanged": "仅首次安装·已改",
+      "deleted": "删除",
+      "enable": "启用",
+      "disable": "禁用"
+    },
+    "expandAll": "全部展开",
+    "collapseAll": "全部折叠"
+  },
   "FileError": {
     "FILE_BLOCKED_BY_ANTIVIRUS": "文件 {{file}} 被杀毒软件拦截。请在 Windows 安全中心允许该文件，或把游戏目录加入排除项后重试。",
     "FILE_MISSING": "找不到文件 {{file}}，可能已被删除、移动或被杀毒软件隔离。请检查后重试。",
@@ -3359,14 +3371,6 @@
         "mixed": "目录下文件设置有多种状态"
       },
       "clickTo": "点击切换为“{{next}}”",
-      "change": {
-        "modified": "修改",
-        "added": "新增",
-        "onceChanged": "仅首次安装·已改",
-        "deleted": "删除",
-        "enable": "启用",
-        "disable": "禁用"
-      },
       "changeHint": {
         "modified": "内容和上一版不同。",
         "added": "上一版没有这个文件。",
@@ -3491,7 +3495,6 @@
       "restoreComponents": "新版本调整了游戏组件，更新时会一并重建游戏的版本配置与依赖库",
       "conflicts": "{{count}} 个文件和你的修改冲突，默认应用新版，可以逐个处理",
       "autoMerged": "自动合并 {{count}}",
-      "showAll": "显示全部（还有 {{count}} 项）",
       "fileDiff": {
         "show": "查看差异",
         "hide": "收起差异",
@@ -3525,8 +3528,6 @@
       "hunk": "第 {{number}} 处冲突（原文件第 {{from}}-{{to}} 行）",
       "allKeepLocal": "全部保留本地",
       "allTakeRemote": "全部应用新版",
-      "expandAll": "全部展开",
-      "collapseAll": "全部折叠",
       "localSide": "本地",
       "remoteSide": "新版本"
     },
@@ -3575,13 +3576,6 @@
     "comparedTo": "对比的版本：{{label}}",
     "countingRule": "列出本地改动：修改、删除、启用状态，以及 mods、资源包、光影里的新文件。",
     "incomplete": "无法获取上一版改动规则，请重试",
-    "class": {
-      "modified": "修改",
-      "deleted": "删除",
-      "added": "新增",
-      "enable": "启用",
-      "disable": "禁用"
-    },
     "disabled": "已禁用",
     "noDiff": {
       "notText": "非文本或文件太大，不显示差异",

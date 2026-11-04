@@ -156,10 +156,13 @@ test("the file-level answer sets every block and shows none when they differ", (
 
 test("the dialog can expand and collapse every conflict card", () => {
   const modal = read("src/components/modals/update-modpack-modal.tsx");
-  // Two icon buttons, like an IDE's expand all / collapse all.
-  assert.match(modal, /\[true, "expandAll", LuUnfoldVertical\]/);
-  assert.match(modal, /\[false, "collapseAll", LuFoldVertical\]/);
-  assert.match(modal, /onClick=\{\(\) => expandAll\(open\)\}/);
+  // The shared toolbar draws the two icon buttons, like an IDE's expand all / collapse all.
+  assert.match(modal, /onExpandAll=/);
+  assert.match(modal, /expandAll\(true\)/);
+  assert.match(modal, /expandAll\(false\)/);
+  const panel = read("src/components/common/file-panel.tsx");
+  assert.match(panel, /\[onExpandAll, "expandAll", LuUnfoldVertical\]/);
+  assert.match(panel, /\[onCollapseAll, "collapseAll", LuFoldVertical\]/);
   assert.match(modal, /expandSignal=\{expandSignal\}/);
   // Cards still start open.
   assert.match(modal, /useState<DiffExpandSignal>\(\{\s*open: true,/);

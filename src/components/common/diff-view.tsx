@@ -442,6 +442,12 @@ interface DiffFileProps {
   actions?: React.ReactNode;
   defaultOpen?: boolean;
   /**
+   * Set to let the parent hold the state, as a card in a virtualized list must:
+   * the card is destroyed when it scrolls out of view.
+   */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /**
    * Opens or closes the file whenever `token` changes (and decides the first
    * state when set), while the header still toggles it by hand in between.
    */
@@ -461,12 +467,17 @@ export const DiffFile: React.FC<DiffFileProps> = ({
   tags,
   actions,
   defaultOpen = true,
+  open,
+  onOpenChange,
   expandSignal,
   children,
 }) => {
   const colors = useDiffColors();
   const { isOpen, onToggle, onOpen, onClose } = useDisclosure({
     defaultIsOpen: expandSignal ? expandSignal.open : defaultOpen,
+    isOpen: open,
+    onOpen: () => onOpenChange?.(true),
+    onClose: () => onOpenChange?.(false),
   });
   const handledToken = useRef(expandSignal?.token);
   useEffect(() => {

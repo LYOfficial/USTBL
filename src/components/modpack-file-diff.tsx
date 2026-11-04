@@ -19,7 +19,13 @@ interface ModpackFileDiffRowProps {
   instanceId: string;
   planHash: string;
   path: string;
+  /** Set to let the parent hold the state, as a row in a virtualized list must. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
+
+/** Diffs already read, so a row that scrolls back into view does not ask again. */
+const diffCache = new Map<string, ModpackFileDiff | null>();
 
 /**
  * A button that shows the line diff of one file of the update plan. The diff
@@ -29,18 +35,36 @@ export const ModpackFileDiffRow: React.FC<ModpackFileDiffRowProps> = ({
   instanceId,
   planHash,
   path,
+  open: controlledOpen,
+  onOpenChange,
 }) => {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const open = controlledOpen ?? ownOpen;
+  const setOpen = (next: boolean) => {
+    setOwnOpen(next);
+    onOpenChange?.(next);
+  };
+  const cacheKey = `${instanceId}\0${planHash}\0${path}`;
   // undefined while loading, null when the request failed.
-  const [diff, setDiff] = useState<ModpackFileDiff | null | undefined>();
+  const [diff, setDiff] = useState<ModpackFileDiff | null | undefined>(() =>
+    diffCache.get(cacheKey)
+  );
 
   useEffect(() => {
     if (!open) return;
+    if (diffCache.has(cacheKey)) {
+      setDiff(diffCache.get(cacheKey));
+      return;
+    }
     let isActive = true;
     setDiff(undefined);
     ModpackUpdateService.modpackUpdateFileDiff(instanceId, planHash, path).then(
       (response) => {
+        // A failed request is not kept; opening the row again retries.
+        if (response.status === "success") {
+          diffCache.set(cacheKey, response.data);
+        }
         if (isActive) {
           setDiff(response.status === "success" ? response.data : null);
         }
@@ -49,7 +73,7 @@ export const ModpackFileDiffRow: React.FC<ModpackFileDiffRowProps> = ({
     return () => {
       isActive = false;
     };
-  }, [open, instanceId, planHash, path]);
+  }, [open, instanceId, planHash, path, cacheKey]);
 
   const notice =
     diff === undefined ? null : diff ? fileDiffNotice(diff) : "unavailable";

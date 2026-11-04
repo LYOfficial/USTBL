@@ -857,6 +857,18 @@
     "clear": "Effacer le filtre",
     "shown": "{{shown}} affichés sur {{total}}"
   },
+  "FilePanel": {
+    "change": {
+      "modified": "Modifié",
+      "added": "Ajouté",
+      "onceChanged": "Première installation uniquement · modifié",
+      "deleted": "Supprimé",
+      "enable": "Activer",
+      "disable": "Désactiver"
+    },
+    "expandAll": "Tout développer",
+    "collapseAll": "Tout réduire"
+  },
   "FileError": {
     "FILE_BLOCKED_BY_ANTIVIRUS": "Le fichier {{file}} a été bloqué par l'antivirus. Autorisez-le dans Sécurité Windows, ou ajoutez le dossier du jeu aux exclusions, puis réessayez.",
     "FILE_MISSING": "Fichier {{file}} introuvable. Il a peut-être été supprimé, déplacé ou mis en quarantaine par l'antivirus. Vérifiez puis réessayez.",
@@ -3359,14 +3371,6 @@
         "mixed": "Les fichiers du dossier ont plusieurs états"
       },
       "clickTo": "Cliquez pour passer à {{next}}",
-      "change": {
-        "modified": "Modifié",
-        "added": "Ajouté",
-        "onceChanged": "Première installation uniquement · modifié",
-        "deleted": "Supprimé",
-        "enable": "Activer",
-        "disable": "Désactiver"
-      },
       "changeHint": {
         "modified": "Le contenu diffère de la version précédente.",
         "added": "La version précédente n'a pas ce fichier.",
@@ -3491,7 +3495,6 @@
       "restoreComponents": "Cette version modifie les composants du jeu. La mise à jour reconstruira aussi le profil de version et les bibliothèques.",
       "conflicts": "{{count}} fichiers sont en conflit avec vos modifications ; la nouvelle version est appliquée par défaut, vous pouvez les traiter individuellement",
       "autoMerged": "{{count}} fusionnés automatiquement",
-      "showAll": "Tout afficher (encore {{count}})",
       "fileDiff": {
         "show": "Afficher les différences",
         "hide": "Masquer les différences",
@@ -3525,8 +3528,6 @@
       "hunk": "Conflit {{number}} (lignes {{from}}–{{to}} du fichier original)",
       "allKeepLocal": "Tout garder en local",
       "allTakeRemote": "Tout appliquer depuis la nouvelle version",
-      "expandAll": "Tout développer",
-      "collapseAll": "Tout réduire",
       "localSide": "Local",
       "remoteSide": "Nouvelle version"
     },
@@ -3575,13 +3576,6 @@
     "comparedTo": "Comparé à : {{label}}",
     "countingRule": "Liste les modifications locales : modifications, suppressions, état activé, et nouveaux fichiers dans les mods, packs de ressources et shaders.",
     "incomplete": "Impossible d’obtenir les règles de modification précédentes ; réessayez",
-    "class": {
-      "modified": "Modifié",
-      "deleted": "Supprimé",
-      "added": "Nouveau",
-      "enable": "Activé",
-      "disable": "Désactivé"
-    },
     "disabled": "Désactivé",
     "noDiff": {
       "notText": "Fichier non textuel ou trop volumineux ; différence non affichée",

@@ -109,13 +109,13 @@ test("the publish tree, update preview and local changes all use the shared filt
     "src/components/modals/modpack-local-changes-modal.tsx",
   ]) {
     const source = read(file);
-    assert.match(source, /@\/components\/common\/file-filter-input/, file);
-    assert.match(source, /<FileFilterInput/, file);
+    assert.match(source, /@\/components\/common\/file-panel/, file);
+    assert.match(source, /<FilePanelToolbar/, file);
     assert.match(source, /@\/utils\/fuzzy-filter/, file);
   }
   assert.match(
     read("src/components/common/publish-file-tree.tsx"),
-    /filterTreeByQuery\(markedNodes, query\)/
+    /filterTreeByQuery\(markedNodes, shownQuery\)/
   );
 });
 
@@ -127,6 +127,12 @@ test("update preview filters the display, not the answers", () => {
   );
   assert.match(chooseAll, /plan\.conflicts/);
   assert.doesNotMatch(chooseAll, /shownConflicts|fileQuery/);
+});
+
+test("the shared toolbar holds the filter box", () => {
+  const source = read("src/components/common/file-panel.tsx");
+  assert.match(source, /@\/components\/common\/file-filter-input/);
+  assert.match(source, /<FileFilterInput/);
 });
 
 test("the input debounces typing", () => {
