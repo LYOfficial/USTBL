@@ -378,7 +378,11 @@ fn campus_install_records(app: &AppHandle) -> Vec<CampusUnfinishedInstall> {
 
 fn unfinished_campus_install(instance: &Instance) -> Option<CampusUnfinishedInstall> {
   let record = load_campus_install_record(&instance.version_path)?;
-  if active_plans().lock().ok()?.contains(&instance.version_path) {
+  if active_plans()
+    .lock()
+    .ok()?
+    .contains_key(&instance.version_path)
+  {
     return None;
   }
   let interrupted = record.phase == "installing";
@@ -804,8 +808,11 @@ fn ensure_not_running(app: &AppHandle, instance_id: &str) -> USTBLResult<()> {
 /// the command's first step (prepare included) until it answers. The
 /// `UpdateGuard` only covers the transaction on disk; this one covers the
 /// whole run, so a second request is told busy instead of re-planning.
-fn active_plans() -> &'static Mutex<std::collections::HashSet<PathBuf>> {
-  static ACTIVE: OnceLock<Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
+///
+/// The value tells whether the holder is only a preview, which a newer request
+/// for the same instance may cancel (see [`acquire_over_preview`]).
+fn active_plans() -> &'static Mutex<HashMap<PathBuf, bool>> {
+  static ACTIVE: OnceLock<Mutex<HashMap<PathBuf, bool>>> = OnceLock::new();
   ACTIVE.get_or_init(Default::default)
 }
 
@@ -813,11 +820,22 @@ struct PlanGuard(PathBuf);
 
 impl PlanGuard {
   fn acquire(root: &Path) -> USTBLResult<Self> {
+    Self::claim(root, false)
+  }
+
+  fn claim(root: &Path, preview: bool) -> USTBLResult<Self> {
+    Self::try_claim(root, preview)?.map_err(|_| InstanceError::ModpackUpdateBusy.into())
+  }
+
+  /// Claim `root`, or say in the same locked step whether its holder is a
+  /// preview.
+  fn try_claim(root: &Path, preview: bool) -> USTBLResult<Result<Self, bool>> {
     let mut active = active_plans().lock()?;
-    if !active.insert(root.to_path_buf()) {
-      return Err(InstanceError::ModpackUpdateBusy.into());
+    if let Some(holder_is_preview) = active.get(root) {
+      return Ok(Err(*holder_is_preview));
     }
-    Ok(Self(root.to_path_buf()))
+    active.insert(root.to_path_buf(), preview);
+    Ok(Ok(Self(root.to_path_buf())))
   }
 }
 
@@ -969,6 +987,46 @@ async fn wait_for_plan_guard(root: &Path) -> USTBLResult<PlanGuard> {
   }
   Err(InstanceError::ModpackUpdateBusy.into())
 }
+
+/// Whether the plan guard of `root` is held by a preview, not by an apply or an
+/// install.
+#[cfg(test)]
+fn held_by_preview(root: &Path) -> bool {
+  active_plans()
+    .lock()
+    .is_ok_and(|active| active.get(root) == Some(&true))
+}
+
+/// Take the plan guard while a preview of the same instance may still hold it:
+/// an aborted preview lets go only when its task is dropped, a moment after
+/// the abort. A guard held by anything but a preview stays busy. With
+/// `supersede` the preview of that instance is cancelled here; a preview
+/// waiting for its predecessor passes `None`, its own handle is registered
+/// under the same id.
+async fn acquire_over_preview(
+  root: &Path,
+  supersede: Option<&str>,
+  preview: bool,
+) -> USTBLResult<PlanGuard> {
+  for _ in 0..PREVIEW_RELEASE_POLLS {
+    match PlanGuard::try_claim(root, preview)? {
+      Ok(guard) => return Ok(guard),
+      // Only a holder seen as a non-preview in the very step that failed to
+      // claim is final; a preview that let go meanwhile is simply retried.
+      Err(false) => return Err(InstanceError::ModpackUpdateBusy.into()),
+      Err(true) => {
+        if let Some(instance_id) = supersede {
+          cancel_prepare(instance_id);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+      }
+    }
+  }
+  Err(InstanceError::ModpackUpdateBusy.into())
+}
+
+/// Polls (10 ms apart) before a cancelled preview is given up on.
+const PREVIEW_RELEASE_POLLS: usize = 500;
 
 /// The baseline is the record of what the modpack installed. Without a
 /// matching one the instance cannot be compared safely.
@@ -1825,7 +1883,9 @@ pub async fn prepare_modpack_update(
 /// baseline and the local files are unchanged since the last plan.
 async fn prepare_inner(app: &AppHandle, instance_id: &str) -> USTBLResult<UpdatePlan> {
   let target = target(app, instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
-  let _guard = PlanGuard::acquire(&target.root)?;
+  // The preview this one replaces was cancelled by the caller and may not have
+  // dropped its guard yet.
+  let _guard = acquire_over_preview(&target.root, None, true).await?;
   if has_campus_install(&target.root) {
     return Err(InstanceError::ModpackInstallInterrupted.into());
   }
@@ -2653,7 +2713,7 @@ async fn apply_modpack_update_inner(
     // so a retry re-plans instead of serving it again.
     plan_cache::clear_plan_cache(&target.root);
     log::info!(
-      "modpack update apply stale: instance={instance_id} expected plan_hash={} got plan_hash={plan_hash}",
+      "modpack update apply stale: instance={instance_id} confirmed plan_hash={plan_hash} current plan_hash={}",
       prepared.plan_hash,
     );
     return Err(InstanceError::ModpackUpdateStale.into());
@@ -3483,7 +3543,9 @@ async fn resume_campus_client(app: &AppHandle, instance: &Instance) -> USTBLResu
 pub async fn recover_modpack_update(app: AppHandle, instance_id: String) -> USTBLResult<bool> {
   let instance = current_instance(&app, &instance_id)?;
   let root = instance.version_path.clone();
-  let guard = PlanGuard::acquire(&root)?;
+  // A preview left running by a closed dialog is cancelled, not reported as
+  // busy: the dialog is about to start a new one.
+  let guard = acquire_over_preview(&root, Some(&instance_id), false).await?;
   let check_app = app.clone();
   let outcome = tokio::task::spawn_blocking({
     let root = root.clone();
@@ -4343,6 +4405,96 @@ mod tests {
     assert!(join_error.is_cancelled());
     let mapped: crate::error::USTBLError = InstanceError::ModpackUpdatePrepareCancelled.into();
     assert_eq!(mapped.0, "MODPACK_UPDATE_PREPARE_CANCELLED");
+  }
+
+  fn spawn_preview_holding(root: &Path, instance_id: &str, release_after_ms: Option<u64>) {
+    let guard = PlanGuard::claim(root, true).unwrap();
+    let task = tokio::spawn(async move {
+      let _guard = guard;
+      match release_after_ms {
+        Some(ms) => tokio::time::sleep(std::time::Duration::from_millis(ms)).await,
+        None => std::future::pending::<()>().await,
+      }
+    });
+    prepare_handles()
+      .lock()
+      .unwrap()
+      .insert(instance_id.to_string(), task.abort_handle());
+  }
+
+  #[tokio::test]
+  async fn a_command_cancels_the_running_preview_instead_of_reporting_busy() {
+    let root = PathBuf::from(format!("preview-over-{}", uuid::Uuid::new_v4()));
+    let id = format!("games:{}", uuid::Uuid::new_v4());
+    spawn_preview_holding(&root, &id, None);
+    assert!(held_by_preview(&root));
+    let guard = acquire_over_preview(&root, Some(&id), false).await.unwrap();
+    // The guard of the command is not a preview's: a second command is busy.
+    assert!(!held_by_preview(&root));
+    assert_eq!(
+      acquire_over_preview(&root, Some(&id), false)
+        .await
+        .err()
+        .unwrap()
+        .0,
+      "MODPACK_UPDATE_BUSY"
+    );
+    drop(guard);
+    assert!(PlanGuard::acquire(&root).is_ok());
+  }
+
+  #[test]
+  fn a_failed_claim_reports_its_holder_in_the_same_step() {
+    let root = PathBuf::from(format!("claim-holder-{}", uuid::Uuid::new_v4()));
+    let preview = PlanGuard::try_claim(&root, true).unwrap().ok().unwrap();
+    assert_eq!(
+      PlanGuard::try_claim(&root, false).unwrap().err(),
+      Some(true)
+    );
+    drop(preview);
+    // Released: the claim succeeds instead of reporting a holder, so a
+    // preview that lets go between two polls is never taken for an apply.
+    let apply = PlanGuard::try_claim(&root, false).unwrap().ok().unwrap();
+    assert_eq!(
+      PlanGuard::try_claim(&root, true).unwrap().err(),
+      Some(false)
+    );
+    drop(apply);
+    assert!(PlanGuard::try_claim(&root, true).unwrap().is_ok());
+  }
+
+  #[tokio::test]
+  async fn an_apply_or_install_is_never_cancelled_for_a_command() {
+    let root = PathBuf::from(format!("apply-over-{}", uuid::Uuid::new_v4()));
+    let id = format!("games:{}", uuid::Uuid::new_v4());
+    let apply = PlanGuard::acquire(&root).unwrap();
+    let preview = tokio::spawn(std::future::pending::<()>());
+    prepare_handles()
+      .lock()
+      .unwrap()
+      .insert(id.clone(), preview.abort_handle());
+    let error = acquire_over_preview(&root, Some(&id), false)
+      .await
+      .err()
+      .unwrap();
+    assert_eq!(error.0, "MODPACK_UPDATE_BUSY");
+    // A busy answer leaves the registered preview alone.
+    assert!(prepare_handles().lock().unwrap().contains_key(&id));
+    cancel_prepare(&id);
+    drop(apply);
+  }
+
+  #[tokio::test]
+  async fn a_new_preview_waits_for_the_one_it_replaced_to_let_go() {
+    let root = PathBuf::from(format!("preview-next-{}", uuid::Uuid::new_v4()));
+    let id = format!("games:{}", uuid::Uuid::new_v4());
+    spawn_preview_holding(&root, &id, Some(60));
+    // Without waiting, the replacement would have answered busy here.
+    assert!(PlanGuard::claim(&root, true).is_err());
+    let guard = acquire_over_preview(&root, None, true).await.unwrap();
+    assert!(held_by_preview(&root));
+    drop(guard);
+    cancel_prepare(&id);
   }
 
   #[test]

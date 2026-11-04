@@ -232,7 +232,7 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
           setPlan(response.data);
           setPlanPhase("planned");
         } else if (
-          response.details !== InstanceError.ModpackUpdatePrepareCancelled
+          response.raw_error !== InstanceError.ModpackUpdatePrepareCancelled
         ) {
           setPlanError({
             message: response.message,
@@ -878,7 +878,7 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
             </Text>
           )}
           {!checking && renderChecked()}
-          {planPhase === "planFailed" && planError && (
+          {!checking && planPhase === "planFailed" && planError && (
             <Alert status="error" mt={3}>
               <AlertIcon />
               <VStack align="start" spacing={1}>
