@@ -232,8 +232,12 @@ pub struct UpdateRequest {
   pub previous_loader: BaselineLoader,
   /// Component chain recorded in the new baseline.
   pub components: Option<Vec<ComponentRef>>,
-  /// Install the remote version's component profile into an instance that has
-  /// none. Takes the place of the loader switch.
+  /// Fingerprint of the component pack the instance holds after the update,
+  /// recorded in the new baseline.
+  pub component_fingerprint: Option<String>,
+  /// Rebuild the component profile from the remote version's pack: into an
+  /// instance that has none, or over one whose pack differs. Takes the place
+  /// of the loader switch.
   pub restore_components: bool,
   /// Content for automatically merged text files. Other operations fetch the
   /// remote file through its normal source.
@@ -1361,6 +1365,7 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
     if let Some(chain) = &request.components {
       baseline = baseline.with_components(chain.clone());
     }
+    baseline = baseline.with_component_fingerprint(request.component_fingerprint.clone());
     baseline.save(root).await.map_err(io_error)?;
     super::release::write(root, &super::release::Release::from_remote(&request.remote))
       .await
@@ -1586,6 +1591,8 @@ mod tests {
       }
       fs::write(self.root.join("pack.json"), "client-restored").unwrap();
       fs::write(self.root.join("pack.jar"), "jar-restored").unwrap();
+      fs::write(self.root.join(COMPONENTS_FILE_NAME), "components-restored").unwrap();
+      fs::write(self.root.join(SNAPSHOT_FILE_NAME), "snapshot-restored").unwrap();
       Ok(())
     }
     async fn commit_origin(&self, version_id: &str) -> USTBLResult<()> {
@@ -1671,6 +1678,7 @@ mod tests {
       origin: origin("1"),
       previous_loader: loader("0.15.0"),
       components: None,
+      component_fingerprint: None,
       restore_components: false,
       merged_contents: BTreeMap::new(),
       base_texts: BTreeMap::new(),
@@ -1749,6 +1757,171 @@ mod tests {
     // The jar did not exist before, so it must not be left behind.
     assert_eq!(root.read("pack.jar"), None);
     assert!(!journal_path(&root.0).exists());
+  }
+
+  /// An instance that was rebuilt from a component pack before: it has the
+  /// client json, jar, component files and a baseline with the old fingerprint.
+  async fn rebuilt_instance(root: &Root) {
+    root.write("pack.jar", "jar-v1");
+    root.write(COMPONENTS_FILE_NAME, "components-v1");
+    root.write(SNAPSHOT_FILE_NAME, "snapshot-v1");
+    ModpackBaseline::build(&origin("1"), loader("0.15.0"), Vec::new())
+      .with_components(vec![ComponentRef {
+        uid: "net.minecraft".into(),
+        version: "1.7.10".into(),
+      }])
+      .with_component_fingerprint(Some("old-fingerprint".into()))
+      .save(&root.0)
+      .await
+      .unwrap();
+  }
+
+  #[tokio::test]
+  async fn an_update_rebuilds_the_profile_with_the_files_and_records_the_new_fingerprint() {
+    let root = setup();
+    rebuilt_instance(&root).await;
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let new = url_file("mods/new.jar", "new", &mut env);
+    let operations = vec![write_op(&new), remove_op("mods/gone.jar")];
+    let mut update = request(&root, vec![new], operations, "0.16.0");
+    with_component_pack(&mut update, &mut env);
+    update.component_fingerprint = Some("new-fingerprint".into());
+
+    apply(&env, update).await.unwrap();
+
+    assert_eq!(root.read("mods/new.jar").as_deref(), Some("new"));
+    assert_eq!(root.read("mods/gone.jar"), None);
+    assert_eq!(root.read("pack.json").as_deref(), Some("client-restored"));
+    assert_eq!(
+      env.restored.lock().unwrap().as_slice(),
+      ["patches/com.example.json=patch-bytes"]
+    );
+    assert!(env.switched.lock().unwrap().is_empty());
+    let baseline = ModpackBaseline::load(&root.0).await.unwrap();
+    assert_eq!(baseline.origin.version_id, "2");
+    assert_eq!(
+      baseline.component_fingerprint.as_deref(),
+      Some("new-fingerprint")
+    );
+  }
+
+  #[tokio::test]
+  async fn a_version_with_only_new_components_still_rebuilds_the_profile() {
+    let root = setup();
+    rebuilt_instance(&root).await;
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    // The loader did not change either: only the component pack differs.
+    let mut update = request(&root, Vec::new(), Vec::new(), "0.15.0");
+    with_component_pack(&mut update, &mut env);
+    update.component_fingerprint = Some("new-fingerprint".into());
+
+    apply(&env, update).await.unwrap();
+
+    assert_eq!(root.read("pack.json").as_deref(), Some("client-restored"));
+    assert_eq!(env.restored.lock().unwrap().len(), 1);
+    let baseline = ModpackBaseline::load(&root.0).await.unwrap();
+    assert_eq!(baseline.origin.version_id, "2");
+    assert_eq!(
+      baseline.component_fingerprint.as_deref(),
+      Some("new-fingerprint")
+    );
+  }
+
+  #[tokio::test]
+  async fn a_version_without_a_rebuild_keeps_the_recorded_fingerprint() {
+    let root = setup();
+    rebuilt_instance(&root).await;
+    let env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let mut update = request(&root, Vec::new(), Vec::new(), "0.15.0");
+    update.component_fingerprint = Some("old-fingerprint".into());
+
+    apply(&env, update).await.unwrap();
+
+    assert!(env.restored.lock().unwrap().is_empty());
+    assert_eq!(root.read("pack.json").as_deref(), Some("client-v1"));
+    let baseline = ModpackBaseline::load(&root.0).await.unwrap();
+    assert_eq!(
+      baseline.component_fingerprint.as_deref(),
+      Some("old-fingerprint")
+    );
+  }
+
+  #[tokio::test]
+  async fn a_failed_rebuild_puts_every_profile_file_and_the_baseline_back() {
+    let root = setup();
+    rebuilt_instance(&root).await;
+    let before = fs::read(root.0.join(BASELINE_FILE_NAME)).unwrap();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      fail_commit: true,
+      ..Default::default()
+    };
+    let new = url_file("mods/new.jar", "new", &mut env);
+    let operations = vec![write_op(&new), remove_op("mods/gone.jar")];
+    let mut update = request(&root, vec![new], operations, "0.16.0");
+    with_component_pack(&mut update, &mut env);
+    update.component_fingerprint = Some("new-fingerprint".into());
+
+    assert!(apply(&env, update).await.is_err());
+
+    assert_eq!(root.read("pack.json").as_deref(), Some("client-v1"));
+    assert_eq!(root.read("pack.jar").as_deref(), Some("jar-v1"));
+    assert_eq!(
+      root.read(COMPONENTS_FILE_NAME).as_deref(),
+      Some("components-v1")
+    );
+    assert_eq!(
+      root.read(SNAPSHOT_FILE_NAME).as_deref(),
+      Some("snapshot-v1")
+    );
+    assert_eq!(fs::read(root.0.join(BASELINE_FILE_NAME)).unwrap(), before);
+    assert_eq!(root.read("mods/new.jar"), None);
+    assert_eq!(root.read("mods/gone.jar").as_deref(), Some("gone"));
+    assert!(!journal_path(&root.0).exists());
+  }
+
+  #[tokio::test]
+  async fn rolling_back_the_last_update_restores_the_previous_profile() {
+    let root = setup();
+    rebuilt_instance(&root).await;
+    let before = fs::read(root.0.join(BASELINE_FILE_NAME)).unwrap();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let mut update = request(&root, Vec::new(), Vec::new(), "0.15.0");
+    with_component_pack(&mut update, &mut env);
+    update.component_fingerprint = Some("new-fingerprint".into());
+    apply(&env, update).await.unwrap();
+    assert_eq!(root.read("pack.json").as_deref(), Some("client-restored"));
+
+    assert!(roll_back_last(&root.0).unwrap());
+
+    assert_eq!(root.read("pack.json").as_deref(), Some("client-v1"));
+    assert_eq!(root.read("pack.jar").as_deref(), Some("jar-v1"));
+    assert_eq!(
+      root.read(COMPONENTS_FILE_NAME).as_deref(),
+      Some("components-v1")
+    );
+    assert_eq!(
+      root.read(SNAPSHOT_FILE_NAME).as_deref(),
+      Some("snapshot-v1")
+    );
+    assert_eq!(fs::read(root.0.join(BASELINE_FILE_NAME)).unwrap(), before);
+    let baseline = ModpackBaseline::load(&root.0).await.unwrap();
+    assert_eq!(
+      baseline.component_fingerprint.as_deref(),
+      Some("old-fingerprint")
+    );
   }
 
   fn ignores_with(path: &str, start: usize, end: usize) -> super::super::ignores::Ignores {

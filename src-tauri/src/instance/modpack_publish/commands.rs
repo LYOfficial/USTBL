@@ -1300,7 +1300,16 @@ async fn try_adopt(
 
   let mut baseline = ModpackBaseline::build(&new_origin, loader, compared.next_baseline);
   if let Some(components) = remote.components.clone() {
-    baseline = baseline.with_components(components);
+    // The publisher's disk is what the pack was made from, so it already
+    // matches the pack and must not be rebuilt on its next update.
+    baseline = baseline
+      .with_components(components)
+      .with_component_fingerprint(
+        remote
+          .component_pack
+          .as_ref()
+          .map(|pack| pack.fingerprint()),
+      );
   }
   if let Err(error) = baseline.save(&instance.version_path).await {
     log::warn!("Could not save published baseline: {error:?}");
@@ -1667,6 +1676,7 @@ mod tests {
       restored_writes: Default::default(),
       ignores: Default::default(),
       ignores_on_disk: Default::default(),
+      restore_components: false,
     };
     let remote = published(
       &[],
@@ -1699,6 +1709,7 @@ mod tests {
       restored_writes: Default::default(),
       ignores: Default::default(),
       ignores_on_disk: Default::default(),
+      restore_components: false,
     };
     let delete = published(
       &[],
@@ -1764,6 +1775,7 @@ mod tests {
       restored_writes: Default::default(),
       ignores: Default::default(),
       ignores_on_disk: Default::default(),
+      restore_components: false,
     };
     let remote = published(
       &[],

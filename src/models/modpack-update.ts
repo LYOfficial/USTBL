@@ -185,6 +185,7 @@ export interface ModpackUpdatePlan {
   conflicts: ModpackConflict[];
   autoMerged: ModpackFileChange[];
   loaderChange?: { from: ModpackBaselineLoader; to: ModpackBaselineLoader };
+  restoreComponents?: boolean;
   reinstallRequired: boolean;
   fastForward: boolean;
   planHash: string;

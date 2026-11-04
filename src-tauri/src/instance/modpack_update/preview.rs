@@ -367,6 +367,9 @@ pub fn shape(prepared: &Prepared, loader_change: &Option<LoaderChange>) -> Vec<S
     lines.push(format!("prune|{path}|{}", dirs.join(",")));
   }
   lines.push(format!("loader|{:?}", loader_change));
+  if prepared.restore_components {
+    lines.push("components|restore".to_string());
+  }
   lines
 }
 

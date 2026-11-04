@@ -595,6 +595,11 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
             })}
           </Text>
         )}
+        {plan.restoreComponents && (
+          <Text fontSize="xs-sm">
+            {t("UpdateModpackModal.plan.restoreComponents")}
+          </Text>
+        )}
         <VStack align="stretch" spacing={2}>
           <ChangeGroup
             title="UpdateModpackModal.plan.restored"

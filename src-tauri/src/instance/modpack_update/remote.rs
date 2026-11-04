@@ -13,6 +13,7 @@ use crate::instance::helpers::modpack::multimc::profile::safe_relative;
 use crate::instance::models::misc::InstanceError;
 use crate::tasks::download::DownloadParam;
 use serde::{Deserialize, Serialize};
+use sha1::{Digest, Sha1};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
@@ -153,6 +154,61 @@ pub struct ComponentPack {
   pub instance_cfg: BTreeMap<String, String>,
   /// Named relative to the pack: `patches/<uid>.json`, `libraries/<file>`.
   pub files: Vec<RemoteFile>,
+}
+
+impl ComponentPack {
+  /// A hash of everything in the pack that decides what the rebuilt profile
+  /// looks like, so two packs with the same fingerprint rebuild identically.
+  ///
+  /// It covers the chain as the resolver reads it (uid and effective version),
+  /// the content of every shipped patch and library, and the `instance.cfg`
+  /// part the resolver applies. Display keys (`name`, `notes`, `IconKey`) and
+  /// the memory keys, which installation does not use, stay out. The cfg part
+  /// mirrors `ResolvedMultiMc::compose`: `JvmArgs` counts only while
+  /// `OverrideJavaArgs` is true.
+  pub fn fingerprint(&self) -> String {
+    let mut chain: Vec<(String, String)> = self
+      .mmc_pack
+      .get("components")
+      .and_then(|value| value.as_array())
+      .map(|entries| {
+        entries
+          .iter()
+          .filter_map(|entry| {
+            let uid = entry.get("uid")?.as_str()?.to_string();
+            let text = |key: &str| entry.get(key).and_then(|value| value.as_str());
+            let version = text("version").or_else(|| text("cachedVersion"));
+            Some((uid, version.unwrap_or_default().to_string()))
+          })
+          .collect()
+      })
+      .unwrap_or_default();
+    chain.sort();
+    let mut files: Vec<(&str, &str)> = self
+      .files
+      .iter()
+      .map(|file| (file.path.as_str(), file.key.sha1.as_str()))
+      .collect();
+    files.sort();
+
+    let mut hasher = Sha1::new();
+    hasher.update(b"ustbl-components/1\n");
+    for (uid, version) in chain {
+      hasher.update(format!("component\0{uid}\0{version}\n").as_bytes());
+    }
+    for (path, sha1) in files {
+      hasher.update(format!("file\0{path}\0{}\n", sha1.to_lowercase()).as_bytes());
+    }
+    let overridden = self
+      .instance_cfg
+      .get("OverrideJavaArgs")
+      .is_some_and(|value| value.eq_ignore_ascii_case("true"));
+    if overridden {
+      let args = self.instance_cfg.get("JvmArgs").map_or("", String::as_str);
+      hasher.update(format!("jvmargs\0{args}\n").as_bytes());
+    }
+    hex::encode(hasher.finalize())
+  }
 }
 
 /// Case-folded lookups over the file and rule lists. Built once per remote

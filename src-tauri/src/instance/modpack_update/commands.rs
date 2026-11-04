@@ -9,8 +9,8 @@ use super::diff::{Conflict, ConflictChoice, Diff, FileChange};
 use super::merge::merge_with_choices;
 use super::notice::{read_update_notice, write_update_notice, UpdateNotice};
 use super::plan::{
-  compare, count_local_changes, finish, invalidate_scan_cache, requires_reinstall, resolve,
-  Prepared,
+  compare, component_action, count_local_changes, finish, invalidate_scan_cache,
+  next_component_fingerprint, requires_reinstall, resolve, ComponentAction, Prepared,
 };
 use super::plan_cache::{self, PlanCache};
 use super::release;
@@ -163,8 +163,14 @@ pub struct UpdatePlan {
   /// The new version changes the component chain, so it has to be installed
   /// again. No changes are planned and `apply_modpack_update` refuses.
   pub reinstall_required: bool,
+  /// The update rebuilds the instance's component profile (client json,
+  /// libraries, launch arguments) from the new version's component pack, which
+  /// differs from the one the instance was set up with.
+  #[serde(default)]
+  pub restore_components: bool,
   /// The instance already matches the new version: applying only moves the
-  /// recorded version forward, nothing is written to the files.
+  /// recorded version forward, nothing is written to the files. Never set
+  /// while the component profile is rebuilt.
   pub fast_forward: bool,
   pub plan_hash: String,
 }
@@ -1998,6 +2004,7 @@ async fn plan_prepared(
       plan_hash: run.prepared.plan_hash,
       loader_change: run.loader_change,
       reinstall_required: false,
+      restore_components: run.prepared.restore_components,
       remote: run.remote,
     });
   }
@@ -2017,6 +2024,7 @@ async fn plan_prepared(
       plan_hash: String::new(),
       loader_change: None,
       reinstall_required: true,
+      restore_components: false,
       remote,
     });
   }
@@ -2051,6 +2059,7 @@ async fn plan_prepared(
     plan_hash: prepared.plan_hash,
     loader_change,
     reinstall_required: false,
+    restore_components: prepared.restore_components,
     remote,
   })
 }
@@ -2063,6 +2072,7 @@ struct PlannedRun {
   plan_hash: String,
   loader_change: Option<LoaderChange>,
   reinstall_required: bool,
+  restore_components: bool,
   remote: super::remote::RemoteModpack,
 }
 
@@ -2131,6 +2141,7 @@ fn plan_of(origin: &InstanceOrigin, prepared: PlannedRun) -> UpdatePlan {
     to_version_id: prepared.version_id.clone(),
     to_label: prepared.label.clone(),
     fast_forward: !prepared.reinstall_required
+      && !prepared.restore_components
       && fast_forward(
         prepared
           .diff
@@ -2145,6 +2156,7 @@ fn plan_of(origin: &InstanceOrigin, prepared: PlannedRun) -> UpdatePlan {
     auto_merged: prepared.diff.auto_merged,
     loader_change: prepared.loader_change,
     reinstall_required: prepared.reinstall_required,
+    restore_components: prepared.restore_components,
     plan_hash: prepared.plan_hash,
   }
 }
@@ -2233,6 +2245,7 @@ async fn plan_fresh_install(
       auto_merged: Vec::new(),
       loader_change: None,
       reinstall_required: true,
+      restore_components: false,
       fast_forward: false,
       plan_hash: String::new(),
     };
@@ -2249,6 +2262,7 @@ async fn plan_fresh_install(
         prune_dirs: BTreeMap::new(),
         ignores: super::ignores::Ignores::default(),
         ignores_on_disk: super::ignores::Ignores::default(),
+        restore_components: false,
       },
       remote,
     });
@@ -2303,20 +2317,22 @@ async fn plan_fresh_install(
     from_version_id: target.origin.version_id.clone(),
     to_version_id: remote.version_id.clone(),
     to_label: remote.label.clone(),
-    fast_forward: fast_forward(
-      prepared
-        .diff
-        .changes
-        .iter()
-        .chain(&prepared.diff.auto_merged),
-      prepared.diff.conflicts.len(),
-      loader_change.is_some(),
-    ),
+    fast_forward: !prepared.restore_components
+      && fast_forward(
+        prepared
+          .diff
+          .changes
+          .iter()
+          .chain(&prepared.diff.auto_merged),
+        prepared.diff.conflicts.len(),
+        loader_change.is_some(),
+      ),
     changes: prepared.diff.changes.clone(),
     conflicts: prepared.diff.conflicts.clone(),
     auto_merged: prepared.diff.auto_merged.clone(),
     loader_change,
     reinstall_required: false,
+    restore_components: prepared.restore_components,
     plan_hash: prepared.plan_hash.clone(),
   };
   Ok(InstallPlan {
@@ -2669,11 +2685,15 @@ async fn apply_modpack_update_inner(
   )
   .await?;
   let fresh = is_fresh(&target.origin);
-  if requires_reinstall(&baseline, &remote, fresh) {
+  let action = component_action(&baseline, &remote, fresh);
+  if action == ComponentAction::Reinstall {
     return Err(InstanceError::ModpackUpdateReinstallRequired.into());
   }
-  // A fresh instance has no chain yet; the engine restores the version's own.
-  let restore_components = fresh && remote.component_pack.is_some();
+  // A fresh instance has no chain yet, and a version whose component pack
+  // differs from the recorded one changes it: the engine rebuilds the profile
+  // from the version's own pack instead of switching the loader.
+  let restore_components = action == ComponentAction::Restore;
+  let component_fingerprint = next_component_fingerprint(&baseline, &remote, action);
   let components = if restore_components {
     remote.components.clone()
   } else {
@@ -2747,6 +2767,7 @@ async fn apply_modpack_update_inner(
       origin: target.origin.clone(),
       previous_loader: baseline.loader.clone(),
       components,
+      component_fingerprint,
       restore_components,
       merged_contents,
       base_texts,
@@ -3432,6 +3453,10 @@ async fn install_beside_client(
   } else {
     None
   };
+  let component_fingerprint = remote
+    .component_pack
+    .as_ref()
+    .map(|pack| pack.fingerprint());
   let ignores = super::ignores::plan_update(&target.root, &prepared, &remote);
   let result = apply(
     &env,
@@ -3446,6 +3471,7 @@ async fn install_beside_client(
         version: target.instance.mod_loader.version.clone(),
       },
       components,
+      component_fingerprint,
       restore_components,
       merged_contents,
       base_texts: BTreeMap::new(),
@@ -4640,6 +4666,7 @@ mod tests {
       plan_hash: "hh".into(),
       loader_change: None,
       reinstall_required: true,
+      restore_components: false,
       remote: crate::instance::modpack_update::remote::RemoteModpack {
         version_id: "2".into(),
         label: "2.0".into(),
@@ -4664,6 +4691,49 @@ mod tests {
     assert_eq!(plan.plan_hash, "hh");
   }
 
+  #[test]
+  fn a_plan_that_rebuilds_the_components_is_not_a_fast_forward() {
+    let origin = InstanceOrigin {
+      platform: OriginPlatform::Campus,
+      project_id: "p".into(),
+      version_id: "1".into(),
+      game_version: "1.7.10".into(),
+      loader_type: ModLoaderType::Forge,
+      follow: true,
+    };
+    let run = |restore_components| PlannedRun {
+      version_id: "2".into(),
+      label: "2.0".into(),
+      diff: Default::default(),
+      plan_hash: "hh".into(),
+      loader_change: None,
+      reinstall_required: false,
+      restore_components,
+      remote: crate::instance::modpack_update::remote::RemoteModpack {
+        version_id: "2".into(),
+        label: "2.0".into(),
+        game_version: "1.7.10".into(),
+        loader: BaselineLoader {
+          loader_type: ModLoaderType::Forge,
+          version: "10.13.4.1614".into(),
+        },
+        components: None,
+        component_pack: None,
+        files: Vec::new(),
+        rules: Vec::new(),
+        rules_manifest: true,
+        disabled_authoritative: true,
+        path_index: std::sync::Arc::new(std::sync::OnceLock::new()),
+      },
+    };
+    // No file differs. Without a rebuild that is a fast forward.
+    let idle = plan_of(&origin, run(false));
+    assert!(idle.fast_forward && !idle.restore_components);
+    let rebuilding = plan_of(&origin, run(true));
+    assert!(!rebuilding.fast_forward);
+    assert!(rebuilding.restore_components);
+    assert!(!rebuilding.reinstall_required);
+  }
   #[test]
   fn a_cancelled_install_cannot_enter_the_commit() {
     let control = InstallControl::new();

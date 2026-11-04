@@ -15,7 +15,7 @@ use super::remote::{RemoteModpack, RemoteRule, RuleKind, RuleState};
 use super::text_diff::{edits, lines_of, unified_diff_hiding, DiffHunk, CONTEXT_LINES};
 use crate::error::{USTBLError, USTBLResult};
 use crate::file_error::AtPath;
-use crate::instance::helpers::modpack::baseline::{BaselineFile, ModpackBaseline};
+use crate::instance::helpers::modpack::baseline::{BaselineFile, ComponentRef, ModpackBaseline};
 use crate::instance::helpers::modpack::{base_store, text};
 use serde::Serialize;
 use sha1::{Digest, Sha1};
@@ -62,6 +62,10 @@ pub struct Prepared {
   /// (the apply writes the former back when they differ).
   pub ignores: Ignores,
   pub ignores_on_disk: Ignores,
+  /// The update rebuilds the component profile from the new version's pack.
+  /// Part of the plan hash: a version that only changes its components is not
+  /// an update with nothing to do.
+  pub restore_components: bool,
 }
 
 /// The pieces of one comparison, so the conflict setup can finish the work
@@ -85,6 +89,8 @@ pub struct Compared {
   /// The local ignores that apply to the baseline, and the file as stored.
   pub ignores: Ignores,
   pub ignores_on_disk: Ignores,
+  /// Whether the update rebuilds the component profile (see `Prepared`).
+  pub restore_components: bool,
 }
 
 /// The baseline entries by path, managed and dormant alike.
@@ -101,6 +107,7 @@ pub fn plan_hash(
   diff: &Diff,
   next_baseline: &[BaselineFile],
   ignores: &Ignores,
+  restore_components: bool,
 ) -> String {
   let mut hasher = Sha1::new();
   hasher.update(remote.version_id.as_bytes());
@@ -112,28 +119,109 @@ pub fn plan_hash(
   hasher.update(serde_json::to_vec(next_baseline).unwrap_or_default());
   hasher.update(b"\0");
   hasher.update(serde_json::to_vec(ignores).unwrap_or_default());
+  // Only a rebuilding plan adds to the input, so every other plan keeps the
+  // hash it had before this existed.
+  if let (true, Some(pack)) = (restore_components, &remote.component_pack) {
+    hasher.update(b"\0components\0");
+    hasher.update(pack.fingerprint().as_bytes());
+  }
   hex::encode(hasher.finalize())
 }
 
-/// Whether the new version needs a clean install instead of an in-place update.
+/// What an update does about the component profile of the instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComponentAction {
+  /// Leave the profile as it is (and switch the loader, if it changed).
+  Keep,
+  /// Rebuild the profile from the new version's component pack inside the
+  /// update transaction. It takes the place of the loader switch.
+  Restore,
+  /// The instance cannot be updated in place.
+  Reinstall,
+}
+
+fn minecraft_version(chain: &[ComponentRef]) -> Option<&str> {
+  chain
+    .iter()
+    .find(|component| component.uid == "net.minecraft")
+    .map(|component| component.version.as_str())
+}
+
+/// Whether the new version's component pack differs from what the instance was
+/// rebuilt from: a different fingerprint (a baseline without one counts as
+/// different) or a different loader, which the chain carries.
 ///
-/// A component chain decides the libraries, loader patches and launch arguments
-/// of an instance, which files cannot express. A new version that declares a
-/// chain different from the one the instance was installed with, or declares one
-/// for an instance that has none, must be installed again. A new version
-/// without a chain never forces a reinstall.
-///
-/// An instance that was created for the modpack and has not installed any
-/// version yet (`fresh`) is the exception: it has nothing to lose, and the
-/// engine restores the chain into it.
-pub fn requires_reinstall(baseline: &ModpackBaseline, remote: &RemoteModpack, fresh: bool) -> bool {
-  let Some(wanted) = &remote.components else {
+/// It does not depend on whether the instance is `fresh`: a fresh instance's
+/// baseline has no fingerprint, so a pack always differs from it.
+pub fn components_changed(baseline: &ModpackBaseline, remote: &RemoteModpack) -> bool {
+  let Some(pack) = &remote.component_pack else {
     return false;
   };
+  baseline.component_fingerprint.as_deref() != Some(pack.fingerprint().as_str())
+    || remote.loader != baseline.loader
+}
+
+/// What to do with the component profile when updating to `remote`.
+///
+/// A component chain decides the libraries, loader patches and launch arguments
+/// of an instance, which files cannot express. A version without a chain
+/// changes nothing here. An instance that was created for the modpack and has
+/// not installed any version yet (`fresh`) has nothing to lose: the engine
+/// restores the chain into it.
+///
+/// Otherwise the instance must have been installed with a chain too, and the
+/// Minecraft version, an unchangeable property of the instance, must not move;
+/// anything else needs a reinstall. Within the same Minecraft version, a pack
+/// that differs from the recorded one (patches, local libraries, the launch
+/// arguments of `instance.cfg`, or the loader) is rebuilt in place.
+pub fn component_action(
+  baseline: &ModpackBaseline,
+  remote: &RemoteModpack,
+  fresh: bool,
+) -> ComponentAction {
+  let Some(wanted) = &remote.components else {
+    return ComponentAction::Keep;
+  };
   if fresh && remote.component_pack.is_some() {
-    return false;
+    return ComponentAction::Restore;
   }
-  baseline.component_refs().as_ref() != Some(wanted)
+  let Some(have) = baseline.component_refs() else {
+    return ComponentAction::Reinstall;
+  };
+  if remote.component_pack.is_none() {
+    // Nothing to rebuild from: only an identical chain is an in-place update.
+    return if &have == wanted {
+      ComponentAction::Keep
+    } else {
+      ComponentAction::Reinstall
+    };
+  }
+  if minecraft_version(&have) != minecraft_version(wanted) {
+    return ComponentAction::Reinstall;
+  }
+  if components_changed(baseline, remote) {
+    ComponentAction::Restore
+  } else {
+    ComponentAction::Keep
+  }
+}
+
+/// Whether the new version needs a clean install instead of an in-place update.
+pub fn requires_reinstall(baseline: &ModpackBaseline, remote: &RemoteModpack, fresh: bool) -> bool {
+  component_action(baseline, remote, fresh) == ComponentAction::Reinstall
+}
+
+/// The fingerprint to record in the baseline an update writes: the new pack's
+/// when the profile is rebuilt, the recorded one otherwise.
+pub fn next_component_fingerprint(
+  baseline: &ModpackBaseline,
+  remote: &RemoteModpack,
+  action: ComponentAction,
+) -> Option<String> {
+  match (action, &remote.component_pack) {
+    (ComponentAction::Restore, Some(pack)) => Some(pack.fingerprint()),
+    _ => baseline.component_fingerprint.clone(),
+  }
 }
 
 /// How many local changes the instance shows: managed files that differ from
@@ -898,6 +986,7 @@ pub async fn compare(
     restored_writes,
     ignores,
     ignores_on_disk,
+    restore_components: components_changed(baseline, remote),
   })
 }
 
@@ -1016,6 +1105,7 @@ pub fn finish(
     restored_writes,
     ignores,
     ignores_on_disk,
+    restore_components,
     ..
   } = compared;
   let mut merged_contents = BTreeMap::new();
@@ -1106,10 +1196,11 @@ pub fn finish(
     }
   }
   diff.conflicts = remaining;
-  let plan_hash = plan_hash(remote, &diff, &next_baseline, &ignores);
+  let plan_hash = plan_hash(remote, &diff, &next_baseline, &ignores, restore_components);
   Ok(Prepared {
     diff,
     plan_hash,
+    restore_components,
     ignores,
     ignores_on_disk,
     merged_contents,
@@ -1129,7 +1220,7 @@ mod tests {
   };
   use crate::instance::models::misc::{InstanceOrigin, ModLoaderType, OriginPlatform};
   use crate::instance::modpack_update::diff::{ChangeKind, ConflictKind};
-  use crate::instance::modpack_update::remote::{FileSource, RemoteFile};
+  use crate::instance::modpack_update::remote::{ComponentPack, FileSource, RemoteFile};
   use sha1::Digest;
   use std::{fs, path::PathBuf};
 
@@ -1347,6 +1438,7 @@ mod tests {
       &prepared.diff,
       &prepared.next_baseline,
       &Ignores::default(),
+      false,
     );
     let mut with_added_ignore = Ignores::default();
     with_added_ignore.added.insert("mods/unmanaged.jar".into());
@@ -1356,7 +1448,8 @@ mod tests {
         &remote_v2,
         &prepared.diff,
         &prepared.next_baseline,
-        &with_added_ignore
+        &with_added_ignore,
+        false
       )
     );
     let _ = fs::remove_dir_all(root);
@@ -1489,6 +1582,265 @@ mod tests {
     assert!(!requires_reinstall(&plain, &remote, false));
     remote.components = chain_of(&gtnh_pack("10.13.4.1614"));
     assert!(requires_reinstall(&plain, &remote, false));
+  }
+
+  fn lwjgl3ify_pack(forge: &str, patch: &str) -> ComponentPack {
+    let mut mmc_pack = gtnh_pack(forge);
+    mmc_pack["components"]
+      .as_array_mut()
+      .unwrap()
+      .push(serde_json::json!({"uid": "me.eigenraven.lwjgl3ify.forgepatches", "version": ""}));
+    ComponentPack {
+      mmc_pack,
+      instance_cfg: BTreeMap::new(),
+      files: vec![
+        pack_file("patches/me.eigenraven.lwjgl3ify.forgepatches.json", patch),
+        pack_file("libraries/lwjgl3ify-forgePatches.jar", "lib-1"),
+      ],
+    }
+  }
+
+  fn pack_file(path: &str, content: &str) -> RemoteFile {
+    RemoteFile {
+      path: path.to_string(),
+      key: key(content),
+      source: FileSource::ArchiveEntry {
+        archive: PathBuf::new(),
+        entry: path.to_string(),
+      },
+      disabled: false,
+      once: false,
+    }
+  }
+
+  fn with_cfg(mut pack: ComponentPack, cfg: &[(&str, &str)]) -> ComponentPack {
+    pack.instance_cfg = cfg
+      .iter()
+      .map(|(key, value)| (key.to_string(), value.to_string()))
+      .collect();
+    pack
+  }
+
+  fn remote_with_pack(pack: ComponentPack) -> RemoteModpack {
+    let mut remote = remote(&[("mods/a.jar", "a1")]);
+    remote.components = chain_of(&pack.mmc_pack);
+    remote.component_pack = Some(pack);
+    remote
+  }
+
+  /// The baseline an update leaves behind after it rebuilt the instance from `pack`.
+  fn rebuilt_from(pack: &ComponentPack) -> ModpackBaseline {
+    baseline(&[("mods/a.jar", "a1")])
+      .with_components(components_of_mmc_pack(&pack.mmc_pack))
+      .with_component_fingerprint(Some(pack.fingerprint()))
+  }
+
+  #[test]
+  fn the_fingerprint_ignores_order_and_display_keys() {
+    let pack = with_cfg(
+      lwjgl3ify_pack("10.13.4.1614", "patch-1"),
+      &[("name", "GTNH"), ("MinMemAlloc", "1024")],
+    );
+    let mut shuffled = with_cfg(
+      lwjgl3ify_pack("10.13.4.1614", "patch-1"),
+      &[
+        ("name", "Renamed"),
+        ("notes", "hello"),
+        ("IconKey", "flame"),
+        ("MaxMemAlloc", "8192"),
+        // Only counts while the override is on.
+        ("JvmArgs", "-Xss4m"),
+      ],
+    );
+    shuffled.files.reverse();
+    shuffled.mmc_pack["components"]
+      .as_array_mut()
+      .unwrap()
+      .reverse();
+    assert_eq!(pack.fingerprint(), shuffled.fingerprint());
+    assert_eq!(pack.fingerprint().len(), 40);
+  }
+
+  #[test]
+  fn the_fingerprint_follows_what_decides_the_rebuilt_profile() {
+    let base = lwjgl3ify_pack("10.13.4.1614", "patch-1");
+    let fingerprint = base.fingerprint();
+
+    // A patch shipped by the pack.
+    assert_ne!(
+      fingerprint,
+      lwjgl3ify_pack("10.13.4.1614", "patch-2").fingerprint()
+    );
+    // A local library.
+    let mut library = lwjgl3ify_pack("10.13.4.1614", "patch-1");
+    library.files[1] = pack_file("libraries/lwjgl3ify-forgePatches.jar", "lib-2");
+    assert_ne!(fingerprint, library.fingerprint());
+    let mut added = lwjgl3ify_pack("10.13.4.1614", "patch-1");
+    added.files.push(pack_file("libraries/other.jar", "x"));
+    assert_ne!(fingerprint, added.fingerprint());
+    // The chain.
+    assert_ne!(
+      fingerprint,
+      lwjgl3ify_pack("10.13.4.1615", "patch-1").fingerprint()
+    );
+    // The launch arguments of instance.cfg.
+    let overridden = with_cfg(
+      lwjgl3ify_pack("10.13.4.1614", "patch-1"),
+      &[("OverrideJavaArgs", "true"), ("JvmArgs", "-Xss4m")],
+    );
+    assert_ne!(fingerprint, overridden.fingerprint());
+    let changed = with_cfg(
+      lwjgl3ify_pack("10.13.4.1614", "patch-1"),
+      &[("OverrideJavaArgs", "TRUE"), ("JvmArgs", "-Xss8m")],
+    );
+    assert_ne!(overridden.fingerprint(), changed.fingerprint());
+    // The same arguments with the override off do nothing.
+    let off = with_cfg(
+      lwjgl3ify_pack("10.13.4.1614", "patch-1"),
+      &[("OverrideJavaArgs", "false"), ("JvmArgs", "-Xss8m")],
+    );
+    assert_eq!(fingerprint, off.fingerprint());
+  }
+
+  #[test]
+  fn a_component_pack_that_differs_is_rebuilt_in_place() {
+    let installed_pack = lwjgl3ify_pack("10.13.4.1614", "patch-1");
+    let installed = rebuilt_from(&installed_pack);
+
+    // Same chain, a patch changed.
+    let remote = remote_with_pack(lwjgl3ify_pack("10.13.4.1614", "patch-2"));
+    assert_eq!(
+      component_action(&installed, &remote, false),
+      ComponentAction::Restore
+    );
+    assert!(!requires_reinstall(&installed, &remote, false));
+    assert!(components_changed(&installed, &remote));
+
+    // Same Minecraft version, another Forge: the chain differs and is rebuilt.
+    let remote = remote_with_pack(lwjgl3ify_pack("10.13.4.1615", "patch-1"));
+    assert_eq!(
+      component_action(&installed, &remote, false),
+      ComponentAction::Restore
+    );
+
+    // Launch arguments changed.
+    let remote = remote_with_pack(with_cfg(
+      lwjgl3ify_pack("10.13.4.1614", "patch-1"),
+      &[("OverrideJavaArgs", "true"), ("JvmArgs", "-Dx=1")],
+    ));
+    assert_eq!(
+      component_action(&installed, &remote, false),
+      ComponentAction::Restore
+    );
+  }
+
+  #[test]
+  fn an_identical_component_pack_is_left_alone() {
+    let pack = lwjgl3ify_pack("10.13.4.1614", "patch-1");
+    let installed = rebuilt_from(&pack);
+    let remote = remote_with_pack(lwjgl3ify_pack("10.13.4.1614", "patch-1"));
+    assert_eq!(
+      component_action(&installed, &remote, false),
+      ComponentAction::Keep
+    );
+    assert!(!components_changed(&installed, &remote));
+  }
+
+  #[test]
+  fn a_baseline_without_a_fingerprint_is_rebuilt_once() {
+    let pack = lwjgl3ify_pack("10.13.4.1614", "patch-1");
+    let installed = rebuilt_from(&pack).with_component_fingerprint(None);
+    let remote = remote_with_pack(pack);
+    assert_eq!(
+      component_action(&installed, &remote, false),
+      ComponentAction::Restore
+    );
+  }
+
+  #[test]
+  fn a_loader_change_alone_rebuilds_instead_of_switching() {
+    let pack = lwjgl3ify_pack("10.13.4.1614", "patch-1");
+    let installed = rebuilt_from(&pack);
+    let mut remote = remote_with_pack(pack);
+    remote.loader.version = "0.16.1".into();
+    assert_eq!(
+      component_action(&installed, &remote, false),
+      ComponentAction::Restore
+    );
+  }
+
+  #[test]
+  fn another_minecraft_version_still_needs_a_reinstall() {
+    let installed = rebuilt_from(&lwjgl3ify_pack("10.13.4.1614", "patch-1"));
+    let mut next = lwjgl3ify_pack("10.13.4.1614", "patch-1");
+    next.mmc_pack["components"][0]["version"] = "1.12.2".into();
+    let remote = remote_with_pack(next);
+    assert_eq!(
+      component_action(&installed, &remote, false),
+      ComponentAction::Reinstall
+    );
+    // A fresh instance has nothing to lose, whatever the version.
+    assert_eq!(
+      component_action(&installed, &remote, true),
+      ComponentAction::Restore
+    );
+  }
+
+  #[test]
+  fn component_actions_for_instances_without_a_chain_or_a_pack() {
+    let pack = lwjgl3ify_pack("10.13.4.1614", "patch-1");
+    // Installed without a chain, the version brings one: reinstall, but a
+    // fresh instance restores it.
+    let plain = baseline(&[("mods/a.jar", "a1")]);
+    let remote = remote_with_pack(pack.clone());
+    assert_eq!(
+      component_action(&plain, &remote, false),
+      ComponentAction::Reinstall
+    );
+    assert_eq!(
+      component_action(&plain, &remote, true),
+      ComponentAction::Restore
+    );
+    // The version brings no chain: nothing to do with the profile.
+    let installed = rebuilt_from(&pack);
+    let no_chain = self::remote(&[("mods/a.jar", "a2")]);
+    assert_eq!(
+      component_action(&installed, &no_chain, false),
+      ComponentAction::Keep
+    );
+    assert!(!components_changed(&installed, &no_chain));
+  }
+
+  #[tokio::test]
+  async fn a_version_that_only_changes_its_components_has_a_plan_to_apply() {
+    let root = instance(&[("mods/a.jar", "a1")]);
+    let installed_pack = lwjgl3ify_pack("10.13.4.1614", "patch-1");
+    let installed = rebuilt_from(&installed_pack);
+
+    let same = remote_with_pack(installed_pack);
+    let unchanged = prepare_with_contents(&root, &installed, &same, &BTreeMap::new())
+      .await
+      .unwrap();
+    assert!(unchanged.diff.is_empty());
+    assert!(!unchanged.restore_components);
+
+    let moved = remote_with_pack(lwjgl3ify_pack("10.13.4.1614", "patch-2"));
+    let rebuilding = prepare_with_contents(&root, &installed, &moved, &BTreeMap::new())
+      .await
+      .unwrap();
+    // No file differs, and the plan still says the profile is rebuilt.
+    assert!(rebuilding.diff.is_empty());
+    assert!(rebuilding.restore_components);
+    assert_ne!(unchanged.plan_hash, rebuilding.plan_hash);
+
+    // The same remote against a baseline that already holds it: nothing to do.
+    let caught_up = rebuilt_from(moved.component_pack.as_ref().unwrap());
+    let settled = prepare_with_contents(&root, &caught_up, &moved, &BTreeMap::new())
+      .await
+      .unwrap();
+    assert!(!settled.restore_components);
+    assert_ne!(settled.plan_hash, rebuilding.plan_hash);
+    let _ = fs::remove_dir_all(root);
   }
 
   #[tokio::test]

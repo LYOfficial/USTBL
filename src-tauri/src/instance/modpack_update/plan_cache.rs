@@ -205,6 +205,7 @@ mod tests {
       auto_merged: Vec::new(),
       loader_change: None,
       reinstall_required: false,
+      restore_components: false,
       fast_forward: true,
       plan_hash: "hh".into(),
     }

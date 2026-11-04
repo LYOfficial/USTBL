@@ -3384,6 +3384,7 @@
       "enable": "啟用 {{count}}",
       "retire": "休眠 {{count}}",
       "loaderChange": "{{loader}} 將從 {{from}} 切換到 {{to}}",
+      "restoreComponents": "新版本調整了遊戲元件，更新時會一併重建遊戲的版本設定與相依函式庫",
       "conflicts": "{{count}} 個檔案和你的修改衝突，預設保留本地，可以逐個處理",
       "autoMerged": "自動合併 {{count}}",
       "showAll": "顯示全部（還有 {{count}} 項）",
