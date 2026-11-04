@@ -25,6 +25,7 @@ function load(file, requireModule) {
   return module.exports;
 }
 
+const choiceUtils = load("src/utils/modpack-update-choices.ts", () => ({}));
 const lists = load("src/components/modpack-update-lists.tsx", (name) =>
   name === "react"
     ? {
@@ -32,7 +33,9 @@ const lists = load("src/components/modpack-update-lists.tsx", (name) =>
         useMemo: (fn) => fn(),
         useState: () => [],
       }
-    : {}
+    : name === "@/utils/modpack-update-choices"
+      ? choiceUtils
+      : {}
 );
 
 const hunk = () => ({
@@ -73,17 +76,17 @@ test("a conflict re-renders only for its own answers", () => {
   );
   // Its own answers, including a default turning explicit, are compared by value.
   assert.equal(
-    equal(props(file, {}, base), props(file, { "a.cfg": "keepLocal" }, base)),
+    equal(props(file, {}, base), props(file, { "a.cfg": "takeRemote" }, base)),
     true
   );
   assert.equal(
-    equal(props(file, {}, base), props(file, { "a.cfg": "takeRemote" }, base)),
+    equal(props(file, {}, base), props(file, { "a.cfg": "keepLocal" }, base)),
     false
   );
   assert.equal(
     equal(
       props(text, { "b.cfg#0": "takeRemote" }, base),
-      props(text, { "b.cfg#0": "takeRemote", "b.cfg#1": "takeRemote" }, base)
+      props(text, { "b.cfg#0": "takeRemote", "b.cfg#1": "keepLocal" }, base)
     ),
     false
   );

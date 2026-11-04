@@ -3,6 +3,7 @@
 //! without hashing every managed file again.
 
 use super::commands::UpdatePlan;
+use super::file_diff::DiffSources;
 use super::remote::UPDATE_DIR;
 use sha1::{Digest, Sha1};
 use std::fs;
@@ -11,8 +12,9 @@ use std::path::{Path, PathBuf};
 
 const CACHE_FILE: &str = "plan-cache.json";
 /// Schema 2 added `component_changes` to the plan; a schema 1 cache would show
-/// a plan without them, so it is recomputed once.
-const CACHE_SCHEMA: u32 = 2;
+/// a plan without them, so it is recomputed once. Schema 3 added `diff_sources`,
+/// which a schema 2 cache cannot answer file diffs from.
+const CACHE_SCHEMA: u32 = 3;
 
 fn cache_path(root: &Path) -> PathBuf {
   root.join(UPDATE_DIR).join(CACHE_FILE)
@@ -33,6 +35,9 @@ pub struct PlanCache {
   #[serde(default)]
   pub optional_choice: Vec<String>,
   pub plan: UpdatePlan,
+  /// Where the new text of the files that have a diff is read from.
+  #[serde(default)]
+  pub diff_sources: DiffSources,
 }
 
 impl PlanCache {
@@ -43,6 +48,7 @@ impl PlanCache {
     fingerprint: String,
     optional_choice: Vec<String>,
     plan: UpdatePlan,
+    diff_sources: DiffSources,
   ) -> Self {
     Self {
       schema: CACHE_SCHEMA,
@@ -53,6 +59,7 @@ impl PlanCache {
       fingerprint,
       optional_choice,
       plan,
+      diff_sources,
     }
   }
 }
@@ -240,6 +247,7 @@ mod tests {
       "f".into(),
       Vec::new(),
       plan(),
+      DiffSources::default(),
     );
     let mut old = serde_json::to_value(&cache).unwrap();
     old["schema"] = 1.into();
@@ -308,6 +316,7 @@ mod tests {
       fingerprint.clone(),
       Vec::new(),
       plan(),
+      DiffSources::default(),
     );
 
     assert!(load_plan_cache(&root).is_none());

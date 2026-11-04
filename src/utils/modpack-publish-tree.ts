@@ -298,6 +298,80 @@ export const setOnce = (
   return { ...draft, once };
 };
 
+export type OnceState = "all" | "none" | "some";
+
+/** How many published files sit under a directory, and how many of them install once. */
+export interface OnceCount {
+  total: number;
+  once: number;
+}
+
+/**
+ * Per directory (lowercased path), the files it holds that the draft publishes
+ * (shown as include; files on disk are never ghosts). One pass over the files,
+ * O(files x depth), so build it once per draft and read it with `onceStateUnder`.
+ */
+export const countOnceByDir = (
+  context: PublishContext,
+  view: PublishView
+): Map<string, OnceCount> => {
+  const counts = new Map<string, OnceCount>();
+  for (const file of context.files) {
+    if (view.fileState(file.path) !== "include") continue;
+    const key = keyOf(file.path);
+    const once = view.isOnce(file.path);
+    let cut = key.lastIndexOf("/");
+    while (cut > 0) {
+      const parent = key.slice(0, cut);
+      let count = counts.get(parent);
+      if (!count) {
+        count = { total: 0, once: 0 };
+        counts.set(parent, count);
+      }
+      count.total += 1;
+      if (once) count.once += 1;
+      cut = key.lastIndexOf("/", cut - 1);
+    }
+  }
+  return counts;
+};
+
+/** O(1). Null when no published file sits under the directory. */
+export const onceStateUnder = (
+  counts: ReadonlyMap<string, OnceCount>,
+  dirPath: string
+): OnceState | null => {
+  const count = counts.get(keyOf(dirPath));
+  if (!count || count.total === 0) return null;
+  if (count.once === 0) return "none";
+  return count.once === count.total ? "all" : "some";
+};
+
+/**
+ * Set first-install-only on every file under a directory (recursively) that
+ * the draft publishes, in one update. O(files) per call. Files that are
+ * ignored, deleted or unmentioned are left as they are.
+ */
+export const setOnceUnder = (
+  context: PublishContext,
+  draft: PublishDraft,
+  view: PublishView,
+  dirPath: string,
+  value: boolean
+): PublishDraft => {
+  const dirKey = keyOf(dirPath);
+  const once = new Set(draft.once);
+  for (const file of context.files) {
+    const key = keyOf(file.path);
+    if (!isUnder(key, dirKey) || view.fileState(file.path) !== "include") {
+      continue;
+    }
+    if (value) once.add(key);
+    else once.delete(key);
+  }
+  return { ...draft, once };
+};
+
 /**
  * The state a click moves to; a mixed node goes to the first. A node missing
  * from disk (`ghost`) can never be ticked: it cycles remove, ignore, delete, or

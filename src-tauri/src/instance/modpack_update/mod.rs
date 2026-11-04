@@ -7,6 +7,7 @@ pub mod commands;
 pub mod decide;
 pub mod diff;
 pub mod download_allowlist;
+pub mod file_diff;
 pub mod ignores;
 pub mod local_scan;
 pub mod local_update;

@@ -39,7 +39,7 @@ test("the update preview lists component changes and keeps the loader line for p
   const modal = read("src/components/modals/update-modpack-modal.tsx");
   assert.match(modal, /plan\.componentChanges\?\.length/);
   assert.match(modal, /UpdateModpackModal\.plan\.componentChanges\.title/);
-  assert.match(modal, /UpdateModpackModal\.plan\.componentChanges\.removed/);
+  assert.match(modal, /<VersionChangeRow/);
   // The loader change is the fallback of the same block, not a second line.
   const block = modal.slice(
     modal.indexOf("plan.componentChanges?.length ?"),

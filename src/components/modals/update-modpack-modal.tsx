@@ -27,6 +27,7 @@ import {
   ConflictItem,
   PlanChangeGroups,
 } from "@/components/modpack-update-lists";
+import { VersionChangeRow } from "@/components/modpack-version-change";
 import { OptionalFilesList } from "@/components/optional-files-list";
 import { useLauncherConfig } from "@/contexts/config";
 import { useGlobalData } from "@/contexts/global-data";
@@ -46,7 +47,9 @@ import {
   failedUpdatePlans,
   rememberedChoices,
   resolvePlanChoices,
+  withDefaultChoices,
 } from "@/utils/modpack-update-choices";
+import { sortConflicts } from "@/utils/modpack-update-order";
 import { pendingUpdateLabels } from "@/utils/rename-suggestion";
 
 interface UpdateModpackModalProps extends Omit<ModalProps, "children"> {
@@ -344,7 +347,7 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
       const response = await ModpackUpdateService.applyModpackUpdate(
         instanceId,
         plan.planHash,
-        choices,
+        withDefaultChoices(plan.conflicts, choices),
         optionalPicksRef.current
       );
       if (response.status !== "success") pendingUpdateLabels.delete(instanceId);
@@ -457,10 +460,13 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
       autoMerged: plan.autoMerged.filter((change) => matchesPath(change.path)),
     };
   }, [plan, fileQuery, matchesPath]);
+  // Display order only: `choices` and the plan hash do not depend on it.
   const shownConflicts = useMemo(
     () =>
       plan
-        ? plan.conflicts.filter((conflict) => matchesPath(conflict.path))
+        ? sortConflicts(plan.conflicts).filter((conflict) =>
+            matchesPath(conflict.path)
+          )
         : [],
     [plan, matchesPath]
   );
@@ -622,41 +628,20 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
               {t("UpdateModpackModal.plan.componentChanges.title")}
             </Text>
             {plan.componentChanges?.length ? (
-              plan.componentChanges.map((change) => {
-                const name = componentDisplayName(change.uid);
-                const from = change.from || "-";
-                const to = change.to || "-";
-                return (
-                  <Text key={change.uid} fontSize="xs-sm">
-                    {change.from == null
-                      ? t("UpdateModpackModal.plan.componentChanges.added", {
-                          name,
-                          to,
-                        })
-                      : change.to == null
-                        ? t(
-                            "UpdateModpackModal.plan.componentChanges.removed",
-                            { name }
-                          )
-                        : t(
-                            "UpdateModpackModal.plan.componentChanges.changed",
-                            {
-                              name,
-                              from,
-                              to,
-                            }
-                          )}
-                  </Text>
-                );
-              })
+              plan.componentChanges.map((change) => (
+                <VersionChangeRow
+                  key={change.uid}
+                  name={componentDisplayName(change.uid)}
+                  from={change.from}
+                  to={change.to}
+                />
+              ))
             ) : plan.loaderChange ? (
-              <Text fontSize="xs-sm">
-                {t("UpdateModpackModal.plan.loaderChange", {
-                  from: plan.loaderChange.from.version,
-                  to: plan.loaderChange.to.version,
-                  loader: plan.loaderChange.to.type,
-                })}
-              </Text>
+              <VersionChangeRow
+                name={plan.loaderChange.to.type}
+                from={plan.loaderChange.from.version}
+                to={plan.loaderChange.to.version}
+              />
             ) : null}
           </VStack>
         )}
@@ -677,7 +662,7 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
               {t("FileFilter.empty")}
             </Text>
           )}
-        <PlanChangeGroups plan={shownPlan ?? plan} />
+        <PlanChangeGroups instanceId={instanceId} plan={shownPlan ?? plan} />
         {plan.conflicts.length > 0 && (
           <VStack align="stretch" spacing={3}>
             <HStack justify="space-between" spacing={2}>

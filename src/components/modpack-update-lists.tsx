@@ -16,6 +16,7 @@ import {
   DiffHunks,
   regionHunk,
 } from "@/components/common/diff-view";
+import { ModpackFileDiffRow } from "@/components/modpack-file-diff";
 import {
   ModpackConflict,
   ModpackConflictChoice,
@@ -23,7 +24,12 @@ import {
   ModpackMergeConflict,
   ModpackUpdatePlan,
 } from "@/models/modpack-update";
+import { choiceOf } from "@/utils/modpack-update-choices";
 import { groupPlanChanges } from "@/utils/modpack-update-groups";
+import {
+  canShowChangeDiff,
+  sortChangesByDiff,
+} from "@/utils/modpack-update-order";
 
 const formatSize = (size?: number) => {
   if (size === undefined) return "";
@@ -74,6 +80,8 @@ const ChangeGroup: React.FC<{
   sizeMode: SizeMode;
   description?: string;
   defaultOpen?: boolean;
+  /** Set for groups whose rows can open a line diff of the plan. */
+  diff?: { instanceId: string; planHash: string };
 }> = ({
   title,
   colorScheme,
@@ -81,14 +89,14 @@ const ChangeGroup: React.FC<{
   sizeMode,
   description,
   defaultOpen = false,
+  diff,
 }) => {
   const { t } = useTranslation();
   const [open, setOpen] = useState(defaultOpen);
   const [showAll, setShowAll] = useState(false);
   // Sorting thousands of paths is only worth it for a group that is open.
   const sorted = useMemo(
-    () =>
-      open ? [...changes].sort((a, b) => a.path.localeCompare(b.path)) : [],
+    () => (open ? sortChangesByDiff(changes) : []),
     [open, changes]
   );
   if (changes.length === 0) return null;
@@ -118,28 +126,40 @@ const ChangeGroup: React.FC<{
             </Text>
           )}
           {shown.map((change) => (
-            <HStack
-              key={change.path}
-              justify="space-between"
-              spacing={3}
-              px={3}
-              py={1.5}
-              borderTopWidth="1px"
-            >
-              <Box minW={0}>
-                <Text fontSize="sm" noOfLines={1} wordBreak="break-all">
-                  {fileName(change.path)}
-                </Text>
-                {change.path.includes("/") && (
-                  <Text fontSize="xs" className="secondary-text" noOfLines={1}>
-                    {change.path}
+            <Box key={change.path}>
+              <HStack
+                justify="space-between"
+                spacing={3}
+                px={3}
+                py={1.5}
+                borderTopWidth="1px"
+              >
+                <Box minW={0}>
+                  <Text fontSize="sm" noOfLines={1} wordBreak="break-all">
+                    {fileName(change.path)}
                   </Text>
-                )}
-              </Box>
-              <Text fontSize="xs" className="secondary-text" flexShrink={0}>
-                {renderSize(sizeMode, change, t)}
-              </Text>
-            </HStack>
+                  {change.path.includes("/") && (
+                    <Text
+                      fontSize="xs"
+                      className="secondary-text"
+                      noOfLines={1}
+                    >
+                      {change.path}
+                    </Text>
+                  )}
+                </Box>
+                <Text fontSize="xs" className="secondary-text" flexShrink={0}>
+                  {renderSize(sizeMode, change, t)}
+                </Text>
+              </HStack>
+              {diff && canShowChangeDiff(change) && (
+                <ModpackFileDiffRow
+                  instanceId={diff.instanceId}
+                  planHash={diff.planHash}
+                  path={change.path}
+                />
+              )}
+            </Box>
           ))}
           {!showAll && sorted.length > shown.length && (
             <Button
@@ -165,12 +185,18 @@ const ChangeGroup: React.FC<{
  * conflicts does not regroup and re-render the lists.
  */
 export const PlanChangeGroups = memo(function PlanChangeGroups({
+  instanceId,
   plan,
 }: {
+  instanceId: string;
   plan: ModpackUpdatePlan;
 }) {
   const { t } = useTranslation();
   const groups = useMemo(() => groupPlanChanges(plan), [plan]);
+  const diff = useMemo(
+    () => ({ instanceId, planHash: plan.planHash }),
+    [instanceId, plan.planHash]
+  );
   return (
     <VStack align="stretch" spacing={2}>
       <ChangeGroup
@@ -192,6 +218,7 @@ export const PlanChangeGroups = memo(function PlanChangeGroups({
         colorScheme="blue"
         changes={groups.update}
         sizeMode="updated"
+        diff={diff}
       />
       <ChangeGroup
         title="UpdateModpackModal.plan.delete"
@@ -222,6 +249,7 @@ export const PlanChangeGroups = memo(function PlanChangeGroups({
         colorScheme="green"
         changes={groups.autoMerged}
         sizeMode="updated"
+        diff={diff}
       />
     </VStack>
   );
@@ -369,11 +397,6 @@ interface ConflictItemProps {
   onReveal: (path: string) => void;
   expandSignal?: DiffExpandSignal;
 }
-
-const choiceOf = (
-  choices: Record<string, ModpackConflictChoice>,
-  key: string
-): ModpackConflictChoice => choices[key] ?? "keepLocal";
 
 /**
  * Re-render a conflict only when the conflict itself or one of its own

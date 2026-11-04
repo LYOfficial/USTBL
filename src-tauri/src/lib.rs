@@ -199,6 +199,7 @@ pub async fn run() -> i32 {
       instance::modpack_update::commands::discard_campus_modpack_install,
       instance::modpack_update::commands::reveal_modpack_conflict_file,
       instance::modpack_update::commands::list_modpack_change_detail,
+      instance::modpack_update::commands::modpack_update_file_diff,
       instance::modpack_update::commands::ignore_modpack_local_change,
       instance::modpack_update::commands::ignore_modpack_added_file,
       instance::modpack_update::commands::list_modpack_ignores,

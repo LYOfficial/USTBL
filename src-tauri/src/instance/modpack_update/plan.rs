@@ -1081,7 +1081,7 @@ pub async fn compare(
 }
 
 /// The steps the apply runs, from the prepared plan and the player's answers.
-/// Unanswered conflicts keep the local file; a kept-local file that needs a
+/// Unanswered conflicts take the new version; a kept-local file that needs a
 /// variant flip is renamed instead of written.
 pub fn resolve(prepared: &Prepared, choices: &BTreeMap<String, ConflictChoice>) -> Vec<Operation> {
   let mut operations = Vec::new();
@@ -1176,6 +1176,31 @@ pub fn resolve(prepared: &Prepared, choices: &BTreeMap<String, ConflictChoice>) 
   }
   operations.sort_by(|a, b| a.path.cmp(&b.path));
   operations
+}
+
+/// Say in the log why a conflict of a text extension has no line blocks.
+fn log_missing_blocks(root: &Path, conflict: &Conflict, remote: Option<&Vec<u8>>) {
+  if !text::is_text_path(&conflict.path, &[]) {
+    return;
+  }
+  let reason = match (conflict.kind, &conflict.baseline) {
+    (ConflictKind::ModifiedLocallyChangedRemotely, Some(base)) => {
+      if base_store::load(root, &base.sha1).ok().flatten().is_none() {
+        "the installed text was not kept"
+      } else if remote.is_none() {
+        "the new text was not read (not UTF-8 text, or over the size limit)"
+      } else {
+        "the local, installed or new text is not valid UTF-8 text"
+      }
+    }
+    (ConflictKind::ModifiedLocallyChangedRemotely, None) => "no installed content is recorded",
+    _ => "this kind of conflict has no installed text to merge from",
+  };
+  log::info!(
+    "modpack update: no text blocks for {} ({:?}): {reason}",
+    conflict.path,
+    conflict.kind
+  );
 }
 
 /// Finish a comparison after the remote bytes of conflicting text files were
@@ -1282,6 +1307,7 @@ pub fn finish(
           }
         }
       }
+      log_missing_blocks(root, &conflict, remote_contents.get(&conflict.path));
       remaining.push(conflict);
     }
   }
@@ -2567,16 +2593,23 @@ mod tests {
       .unwrap();
     assert!(entry.is_managed() && entry.disabled);
 
-    for choices in [
-      BTreeMap::new(),
-      BTreeMap::from([("mods/a.jar".to_string(), ConflictChoice::KeepLocal)]),
-    ] {
-      let operations = resolve(&prepared, &choices);
-      assert_eq!(operations.len(), 1);
-      assert!(operations[0].rename);
-      assert_eq!(operations[0].write, None);
-      assert!(operations[0].final_disabled);
-    }
+    let choices = BTreeMap::from([("mods/a.jar".to_string(), ConflictChoice::KeepLocal)]);
+    let operations = resolve(&prepared, &choices);
+    assert_eq!(operations.len(), 1);
+    assert!(operations[0].rename);
+    assert_eq!(operations[0].write, None);
+    assert!(operations[0].final_disabled);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn an_unanswered_conflict_takes_the_new_version() {
+    let root = instance(&[("mods/a.jar", "a1-edited")]);
+    let prepared = prepare_content_conflict(&root).await;
+    let operations = resolve(&prepared, &BTreeMap::new());
+    assert_eq!(operations.len(), 1);
+    assert!(!operations[0].rename);
+    assert_eq!(operations[0].write, Some(key("a2")));
     let _ = fs::remove_dir_all(root);
   }
 
@@ -2624,7 +2657,8 @@ mod tests {
       .unwrap();
     assert!(entry.is_managed() && !entry.disabled);
 
-    let operations = resolve(&prepared, &BTreeMap::new());
+    let keep = BTreeMap::from([("mods/a.jar".to_string(), ConflictChoice::KeepLocal)]);
+    let operations = resolve(&prepared, &keep);
     assert_eq!(operations.len(), 1);
     assert!(operations[0].rename);
     assert!(!operations[0].final_disabled);
@@ -2665,7 +2699,8 @@ mod tests {
     assert!(entry.is_managed() && entry.disabled);
 
     // The local file already sits at the outcome: keeping it is a plain keep.
-    assert!(resolve(&prepared, &BTreeMap::new()).is_empty());
+    let keep = BTreeMap::from([(conflict.path.clone(), ConflictChoice::KeepLocal)]);
+    assert!(resolve(&prepared, &keep).is_empty());
     // Taking the remote writes the new file there too.
     let taken = resolve(
       &prepared,
@@ -3048,7 +3083,7 @@ mod tests {
     let local_source = String::from_utf8(local_source.clone()).unwrap();
     assert!(local_source.contains("b=2\n") && !local_source.contains("b=20"));
     assert!(local_source.contains("d=40"));
-    let mut choices = BTreeMap::new();
+    let mut choices = BTreeMap::from([("config/a.toml#0".to_string(), ConflictChoice::KeepLocal)]);
     let merged =
       crate::instance::modpack_update::commands::selected_hunk_contents(&prepared, &mut choices)
         .unwrap();
@@ -3069,11 +3104,11 @@ mod tests {
       prepared.diff.conflicts[0].kind,
       ConflictKind::ModifiedLocallyRemovedRemotely
     );
-    let operations = resolve(&prepared, &BTreeMap::new());
+    let mut choices = BTreeMap::from([("config/a.toml".to_string(), ConflictChoice::KeepLocal)]);
+    let operations = resolve(&prepared, &choices);
     assert_eq!(operations.len(), 1);
     assert_eq!(operations[0].write, None);
     assert!(operations[0].write_local);
-    let mut choices = BTreeMap::new();
     let contents =
       crate::instance::modpack_update::commands::selected_hunk_contents(&prepared, &mut choices)
         .unwrap();
@@ -3247,7 +3282,8 @@ mod tests {
     assert_eq!(operations[0].write, Some(key("q2")));
     assert_one_spelling(&prepared, &operations, "config/Quests/Flamingidiots.json");
 
-    let keep = resolve(&prepared, &BTreeMap::new());
+    let keep_choice = BTreeMap::from([(conflict.path.clone(), ConflictChoice::KeepLocal)]);
+    let keep = resolve(&prepared, &keep_choice);
     assert!(keep.iter().all(|op| op.write.is_none()));
     let _ = fs::remove_dir_all(root);
   }

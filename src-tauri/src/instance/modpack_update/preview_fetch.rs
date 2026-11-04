@@ -3,6 +3,7 @@
 //! that goes wrong is logged and answered with `None`, so the caller takes the
 //! full download.
 
+use super::file_diff::RangeArchive;
 use super::preview::{preview_remote, run_preview, PreviewRun};
 use super::range_zip::{read_listing, HttpSource, RangeSource, ZipListing};
 use super::sources::{
@@ -147,6 +148,36 @@ pub async fn listing_and_manifest(
   Err(InstanceError::ModpackManifestParseError.into())
 }
 
+/// One entry of the archive a range preview listed, read again through byte
+/// ranges (the listing comes from the cache when it is still there).
+pub async fn read_listed_entry(
+  app: &AppHandle,
+  root: &Path,
+  range: &RangeArchive,
+  entry: &str,
+  max: u64,
+) -> USTBLResult<Vec<u8>> {
+  let param = plain_download(&range.url)?;
+  let cached = load_listing_cache(root, range.platform, &range.version_id, &range.sha1);
+  let source = HttpSource::new(
+    app.state::<reqwest::Client>().inner().clone(),
+    source_urls(app, &param),
+    cached.as_ref().map(|cache| cache.listing.total_len),
+  );
+  let (listing, _) = listing_and_manifest(
+    &source,
+    root,
+    range.platform,
+    &range.version_id,
+    &range.sha1,
+    cached,
+  )
+  .await?;
+  let entry = listing
+    .find(entry)
+    .ok_or(InstanceError::ModpackManifestParseError)?;
+  Ok(listing.read_entry_bytes(&source, entry, max).await?)
+}
 /// Plan the update of a platform pack without downloading its archive.
 /// `None` means the preview is not available or failed; the caller then
 /// downloads the archive and plans from it.

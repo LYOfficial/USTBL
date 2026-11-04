@@ -21,7 +21,12 @@ function load(file) {
   return module.exports;
 }
 
-const { resolvePlanChoices } = load("src/utils/modpack-update-choices.ts");
+const {
+  resolvePlanChoices,
+  withDefaultChoices,
+  choiceOf,
+  DEFAULT_CONFLICT_CHOICE,
+} = load("src/utils/modpack-update-choices.ts");
 
 const hunkChoice = { "config/fadeless.json#0": "takeRemote" };
 
@@ -114,4 +119,74 @@ test("the caller passes the failed hash explicitly: the same plan keeps the choi
   });
   assert.deepEqual(kept.choices, hunkChoice);
   assert.equal(kept.toastPlanChanged, false);
+});
+
+const conflicts = [
+  { path: "config/a.toml", hunks: [{}, {}] },
+  { path: "mods/b.jar", hunks: [] },
+  { path: "config/c.cfg", hunks: [] },
+];
+
+test("an unanswered conflict defaults to the new version, same as the backend", () => {
+  assert.equal(DEFAULT_CONFLICT_CHOICE, "takeRemote");
+  assert.equal(choiceOf({}, "mods/b.jar"), "takeRemote");
+  assert.equal(
+    choiceOf({ "mods/b.jar": "keepLocal" }, "mods/b.jar"),
+    "keepLocal"
+  );
+  const backend = fs.readFileSync(
+    path.join(__dirname, "../../src-tauri/src/instance/modpack_update/diff.rs"),
+    "utf8"
+  );
+  assert.match(
+    backend,
+    /pub enum ConflictChoice \{\s*KeepLocal,\s*#\[default\]\s*TakeRemote,/
+  );
+});
+
+test("the submitted answers cover every conflict and block", () => {
+  const sent = withDefaultChoices(conflicts, {
+    "config/a.toml#1": "keepLocal",
+    "mods/b.jar": "keepLocal",
+    "gone.cfg": "keepLocal",
+  });
+  assert.deepEqual(sent, {
+    "config/a.toml#0": "takeRemote",
+    "config/a.toml#1": "keepLocal",
+    "mods/b.jar": "keepLocal",
+    "config/c.cfg": "takeRemote",
+  });
+});
+
+test("remembered answers of the same plan are restored, defaults fill the rest", () => {
+  const remembered = new Map([
+    ["i1", { planHash: "h", choices: { "mods/b.jar": "keepLocal" } }],
+  ]);
+  const { choices } = resolvePlanChoices({
+    instanceId: "i1",
+    newPlanHash: "h",
+    failedPlanHash: null,
+    recheckAfterFailure: false,
+    remembered,
+    currentChoices: {},
+  });
+  assert.equal(
+    withDefaultChoices(conflicts, choices)["mods/b.jar"],
+    "keepLocal"
+  );
+  assert.equal(
+    withDefaultChoices(conflicts, choices)["config/c.cfg"],
+    "takeRemote"
+  );
+});
+
+test("the dialog submits the filled-in answers", () => {
+  const modal = fs.readFileSync(
+    path.join(
+      __dirname,
+      "../../src/components/modals/update-modpack-modal.tsx"
+    ),
+    "utf8"
+  );
+  assert.match(modal, /withDefaultChoices\(plan\.conflicts, choices\)/);
 });

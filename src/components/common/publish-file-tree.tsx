@@ -2,6 +2,7 @@ import {
   Box,
   Button,
   Center,
+  Checkbox,
   HStack,
   IconButton,
   Tag,
@@ -29,6 +30,7 @@ import Empty from "@/components/common/empty";
 import FileFilterInput from "@/components/common/file-filter-input";
 import PublishChangeDiff from "@/components/common/publish-change-diff";
 import TreeView, { TreeNode } from "@/components/common/tree-view";
+import { useLauncherConfig } from "@/contexts/config";
 import {
   AUTO_EXPAND_LIMIT,
   countFiles,
@@ -40,6 +42,7 @@ import {
   ChangeCategory,
   ChangeFilter,
   NO_FILTER,
+  OnceCount,
   PreviousRelease,
   PublishChange,
   PublishContext,
@@ -50,16 +53,19 @@ import {
   canRemoveFile,
   categorizeChanges,
   countCategories,
+  countOnceByDir,
   dirChangeCounts,
   filterNodes,
   isFilterActive,
   keyOf,
   localDeletePaths,
   nextState,
+  onceStateUnder,
   restoreInheritance,
   setDirState,
   setFileState,
   setOnce,
+  setOnceUnder,
   toggleCategory,
   viewOf,
 } from "@/utils/modpack-publish-tree";
@@ -128,6 +134,10 @@ const PublishFileTree: React.FC<PublishFileTreeProps> = ({
     [changes, context, previous, view]
   );
   const counts = useMemo(() => countCategories(marks), [marks]);
+  const onceCounts = useMemo(
+    () => countOnceByDir(context, view),
+    [context, view]
+  );
   const dirCounts = useMemo(() => dirChangeCounts(marks), [marks]);
   const localDeletes = useMemo(
     () => new Set(localDeletePaths(context, draft)),
@@ -274,6 +284,7 @@ const PublishFileTree: React.FC<PublishFileTreeProps> = ({
                 context={context}
                 draft={draft}
                 view={view}
+                onceCounts={onceCounts}
                 label={label}
                 category={marks.get(keyOf(data.path))}
                 change={changeByKey.get(keyOf(data.path))}
@@ -305,6 +316,7 @@ interface PublishTreeRowProps {
   context: PublishContext;
   draft: PublishDraft;
   view: ReturnType<typeof viewOf>;
+  onceCounts: ReadonlyMap<string, OnceCount>;
   label: (state: ShownState) => string;
   category: ChangeCategory | undefined;
   change: PublishChange | undefined;
@@ -319,6 +331,7 @@ const PublishTreeRow: React.FC<PublishTreeRowProps> = ({
   context,
   draft,
   view,
+  onceCounts,
   label,
   category,
   change,
@@ -327,6 +340,8 @@ const PublishTreeRow: React.FC<PublishTreeRowProps> = ({
   onDraftChange,
 }) => {
   const { t } = useTranslation();
+  const { config } = useLauncherConfig();
+  const primaryColor = config.appearance.theme.primaryColor;
   const [showDiff, setShowDiff] = useState(false);
   const isDir = data.kind === "dir";
   const state = isDir ? view.dirState(data.path) : view.fileState(data.path);
@@ -351,6 +366,73 @@ const PublishTreeRow: React.FC<PublishTreeRowProps> = ({
     change !== undefined &&
     (change.kind === "modified" || change.kind === "onceChanged") &&
     change.previousSha1 !== null;
+
+  // Files and directories share one small box in a fixed-width slot at the
+  // row's right edge, so the boxes line up whether or not a row has one.
+  const dirOnce = isDir ? onceStateUnder(onceCounts, data.path) : null;
+  let onceControl: React.ReactNode = null;
+  if (!isDir && !data.ghost && state === "include") {
+    onceControl = (
+      <Tooltip
+        label={
+          <>
+            <Text>{t("PublishModpackModal.tree.once")}</Text>
+            <Text mt={1} opacity={0.8}>
+              {t("PublishModpackModal.tree.onceHint")}
+            </Text>
+          </>
+        }
+      >
+        <span>
+          <Checkbox
+            size="sm"
+            colorScheme={primaryColor}
+            isChecked={view.isOnce(data.path)}
+            onChange={(e) =>
+              onDraftChange((prev) =>
+                setOnce(prev, data.path, e.target.checked)
+              )
+            }
+            aria-label={`${data.name}: ${t("PublishModpackModal.tree.once")}`}
+          />
+        </span>
+      </Tooltip>
+    );
+  } else if (dirOnce !== null) {
+    onceControl = (
+      <Tooltip
+        label={
+          <>
+            <Text>{t("PublishModpackModal.tree.onceDir")}</Text>
+            <Text mt={1} opacity={0.8}>
+              {t("PublishModpackModal.tree.onceHint")}
+            </Text>
+          </>
+        }
+      >
+        <span>
+          <Checkbox
+            size="sm"
+            colorScheme={primaryColor}
+            isChecked={dirOnce === "all"}
+            isIndeterminate={dirOnce === "some"}
+            onChange={() =>
+              onDraftChange((prev) =>
+                setOnceUnder(
+                  context,
+                  prev,
+                  viewOf(context, prev),
+                  data.path,
+                  dirOnce !== "all"
+                )
+              )
+            }
+            aria-label={`${data.name}: ${t("PublishModpackModal.tree.onceDir")}`}
+          />
+        </span>
+      </Tooltip>
+    );
+  }
 
   return (
     <VStack align="stretch" spacing={1} w="100%">
@@ -471,21 +553,6 @@ const PublishTreeRow: React.FC<PublishTreeRowProps> = ({
             )}
           </Button>
         ) : null}
-        {!isDir && !data.ghost && state === "include" ? (
-          <Tooltip label={t("PublishModpackModal.tree.onceHint")}>
-            <Box flexShrink={0}>
-              <BlockToggle
-                checked={view.isOnce(data.path)}
-                onChange={(checked) =>
-                  onDraftChange((prev) => setOnce(prev, data.path, checked))
-                }
-                aria-label={t("PublishModpackModal.tree.once")}
-              >
-                {t("PublishModpackModal.tree.once")}
-              </BlockToggle>
-            </Box>
-          </Tooltip>
-        ) : null}
         {view.hasOverride(data.path, data.kind) ? (
           <Tooltip label={t("PublishModpackModal.tree.restoreHint")}>
             <IconButton
@@ -501,6 +568,16 @@ const PublishTreeRow: React.FC<PublishTreeRowProps> = ({
             />
           </Tooltip>
         ) : null}
+        <Box
+          w="20px"
+          h="20px"
+          flexShrink={0}
+          display="flex"
+          alignItems="center"
+          justifyContent="center"
+        >
+          {onceControl}
+        </Box>
       </HStack>
       {canDiff && showDiff && change ? (
         <Box pl={2} pb={1}>

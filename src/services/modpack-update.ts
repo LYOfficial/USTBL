@@ -3,6 +3,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
   ModpackChangeDetail,
   ModpackConflictChoice,
+  ModpackFileDiff,
   ModpackIgnoredItem,
   ModpackOptionalFile,
   ModpackUnofficialDownloads,
@@ -175,6 +176,23 @@ export class ModpackUpdateService {
     return () => {
       unlisten.then((removeListener) => removeListener());
     };
+  }
+
+  /**
+   * The line diff of one file of the plan the dialog shows. planHash must
+   * be the shown plan's; a plan that has changed since fails as stale.
+   */
+  @responseHandler("instance")
+  static async modpackUpdateFileDiff(
+    instanceId: string,
+    planHash: string,
+    path: string
+  ): Promise<InvokeResponse<ModpackFileDiff>> {
+    return await invoke("modpack_update_file_diff", {
+      instanceId,
+      planHash,
+      path,
+    });
   }
 
   /**

@@ -512,6 +512,36 @@ mod tests {
     assert!(serde_json::from_slice::<serde_json::Value>(&merged).is_ok());
   }
 
+  /// `valid_format` has no rule for `.lang` (as for `.properties`), so a
+  /// language file merges and conflicts line by line like any plain text.
+  #[test]
+  fn lang_files_merge_by_line_and_report_conflicts() {
+    let path = "assets/mod/lang/en_US.lang";
+    let base = b"a=1\nb=2\nc=3\nd=4\ne=5\n";
+    let merged = merge_text(
+      path,
+      base,
+      b"a=L\nb=2\nc=3\nd=4\ne=5\n",
+      b"a=1\nb=2\nc=3\nd=4\ne=R\n",
+    )
+    .unwrap();
+    assert_eq!(merged, b"a=L\nb=2\nc=3\nd=4\ne=R\n");
+    let conflicts = text_conflicts(
+      path,
+      base,
+      b"a=L\nb=2\nc=3\nd=4\ne=5\n",
+      b"a=R\nb=2\nc=3\nd=4\ne=5\n",
+    )
+    .unwrap();
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(conflicts[0].local, vec!["a=L"]);
+    assert_eq!(conflicts[0].remote, vec!["a=R"]);
+    assert!(matches!(
+      merge_text(path, base, b"a=\xE4\n", base),
+      Err(TextMergeError::InvalidText)
+    ));
+  }
+
   /// A long shared head and tail must not shift the hunk coordinates: they
   /// still address lines of the original base.
   #[test]

@@ -6,6 +6,7 @@ use super::apply::{
   Recovery, Stage, UpdateEnv, UpdateGuard, UpdateRequest,
 };
 use super::diff::{Conflict, ConflictChoice, Diff, FileChange};
+use super::file_diff::{self, FileDiffUnavailable, ModpackFileDiff};
 use super::local_update;
 use super::merge::merge_with_choices;
 use super::notice::{read_update_notice, write_update_notice, UpdateNotice};
@@ -2196,6 +2197,7 @@ async fn prepare_target(
   let prepared = plan_prepared(app, &target, &baseline, &latest, optional_choice).await?;
   // The fingerprint is taken over the same paths the plan covers.
   let paths = plan_cache::plan_paths(&baseline, &prepared.remote);
+  let diff_sources = prepared.diff_sources.clone();
   let plan = plan_of(&target.origin, prepared);
   let fingerprint = {
     let root = target.root.clone();
@@ -2211,6 +2213,7 @@ async fn prepare_target(
     fingerprint,
     optional_choice.to_vec(),
     plan.clone(),
+    diff_sources,
   );
   if let Err(error) = plan_cache::write_plan_cache(&target.root, &cache) {
     log::warn!("cannot write modpack plan cache: {error:?}");
@@ -2229,6 +2232,18 @@ async fn plan_prepared(
 ) -> USTBLResult<PlannedRun> {
   // A platform pack is previewed through byte ranges of its archive when it
   // can be; the archive itself is only downloaded when the update is confirmed.
+  let range = super::preview_fetch::range_target(
+    &target.origin,
+    &target.root,
+    latest,
+    is_fresh(&target.origin),
+  )
+  .map(|(url, sha1)| super::file_diff::RangeArchive {
+    platform: target.origin.platform,
+    version_id: latest.version_id.clone(),
+    url,
+    sha1,
+  });
   if let Some(run) = super::preview_fetch::plan_by_ranges(
     app,
     &target.origin,
@@ -2248,7 +2263,9 @@ async fn plan_prepared(
       &run.remote.optional,
     )
     .new;
+    let diff_sources = super::file_diff::collect_sources(&run.prepared.diff, &run.remote, range);
     return Ok(PlannedRun {
+      diff_sources,
       new_optional,
       version_id: run.remote.version_id.clone(),
       label: run.remote.label.clone(),
@@ -2272,6 +2289,7 @@ async fn plan_prepared(
   let new_optional = optional::select(&mut remote, &target.root, baseline, optional_choice).new;
   if requires_reinstall(baseline, &remote, is_fresh(&target.origin)) {
     return Ok(PlannedRun {
+      diff_sources: Default::default(),
       new_optional,
       version_id: remote.version_id.clone(),
       label: remote.label.clone(),
@@ -2308,7 +2326,9 @@ async fn plan_prepared(
   let remote_contents =
     materialize_text_candidates(app, target, &remote, &compared.diff.conflicts).await?;
   let prepared = finish(compared, &target.root, &remote, &remote_contents)?;
+  let diff_sources = super::file_diff::collect_sources(&prepared.diff, &remote, None);
   Ok(PlannedRun {
+    diff_sources,
     new_optional,
     version_id: remote.version_id.clone(),
     label: remote.label.clone(),
@@ -2334,6 +2354,7 @@ struct PlannedRun {
   restore_components: bool,
   remote: super::remote::RemoteModpack,
   new_optional: Vec<OptionalFile>,
+  diff_sources: super::file_diff::DiffSources,
 }
 
 /// Drop files an interrupted preview could have left behind.
@@ -2719,7 +2740,7 @@ fn remote_if_equivalent(path: &str, merged: Vec<u8>, remote: &[u8]) -> Vec<u8> {
 }
 
 /// Describe how each conflict was answered, for the apply log: the whole
-/// file, single blocks (`path#index`), or the default keep-local.
+/// file, single blocks (`path#index`), or the default (take the new version).
 pub(super) fn describe_conflict_resolutions(
   diff: &super::diff::Diff,
   choices: &BTreeMap<String, ConflictChoice>,
@@ -2751,7 +2772,7 @@ pub(super) fn selected_hunk_contents(
 ) -> USTBLResult<BTreeMap<String, Vec<u8>>> {
   let mut result = prepared.merged_contents.clone();
   for conflict in &prepared.diff.conflicts {
-    if conflict.hunks.is_empty() && choices.get(&conflict.path) != Some(&ConflictChoice::TakeRemote)
+    if conflict.hunks.is_empty() && choices.get(&conflict.path) == Some(&ConflictChoice::KeepLocal)
     {
       if let Some(bytes) = prepared.restored_locals.get(&conflict.path) {
         result.insert(conflict.path.clone(), bytes.clone());
@@ -2768,7 +2789,7 @@ pub(super) fn selected_hunk_contents(
       .unwrap_or(0);
     let selected: Vec<usize> = (0..)
       .take(hunk_count)
-      .filter(|index| choices.get(&format!("{path}#{index}")) == Some(&ConflictChoice::TakeRemote))
+      .filter(|index| choices.get(&format!("{path}#{index}")) != Some(&ConflictChoice::KeepLocal))
       .collect();
     if hunk_count == 0 {
       continue;
@@ -2835,8 +2856,125 @@ async fn materialize_text_candidates(
   Ok(result)
 }
 
+/// The line diff of one file of the plan the dialog shows, made when the
+/// player opens it. The plan carries no contents; the new text is read again
+/// from where the plan found it (the preview archive's byte ranges, one
+/// download, or the campus packs), the local text from disk.
+#[tauri::command]
+pub async fn modpack_update_file_diff(
+  app: AppHandle,
+  instance_id: String,
+  plan_hash: String,
+  path: String,
+) -> USTBLResult<ModpackFileDiff> {
+  let target = update_target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let cache = {
+    let root = target.root.clone();
+    tokio::task::spawn_blocking(move || file_diff::load_current(&root, &plan_hash))
+      .await
+      .map_err(|e| crate::error::USTBLError(e.to_string()))??
+  };
+  let unavailable = || {
+    Ok(ModpackFileDiff::unavailable(
+      FileDiffUnavailable::Unavailable,
+    ))
+  };
+  // Only paths of the cached plan are read, so the path needs no further check.
+  let (Some(side), Some(stored)) = (
+    file_diff::side_of(&cache.plan, &path),
+    cache.diff_sources.find(&path).cloned(),
+  ) else {
+    return unavailable();
+  };
+  let Some(local) = read_local_text(&target.root, &path).await else {
+    return unavailable();
+  };
+  let remote = match fetch_diff_remote(&app, &target, &cache, stored).await {
+    Ok(bytes) => bytes,
+    Err(error) => {
+      log::warn!("modpack file diff: cannot read the new {path}: {error:?}");
+      return unavailable();
+    }
+  };
+  Ok(match side {
+    file_diff::Side::Update => file_diff::diff_bytes(&path, &local, &remote),
+    file_diff::Side::Merged => {
+      let baseline = load_baseline(&target).await?;
+      let base = baseline
+        .files
+        .iter()
+        .find(|file| file.path == path)
+        .and_then(|file| {
+          crate::instance::helpers::modpack::base_store::load(&target.root, &file.sha1)
+            .ok()
+            .flatten()
+        });
+      match base {
+        Some(base) => file_diff::merged_diff(&path, &base, &local, &remote),
+        None => return unavailable(),
+      }
+    }
+  })
+}
+
+/// The local file's bytes, under its enabled or `.disabled` name.
+async fn read_local_text(root: &Path, path: &str) -> Option<Vec<u8>> {
+  let enabled = root.join(path);
+  match tokio::fs::read(&enabled).await {
+    Ok(bytes) => Some(bytes),
+    Err(_) => tokio::fs::read(root.join(format!("{path}.disabled")))
+      .await
+      .ok(),
+  }
+}
+
+/// The new version's bytes of one file the plan remembered a source for.
+async fn fetch_diff_remote(
+  app: &AppHandle,
+  target: &Target,
+  cache: &PlanCache,
+  stored: super::remote::StoredRemoteFile,
+) -> USTBLResult<Vec<u8>> {
+  let max = text::MAX_TEXT_SIZE as u64;
+  if let super::remote::StoredFileSource::Listed { entry, .. } = &stored.source {
+    let range = cache
+      .diff_sources
+      .range
+      .as_ref()
+      .ok_or(InstanceError::ModpackUpdateStale)?;
+    return super::preview_fetch::read_listed_entry(app, &target.root, range, entry, max).await;
+  }
+  let file = super::remote::RemoteFile::from_stored(stored, |version_id| {
+    super::packs::PackSession::new(super::packs::AppTransport::new(app.clone()), version_id)
+  });
+  let baseline = load_baseline(target).await?;
+  let env = AppEnv {
+    app: app.clone(),
+    instance_id: target.instance.id.clone(),
+    label: cache.plan.to_label.clone(),
+    loader: baseline.loader,
+    loader_install_pending: AtomicBool::new(false),
+    started: Instant::now(),
+    tasks: None,
+  };
+  let scratch = target
+    .root
+    .join(super::remote::UPDATE_DIR)
+    .join("file-diff")
+    .join(uuid::Uuid::new_v4().to_string());
+  let candidates = [&file];
+  let result = match prepare_packs(&candidates).await {
+    Ok(()) => read_remote_files(&env, &scratch, &candidates).await,
+    Err(error) => Err(error),
+  };
+  let _ = tokio::fs::remove_dir_all(&scratch).await;
+  result?
+    .into_iter()
+    .next()
+    .ok_or_else(|| crate::error::USTBLError("no content".into()))
+}
 /// Apply the plan the player confirmed. `choices` answers conflicts by path;
-/// anything unanswered keeps the local file.
+/// anything unanswered takes the new version.
 #[tauri::command]
 pub async fn apply_modpack_update(
   app: AppHandle,
@@ -5211,16 +5349,16 @@ mod tests {
     assert_eq!(
       describe_conflict_resolutions(&diff, &choices),
       vec![
-        "config/a.json:hunks[#0=TakeRemote,#1=KeepLocal]".to_string(),
+        "config/a.json:hunks[#0=TakeRemote,#1=TakeRemote]".to_string(),
         "mods/b.jar:file=TakeRemote".to_string(),
       ]
     );
-    // Unanswered conflicts are reported as the keep-local default.
+    // Unanswered conflicts are reported as the take-remote default.
     assert_eq!(
       describe_conflict_resolutions(&diff, &BTreeMap::new()),
       vec![
-        "config/a.json:hunks[#0=KeepLocal,#1=KeepLocal]".to_string(),
-        "mods/b.jar:file=KeepLocal".to_string(),
+        "config/a.json:hunks[#0=TakeRemote,#1=TakeRemote]".to_string(),
+        "mods/b.jar:file=TakeRemote".to_string(),
       ]
     );
   }
@@ -5246,6 +5384,7 @@ mod tests {
       reinstall_required: true,
       restore_components: false,
       new_optional: Vec::new(),
+      diff_sources: Default::default(),
       remote: crate::instance::modpack_update::remote::RemoteModpack {
         version_id: "2".into(),
         label: "2.0".into(),
@@ -5293,6 +5432,7 @@ mod tests {
       reinstall_required: false,
       restore_components,
       new_optional: Vec::new(),
+      diff_sources: Default::default(),
       remote: crate::instance::modpack_update::remote::RemoteModpack {
         version_id: "2".into(),
         label: "2.0".into(),

@@ -108,6 +108,13 @@ export interface ModpackDiffHunk {
   edits?: ModpackDiffEdit[];
 }
 
+/** The line diff of one file of an update plan, made on demand. */
+export interface ModpackFileDiff {
+  /** Empty when only line endings, a BOM or a timestamp differ. */
+  hunks: ModpackDiffHunk[] | null;
+  unavailable: "notText" | "unavailable" | null;
+}
+
 /** How a path differs from the release the instance last matched. */
 export type ModpackChangeClass =
   | "modified"
