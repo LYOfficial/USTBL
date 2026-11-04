@@ -851,6 +851,12 @@
       "description": "首次启动，正在自动下载 Java 25 运行时"
     }
   },
+  "FileFilter": {
+    "placeholder": "筛选文件",
+    "empty": "没有匹配的文件",
+    "clear": "清除筛选",
+    "shown": "显示 {{shown}} / {{total}}"
+  },
   "FileError": {
     "FILE_BLOCKED_BY_ANTIVIRUS": "文件 {{file}} 被杀毒软件拦截。请在 Windows 安全中心允许该文件，或把游戏目录加入排除项后重试。",
     "FILE_MISSING": "找不到文件 {{file}}，可能已被删除、移动或被杀毒软件隔离。请检查后重试。",
@@ -1349,6 +1355,15 @@
       "description": "该整合包要从以下不在 Modrinth 认可范围内的地址下载 {{count}} 个文件。这些文件未经平台审核，可能不安全，请仅在信任整合包作者时继续。",
       "trust": "信任并继续",
       "cancel": "取消导入"
+    },
+    "mode": {
+      "create": "新建实例",
+      "update": "更新已有实例"
+    },
+    "update": {
+      "instance": "要更新的实例",
+      "noInstance": "没有可以从本地文件更新的实例",
+      "confirm": "预览更新"
     }
   },
   "InstanceBasicSettings": {
@@ -3323,6 +3338,7 @@
       "mixed": "混合",
       "once": "仅首次安装",
       "onceHint": "只在首次安装时附带此文件，之后不会更新，如若删除也不会补齐",
+      "onceDir": "此目录下的文件都仅首次安装",
       "restore": "恢复继承",
       "restoreHint": "去掉单独设置，跟随父目录",
       "disabled": "已禁用",
@@ -3467,11 +3483,22 @@
       "disable": "禁用 {{count}}",
       "enable": "启用 {{count}}",
       "retire": "休眠 {{count}}",
-      "loaderChange": "{{loader}} 将从 {{from}} 切换到 {{to}}",
+      "componentChanges": {
+        "title": "组件变化",
+        "addedTag": "新增",
+        "removedTag": "移除"
+      },
       "restoreComponents": "新版本调整了游戏组件，更新时会一并重建游戏的版本配置与依赖库",
-      "conflicts": "{{count}} 个文件和你的修改冲突，默认保留本地，可以逐个处理",
+      "conflicts": "{{count}} 个文件和你的修改冲突，默认应用新版，可以逐个处理",
       "autoMerged": "自动合并 {{count}}",
       "showAll": "显示全部（还有 {{count}} 项）",
+      "fileDiff": {
+        "show": "查看差异",
+        "hide": "收起差异",
+        "notText": "非文本或文件太大，无法显示差异",
+        "unavailable": "无法获取新版本的内容，请稍后再试",
+        "formatOnly": "仅换行等格式不同"
+      },
       "reinstallRequired": "{{latest}} 更改了实例的组件链，不能直接更新，请重新安装",
       "restored": "覆盖已忽略的改动 {{count}}",
       "restoredDescription": "本地忽略过的改动，将与新版本内容同步。包含新版本同名文件替换。",
@@ -3488,16 +3515,18 @@
       "modifiedLocallyChangedRemotely": "本地和新版本在此文件的变动发生冲突",
       "modifiedLocallyRemovedRemotely": "本地修改了此文件，新版本不再包含此文件",
       "deletedLocallyChangedRemotely": "本地删除了此文件，新版本有此文件的修改版",
-      "unmanagedFileInTheWay": "新版本新增同名文件，会对此文件进行替换",
+      "unmanagedFileInTheWay": "新版本新增与本地新增文件同名，会用新版本替换本地",
       "remanage": "整合包重新管理它，但本地的内容和新版本不一样"
     },
     "choice": {
       "keepLocal": "保留本地",
-      "takeRemote": "使用新版本",
+      "takeRemote": "应用新版",
       "revealFile": "在文件夹中显示",
       "hunk": "第 {{number}} 处冲突（原文件第 {{from}}-{{to}} 行）",
       "allKeepLocal": "全部保留本地",
-      "allTakeRemote": "全部使用新版本",
+      "allTakeRemote": "全部应用新版",
+      "expandAll": "全部展开",
+      "collapseAll": "全部折叠",
       "localSide": "本地",
       "remoteSide": "新版本"
     },

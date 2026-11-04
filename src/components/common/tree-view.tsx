@@ -33,6 +33,8 @@ interface TreeViewProps<T = unknown> {
   defaultExpandedDepth?: number;
   preserveExpanded?: boolean;
   expandRequest?: { ids: Set<string> };
+  /** Show every branch open without touching the remembered expansion. */
+  expandAll?: boolean;
   leafPlaceholderWidth?: number;
 }
 
@@ -80,9 +82,12 @@ const TreeView = <T,>({
   defaultExpandedDepth = 0,
   preserveExpanded = false,
   expandRequest,
+  expandAll = false,
   leafPlaceholderWidth = 24,
 }: TreeViewProps<T>) => {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  // Branches the user closed while `expandAll` is on; dropped when it flips.
+  const [closedIds, setClosedIds] = useState<Set<string>>(new Set());
   const expansionHistory = useRef<ExpansionHistory>(new Map());
   const lastExpandRequest = useRef<TreeViewProps<T>["expandRequest"]>();
 
@@ -108,25 +113,42 @@ const TreeView = <T,>({
     }
   }, [nodes, defaultExpandedDepth, preserveExpanded, expandRequest]);
 
-  const toggleExpanded = useCallback((id: string) => {
-    setExpandedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
+  useEffect(() => {
+    setClosedIds(new Set());
+  }, [expandAll]);
+
+  const toggleExpanded = useCallback(
+    (id: string) => {
+      if (expandAll) {
+        setClosedIds((prev) => {
+          const next = new Set(prev);
+          if (!next.delete(id)) next.add(id);
+          return next;
+        });
+        return;
       }
-      if (expansionHistory.current.has(id)) {
-        expansionHistory.current.set(id, next.has(id));
-      }
-      return next;
-    });
-  }, []);
+      setExpandedIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) {
+          next.delete(id);
+        } else {
+          next.add(id);
+        }
+        if (expansionHistory.current.has(id)) {
+          expansionHistory.current.set(id, next.has(id));
+        }
+        return next;
+      });
+    },
+    [expandAll]
+  );
 
   const renderBranch = (node: TreeNode<T>, depth: number): React.ReactNode => {
     const children = node.children ?? [];
     const isLeaf = children.length === 0;
-    const isExpanded = expandedIds.has(node.id);
+    const isExpanded = expandAll
+      ? !closedIds.has(node.id)
+      : expandedIds.has(node.id);
 
     return (
       <VStack key={node.id} align="stretch" spacing={spacing}>

@@ -6,13 +6,15 @@ use super::apply::{
   Recovery, Stage, UpdateEnv, UpdateGuard, UpdateRequest,
 };
 use super::diff::{Conflict, ConflictChoice, Diff, FileChange};
+use super::file_diff::{self, FileDiffUnavailable, ModpackFileDiff};
 use super::local_update;
 use super::merge::merge_with_choices;
 use super::notice::{read_update_notice, write_update_notice, UpdateNotice};
 use super::optional::{self, OptionalFile};
 use super::plan::{
-  compare, component_action, count_local_changes, finish, invalidate_scan_cache,
-  next_component_fingerprint, requires_reinstall, resolve, ComponentAction, Prepared,
+  compare, component_action, component_changes, count_local_changes, finish, invalidate_scan_cache,
+  next_component_fingerprint, requires_reinstall, resolve, ComponentAction, ComponentChange,
+  Prepared,
 };
 use super::plan_cache::{self, PlanCache};
 use super::release;
@@ -163,6 +165,11 @@ pub struct UpdatePlan {
   pub conflicts: Vec<Conflict>,
   pub auto_merged: Vec<FileChange>,
   pub loader_change: Option<LoaderChange>,
+  /// Components whose version differs between the installed chain and the new
+  /// version's chain. Display only: the chains already take part in
+  /// `plan_hash` through the baseline and the remote content hash.
+  #[serde(default)]
+  pub component_changes: Vec<ComponentChange>,
   /// The new version changes the component chain, so it has to be installed
   /// again. No changes are planned and `apply_modpack_update` refuses.
   pub reinstall_required: bool,
@@ -862,6 +869,24 @@ fn target(app: &AppHandle, instance_id: &str) -> USTBLResult<Option<Target>> {
 /// local import is theirs too while an archive picked to update it is staged.
 fn update_target(app: &AppHandle, instance_id: &str) -> USTBLResult<Option<Target>> {
   target_with(app, instance_id, true)
+}
+
+/// [`target`] for the local-changes commands. They only read the files and the
+/// baseline, so a settled local import is theirs too.
+fn changes_target(app: &AppHandle, instance_id: &str) -> USTBLResult<Option<Target>> {
+  if let Some(target) = target(app, instance_id)? {
+    return Ok(Some(target));
+  }
+  let instance = current_instance(app, instance_id)?;
+  let Some(origin) = instance.origin.clone() else {
+    return Ok(None);
+  };
+  let root = instance.version_path.clone();
+  Ok(Some(Target {
+    instance,
+    origin,
+    root,
+  }))
 }
 
 fn target_with(
@@ -1572,20 +1597,15 @@ pub async fn check_modpack_update(
   scan_local: Option<bool>,
 ) -> USTBLResult<UpdateCheck> {
   let Some(target) = target(&app, &instance_id)? else {
-    if let Some(target) = update_target(&app, &instance_id)? {
-      return Ok(picked_archive_check(&target));
+    let staged = update_target(&app, &instance_id)?;
+    let mut check = match &staged {
+      Some(target) => picked_archive_check(target),
+      None => settled_local_check(None),
+    };
+    if scan_local == Some(true) {
+      check.local_changes = count_settled_local(&app, &instance_id).await;
     }
-    return Ok(UpdateCheck {
-      status: CheckStatus::NotFollowing,
-      follow: false,
-      current_label: None,
-      latest_version_id: None,
-      latest_label: None,
-      reason: None,
-      can_roll_back: false,
-      local_changes: None,
-      unlinked: false,
-    });
+    return Ok(check);
   };
   check_unless_installing(&target, check_installed_modpack(&app, &target, scan_local)).await
 }
@@ -1602,6 +1622,34 @@ pub async fn prime_campus_listing(app: AppHandle) {
 #[tauri::command]
 pub fn clear_campus_listing() {
   super::sources::campus_listing().clear();
+}
+
+/// The check of an instance the engine does not follow (a settled local
+/// import, or none with an origin). `local_changes` is set only by a scan.
+fn settled_local_check(local_changes: Option<usize>) -> UpdateCheck {
+  UpdateCheck {
+    status: CheckStatus::NotFollowing,
+    follow: false,
+    current_label: None,
+    latest_version_id: None,
+    latest_label: None,
+    reason: None,
+    can_roll_back: false,
+    local_changes,
+    unlinked: false,
+  }
+}
+
+/// The local-change count of a local import against its baseline. `None`
+/// when the instance is not a local import or has no matching baseline, so
+/// there is nothing to compare.
+async fn count_settled_local(app: &AppHandle, instance_id: &str) -> Option<usize> {
+  let target = changes_target(app, instance_id).ok()??;
+  if target.origin.platform != OriginPlatform::Local || has_campus_install(&target.root) {
+    return None;
+  }
+  let baseline = load_baseline(&target).await.ok()?;
+  count_local_changes(&target.root, &baseline).await.ok()
 }
 
 /// The check of a local import with an archive picked to update it: the
@@ -1855,7 +1903,8 @@ pub async fn list_modpack_change_detail(
   app: AppHandle,
   instance_id: String,
 ) -> USTBLResult<ModpackChangeDetail> {
-  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let target =
+    changes_target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let baseline = load_baseline(&target).await?;
   let (mut release, fallback) = release::release_for(&target.root, &baseline);
   let mut incomplete = false;
@@ -1892,6 +1941,17 @@ pub async fn list_modpack_change_detail(
   })
   .await
   .map_err(|error| crate::error::USTBLError(error.to_string()))??;
+  if target.origin.platform == OriginPlatform::Local && fallback {
+    // The fallback label is the archive's SHA-1; show the version the player knows.
+    if let Some(version) = target
+      .instance
+      .modpack_version
+      .clone()
+      .filter(|v| !v.is_empty())
+    {
+      release.label = version;
+    }
+  }
   let entries = super::changes::classify(&target.root, &baseline, &release, &listed).await?;
   Ok(ModpackChangeDetail {
     version_id: release.version_id,
@@ -1921,7 +1981,8 @@ pub async fn ignore_modpack_local_change(
   baseline_sha1: String,
   range: Option<super::ignores::Region>,
 ) -> USTBLResult<()> {
-  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let target =
+    changes_target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let _guard = UpdateGuard::acquire(&target.root)?;
   let baseline = load_baseline(&target).await?;
   let root = target.root.clone();
@@ -1941,7 +2002,8 @@ pub async fn ignore_modpack_added_file(
   instance_id: String,
   path: String,
 ) -> USTBLResult<()> {
-  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let target =
+    changes_target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let _guard = UpdateGuard::acquire(&target.root)?;
   let baseline = load_baseline(&target).await?;
   let (release, _) = release::release_for(&target.root, &baseline);
@@ -1964,7 +2026,8 @@ pub async fn list_modpack_ignores(
   app: AppHandle,
   instance_id: String,
 ) -> USTBLResult<Vec<super::ignores::IgnoredItem>> {
-  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let target =
+    changes_target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let baseline = load_baseline(&target).await?;
   let (release, _) = release::release_for(&target.root, &baseline);
   let root = target.root.clone();
@@ -1982,7 +2045,8 @@ pub async fn unignore_modpack_local_change(
   path: String,
   range: Option<super::ignores::Region>,
 ) -> USTBLResult<()> {
-  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let target =
+    changes_target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let _guard = UpdateGuard::acquire(&target.root)?;
   let baseline = load_baseline(&target).await?;
   let root = target.root.clone();
@@ -2133,6 +2197,7 @@ async fn prepare_target(
   let prepared = plan_prepared(app, &target, &baseline, &latest, optional_choice).await?;
   // The fingerprint is taken over the same paths the plan covers.
   let paths = plan_cache::plan_paths(&baseline, &prepared.remote);
+  let diff_sources = prepared.diff_sources.clone();
   let plan = plan_of(&target.origin, prepared);
   let fingerprint = {
     let root = target.root.clone();
@@ -2148,6 +2213,7 @@ async fn prepare_target(
     fingerprint,
     optional_choice.to_vec(),
     plan.clone(),
+    diff_sources,
   );
   if let Err(error) = plan_cache::write_plan_cache(&target.root, &cache) {
     log::warn!("cannot write modpack plan cache: {error:?}");
@@ -2166,6 +2232,18 @@ async fn plan_prepared(
 ) -> USTBLResult<PlannedRun> {
   // A platform pack is previewed through byte ranges of its archive when it
   // can be; the archive itself is only downloaded when the update is confirmed.
+  let range = super::preview_fetch::range_target(
+    &target.origin,
+    &target.root,
+    latest,
+    is_fresh(&target.origin),
+  )
+  .map(|(url, sha1)| super::file_diff::RangeArchive {
+    platform: target.origin.platform,
+    version_id: latest.version_id.clone(),
+    url,
+    sha1,
+  });
   if let Some(run) = super::preview_fetch::plan_by_ranges(
     app,
     &target.origin,
@@ -2185,13 +2263,16 @@ async fn plan_prepared(
       &run.remote.optional,
     )
     .new;
+    let diff_sources = super::file_diff::collect_sources(&run.prepared.diff, &run.remote, range);
     return Ok(PlannedRun {
+      diff_sources,
       new_optional,
       version_id: run.remote.version_id.clone(),
       label: run.remote.label.clone(),
       diff: run.prepared.diff,
       plan_hash: run.prepared.plan_hash,
       loader_change: run.loader_change,
+      component_changes: component_changes(baseline, &run.remote),
       reinstall_required: false,
       restore_components: run.prepared.restore_components,
       remote: run.remote,
@@ -2208,12 +2289,14 @@ async fn plan_prepared(
   let new_optional = optional::select(&mut remote, &target.root, baseline, optional_choice).new;
   if requires_reinstall(baseline, &remote, is_fresh(&target.origin)) {
     return Ok(PlannedRun {
+      diff_sources: Default::default(),
       new_optional,
       version_id: remote.version_id.clone(),
       label: remote.label.clone(),
       diff: Default::default(),
       plan_hash: String::new(),
       loader_change: None,
+      component_changes: component_changes(baseline, &remote),
       reinstall_required: true,
       restore_components: false,
       remote,
@@ -2243,13 +2326,16 @@ async fn plan_prepared(
   let remote_contents =
     materialize_text_candidates(app, target, &remote, &compared.diff.conflicts).await?;
   let prepared = finish(compared, &target.root, &remote, &remote_contents)?;
+  let diff_sources = super::file_diff::collect_sources(&prepared.diff, &remote, None);
   Ok(PlannedRun {
+    diff_sources,
     new_optional,
     version_id: remote.version_id.clone(),
     label: remote.label.clone(),
     diff: prepared.diff,
     plan_hash: prepared.plan_hash,
     loader_change,
+    component_changes: component_changes(baseline, &remote),
     reinstall_required: false,
     restore_components: prepared.restore_components,
     remote,
@@ -2263,10 +2349,12 @@ struct PlannedRun {
   diff: super::diff::Diff,
   plan_hash: String,
   loader_change: Option<LoaderChange>,
+  component_changes: Vec<ComponentChange>,
   reinstall_required: bool,
   restore_components: bool,
   remote: super::remote::RemoteModpack,
   new_optional: Vec<OptionalFile>,
+  diff_sources: super::file_diff::DiffSources,
 }
 
 /// Drop files an interrupted preview could have left behind.
@@ -2357,6 +2445,7 @@ fn plan_of(origin: &InstanceOrigin, prepared: PlannedRun) -> UpdatePlan {
     conflicts: prepared.diff.conflicts,
     auto_merged: prepared.diff.auto_merged,
     loader_change: prepared.loader_change,
+    component_changes: prepared.component_changes,
     reinstall_required: prepared.reinstall_required,
     restore_components: prepared.restore_components,
     plan_hash: prepared.plan_hash,
@@ -2450,6 +2539,7 @@ async fn plan_fresh_install(
       conflicts: Vec::new(),
       auto_merged: Vec::new(),
       loader_change: None,
+      component_changes: component_changes(&baseline, &remote),
       reinstall_required: true,
       restore_components: false,
       fast_forward: false,
@@ -2539,6 +2629,7 @@ async fn plan_fresh_install(
     conflicts: prepared.diff.conflicts.clone(),
     auto_merged: prepared.diff.auto_merged.clone(),
     loader_change,
+    component_changes: component_changes(&baseline, &remote),
     reinstall_required: false,
     restore_components: prepared.restore_components,
     plan_hash: prepared.plan_hash.clone(),
@@ -2649,7 +2740,7 @@ fn remote_if_equivalent(path: &str, merged: Vec<u8>, remote: &[u8]) -> Vec<u8> {
 }
 
 /// Describe how each conflict was answered, for the apply log: the whole
-/// file, single blocks (`path#index`), or the default keep-local.
+/// file, single blocks (`path#index`), or the default (take the new version).
 pub(super) fn describe_conflict_resolutions(
   diff: &super::diff::Diff,
   choices: &BTreeMap<String, ConflictChoice>,
@@ -2681,7 +2772,7 @@ pub(super) fn selected_hunk_contents(
 ) -> USTBLResult<BTreeMap<String, Vec<u8>>> {
   let mut result = prepared.merged_contents.clone();
   for conflict in &prepared.diff.conflicts {
-    if conflict.hunks.is_empty() && choices.get(&conflict.path) != Some(&ConflictChoice::TakeRemote)
+    if conflict.hunks.is_empty() && choices.get(&conflict.path) == Some(&ConflictChoice::KeepLocal)
     {
       if let Some(bytes) = prepared.restored_locals.get(&conflict.path) {
         result.insert(conflict.path.clone(), bytes.clone());
@@ -2698,7 +2789,7 @@ pub(super) fn selected_hunk_contents(
       .unwrap_or(0);
     let selected: Vec<usize> = (0..)
       .take(hunk_count)
-      .filter(|index| choices.get(&format!("{path}#{index}")) == Some(&ConflictChoice::TakeRemote))
+      .filter(|index| choices.get(&format!("{path}#{index}")) != Some(&ConflictChoice::KeepLocal))
       .collect();
     if hunk_count == 0 {
       continue;
@@ -2765,8 +2856,125 @@ async fn materialize_text_candidates(
   Ok(result)
 }
 
+/// The line diff of one file of the plan the dialog shows, made when the
+/// player opens it. The plan carries no contents; the new text is read again
+/// from where the plan found it (the preview archive's byte ranges, one
+/// download, or the campus packs), the local text from disk.
+#[tauri::command]
+pub async fn modpack_update_file_diff(
+  app: AppHandle,
+  instance_id: String,
+  plan_hash: String,
+  path: String,
+) -> USTBLResult<ModpackFileDiff> {
+  let target = update_target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let cache = {
+    let root = target.root.clone();
+    tokio::task::spawn_blocking(move || file_diff::load_current(&root, &plan_hash))
+      .await
+      .map_err(|e| crate::error::USTBLError(e.to_string()))??
+  };
+  let unavailable = || {
+    Ok(ModpackFileDiff::unavailable(
+      FileDiffUnavailable::Unavailable,
+    ))
+  };
+  // Only paths of the cached plan are read, so the path needs no further check.
+  let (Some(side), Some(stored)) = (
+    file_diff::side_of(&cache.plan, &path),
+    cache.diff_sources.find(&path).cloned(),
+  ) else {
+    return unavailable();
+  };
+  let Some(local) = read_local_text(&target.root, &path).await else {
+    return unavailable();
+  };
+  let remote = match fetch_diff_remote(&app, &target, &cache, stored).await {
+    Ok(bytes) => bytes,
+    Err(error) => {
+      log::warn!("modpack file diff: cannot read the new {path}: {error:?}");
+      return unavailable();
+    }
+  };
+  Ok(match side {
+    file_diff::Side::Update => file_diff::diff_bytes(&path, &local, &remote),
+    file_diff::Side::Merged => {
+      let baseline = load_baseline(&target).await?;
+      let base = baseline
+        .files
+        .iter()
+        .find(|file| file.path == path)
+        .and_then(|file| {
+          crate::instance::helpers::modpack::base_store::load(&target.root, &file.sha1)
+            .ok()
+            .flatten()
+        });
+      match base {
+        Some(base) => file_diff::merged_diff(&path, &base, &local, &remote),
+        None => return unavailable(),
+      }
+    }
+  })
+}
+
+/// The local file's bytes, under its enabled or `.disabled` name.
+async fn read_local_text(root: &Path, path: &str) -> Option<Vec<u8>> {
+  let enabled = root.join(path);
+  match tokio::fs::read(&enabled).await {
+    Ok(bytes) => Some(bytes),
+    Err(_) => tokio::fs::read(root.join(format!("{path}.disabled")))
+      .await
+      .ok(),
+  }
+}
+
+/// The new version's bytes of one file the plan remembered a source for.
+async fn fetch_diff_remote(
+  app: &AppHandle,
+  target: &Target,
+  cache: &PlanCache,
+  stored: super::remote::StoredRemoteFile,
+) -> USTBLResult<Vec<u8>> {
+  let max = text::MAX_TEXT_SIZE as u64;
+  if let super::remote::StoredFileSource::Listed { entry, .. } = &stored.source {
+    let range = cache
+      .diff_sources
+      .range
+      .as_ref()
+      .ok_or(InstanceError::ModpackUpdateStale)?;
+    return super::preview_fetch::read_listed_entry(app, &target.root, range, entry, max).await;
+  }
+  let file = super::remote::RemoteFile::from_stored(stored, |version_id| {
+    super::packs::PackSession::new(super::packs::AppTransport::new(app.clone()), version_id)
+  });
+  let baseline = load_baseline(target).await?;
+  let env = AppEnv {
+    app: app.clone(),
+    instance_id: target.instance.id.clone(),
+    label: cache.plan.to_label.clone(),
+    loader: baseline.loader,
+    loader_install_pending: AtomicBool::new(false),
+    started: Instant::now(),
+    tasks: None,
+  };
+  let scratch = target
+    .root
+    .join(super::remote::UPDATE_DIR)
+    .join("file-diff")
+    .join(uuid::Uuid::new_v4().to_string());
+  let candidates = [&file];
+  let result = match prepare_packs(&candidates).await {
+    Ok(()) => read_remote_files(&env, &scratch, &candidates).await,
+    Err(error) => Err(error),
+  };
+  let _ = tokio::fs::remove_dir_all(&scratch).await;
+  result?
+    .into_iter()
+    .next()
+    .ok_or_else(|| crate::error::USTBLError("no content".into()))
+}
 /// Apply the plan the player confirmed. `choices` answers conflicts by path;
-/// anything unanswered keeps the local file.
+/// anything unanswered takes the new version.
 #[tauri::command]
 pub async fn apply_modpack_update(
   app: AppHandle,
@@ -4092,6 +4300,19 @@ mod tests {
   }
 
   #[test]
+  fn the_check_of_a_settled_local_import_carries_only_the_scan_count() {
+    let unscanned = settled_local_check(None);
+    assert_eq!(unscanned.status, CheckStatus::NotFollowing);
+    assert_eq!(unscanned.local_changes, None);
+    assert!(!unscanned.follow);
+
+    // A count of 0 still means the comparison ran.
+    let scanned = settled_local_check(Some(0));
+    assert_eq!(scanned.status, CheckStatus::NotFollowing);
+    assert_eq!(scanned.local_changes, Some(0));
+  }
+
+  #[test]
   fn the_check_of_a_picked_archive_offers_it_as_the_update() {
     let root = picked_root();
     stage_picked(&root, "new");
@@ -5128,16 +5349,16 @@ mod tests {
     assert_eq!(
       describe_conflict_resolutions(&diff, &choices),
       vec![
-        "config/a.json:hunks[#0=TakeRemote,#1=KeepLocal]".to_string(),
+        "config/a.json:hunks[#0=TakeRemote,#1=TakeRemote]".to_string(),
         "mods/b.jar:file=TakeRemote".to_string(),
       ]
     );
-    // Unanswered conflicts are reported as the keep-local default.
+    // Unanswered conflicts are reported as the take-remote default.
     assert_eq!(
       describe_conflict_resolutions(&diff, &BTreeMap::new()),
       vec![
-        "config/a.json:hunks[#0=KeepLocal,#1=KeepLocal]".to_string(),
-        "mods/b.jar:file=KeepLocal".to_string(),
+        "config/a.json:hunks[#0=TakeRemote,#1=TakeRemote]".to_string(),
+        "mods/b.jar:file=TakeRemote".to_string(),
       ]
     );
   }
@@ -5159,9 +5380,11 @@ mod tests {
       diff: Default::default(),
       plan_hash: "hh".into(),
       loader_change: None,
+      component_changes: Vec::new(),
       reinstall_required: true,
       restore_components: false,
       new_optional: Vec::new(),
+      diff_sources: Default::default(),
       remote: crate::instance::modpack_update::remote::RemoteModpack {
         version_id: "2".into(),
         label: "2.0".into(),
@@ -5205,9 +5428,11 @@ mod tests {
       diff: Default::default(),
       plan_hash: "hh".into(),
       loader_change: None,
+      component_changes: Vec::new(),
       reinstall_required: false,
       restore_components,
       new_optional: Vec::new(),
+      diff_sources: Default::default(),
       remote: crate::instance::modpack_update::remote::RemoteModpack {
         version_id: "2".into(),
         label: "2.0".into(),

@@ -5,7 +5,16 @@ use std::path::Path;
 
 pub const MAX_TEXT_SIZE: usize = 2 * 1024 * 1024;
 
-const TEXT_EXTENSIONS: &[&str] = &["cfg", "conf", "ini", "json", "properties", "toml", "txt"];
+const TEXT_EXTENSIONS: &[&str] = &[
+  "cfg",
+  "conf",
+  "ini",
+  "json",
+  "lang",
+  "properties",
+  "toml",
+  "txt",
+];
 
 fn extension(path: &str) -> Option<&str> {
   Path::new(path).extension().and_then(|value| value.to_str())
@@ -96,6 +105,21 @@ mod tests {
       normalize_text("config/a.properties", b"# user note\r\na=b"),
       Some("# user note\na=b\n".into())
     );
+  }
+
+  #[test]
+  fn lang_files_are_text() {
+    assert!(is_text_path("assets/mod/lang/en_US.lang", b"a.b=c\n"));
+    assert!(is_text_path(
+      "assets/mod/lang/zh_CN.LANG",
+      "a=你好\n".as_bytes()
+    ));
+    assert_eq!(
+      normalize_text("assets/mod/lang/en_US.lang", b"a=1\r\nb=2"),
+      Some("a=1\nb=2\n".into())
+    );
+    // Only UTF-8 qualifies: a Latin-1 file stays a whole-file choice.
+    assert!(!is_text_path("assets/mod/lang/de_DE.lang", b"a=\xE4\n"));
   }
 
   #[test]

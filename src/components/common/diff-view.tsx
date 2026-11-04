@@ -7,7 +7,7 @@ import {
   useColorModeValue,
   useDisclosure,
 } from "@chakra-ui/react";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { LuChevronDown, LuChevronRight } from "react-icons/lu";
 import {
   ModpackDiffEdit,
@@ -441,7 +441,17 @@ interface DiffFileProps {
   /** Buttons at the right end of the header. */
   actions?: React.ReactNode;
   defaultOpen?: boolean;
+  /**
+   * Opens or closes the file whenever `token` changes (and decides the first
+   * state when set), while the header still toggles it by hand in between.
+   */
+  expandSignal?: DiffExpandSignal;
   children?: React.ReactNode;
+}
+
+export interface DiffExpandSignal {
+  open: boolean;
+  token: number;
 }
 
 /** A file in a GitHub-style diff: a header bar over a collapsible body. */
@@ -451,10 +461,20 @@ export const DiffFile: React.FC<DiffFileProps> = ({
   tags,
   actions,
   defaultOpen = true,
+  expandSignal,
   children,
 }) => {
   const colors = useDiffColors();
-  const { isOpen, onToggle } = useDisclosure({ defaultIsOpen: defaultOpen });
+  const { isOpen, onToggle, onOpen, onClose } = useDisclosure({
+    defaultIsOpen: expandSignal ? expandSignal.open : defaultOpen,
+  });
+  const handledToken = useRef(expandSignal?.token);
+  useEffect(() => {
+    if (!expandSignal || expandSignal.token === handledToken.current) return;
+    handledToken.current = expandSignal.token;
+    if (expandSignal.open) onOpen();
+    else onClose();
+  }, [expandSignal, onOpen, onClose]);
   const stats = hunks ? diffStats(hunks) : null;
   return (
     <Box

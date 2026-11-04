@@ -92,3 +92,20 @@ export const ledgerLocalInstances = (
   instances: InstanceSummary[]
 ): InstanceSummary[] =>
   instances.filter((instance) => instance.origin?.platform === "local");
+
+/** Local imports that can be updated from a file: not still installing. */
+export const ledgerLocalUpdatable = (
+  instances: InstanceSummary[]
+): InstanceSummary[] =>
+  ledgerLocalInstances(instances).filter(
+    (instance) => !isInstallingInstance(instance)
+  );
+
+/**
+ * View changes of a local import needs the scan to have found a baseline to
+ * compare against (no baseline, no count), and no installation under way.
+ */
+export const ledgerLocalChangesDisabled = (
+  instance: InstanceSummary,
+  check: ModpackUpdateCheck | undefined
+) => isInstallingInstance(instance) || !ledgerScanned(check);

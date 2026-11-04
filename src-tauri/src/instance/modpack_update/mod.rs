@@ -1,9 +1,13 @@
 pub mod apply;
+pub mod change_core;
+#[cfg(test)]
+mod change_parity;
 pub mod changes;
 pub mod commands;
 pub mod decide;
 pub mod diff;
 pub mod download_allowlist;
+pub mod file_diff;
 pub mod ignores;
 pub mod local_scan;
 pub mod local_update;

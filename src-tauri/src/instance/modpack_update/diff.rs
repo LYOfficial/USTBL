@@ -158,9 +158,11 @@ impl Diff {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// The default is the answer given to a conflict (or block) nobody answered:
+/// the new version is applied.
 pub enum ConflictChoice {
-  #[default]
   KeepLocal,
+  #[default]
   TakeRemote,
 }
 

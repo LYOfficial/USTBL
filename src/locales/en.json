@@ -851,6 +851,12 @@
       "description": "First launch detected, downloading the Java 25 runtime automatically"
     }
   },
+  "FileFilter": {
+    "placeholder": "Filter files",
+    "empty": "No matching files",
+    "clear": "Clear filter",
+    "shown": "Showing {{shown}} of {{total}}"
+  },
   "FileError": {
     "FILE_BLOCKED_BY_ANTIVIRUS": "File {{file}} was blocked by antivirus software. Allow the file in Windows Security, or add the game directory to the exclusions, then try again.",
     "FILE_MISSING": "Cannot find file {{file}}. It may have been deleted, moved, or quarantined by antivirus software. Check and try again.",
@@ -1349,6 +1355,15 @@
       "description": "This modpack downloads {{count}} files from the addresses below, which Modrinth does not approve. These files have not been reviewed by the platform and may be unsafe. Continue only if you trust the modpack author.",
       "trust": "Trust and continue",
       "cancel": "Cancel import"
+    },
+    "mode": {
+      "create": "New instance",
+      "update": "Update existing instance"
+    },
+    "update": {
+      "instance": "Instance to update",
+      "noInstance": "No instance can be updated from a local file",
+      "confirm": "Preview update"
     }
   },
   "InstanceBasicSettings": {
@@ -3323,6 +3338,7 @@
       "mixed": "Mixed",
       "once": "First install only",
       "onceHint": "Include this file only on first install; it is not updated or restored after deletion",
+      "onceDir": "Files in this directory are all first install only",
       "restore": "Restore inheritance",
       "restoreHint": "Remove the separate setting and follow the parent directory",
       "disabled": "Disabled",
@@ -3467,11 +3483,22 @@
       "disable": "{{count}} disabled",
       "enable": "{{count}} enabled",
       "retire": "Stop managing {{count}}",
-      "loaderChange": "{{loader}} will switch from {{from}} to {{to}}",
+      "componentChanges": {
+        "title": "Component changes",
+        "addedTag": "Added",
+        "removedTag": "Removed"
+      },
       "restoreComponents": "This version changes the game components. The update will also rebuild the game's version profile and libraries.",
-      "conflicts": "{{count}} files conflict with your changes; keep local by default and handle them individually",
+      "conflicts": "{{count}} files conflict with your changes; the new version is applied by default, and you can handle them individually",
       "autoMerged": "{{count}} auto-merged",
       "showAll": "Show all ({{count}} more)",
+      "fileDiff": {
+        "show": "Show diff",
+        "hide": "Hide diff",
+        "notText": "Not text or too large to show a diff",
+        "unavailable": "Unable to get the new version's content; try again later",
+        "formatOnly": "Only line endings or other formatting differ"
+      },
       "reinstallRequired": "This instance cannot be updated directly because {{latest}} changed its component chain; reinstall it",
       "restored": "Overwrite ignored changes {{count}}",
       "restoredDescription": "Locally ignored changes sync with the new version, including same-named file replacements.",
@@ -3488,16 +3515,18 @@
       "modifiedLocallyChangedRemotely": "Local changes and the new version’s changes to this file conflict",
       "modifiedLocallyRemovedRemotely": "Modified locally, but this file is no longer included in the new version",
       "deletedLocallyChangedRemotely": "Deleted locally, but the new version has a modified copy",
-      "unmanagedFileInTheWay": "The new version adds a same-named file and will replace this one",
+      "unmanagedFileInTheWay": "The new version adds a file with the same name as a file added locally and will replace the local one",
       "remanage": "The modpack manages it again, but local contents differ from the new version"
     },
     "choice": {
       "keepLocal": "Keep local",
-      "takeRemote": "Use new version",
+      "takeRemote": "Apply new version",
       "revealFile": "Show in folder",
       "hunk": "Conflict {{number}} (lines {{from}}–{{to}} in the original file)",
       "allKeepLocal": "Keep all local",
-      "allTakeRemote": "Use new version for all",
+      "allTakeRemote": "Apply new version to all",
+      "expandAll": "Expand all",
+      "collapseAll": "Collapse all",
       "localSide": "Local",
       "remoteSide": "New version"
     },

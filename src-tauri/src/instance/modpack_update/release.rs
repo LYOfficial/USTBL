@@ -1,4 +1,3 @@
-use super::diff::FileKey;
 use super::remote::{RemoteModpack, RemoteRule, UPDATE_DIR};
 use crate::file_error::{tag, AtPath};
 use crate::instance::helpers::modpack::baseline::ModpackBaseline;
@@ -22,15 +21,6 @@ pub struct ReleaseFile {
   pub disabled: bool,
   #[serde(default)]
   pub once: bool,
-}
-
-impl ReleaseFile {
-  pub fn key(&self) -> FileKey {
-    FileKey {
-      sha1: self.sha1.clone(),
-      size: self.size,
-    }
-  }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

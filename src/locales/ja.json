@@ -851,6 +851,12 @@
       "description": "初回起動を検出し、Java 25 ランタイムを自動でダウンロードしています"
     }
   },
+  "FileFilter": {
+    "placeholder": "ファイルを絞り込み",
+    "empty": "一致するファイルがありません",
+    "clear": "絞り込みを解除",
+    "shown": "{{total}} 件中 {{shown}} 件を表示"
+  },
   "FileError": {
     "FILE_BLOCKED_BY_ANTIVIRUS": "ファイル {{file}} がウイルス対策ソフトにブロックされました。Windows セキュリティでこのファイルを許可するか、ゲームのフォルダーを除外に追加してから、もう一度お試しください。",
     "FILE_MISSING": "ファイル {{file}} が見つかりません。削除または移動されたか、ウイルス対策ソフトに隔離された可能性があります。確認してからもう一度お試しください。",
@@ -1349,6 +1355,15 @@
       "description": "このモッドパックは、Modrinth が認めていない以下のアドレスから {{count}} 個のファイルをダウンロードします。これらのファイルはプラットフォームの審査を受けておらず、安全でない可能性があります。作者を信頼できる場合のみ続行してください。",
       "trust": "信頼して続行",
       "cancel": "インポートをキャンセル"
+    },
+    "mode": {
+      "create": "新規インスタンス",
+      "update": "既存のインスタンスを更新"
+    },
+    "update": {
+      "instance": "更新するインスタンス",
+      "noInstance": "ローカルファイルから更新できるインスタンスがありません",
+      "confirm": "更新をプレビュー"
     }
   },
   "InstanceBasicSettings": {
@@ -3329,6 +3344,7 @@
       "mixed": "混在",
       "once": "初回インストールのみ",
       "onceHint": "初回インストール時だけこのファイルを付属し、その後は更新しません。削除されても補充しません",
+      "onceDir": "このフォルダ内のファイルはすべて初回インストールのみ",
       "restore": "継承に戻す",
       "restoreHint": "個別設定を削除して親フォルダーに従う",
       "disabled": "無効",
@@ -3467,11 +3483,22 @@
       "disable": "無効化 {{count}}",
       "enable": "有効化 {{count}}",
       "retire": "休止 {{count}}",
-      "loaderChange": "{{loader}}が{{from}}から{{to}}に切り替わります",
+      "componentChanges": {
+        "title": "コンポーネントの変更",
+        "addedTag": "追加",
+        "removedTag": "削除"
+      },
       "restoreComponents": "このバージョンではゲームコンポーネントが変更されています。更新時にバージョン構成とライブラリも再構築されます。",
-      "conflicts": "{{count}}個のファイルが変更と競合しています。初期設定はローカルを保持し、個別に処理できます",
+      "conflicts": "{{count}}件のファイルがあなたの変更と競合しています。既定では新バージョンを適用します。個別に処理できます",
       "autoMerged": "自動マージ {{count}}",
       "showAll": "すべて表示（あと {{count}} 件）",
+      "fileDiff": {
+        "show": "差分を表示",
+        "hide": "差分を閉じる",
+        "notText": "テキストでないか大きすぎるため、差分を表示できません",
+        "unavailable": "新しいバージョンの内容を取得できません。後でもう一度お試しください",
+        "formatOnly": "改行などの形式だけが異なります"
+      },
       "reinstallRequired": "{{latest}}でコンポーネント構成が変わったため、このインスタンスは直接更新できません。再インストールしてください",
       "restored": "無視した変更を上書き {{count}}",
       "restoredDescription": "ローカルで無視した変更を新バージョンと同期します。同名ファイルの置き換えも含みます。",
@@ -3488,16 +3515,18 @@
       "modifiedLocallyChangedRemotely": "このファイルのローカルと新バージョンの変更が競合しています",
       "modifiedLocallyRemovedRemotely": "ローカルで変更されていますが、新バージョンにはこのファイルが含まれません",
       "deletedLocallyChangedRemotely": "ローカルで削除されていますが、新バージョンに変更版があります",
-      "unmanagedFileInTheWay": "新バージョンに同名ファイルが追加され、このファイルを置き換えます",
+      "unmanagedFileInTheWay": "新バージョンで追加されたファイルがローカルで追加したファイルと同名のため、ローカルのファイルを置き換えます",
       "remanage": "モッドパックが再び管理しますが、ローカルの内容が新バージョンと異なります"
     },
     "choice": {
       "keepLocal": "ローカルを保持",
-      "takeRemote": "新バージョンを使用",
+      "takeRemote": "新バージョンを適用",
       "revealFile": "フォルダーに表示",
       "hunk": "競合 {{number}}（元ファイルの{{from}}～{{to}}行）",
       "allKeepLocal": "すべてローカルを保持",
-      "allTakeRemote": "すべて新しいバージョンを使用",
+      "allTakeRemote": "すべて新バージョンを適用",
+      "expandAll": "すべて展開",
+      "collapseAll": "すべて折りたたむ",
       "localSide": "ローカル",
       "remoteSide": "新しいバージョン"
     },

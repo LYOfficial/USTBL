@@ -26,6 +26,8 @@ function load(file, requireModule = () => ({})) {
 
 const choices = load("src/utils/modpack-update-choices.ts");
 const fileError = load("src/utils/file-error.ts");
+const fuzzyFilter = load("src/utils/fuzzy-filter.ts");
+const updateOrder = load("src/utils/modpack-update-order.ts");
 const stages = load("src/utils/campus-install-task.ts", (name) =>
   name === "@/utils/file-error" ? fileError : {}
 );
@@ -231,7 +233,7 @@ test("global task context receives results with no update modal mounted", () => 
     .filter((fn) => fn.toString().includes("onUpdateFinished"))
     .forEach((fn) => fn());
   assert.equal(typeof finished, "function");
-  const answer = { "config/test.json#0": "takeRemote" };
+  const answer = { "config/test.json#0": "keepLocal" };
   choices.rememberedChoices.set("test", { planHash: "hash", choices: answer });
   const payload = {
     instanceId: "test",
@@ -309,7 +311,7 @@ test("reopened dialog restores a failed plan's choices, submits once and closes 
   for (const samePlan of [true, false]) {
     choices.rememberedChoices.clear();
     choices.failedUpdatePlans.clear();
-    const answer = { "config/test.json#0": "takeRemote" };
+    const answer = { "config/test.json#0": "keepLocal" };
     choices.rememberedChoices.set("test", {
       planHash: "failed",
       choices: answer,
@@ -327,6 +329,7 @@ test("reopened dialog restores a failed plan's choices, submits once and closes 
         return fn;
       },
       useEffect: () => {},
+      useMemo: (fn) => fn(),
       useRef: (initial) => {
         const i = cursor++;
         return (slots[i] ??= { current: initial });
@@ -345,7 +348,7 @@ test("reopened dialog restores a failed plan's choices, submits once and closes 
     const plan = {
       planHash: samePlan ? "failed" : "changed",
       fastForward: true,
-      conflicts: [],
+      conflicts: [{ path: "config/test.json", kind: "x", hunks: [{}] }],
       changes: [],
       toLabel: "next",
     };
@@ -371,6 +374,8 @@ test("reopened dialog restores a failed plan's choices, submits once and closes 
             }),
           };
         if (name === "@/utils/modpack-update-choices") return choices;
+        if (name === "@/utils/fuzzy-filter") return fuzzyFilter;
+        if (name === "@/utils/modpack-update-order") return updateOrder;
         if (name === "@/utils/rename-suggestion") return renameSuggestion;
         if (name === "@/enums/service-error") return { InstanceError: {} };
         if (name === "@/services/modpack-update")
@@ -416,7 +421,12 @@ test("reopened dialog restores a failed plan's choices, submits once and closes 
     );
     await Promise.all([apply(), apply()]);
     assert.deepEqual(submitted, [
-      ["test", plan.planHash, samePlan ? answer : {}, []],
+      [
+        "test",
+        plan.planHash,
+        samePlan ? answer : { "config/test.json#0": "takeRemote" },
+        [],
+      ],
     ]);
     assert.equal(closed, 1);
     assert.equal(

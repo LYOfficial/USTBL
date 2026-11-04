@@ -3,6 +3,8 @@ import {
   AlertIcon,
   Button,
   HStack,
+  Icon,
+  IconButton,
   Modal,
   ModalBody,
   ModalCloseButton,
@@ -13,14 +15,19 @@ import {
   ModalProps,
   Progress,
   Text,
+  Tooltip,
   VStack,
 } from "@chakra-ui/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { LuFoldVertical, LuUnfoldVertical } from "react-icons/lu";
+import { DiffExpandSignal } from "@/components/common/diff-view";
+import FileFilterInput from "@/components/common/file-filter-input";
 import {
   ConflictItem,
   PlanChangeGroups,
 } from "@/components/modpack-update-lists";
+import { VersionChangeRow } from "@/components/modpack-version-change";
 import { OptionalFilesList } from "@/components/optional-files-list";
 import { useLauncherConfig } from "@/contexts/config";
 import { useGlobalData } from "@/contexts/global-data";
@@ -34,11 +41,15 @@ import {
 } from "@/models/modpack-update";
 import { CampusModpackService } from "@/services/campus-modpack";
 import { ModpackUpdateService } from "@/services/modpack-update";
+import { createPathMatcher, isQueryActive } from "@/utils/fuzzy-filter";
+import { componentDisplayName } from "@/utils/modpack-components";
 import {
   failedUpdatePlans,
   rememberedChoices,
   resolvePlanChoices,
+  withDefaultChoices,
 } from "@/utils/modpack-update-choices";
+import { sortConflicts } from "@/utils/modpack-update-order";
 import { pendingUpdateLabels } from "@/utils/rename-suggestion";
 
 interface UpdateModpackModalProps extends Omit<ModalProps, "children"> {
@@ -88,6 +99,7 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
   const [progress, setProgress] = useState<CampusInstallProgress | null>(null);
   const [confirmingRollback, setConfirmingRollback] = useState(false);
   const [planError, setPlanError] = useState<PlanError | null>(null);
+  const [fileQuery, setFileQuery] = useState("");
   const choicesRef = useRef(choices);
   choicesRef.current = choices;
   // Picks among the optional files this version added. They are part of the
@@ -335,7 +347,7 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
       const response = await ModpackUpdateService.applyModpackUpdate(
         instanceId,
         plan.planHash,
-        choices,
+        withDefaultChoices(plan.conflicts, choices),
         optionalPicksRef.current
       );
       if (response.status !== "success") pendingUpdateLabels.delete(instanceId);
@@ -438,9 +450,52 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
     [plan]
   );
 
+  // Display only: answers and "all" buttons still cover every conflict.
+  const matchesPath = useMemo(() => createPathMatcher(fileQuery), [fileQuery]);
+  const shownPlan = useMemo(() => {
+    if (!plan || !isQueryActive(fileQuery)) return plan;
+    return {
+      ...plan,
+      changes: plan.changes.filter((change) => matchesPath(change.path)),
+      autoMerged: plan.autoMerged.filter((change) => matchesPath(change.path)),
+    };
+  }, [plan, fileQuery, matchesPath]);
+  // Display order only: `choices` and the plan hash do not depend on it.
+  const shownConflicts = useMemo(
+    () =>
+      plan
+        ? sortConflicts(plan.conflicts).filter((conflict) =>
+            matchesPath(conflict.path)
+          )
+        : [],
+    [plan, matchesPath]
+  );
+
   const chooseOne = useCallback(
     (key: string, choice: ModpackConflictChoice) =>
       setChoices((prev) => ({ ...prev, [key]: choice })),
+    []
+  );
+
+  /** Answer all blocks of one file with a single update. */
+  const chooseMany = useCallback(
+    (keys: string[], choice: ModpackConflictChoice) =>
+      setChoices((prev) => {
+        const next = { ...prev };
+        for (const key of keys) next[key] = choice;
+        return next;
+      }),
+    []
+  );
+
+  // Conflict cards start open; the two buttons open or close every card at once.
+  const [expandSignal, setExpandSignal] = useState<DiffExpandSignal>({
+    open: true,
+    token: 0,
+  });
+  const expandAll = useCallback(
+    (open: boolean) =>
+      setExpandSignal((prev) => ({ open, token: prev.token + 1 })),
     []
   );
 
@@ -567,30 +622,85 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
             />
           </VStack>
         )}
-        {plan.loaderChange && (
-          <Text fontSize="xs-sm">
-            {t("UpdateModpackModal.plan.loaderChange", {
-              from: plan.loaderChange.from.version,
-              to: plan.loaderChange.to.version,
-              loader: plan.loaderChange.to.type,
-            })}
-          </Text>
+        {(!!plan.componentChanges?.length || plan.loaderChange) && (
+          <VStack align="stretch" spacing={1}>
+            <Text fontWeight="medium">
+              {t("UpdateModpackModal.plan.componentChanges.title")}
+            </Text>
+            {plan.componentChanges?.length ? (
+              plan.componentChanges.map((change) => (
+                <VersionChangeRow
+                  key={change.uid}
+                  name={componentDisplayName(change.uid)}
+                  from={change.from}
+                  to={change.to}
+                />
+              ))
+            ) : plan.loaderChange ? (
+              <VersionChangeRow
+                name={plan.loaderChange.to.type}
+                from={plan.loaderChange.from.version}
+                to={plan.loaderChange.to.version}
+              />
+            ) : null}
+          </VStack>
         )}
         {plan.restoreComponents && (
           <Text fontSize="xs-sm">
             {t("UpdateModpackModal.plan.restoreComponents")}
           </Text>
         )}
-        <PlanChangeGroups plan={plan} />
+        {plan.changes.length + plan.autoMerged.length + plan.conflicts.length >
+          0 && <FileFilterInput value={fileQuery} onChange={setFileQuery} />}
+        {shownPlan &&
+          isQueryActive(fileQuery) &&
+          shownPlan.changes.length +
+            shownPlan.autoMerged.length +
+            shownConflicts.length ===
+            0 && (
+            <Text fontSize="xs-sm" className="secondary-text">
+              {t("FileFilter.empty")}
+            </Text>
+          )}
+        <PlanChangeGroups instanceId={instanceId} plan={shownPlan ?? plan} />
         {plan.conflicts.length > 0 && (
           <VStack align="stretch" spacing={3}>
             <HStack justify="space-between" spacing={2}>
-              <Text fontWeight="medium">
-                {t("UpdateModpackModal.plan.conflicts", {
-                  count: plan.conflicts.length,
-                })}
-              </Text>
+              <HStack spacing={2} minW={0}>
+                <Text fontWeight="medium">
+                  {t("UpdateModpackModal.plan.conflicts", {
+                    count: plan.conflicts.length,
+                  })}
+                </Text>
+                {isQueryActive(fileQuery) && (
+                  <Text fontSize="xs" className="secondary-text">
+                    {t("FileFilter.shown", {
+                      shown: shownConflicts.length,
+                      total: plan.conflicts.length,
+                    })}
+                  </Text>
+                )}
+              </HStack>
               <HStack spacing={1} flexShrink={0}>
+                {(
+                  [
+                    [true, "expandAll", LuUnfoldVertical],
+                    [false, "collapseAll", LuFoldVertical],
+                  ] as const
+                ).map(([open, key, icon]) => (
+                  <Tooltip
+                    key={key}
+                    label={t(`UpdateModpackModal.choice.${key}`)}
+                  >
+                    <IconButton
+                      size="xs"
+                      variant="ghost"
+                      aria-label={t(`UpdateModpackModal.choice.${key}`)}
+                      icon={<Icon as={icon} />}
+                      onClick={() => expandAll(open)}
+                    />
+                  </Tooltip>
+                ))}
                 <Button
                   size="xs"
                   variant="ghost"
@@ -607,14 +717,16 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
                 </Button>
               </HStack>
             </HStack>
-            {plan.conflicts.map((conflict) => (
+            {shownConflicts.map((conflict) => (
               <ConflictItem
                 key={conflict.path}
                 conflict={conflict}
                 choices={choices}
                 primaryColor={primaryColor}
                 onChoose={chooseOne}
+                onChooseMany={chooseMany}
                 onReveal={revealConflictFile}
+                expandSignal={expandSignal}
               />
             ))}
           </VStack>

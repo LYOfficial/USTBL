@@ -10,6 +10,7 @@ import {
   ModalHeader,
   ModalOverlay,
   ModalProps,
+  Select,
   Text,
   VStack,
   useDisclosure,
@@ -22,6 +23,7 @@ import {
   OptionItemGroup,
   OptionItemGroupProps,
 } from "@/components/common/option-item";
+import SegmentedControl from "@/components/common/segmented";
 import { InstanceBasicSettings } from "@/components/instance-basic-settings";
 import {
   gameTypesToIcon,
@@ -33,6 +35,7 @@ import { useGlobalData } from "@/contexts/global-data";
 import { useToast } from "@/contexts/toast";
 import { ModLoaderType } from "@/enums/instance";
 import { useFolderConflict } from "@/hooks/folder-conflict";
+import { useLocalModpackUpdate } from "@/hooks/local-modpack-update";
 import { ModpackMetaInfo } from "@/models/instance/misc";
 import {
   ModpackOptionalFile,
@@ -45,7 +48,10 @@ import { ModpackUpdateService } from "@/services/modpack-update";
 import { ResourceService } from "@/services/resource";
 import { runCampusInstall } from "@/utils/campus-install";
 import { localizeCampusInstallError } from "@/utils/campus-install-task";
+import { ledgerLocalUpdatable } from "@/utils/modpack-ledger";
 import { isDirNameInvalid, sanitizeFileName } from "@/utils/string";
+
+type ImportMode = "create" | "update";
 
 interface ImportModpackModalProps extends Omit<ModalProps, "children"> {
   path: string;
@@ -62,6 +68,13 @@ const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
   const toast = useToast();
   const primaryColor = config.appearance.theme.primaryColor;
   const { onClose } = modalProps;
+  const { updateFromPath, pickingId } = useLocalModpackUpdate();
+
+  const [mode, setMode] = useState<ImportMode>("create");
+  const [pickedId, setPickedId] = useState("");
+  const updatable = ledgerLocalUpdatable(getInstanceList() ?? []);
+  const updateTarget =
+    updatable.find((instance) => instance.id === pickedId) ?? updatable[0];
 
   const [modpack, setModpack] = useState<ModpackMetaInfo>();
   const [name, setName] = useState("");
@@ -256,6 +269,15 @@ const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
     ]
   );
 
+  // The file is already chosen here; the shared flow confirms unofficial
+  // addresses, stages it and opens the update dialog.
+  const handleUpdateExisting = useCallback(async () => {
+    if (!updateTarget) return;
+    if (await updateFromPath(updateTarget.id, updateTarget.name, path)) {
+      onClose();
+    }
+  }, [updateTarget, updateFromPath, path, onClose]);
+
   const handleCancelUnofficial = useCallback(() => {
     onUnofficialClose();
     onClose();
@@ -315,16 +337,55 @@ const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
               </Center>
             ) : (
               <VStack w="100%" spacing={4}>
-                <InstanceBasicSettings
-                  name={name}
-                  setName={setName}
-                  description={description}
-                  setDescription={setDescription}
-                  iconSrc={iconSrc}
-                  setIconSrc={setIconSrc}
-                  gameDirectory={gameDirectory}
-                  setGameDirectory={setGameDirectory}
+                <SegmentedControl
+                  size="sm"
+                  alignSelf="flex-start"
+                  selected={mode}
+                  onSelectItem={(value) => setMode(value as ImportMode)}
+                  items={[
+                    {
+                      value: "create",
+                      label: t("ImportModpackModal.mode.create"),
+                    },
+                    {
+                      value: "update",
+                      label: t("ImportModpackModal.mode.update"),
+                    },
+                  ]}
                 />
+                {mode === "create" ? (
+                  <InstanceBasicSettings
+                    name={name}
+                    setName={setName}
+                    description={description}
+                    setDescription={setDescription}
+                    iconSrc={iconSrc}
+                    setIconSrc={setIconSrc}
+                    gameDirectory={gameDirectory}
+                    setGameDirectory={setGameDirectory}
+                  />
+                ) : updatable.length === 0 ? (
+                  <Text className="secondary-text">
+                    {t("ImportModpackModal.update.noInstance")}
+                  </Text>
+                ) : (
+                  <VStack align="stretch" w="100%" spacing={2}>
+                    <Text fontSize="xs-sm" fontWeight="medium">
+                      {t("ImportModpackModal.update.instance")}
+                    </Text>
+                    <Select
+                      size="sm"
+                      value={updateTarget?.id ?? ""}
+                      onChange={(event) => setPickedId(event.target.value)}
+                    >
+                      {updatable.map((instance) => (
+                        <option key={instance.id} value={instance.id}>
+                          {instance.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </VStack>
+                )}
                 {modpackInfoGroup.map((group, index) => (
                   <OptionItemGroup
                     title={group.title}
@@ -333,7 +394,7 @@ const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
                     w="100%"
                   />
                 ))}
-                {optionalFiles.length > 0 && (
+                {mode === "create" && optionalFiles.length > 0 && (
                   <Button
                     variant="outline"
                     alignSelf="flex-start"
@@ -349,13 +410,24 @@ const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
             )}
           </ModalBody>
           <ModalFooter>
-            <Button
-              colorScheme={primaryColor}
-              onClick={() => handleImportModpack(false)}
-              isLoading={isBtnLoading || isPageLoading}
-            >
-              {t("General.import")}
-            </Button>
+            {mode === "create" ? (
+              <Button
+                colorScheme={primaryColor}
+                onClick={() => handleImportModpack(false)}
+                isLoading={isBtnLoading || isPageLoading}
+              >
+                {t("General.import")}
+              </Button>
+            ) : (
+              <Button
+                colorScheme={primaryColor}
+                onClick={handleUpdateExisting}
+                isDisabled={!updateTarget}
+                isLoading={pickingId !== null || isPageLoading}
+              >
+                {t("ImportModpackModal.update.confirm")}
+              </Button>
+            )}
           </ModalFooter>
         </ModalContent>
       </Modal>

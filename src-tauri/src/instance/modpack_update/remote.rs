@@ -363,6 +363,30 @@ impl From<&RemoteModpack> for StoredRemoteModpack {
   }
 }
 
+impl RemoteFile {
+  /// Rebuild one file from its stored form; a pack source gets session.
+  pub fn from_stored(
+    file: StoredRemoteFile,
+    session: impl FnOnce(i64) -> Arc<PackSession>,
+  ) -> Self {
+    Self {
+      path: file.path,
+      key: file.key,
+      source: match file.source {
+        StoredFileSource::Download { param } => FileSource::Download(param),
+        StoredFileSource::ArchiveEntry { archive, entry } => {
+          FileSource::ArchiveEntry { archive, entry }
+        }
+        StoredFileSource::Cached { path } => FileSource::Cached { path },
+        StoredFileSource::Listed { entry, exact } => FileSource::Listed { entry, exact },
+        StoredFileSource::Pack { version_id } => FileSource::Pack(session(version_id)),
+      },
+      disabled: file.disabled,
+      once: file.once,
+    }
+  }
+}
+
 impl RemoteModpack {
   /// Rebuild a remote from its stored form. Pack sources get a fresh session
   /// from `make_session`, one per version shared by all of its files (the

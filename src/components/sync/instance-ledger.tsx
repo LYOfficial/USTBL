@@ -19,6 +19,7 @@ import {
   LedgerBadge,
   ledgerBadge,
   ledgerInstances,
+  ledgerLocalChangesDisabled,
   ledgerLocalInstances,
   ledgerScanned,
   ledgerUpdateDisabled,
@@ -66,19 +67,27 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
     .filter(shouldCheckInstance)
     .map((instance) => instance.id)
     .join("\n");
+  // Local imports are scanned too, for the change count behind "view changes".
+  const localKey = localRows
+    .filter((instance) => !isInstallingInstance(instance))
+    .map((instance) => instance.id)
+    .join("\n");
 
   // One at a time, so a slow platform does not pile up requests. This is the
   // scan that finds local edits, which the quick startup check skips.
   const checkAll = useCallback(
     async (isCancelled: () => boolean) => {
       setChecking(true);
-      for (const id of followedKey ? followedKey.split("\n") : []) {
+      const ids = [followedKey, localKey].flatMap((key) =>
+        key ? key.split("\n") : []
+      );
+      for (const id of ids) {
         if (isCancelled()) break;
         await checkModpackUpdate(id, true);
       }
       setChecking(false);
     },
-    [followedKey, checkModpackUpdate]
+    [followedKey, localKey, checkModpackUpdate]
   );
 
   useEffect(() => {
@@ -137,7 +146,7 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
               label={t("InstanceSyncPage.ledger.checkAll")}
               withTooltip
               onClick={() => checkAll(() => false)}
-              isDisabled={checking || !followedKey}
+              isDisabled={checking || (!followedKey && !localKey)}
               size="xs"
               h={21}
             />
@@ -231,6 +240,7 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
           <OptionItemGroup
             items={localRows.map((instance) => {
               const installing = isInstallingInstance(instance);
+              const check = modpackChecks[instance.id];
               return {
                 title: (
                   <HStack spacing={2}>
@@ -267,6 +277,19 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
                       }
                     >
                       {t("InstanceSyncPage.ledger.action.details")}
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      isDisabled={ledgerLocalChangesDisabled(instance, check)}
+                      onClick={() =>
+                        openSharedModal("modpack-local-changes", {
+                          instanceId: instance.id,
+                          instanceName: instance.name,
+                        })
+                      }
+                    >
+                      {t("InstanceSyncPage.ledger.action.viewChanges")}
                     </Button>
                     <Button
                       size="xs"

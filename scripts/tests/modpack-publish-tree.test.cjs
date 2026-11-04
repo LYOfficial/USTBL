@@ -32,6 +32,7 @@ const {
   canRemoveFile,
   categorizeChanges: categorizeChangesRaw,
   countCategories,
+  countOnceByDir,
   defaultPublishProject,
   dirChangeCounts,
   filterNodes,
@@ -39,11 +40,13 @@ const {
   isSummaryEmpty,
   localDeletePaths,
   nextState,
+  onceStateUnder,
   publishTargetAfterLoad,
   restoreInheritance,
   setDirState,
   setFileState,
   setOnce,
+  setOnceUnder,
   summarizePublish,
   toPublishPayload,
   toggleCategory,
@@ -1105,4 +1108,78 @@ test("the summary always agrees with the payload the dialog sends", () => {
     rule("mods/b.jar", "file", "delete"),
   ]);
   assert.deepEqual(summary.rulesRemoved, [rule("lost", "dir", "ignore")]);
+});
+
+// ---------------------------------------------------------- directory once
+
+const onceOf = (context, draft, dir) =>
+  onceStateUnder(countOnceByDir(context, viewOf(context, draft)), dir);
+const onceUnder = (context, draft, dir, value) =>
+  setOnceUnder(context, draft, viewOf(context, draft), dir, value);
+
+test("onceStateUnder: none, some, all, and null for an empty directory", () => {
+  const context = ctxOf(["mods/a.jar", "mods/sub/b.jar", "mods/sub/c.jar", "x/y.txt"]);
+  assert.equal(onceOf(context, draftOf(), "mods"), "none");
+  assert.equal(onceOf(context, draftOf([], { once: ["mods/sub/b.jar"] }), "mods"), "some");
+  assert.equal(onceOf(context, draftOf([], { once: ["mods/sub/b.jar"] }), "mods/sub"), "some");
+  const all = draftOf([], { once: ["mods/a.jar", "mods/sub/b.jar", "mods/sub/c.jar"] });
+  assert.equal(onceOf(context, all, "mods"), "all");
+  assert.equal(onceOf(context, all, "x"), "none");
+  assert.equal(onceOf(context, all, "nothing"), null);
+});
+
+test("directory once counts only published files", () => {
+  const context = ctxOf(["mods/a.jar", "mods/b.jar", "mods/c.jar"], [ghostOf("mods/gone.jar")]);
+  const draft = draftOf([rule("mods/b.jar", "file", "ignore"), rule("mods/c.jar", "file", "delete")], {
+    once: ["mods/a.jar", "mods/gone.jar"],
+  });
+  assert.equal(onceOf(context, draft, "mods"), "all");
+  const allIgnored = draftOf([rule("mods", "dir", "ignore")]);
+  assert.equal(onceOf(context, allIgnored, "mods"), null);
+});
+
+test("setOnceUnder: recursive, one update, only published files", () => {
+  const context = ctxOf(["mods/a.jar", "mods/sub/deep/b.jar", "mods/skip.jar", "other/c.jar"]);
+  const draft = draftOf([rule("mods/skip.jar", "file", "ignore")]);
+  const on = onceUnder(context, draft, "mods", true);
+  assert.deepEqual([...on.once].sort(), ["mods/a.jar", "mods/sub/deep/b.jar"]);
+  assert.equal(draft.once.size, 0);
+  assert.equal(onceOf(context, on, "mods"), "all");
+  assert.equal(onceOf(context, on, "other"), "none");
+  const off = onceUnder(context, on, "mods", false);
+  assert.equal(off.once.size, 0);
+  assert.equal(off.rules, draft.rules);
+});
+
+test("setOnceUnder: partial turns all on, a dir name prefix is not a child, keys are lowercase", () => {
+  const context = ctxOf(["Mods/A.jar", "Mods/B.jar", "Mods2/c.jar"]);
+  const draft = draftOf([], { once: ["mods/a.jar"] });
+  assert.equal(onceOf(context, draft, "Mods"), "some");
+  const on = onceUnder(context, draft, "mods", true);
+  assert.deepEqual([...on.once].sort(), ["mods/a.jar", "mods/b.jar"]);
+  assert.equal(onceOf(context, on, "MODS"), "all");
+  const off = onceUnder(context, on, "Mods", false);
+  assert.equal(off.once.size, 0);
+});
+
+test("setOnceUnder leaves once marks on files that are not published", () => {
+  const context = ctxOf(["mods/a.jar", "mods/b.jar"]);
+  const draft = draftOf([rule("mods/b.jar", "file", "ignore")], { once: ["mods/b.jar"] });
+  const off = onceUnder(context, draft, "mods", false);
+  assert.deepEqual([...off.once], ["mods/b.jar"]);
+});
+
+test("publish tree rows show no once text and keep one box column", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../../src/components/common/publish-file-tree.tsx"),
+    "utf8"
+  );
+  // Only the tooltip's first line may render the text as a child.
+  const withoutTooltip = source.replace(
+    /<Text>\{t\("PublishModpackModal\.tree\.once"\)\}<\/Text>/g,
+    ""
+  );
+  assert.ok(!/>\s*\{t\("PublishModpackModal\.tree\.once"\)\}\s*</.test(withoutTooltip));
+  assert.ok(source.includes("<Checkbox"));
+  assert.ok(source.includes("onceControl"));
 });
