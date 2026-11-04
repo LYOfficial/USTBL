@@ -380,6 +380,7 @@ pub fn campus_remote(
       .as_ref()
       .map(|components| component_pack(components, packs))
       .transpose()?,
+    recommended_memory_mb: None,
     files,
     rules,
     rules_manifest: true,
@@ -859,6 +860,8 @@ fn multimc_pack(archive: &Path) -> USTBLResult<(ArchiveFacts, ComponentPack)> {
       },
       overrides_paths: manifest.get_overrides_paths(),
       downloads: Vec::new(),
+      // A MultiMC pack's recommendation is in its `instance.cfg`.
+      recommended_memory_mb: None,
     },
     ComponentPack {
       mmc_pack,
@@ -878,6 +881,8 @@ pub struct ArchiveFacts {
   pub overrides_paths: Vec<String>,
   /// Files the manifest asks to download, with the platform's hash and size.
   pub downloads: Vec<RemoteFile>,
+  /// Memory in MiB the manifest recommends, if it says.
+  pub recommended_memory_mb: Option<u32>,
 }
 
 /// How many hash-less files are fetched at once while the remote is built.
@@ -1072,6 +1077,7 @@ where
     loader,
     overrides_paths: manifest.get_overrides_paths(),
     downloads: download_files(root, downloads, fetch).await?,
+    recommended_memory_mb: manifest.recommended_memory_mb(),
   })
 }
 /// The remote of a platform archive from its manifest facts and the files its
@@ -1089,6 +1095,7 @@ pub fn assemble_remote(
     loader: facts.loader,
     components: None,
     component_pack: None,
+    recommended_memory_mb: facts.recommended_memory_mb,
     files: merge_files(downloads, overrides),
     rules: Vec::new(),
     rules_manifest: false,
@@ -2383,6 +2390,7 @@ mod tests {
       },
       components: None,
       component_pack: None,
+      recommended_memory_mb: None,
       files: vec![
         RemoteFile {
           path: "mods/a.jar".into(),

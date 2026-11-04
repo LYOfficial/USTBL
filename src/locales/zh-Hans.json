@@ -2446,6 +2446,14 @@
           }
         }
       },
+      "answerMemorySuggestion": {
+        "error": {
+          "title": "实例设置更新失败",
+          "description": {
+            "INSTANCE_NOT_FOUND_BY_ID": "实例 ID 不存在"
+          }
+        }
+      },
       "updateInstanceConfig": {
         "error": {
           "title": "实例设置更新失败",
@@ -3601,6 +3609,22 @@
     "button": {
       "later": "稍后",
       "goToSync": "前往更新"
+    }
+  },
+  "MemorySuggestionModal": {
+    "title": "整合包建议分配更多内存",
+    "body": "「{{pack}}」建议使用 {{suggested}} 内存，该实例当前使用 {{current}}（{{source}}）。",
+    "source": {
+      "global": "全局设置",
+      "instance": "实例设置",
+      "auto": "自动分配"
+    },
+    "note": "应用后该实例改用独立的游戏设置，只把内存调整为建议值，其余设置不变，之后可随时在实例设置中修改。",
+    "clamped": "你的设备共有 {{total}} 内存，建议值已调整为 {{clamped}}。",
+    "button": {
+      "apply": "应用建议",
+      "keep": "保持当前",
+      "later": "稍后再说"
     }
   }
 }

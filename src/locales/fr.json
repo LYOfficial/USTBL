@@ -2446,6 +2446,14 @@
           }
         }
       },
+      "answerMemorySuggestion": {
+        "error": {
+          "title": "Échec de la mise à jour des paramètres de l'instance",
+          "description": {
+            "INSTANCE_NOT_FOUND_BY_ID": "ID d'instance introuvable"
+          }
+        }
+      },
       "updateInstanceConfig": {
         "error": {
           "title": "Échec de la mise à jour des paramètres de l'instance",
@@ -3601,6 +3609,22 @@
     "button": {
       "later": "Plus tard",
       "goToSync": "Aller à la mise à jour"
+    }
+  },
+  "MemorySuggestionModal": {
+    "title": "Le modpack recommande davantage de mémoire",
+    "body": "« {{pack}} » recommande {{suggested}} de mémoire. Cette instance utilise actuellement {{current}} ({{source}}).",
+    "source": {
+      "global": "paramètres globaux",
+      "instance": "paramètres de l'instance",
+      "auto": "allocation automatique"
+    },
+    "note": "En appliquant, cette instance utilisera ses propres paramètres de jeu et seule la mémoire sera réglée sur la valeur recommandée ; les autres paramètres ne changent pas. Vous pourrez la modifier à tout moment dans les paramètres de l'instance.",
+    "clamped": "Votre appareil dispose de {{total}} de mémoire ; la recommandation a été ajustée à {{clamped}}.",
+    "button": {
+      "apply": "Appliquer la recommandation",
+      "keep": "Conserver l'actuel",
+      "later": "Plus tard"
     }
   }
 }

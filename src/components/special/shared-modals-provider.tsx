@@ -9,6 +9,7 @@ import GenericConfirmDialog from "@/components/modals/generic-confirm-dialog";
 import ImportModpackModal from "@/components/modals/import-modpack-modal";
 import InstallPlatformModpackModal from "@/components/modals/install-platform-modpack-modal";
 import LaunchProcessModal from "@/components/modals/launch-process-modal";
+import MemorySuggestionModal from "@/components/modals/memory-suggestion-modal";
 import ModpackInstanceDetailsModal from "@/components/modals/modpack-instance-details-modal";
 import ModpackLocalChangesModal from "@/components/modals/modpack-local-changes-modal";
 import NotifyModpackUpdatesModal from "@/components/modals/notify-modpack-updates-modal";
@@ -50,6 +51,7 @@ const SharedModals: React.FC<{ children: React.ReactNode }> = ({
     "import-modpack": ImportModpackModal,
     "install-platform-modpack": InstallPlatformModpackModal,
     launch: LaunchProcessModal,
+    "memory-suggestion": MemorySuggestionModal,
     "modpack-instance-details": ModpackInstanceDetailsModal,
     "modpack-local-changes": ModpackLocalChangesModal,
     "notify-modpack-updates": NotifyModpackUpdatesModal,

@@ -2446,6 +2446,14 @@
           }
         }
       },
+      "answerMemorySuggestion": {
+        "error": {
+          "title": "Failed to update instance settings",
+          "description": {
+            "INSTANCE_NOT_FOUND_BY_ID": "Instance ID does not exist"
+          }
+        }
+      },
       "updateInstanceConfig": {
         "error": {
           "title": "Failed to update instance settings",
@@ -3601,6 +3609,22 @@
     "button": {
       "later": "Later",
       "goToSync": "Go to update"
+    }
+  },
+  "MemorySuggestionModal": {
+    "title": "The modpack recommends more memory",
+    "body": "\"{{pack}}\" recommends {{suggested}} of memory. This instance currently uses {{current}} ({{source}}).",
+    "source": {
+      "global": "global settings",
+      "instance": "instance settings",
+      "auto": "automatic allocation"
+    },
+    "note": "Applying switches this instance to its own game settings and only sets the memory to the recommended value; other settings stay the same. You can change it at any time in the instance settings.",
+    "clamped": "Your device has {{total}} of memory, so the recommendation was adjusted to {{clamped}}.",
+    "button": {
+      "apply": "Apply recommendation",
+      "keep": "Keep current",
+      "later": "Later"
     }
   }
 }

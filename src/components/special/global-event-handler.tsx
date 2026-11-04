@@ -10,6 +10,7 @@ import { useToast } from "@/contexts/toast";
 import useDeepLink from "@/hooks/deep-link";
 import { useDragAndDrop, useTauriFileDrop } from "@/hooks/drag-and-drop";
 import useKeyboardShortcut from "@/hooks/keyboard-shortcut";
+import { useMemorySuggestions } from "@/hooks/memory-suggestion";
 import { AccountService } from "@/services/account";
 import { appendFriendMessage } from "@/services/friend-message-cache";
 import { ModpackUpdateService } from "@/services/modpack-update";
@@ -37,6 +38,9 @@ const GlobalEventHandler: React.FC<{ children: React.ReactNode }> = ({
   // notify twice, while a later release still notifies again.
   const notifiedVersionRef = useRef<string | null>(null);
   const knownMessageIds = useRef<Set<number> | null>(null);
+
+  // Modpack memory recommendations found after an install or an update.
+  useMemorySuggestions(!isStandAlone);
 
   useEffect(() => {
     if (isStandAlone) return;

@@ -237,6 +237,7 @@ mod tests {
       },
       components: None,
       component_pack: None,
+      recommended_memory_mb: None,
       files: vec![RemoteFile {
         path: "mods/a.jar".into(),
         key: FileKey {

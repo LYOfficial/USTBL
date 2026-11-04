@@ -257,6 +257,9 @@ pub struct RemoteModpack {
   pub components: Option<Vec<ComponentRef>>,
   /// Present exactly when `components` is.
   pub component_pack: Option<ComponentPack>,
+  /// Memory in MiB the platform manifest recommends (CurseForge
+  /// `recommendedRam`); a component pack's is read from its `instance_cfg`.
+  pub recommended_memory_mb: Option<u32>,
   pub files: Vec<RemoteFile>,
   /// Publish rules of a `ustbl.modpack/3` manifest; empty for the other
   /// platforms, where every unlisted path is unmentioned.
@@ -308,6 +311,8 @@ pub struct StoredRemoteModpack {
   pub components: Option<Vec<ComponentRef>>,
   #[serde(default)]
   pub component_pack: Option<StoredComponentPack>,
+  #[serde(default)]
+  pub recommended_memory_mb: Option<u32>,
   pub files: Vec<StoredRemoteFile>,
   #[serde(default)]
   pub rules: Vec<RemoteRule>,
@@ -340,6 +345,7 @@ impl From<&RemoteModpack> for StoredRemoteModpack {
           instance_cfg: pack.instance_cfg.clone(),
           files: pack.files.iter().map(file).collect(),
         }),
+      recommended_memory_mb: remote.recommended_memory_mb,
       files: remote.files.iter().map(file).collect(),
       rules: remote.rules.clone(),
       rules_manifest: remote.rules_manifest,
@@ -390,6 +396,7 @@ impl RemoteModpack {
       loader: stored.loader,
       components: stored.components,
       component_pack,
+      recommended_memory_mb: stored.recommended_memory_mb,
       files,
       rules: stored.rules,
       rules_manifest: stored.rules_manifest,
@@ -625,6 +632,7 @@ mod tests {
       },
       components: None,
       component_pack: None,
+      recommended_memory_mb: None,
       files: paths
         .iter()
         .map(|path| RemoteFile {
@@ -828,6 +836,23 @@ mod tests {
     RemoteModpack::from_stored(stored, |version_id| {
       PackSession::new(Arc::new(NoTransport), version_id)
     })
+  }
+
+  #[test]
+  fn the_recommended_memory_survives_the_stored_form_and_old_caches_read_cleanly() {
+    let mut archive = pack(&["mods/a.jar"]);
+    archive.recommended_memory_mb = Some(8196);
+    let json = serde_json::to_string(&StoredRemoteModpack::from(&archive)).unwrap();
+    assert_eq!(
+      rebuilt(serde_json::from_str(&json).unwrap()).recommended_memory_mb,
+      Some(8196)
+    );
+    let mut value = serde_json::to_value(StoredRemoteModpack::from(&archive)).unwrap();
+    value.as_object_mut().unwrap().remove("recommendedMemoryMb");
+    assert_eq!(
+      rebuilt(serde_json::from_value(value).unwrap()).recommended_memory_mb,
+      None
+    );
   }
 
   #[test]

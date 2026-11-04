@@ -488,6 +488,7 @@ mod tests {
       game_version: "1.21.1".into(),
       loader: loader(),
       overrides_paths: vec!["overrides".into()],
+      recommended_memory_mb: None,
       downloads: vec![RemoteFile {
         path: "mods/a.jar".into(),
         key: real_key(b"jar-a"),

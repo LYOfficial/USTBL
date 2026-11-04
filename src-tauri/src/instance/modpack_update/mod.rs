@@ -5,6 +5,7 @@ pub mod decide;
 pub mod diff;
 pub mod ignores;
 pub mod local_scan;
+pub mod memory;
 pub mod merge;
 pub mod notice;
 pub mod packs;

@@ -1506,6 +1506,19 @@ mod tests {
     }
   }
 
+  #[test]
+  fn finishing_an_update_keeps_the_memory_suggestion() {
+    let root = Root::new();
+    root.write(".ustbl-update/memory-suggestion.json", "{}");
+    root.write(".ustbl-update/staging/mods/a.jar", "a");
+    root.write(".ustbl-update/remote/v1.remote.json", "{}");
+    for keep_backup in [true, false] {
+      finish_cleanup(&root.0, keep_backup);
+      assert!(root.read(".ustbl-update/memory-suggestion.json").is_some());
+      assert!(!root.0.join(UPDATE_DIR).join("staging").exists());
+      assert!(!root.0.join(UPDATE_DIR).join("remote").exists());
+    }
+  }
   #[derive(Default)]
   struct FakeEnv {
     contents: BTreeMap<String, Vec<u8>>,
@@ -1686,6 +1699,7 @@ mod tests {
         loader: loader(new_loader),
         components: None,
         component_pack: None,
+        recommended_memory_mb: None,
         files,
         rules: Vec::new(),
         rules_manifest: false,

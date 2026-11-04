@@ -77,6 +77,8 @@ structstruck::strike! {
     pub minecraft: struct {
       pub version: String,
       pub mod_loaders: Vec<CurseForgeModLoader>,
+      #[serde(default, skip_serializing_if = "Option::is_none")]
+      pub recommended_ram: Option<u32>,
     },
     pub files: Vec<CurseForgeFiles>,
   }
@@ -529,6 +531,10 @@ fn build_download(
 
 #[async_trait]
 impl ModpackManifest for CurseForgeManifest {
+  fn recommended_memory_mb(&self) -> Option<u32> {
+    self.minecraft.recommended_ram.filter(|mb| *mb > 0)
+  }
+
   fn from_archive(file: &File) -> USTBLResult<Self> {
     let mut archive = ZipArchive::new(file)?;
     let mut manifest_file = archive.by_name("manifest.json")?;
@@ -632,6 +638,23 @@ mod tests {
   use super::*;
   use std::sync::Mutex as StdMutex;
 
+  #[test]
+  fn recommended_ram_is_read_from_the_manifest() {
+    let parse = |minecraft: &str| -> CurseForgeManifest {
+      serde_json::from_str(&format!(
+        r#"{{"name":"P","author":"A","overrides":"overrides","files":[],"minecraft":{minecraft}}}"#
+      ))
+      .unwrap()
+    };
+    let with = parse(r#"{"version":"1.21.1","modLoaders":[],"recommendedRam":8196}"#);
+    assert_eq!(with.recommended_memory_mb(), Some(8196));
+    let without = parse(r#"{"version":"1.21.1","modLoaders":[]}"#);
+    assert_eq!(without.recommended_memory_mb(), None);
+    let zero = parse(r#"{"version":"1.21.1","modLoaders":[],"recommendedRam":0}"#);
+    assert_eq!(zero.recommended_memory_mb(), None);
+    let null = parse(r#"{"version":"1.21.1","modLoaders":[],"recommendedRam":null}"#);
+    assert_eq!(null.recommended_memory_mb(), None);
+  }
   /// A fake CurseForge that knows a fixed set of files, and can be told to
   /// leave ids out of the first N batch answers or to fail.
   #[derive(Default)]

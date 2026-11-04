@@ -377,6 +377,7 @@ mod tests {
         version: "0.16.0".into(),
       },
       overrides_paths: vec!["overrides".into()],
+      recommended_memory_mb: None,
       downloads: Vec::new(),
     };
     assemble_remote(latest, facts, files)

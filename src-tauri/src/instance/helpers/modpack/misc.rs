@@ -30,6 +30,10 @@ pub trait ModpackManifest {
   /// Archive directories holding files to copy into the instance, in layering
   /// order: when several contain the same file, the later directory wins.
   fn get_overrides_paths(&self) -> Vec<String>;
+  /// Memory in MiB the manifest recommends, for formats that carry one.
+  fn recommended_memory_mb(&self) -> Option<u32> {
+    None
+  }
 }
 
 /// A file the modpack manifest asks the launcher to download.

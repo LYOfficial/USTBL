@@ -94,6 +94,20 @@ pub struct LaunchCommand {
   pub args: Vec<String>,
 }
 
+/// The -Xmx value in MiB: the automatic suggestion (bytes, read only when
+/// needed) or the configured maximum.
+pub fn max_memory_mb(
+  auto: bool,
+  configured_mb: u32,
+  suggested_max_alloc: impl FnOnce() -> u64,
+) -> u32 {
+  if auto {
+    (suggested_max_alloc() / 1024 / 1024) as u32
+  } else {
+    configured_mb
+  }
+}
+
 pub async fn generate_launch_command(
   app: &AppHandle,
   quick_play_singleplayer: Option<String>,
@@ -215,12 +229,11 @@ pub async fn generate_launch_command(
   // set maximum memory allocation
   cmd.push(format!(
     "-Xmx{}m",
-    if game_config.performance.auto_mem_allocation {
-      let memory_info = get_memory_info();
-      (memory_info.suggested_max_alloc / 1024 / 1024) as u32
-    } else {
-      game_config.performance.max_mem_allocation
-    }
+    max_memory_mb(
+      game_config.performance.auto_mem_allocation,
+      game_config.performance.max_mem_allocation,
+      || get_memory_info().suggested_max_alloc,
+    )
   ));
 
   let jvm = &game_config.advanced.jvm;

@@ -1269,6 +1269,7 @@ mod tests {
       loader: loader(),
       components: None,
       component_pack: None,
+      recommended_memory_mb: None,
       files: files
         .iter()
         .map(|(path, content)| RemoteFile {

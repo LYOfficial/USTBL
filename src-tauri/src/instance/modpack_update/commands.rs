@@ -2767,6 +2767,7 @@ async fn apply_modpack_update_inner(
     describe_conflict_resolutions(&prepared.diff, &apply_choices).join(","),
   );
   let ignores = super::ignores::plan_update(&target.root, &prepared, &remote);
+  let recommendation = super::memory::Recommendation::of(&remote);
   let result = apply(
     &env,
     UpdateRequest {
@@ -2792,6 +2793,7 @@ async fn apply_modpack_update_inner(
   // The supervisor refreshes memory on every error, including preparation and
   // panic failures, and consumes the preview while it still holds PlanGuard.
   result?;
+  recommendation.record(&target.root, &target.instance.name);
   Ok(UpdateOutcome {
     version_id,
     loader_install_pending: env.loader_install_pending.load(Ordering::SeqCst),
@@ -3506,6 +3508,7 @@ async fn install_beside_client(
   }
   plan_cache::clear_plan_cache(&target.root);
   result?;
+  super::memory::Recommendation::of(&remote).record(&target.root, &target.instance.name);
   remove_campus_install_record(&target.root);
   Ok(UpdateOutcome {
     version_id,
@@ -4717,6 +4720,7 @@ mod tests {
         },
         components: None,
         component_pack: None,
+        recommended_memory_mb: None,
         files: Vec::new(),
         rules: Vec::new(),
         rules_manifest: false,
@@ -4759,6 +4763,7 @@ mod tests {
         },
         components: None,
         component_pack: None,
+        recommended_memory_mb: None,
         files: Vec::new(),
         rules: Vec::new(),
         rules_manifest: true,

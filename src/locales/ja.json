@@ -2446,6 +2446,14 @@
           }
         }
       },
+      "answerMemorySuggestion": {
+        "error": {
+          "title": "インスタンス設定の更新に失敗",
+          "description": {
+            "INSTANCE_NOT_FOUND_BY_ID": "指定された ID のインスタンスが見つからない"
+          }
+        }
+      },
       "updateInstanceConfig": {
         "error": {
           "title": "インスタンス設定の更新に失敗",
@@ -3601,6 +3609,22 @@
     "button": {
       "later": "後で",
       "goToSync": "更新へ"
+    }
+  },
+  "MemorySuggestionModal": {
+    "title": "モッドパックはより多くのメモリを推奨しています",
+    "body": "「{{pack}}」は {{suggested}} のメモリを推奨しています。このインスタンスは現在 {{current}}（{{source}}）を使用しています。",
+    "source": {
+      "global": "グローバル設定",
+      "instance": "インスタンス設定",
+      "auto": "自動割り当て"
+    },
+    "note": "適用すると、このインスタンスは独自のゲーム設定を使うようになり、メモリだけが推奨値に変更されます。その他の設定は変わりません。インスタンス設定からいつでも変更できます。",
+    "clamped": "このデバイスのメモリは合計 {{total}} のため、推奨値を {{clamped}} に調整しました。",
+    "button": {
+      "apply": "推奨値を適用",
+      "keep": "現在の設定を維持",
+      "later": "あとで"
     }
   }
 }
