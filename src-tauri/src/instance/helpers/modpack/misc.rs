@@ -9,7 +9,6 @@ use crate::tasks::download::DownloadParam;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::fs;
 use std::fs::File;
 use std::path::Path;
 use tauri::AppHandle;
@@ -38,21 +37,6 @@ pub struct ModpackDownload {
   pub param: DownloadParam,
   /// Size in bytes when the manifest (or the platform API) reports it.
   pub size: Option<u64>,
-}
-
-/// Drop downloads whose destination an override already fills. Overrides are
-/// extracted before the download group runs, so a download of the same path
-/// would otherwise replace the override afterwards.
-pub fn retain_non_overridden_downloads(
-  downloads: &mut Vec<ModpackDownload>,
-  root: &Path,
-  overrides: &[String],
-) {
-  downloads.retain(|download| {
-    !overrides
-      .iter()
-      .any(|relative| download.param.dest == root.join(relative))
-  });
 }
 
 pub(crate) type ManifestBox = Box<dyn ModpackManifest + Send + Sync>;
@@ -160,20 +144,6 @@ impl ModpackMetaInfo {
   }
 }
 
-pub async fn get_download_params(
-  app: &AppHandle,
-  file: &File,
-  instance_path: &Path,
-) -> USTBLResult<Vec<ModpackDownload>> {
-  for parser in get_parsers() {
-    if let Ok(manifest) = parser(file) {
-      return manifest.get_download_params(app, instance_path).await;
-    }
-  }
-
-  Err(InstanceError::ModpackManifestParseError.into())
-}
-
 /// Files the modpack's override directories would put into the instance, as
 /// relative path (using `/`) to archive entry name.
 ///
@@ -216,7 +186,10 @@ pub fn list_override_entries(
 }
 
 /// Extract the modpack's override directories into the instance and return the
-/// relative paths (using `/`) of the files that exist afterwards.
+/// relative paths (using `/`) of the files that exist afterwards. The launcher
+/// itself installs overrides through the update engine; this is how the tests
+/// build the instance an archive describes.
+#[cfg(test)]
 pub fn extract_overrides(file: &File, instance_path: &Path) -> USTBLResult<Vec<String>> {
   let overrides_paths = get_parsers()
     .into_iter()
@@ -236,7 +209,7 @@ pub fn extract_overrides(file: &File, instance_path: &Path) -> USTBLResult<Vec<S
     let outpath = instance_path.join(super::multimc::profile::safe_relative(relative)?);
     if let Some(parent) = outpath.parent() {
       if !parent.exists() {
-        fs::create_dir_all(parent)?;
+        std::fs::create_dir_all(parent)?;
       }
     }
     let mut outfile = File::create(&outpath)?;
@@ -247,28 +220,9 @@ pub fn extract_overrides(file: &File, instance_path: &Path) -> USTBLResult<Vec<S
 #[cfg(test)]
 mod tests {
   use super::*;
+  use std::fs;
   use std::io::Write;
   use zip::write::SimpleFileOptions;
-
-  #[test]
-  fn override_destinations_are_never_scheduled_for_download() {
-    let root = std::path::PathBuf::from("instance");
-    let make = |relative: &str| ModpackDownload {
-      param: DownloadParam {
-        src: url::Url::parse("https://example.test/file").unwrap(),
-        dest: root.join(relative),
-        sha1: None,
-        filename: None,
-        custom_headers: None,
-        transfer_options: Default::default(),
-      },
-      size: None,
-    };
-    let mut downloads = vec![make("config/a.cfg"), make("mods/b.jar")];
-    retain_non_overridden_downloads(&mut downloads, &root, &["config/a.cfg".into()]);
-    assert_eq!(downloads.len(), 1);
-    assert_eq!(downloads[0].param.dest, root.join("mods/b.jar"));
-  }
 
   const MRPACK_INDEX: &str =
     r#"{"versionId":"1","name":"test","files":[],"dependencies":{"minecraft":"1.20.1"}}"#;

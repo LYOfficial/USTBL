@@ -13,8 +13,10 @@ use crate::instance::helpers::modpack::baseline::{
   components_of_mmc_pack, hash_file, normalize_relative_path, BaselineLoader,
 };
 use crate::instance::helpers::modpack::misc::{
-  list_override_entries, parse_platform_manifest, ManifestBox, ModpackDownload,
+  list_override_entries, parse_platform_manifest, ManifestBox, ModpackDownload, ModpackManifest,
 };
+use crate::instance::helpers::modpack::multimc::profile::{safe_relative, PackFiles, ZipFiles};
+use crate::instance::helpers::modpack::multimc::MultiMcManifest;
 use crate::instance::models::misc::{InstanceError, InstanceOrigin, ModLoaderType, OriginPlatform};
 use crate::resource::commands::fetch_resource_version_packs;
 use crate::resource::models::{
@@ -461,7 +463,7 @@ impl RemoteCache {
 }
 
 /// The archive of an Archive payload: its sha1 and the path it is kept at.
-pub(super) fn archive_path(root: &Path, sha1: &str) -> PathBuf {
+pub(crate) fn archive_path(root: &Path, sha1: &str) -> PathBuf {
   remote_dir(root).join(format!("{sha1}.zip"))
 }
 
@@ -535,12 +537,35 @@ fn hash_zip_entry(
 
 /// Downloaded files first, then overrides: an override wins over a download of
 /// the same path, matching what a fresh install does.
+///
+/// Paths that differ only in case land on the same file on Windows. When they
+/// carry the same content (GTNH 2.8.4 ships four such pairs) one of them is
+/// kept; when the content differs both stay and `validate` refuses the pack.
 pub fn merge_files(downloads: Vec<RemoteFile>, overrides: Vec<RemoteFile>) -> Vec<RemoteFile> {
   let mut by_path = BTreeMap::new();
   for file in downloads.into_iter().chain(overrides) {
     by_path.insert(file.path.clone(), file);
   }
-  by_path.into_values().collect()
+  let mut kept: BTreeMap<String, usize> = BTreeMap::new();
+  let mut files: Vec<RemoteFile> = Vec::with_capacity(by_path.len());
+  for file in by_path.into_values() {
+    let lowered = file.path.to_lowercase();
+    if let Some(&index) = kept.get(&lowered) {
+      let first = &files[index];
+      if first.key == file.key && first.disabled == file.disabled {
+        log::warn!(
+          "modpack ships {} and {} with the same content; keeping the first",
+          first.path,
+          file.path
+        );
+        continue;
+      }
+    } else {
+      kept.insert(lowered, files.len());
+    }
+    files.push(file);
+  }
+  files
 }
 
 /// Read the `.disabled` files of a platform archive. A mod under `mods/` named
@@ -609,8 +634,59 @@ pub async fn remote_from_archive(
 ) -> USTBLResult<RemoteModpack> {
   let file = File::open(archive)?;
   let manifest = parse_platform_manifest(&file)?;
-  let facts = archive_facts(app, &manifest, root, origin).await?;
+  remote_from_manifest(app, &manifest, archive, root, instance_name, origin, latest).await
+}
 
+async fn remote_from_manifest(
+  app: &AppHandle,
+  manifest: &ManifestBox,
+  archive: &Path,
+  root: &Path,
+  instance_name: &str,
+  origin: &InstanceOrigin,
+  latest: &LatestVersion,
+) -> USTBLResult<RemoteModpack> {
+  let line = manifest_line(manifest, origin)?;
+  let downloads = manifest.get_download_params(app, root).await?;
+  remote_from_downloads(
+    manifest,
+    line,
+    downloads,
+    |param| download_param(app, param),
+    archive,
+    root,
+    instance_name,
+    latest,
+  )
+  .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn remote_from_downloads<F, Fut>(
+  manifest: &ManifestBox,
+  line: (String, BaselineLoader),
+  downloads: Vec<ModpackDownload>,
+  fetch: F,
+  archive: &Path,
+  root: &Path,
+  instance_name: &str,
+  latest: &LatestVersion,
+) -> USTBLResult<RemoteModpack>
+where
+  F: Fn(DownloadParam) -> Fut,
+  Fut: std::future::Future<Output = USTBLResult<()>>,
+{
+  let facts = facts_of(manifest, line, downloads, fetch, root).await?;
+  let overrides = hash_overrides(archive, &facts, instance_name).await?;
+  Ok(assemble_remote(latest, facts, overrides))
+}
+
+/// The files the archive's override directories contribute, hashed in place.
+async fn hash_overrides(
+  archive: &Path,
+  facts: &ArchiveFacts,
+  instance_name: &str,
+) -> USTBLResult<Vec<RemoteFile>> {
   let hashing_started = std::time::Instant::now();
   let overrides_paths = facts.overrides_paths.clone();
   let (archive_path, name) = (archive.to_path_buf(), instance_name.to_string());
@@ -642,8 +718,154 @@ pub async fn remote_from_archive(
     overrides.len(),
     hashing_started.elapsed().as_millis()
   );
+  Ok(overrides)
+}
 
-  Ok(assemble_remote(latest, facts, overrides))
+/// What a picked archive turned out to be.
+enum LocalPack {
+  /// Modrinth or CurseForge: the manifest lists downloads, the overrides ship the rest.
+  Platform(ManifestBox),
+  /// MultiMC: a component chain plus the files of its game folder.
+  MultiMc(ArchiveFacts, ComponentPack),
+}
+
+impl LocalPack {
+  fn open(archive: &Path) -> USTBLResult<Self> {
+    let file = File::open(archive)?;
+    if let Ok(manifest) = parse_platform_manifest(&file) {
+      // The formats name these loaders, the engine installs neither.
+      if matches!(
+        declared_loader(manifest.as_ref())?.0,
+        ModLoaderType::Quilt | ModLoaderType::LiteLoader
+      ) {
+        return Err(InstanceError::UnsupportedModLoader.into());
+      }
+      return Ok(Self::Platform(manifest));
+    }
+    drop(file);
+    let (facts, pack) = multimc_pack(archive)?;
+    Ok(Self::MultiMc(facts, pack))
+  }
+}
+
+/// Whether the engine can install the archive, by the same reading the install
+/// starts with. Lets the import dialog refuse a pack before an instance exists.
+pub async fn check_local_archive(archive: &Path) -> USTBLResult<()> {
+  let archive = archive.to_path_buf();
+  tokio::task::spawn_blocking(move || LocalPack::open(&archive).map(|_| ()))
+    .await
+    .map_err(|e| USTBLError(e.to_string()))?
+}
+
+/// Read a modpack archive the user picked from disk. A Modrinth or CurseForge
+/// pack is described like a downloaded one; a MultiMC pack becomes a component
+/// pack plus the files of its game folder.
+pub async fn local_remote(
+  app: &AppHandle,
+  archive: &Path,
+  root: &Path,
+  instance_name: &str,
+  origin: &InstanceOrigin,
+  latest: &LatestVersion,
+) -> USTBLResult<RemoteModpack> {
+  let pack = tokio::task::spawn_blocking({
+    let archive = archive.to_path_buf();
+    move || LocalPack::open(&archive)
+  })
+  .await
+  .map_err(|e| USTBLError(e.to_string()))??;
+  match pack {
+    LocalPack::Platform(manifest) => {
+      remote_from_manifest(app, &manifest, archive, root, instance_name, origin, latest).await
+    }
+    LocalPack::MultiMc(facts, pack) => {
+      multimc_remote(facts, pack, archive, instance_name, latest).await
+    }
+  }
+}
+
+async fn multimc_remote(
+  facts: ArchiveFacts,
+  pack: ComponentPack,
+  archive: &Path,
+  instance_name: &str,
+  latest: &LatestVersion,
+) -> USTBLResult<RemoteModpack> {
+  let overrides = hash_overrides(archive, &facts, instance_name).await?;
+  let mut remote = assemble_remote(latest, facts, overrides);
+  remote.components = Some(components_of_mmc_pack(&pack.mmc_pack));
+  remote.component_pack = Some(pack);
+  Ok(remote)
+}
+/// What a MultiMC archive says: the game and loader its component chain
+/// names, and the chain itself with the patches and libraries it ships.
+/// Nothing is resolved here; the chain is resolved when it is restored.
+fn multimc_pack(archive: &Path) -> USTBLResult<(ArchiveFacts, ComponentPack)> {
+  let file = File::open(archive)?;
+  let manifest = MultiMcManifest::from_archive(&file)?;
+  let game_version = manifest.get_client_version()?;
+  let (loader_type, loader_version) = declared_loader(&manifest)?;
+  let mmc_pack: Value = serde_json::from_slice(
+    &ZipFiles::new(&file, &manifest.base_path)?.read("mmc-pack.json", 4 << 20)?,
+  )?;
+
+  let mut zip = zip::ZipArchive::new(&file)?;
+  let mut pack_files = Vec::new();
+  for index in 0..zip.len() {
+    let (name, symlink) = {
+      let entry = zip.by_index(index)?;
+      if !entry.is_file() {
+        continue;
+      }
+      (
+        entry.name()?.into_owned(),
+        entry.unix_mode().is_some_and(|m| m & 0o170000 == 0o120000),
+      )
+    };
+    let Some(relative) = name.strip_prefix(&manifest.base_path) else {
+      continue;
+    };
+    if !relative.starts_with("patches/") && !relative.starts_with("libraries/") {
+      continue;
+    }
+    if symlink || safe_relative(relative).is_err() {
+      log::warn!("modpack archive: skipped unusable component file {name}");
+      continue;
+    }
+    let mut source = zip.by_name(&name)?;
+    let mut hasher = Sha1::new();
+    let size = std::io::copy(&mut source, &mut hasher).at(archive)?;
+    pack_files.push(RemoteFile {
+      path: relative.to_string(),
+      key: FileKey {
+        sha1: hex::encode(hasher.finalize()),
+        size,
+      },
+      source: FileSource::ArchiveEntry {
+        archive: archive.to_path_buf(),
+        entry: name,
+      },
+      disabled: false,
+      once: false,
+    });
+  }
+
+  Ok((
+    ArchiveFacts {
+      game_version,
+      loader: BaselineLoader {
+        loader_type,
+        version: loader_version,
+      },
+      overrides_paths: manifest.get_overrides_paths(),
+      downloads: Vec::new(),
+    },
+    ComponentPack {
+      mmc_pack,
+      instance_cfg: manifest.cfg.into_iter().collect(),
+      files: pack_files,
+    },
+  ))
 }
 
 /// What a platform archive's manifest says, independent of how its overrides
@@ -774,6 +996,40 @@ where
   Ok(key)
 }
 
+/// The loader a manifest declares. A pack that declares none is vanilla; a
+/// loader the format names but the launcher cannot install is an error.
+fn declared_loader(manifest: &dyn ModpackManifest) -> USTBLResult<(ModLoaderType, String)> {
+  manifest.get_mod_loader_type_version().or_else(|error| {
+    if error.0 == InstanceError::ModpackManifestParseError.to_string() {
+      Ok((ModLoaderType::Unknown, String::new()))
+    } else {
+      Err(error)
+    }
+  })
+}
+
+/// The game and loader a manifest declares, when they are the followed line's.
+/// Checked before anything is looked up or fetched for the pack.
+fn manifest_line(
+  manifest: &ManifestBox,
+  origin: &InstanceOrigin,
+) -> USTBLResult<(String, BaselineLoader)> {
+  let game_version = manifest.get_client_version()?;
+  let (loader_type, version) = declared_loader(manifest.as_ref())?;
+  if game_version != origin.game_version
+    || (loader_type != origin.loader_type && !origin.version_id.is_empty())
+  {
+    return Err(InstanceError::ModpackUpdateLineMismatch.into());
+  }
+  Ok((
+    game_version,
+    BaselineLoader {
+      loader_type,
+      version,
+    },
+  ))
+}
+
 /// Check the manifest against the followed line and look up its downloads.
 pub async fn archive_facts(
   app: &AppHandle,
@@ -781,38 +1037,43 @@ pub async fn archive_facts(
   root: &Path,
   origin: &InstanceOrigin,
 ) -> USTBLResult<ArchiveFacts> {
-  let game_version = manifest.get_client_version()?;
-  let (loader_type, loader_version) = manifest.get_mod_loader_type_version()?;
-  if game_version != origin.game_version
-    || (loader_type != origin.loader_type && !origin.version_id.is_empty())
-  {
-    return Err(InstanceError::ModpackUpdateLineMismatch.into());
-  }
-
+  let line = manifest_line(manifest, origin)?;
   let params_started = std::time::Instant::now();
-  let downloads = download_files(
-    root,
-    manifest.get_download_params(app, root).await?,
+  let downloads = manifest.get_download_params(app, root).await?;
+  let facts = facts_of(
+    manifest,
+    line,
+    downloads,
     |param| download_param(app, param),
+    root,
   )
   .await?;
-
   log::info!(
     "modpack archive files: {} downloads, platform lookup elapsed_ms={}",
-    downloads.len(),
+    facts.downloads.len(),
     params_started.elapsed().as_millis()
   );
-  Ok(ArchiveFacts {
-    game_version,
-    loader: BaselineLoader {
-      loader_type,
-      version: loader_version,
-    },
-    overrides_paths: manifest.get_overrides_paths(),
-    downloads,
-  })
+  Ok(facts)
 }
 
+async fn facts_of<F, Fut>(
+  manifest: &ManifestBox,
+  (game_version, loader): (String, BaselineLoader),
+  downloads: Vec<ModpackDownload>,
+  fetch: F,
+  root: &Path,
+) -> USTBLResult<ArchiveFacts>
+where
+  F: Fn(DownloadParam) -> Fut,
+  Fut: std::future::Future<Output = USTBLResult<()>>,
+{
+  Ok(ArchiveFacts {
+    game_version,
+    loader,
+    overrides_paths: manifest.get_overrides_paths(),
+    downloads: download_files(root, downloads, fetch).await?,
+  })
+}
 /// The remote of a platform archive from its manifest facts and the files its
 /// overrides contribute.
 pub fn assemble_remote(
@@ -1575,38 +1836,45 @@ pub async fn latest_version(
         payload: Some(Payload::Campus(Box::new(version))),
       }))
     }
-    platform => {
-      let source = match platform {
-        OriginPlatform::Modrinth => OtherResourceSource::Modrinth,
-        _ => OtherResourceSource::CurseForge,
-      };
-      let packs = fetch_resource_version_packs(
-        app.clone(),
-        source,
-        OtherResourceVersionPackQuery {
-          resource_id: origin.project_id.clone(),
-          mod_loader: ALL_FILTER.into(),
-          game_versions: vec![origin.game_version.clone()],
-        },
-      )
-      .await?;
-      let items = packs.into_iter().flat_map(|pack| pack.items).collect();
-      let Some(item) = select_update(items, origin.loader_type, &origin.version_id) else {
-        return Ok(None);
-      };
-      if item.download_url.is_empty() || item.sha1.is_empty() {
-        return Err(InstanceError::ModpackUpdateRemoteInvalid.into());
-      }
-      Ok(Some(LatestVersion {
-        version_id: item.file_id,
-        label: item.name,
-        payload: Some(Payload::Archive {
-          url: item.download_url,
-          sha1: item.sha1.to_lowercase(),
-        }),
-      }))
+    // A local import has no remote: nothing is asked and nothing is newer.
+    OriginPlatform::Local => Ok(None),
+    OriginPlatform::Modrinth => platform_latest(app, origin, OtherResourceSource::Modrinth).await,
+    OriginPlatform::CurseForge => {
+      platform_latest(app, origin, OtherResourceSource::CurseForge).await
     }
   }
+}
+
+async fn platform_latest(
+  app: &AppHandle,
+  origin: &InstanceOrigin,
+  source: OtherResourceSource,
+) -> USTBLResult<Option<LatestVersion>> {
+  let packs = fetch_resource_version_packs(
+    app.clone(),
+    source,
+    OtherResourceVersionPackQuery {
+      resource_id: origin.project_id.clone(),
+      mod_loader: ALL_FILTER.into(),
+      game_versions: vec![origin.game_version.clone()],
+    },
+  )
+  .await?;
+  let items = packs.into_iter().flat_map(|pack| pack.items).collect();
+  let Some(item) = select_update(items, origin.loader_type, &origin.version_id) else {
+    return Ok(None);
+  };
+  if item.download_url.is_empty() || item.sha1.is_empty() {
+    return Err(InstanceError::ModpackUpdateRemoteInvalid.into());
+  }
+  Ok(Some(LatestVersion {
+    version_id: item.file_id,
+    label: item.name,
+    payload: Some(Payload::Archive {
+      url: item.download_url,
+      sha1: item.sha1.to_lowercase(),
+    }),
+  }))
 }
 
 /// Fetch whatever the new version needs to be described file by file. The
@@ -1629,6 +1897,25 @@ pub async fn resolve_remote(
       .as_ref()
       .ok_or(InstanceError::ModpackUpdateRemoteInvalid)?;
     let (remote, archive) = match payload {
+      Payload::Archive { sha1, .. } if origin.platform == OriginPlatform::Local => {
+        // The import copied the archive here and nothing else has it: when it
+        // is gone or changed there is nothing to fetch it from.
+        let path = archive_path(root, sha1);
+        let (actual, size) = tokio::task::spawn_blocking({
+          let path = path.clone();
+          move || hash_file(&path)
+        })
+        .await
+        .map_err(|e| USTBLError(e.to_string()))?
+        .map_err(|_| InstanceError::ModpackUpdateRemoteInvalid)?;
+        if actual != *sha1 {
+          return Err(InstanceError::ModpackUpdateRemoteInvalid.into());
+        }
+        (
+          local_remote(app, &path, root, instance_name, origin, latest).await?,
+          Some((sha1.as_str(), size)),
+        )
+      }
       Payload::Archive { url, sha1 } => {
         let path = archive_path(root, sha1);
         let cached = tokio::task::spawn_blocking({
@@ -2024,6 +2311,43 @@ mod tests {
     assert_eq!(merged.len(), 2);
     assert_eq!(merged[0].key.sha1, "3");
     assert!(matches!(merged[0].source, FileSource::ArchiveEntry { .. }));
+  }
+
+  #[test]
+  fn paths_differing_only_in_case_are_folded_when_their_content_is_the_same() {
+    let file = |path: &str, sha1: &str| RemoteFile {
+      path: path.into(),
+      key: FileKey {
+        sha1: sha1.into(),
+        size: 1,
+      },
+      source: FileSource::ArchiveEntry {
+        archive: PathBuf::new(),
+        entry: path.into(),
+      },
+      disabled: false,
+      once: false,
+    };
+    let same = merge_files(
+      Vec::new(),
+      vec![
+        file("config/Pack[ABC]/lang/zh_CN.lang", "1"),
+        file("config/Pack[abc]/lang/zh_CN.lang", "1"),
+        file("config/other.cfg", "2"),
+      ],
+    );
+    let paths: Vec<&str> = same.iter().map(|file| file.path.as_str()).collect();
+    assert_eq!(
+      paths,
+      ["config/Pack[ABC]/lang/zh_CN.lang", "config/other.cfg"]
+    );
+
+    // Different content is left for `validate` to refuse.
+    let different = merge_files(
+      Vec::new(),
+      vec![file("config/A.cfg", "1"), file("config/a.cfg", "2")],
+    );
+    assert_eq!(different.len(), 2);
   }
 
   fn origin_with(platform: OriginPlatform, version_id: &str) -> InstanceOrigin {
@@ -2434,6 +2758,332 @@ mod tests {
     assert!(!stored.cached_files_present());
     fs::remove_file(&kept).unwrap();
     assert!(!stored.cached_files_present());
+    let _ = fs::remove_dir_all(root);
+  }
+
+  // ---- local import ----
+
+  fn local_zip(entries: &[(&str, &[u8])]) -> PathBuf {
+    let path = std::env::temp_dir().join(format!("ustbl-local-{}.zip", uuid::Uuid::new_v4()));
+    let mut zip = zip::ZipWriter::new(File::create(&path).unwrap());
+    for (name, content) in entries {
+      zip
+        .start_file(*name, zip::write::SimpleFileOptions::default())
+        .unwrap();
+      zip.write_all(content).unwrap();
+    }
+    zip.finish().unwrap();
+    path
+  }
+
+  fn local_origin() -> InstanceOrigin {
+    InstanceOrigin {
+      game_version: "1.20.1".into(),
+      loader_type: ModLoaderType::Unknown,
+      follow: false,
+      ..origin_with(OriginPlatform::Local, "")
+    }
+  }
+
+  fn local_version() -> LatestVersion {
+    LatestVersion {
+      version_id: "ab".repeat(20),
+      label: "1.0".into(),
+      payload: Some(Payload::Archive {
+        url: String::new(),
+        sha1: "ab".repeat(20),
+      }),
+    }
+  }
+
+  /// `local_remote` without the platform lookups: the downloads are given.
+  async fn offline_remote(
+    archive: &Path,
+    root: &Path,
+    downloads: Vec<ModpackDownload>,
+  ) -> USTBLResult<RemoteModpack> {
+    let (origin, latest) = (local_origin(), local_version());
+    match LocalPack::open(archive)? {
+      LocalPack::Platform(manifest) => {
+        let line = manifest_line(&manifest, &origin)?;
+        remote_from_downloads(
+          &manifest,
+          line,
+          downloads,
+          |_| async { Ok(()) },
+          archive,
+          root,
+          "inst",
+          &latest,
+        )
+        .await
+      }
+      LocalPack::MultiMc(facts, pack) => {
+        multimc_remote(facts, pack, archive, "inst", &latest).await
+      }
+    }
+  }
+
+  fn mrpack_index(dependencies: &str) -> String {
+    format!(r#"{{"versionId":"1","name":"test","files":[],"dependencies":{{{dependencies}}}}}"#)
+  }
+
+  fn curseforge_manifest(loaders: &str) -> String {
+    format!(
+      r#"{{"name":"cf","version":"2","author":"a","overrides":"overrides","minecraft":{{"version":"1.20.1","modLoaders":[{loaders}]}},"files":[]}}"#
+    )
+  }
+
+  fn mmc_pack_json(loader: &str) -> String {
+    format!(
+      r#"{{"formatVersion":1,"components":[{{"uid":"net.minecraft","version":"1.20.1","important":true}}{loader}]}}"#
+    )
+  }
+
+  fn file_of<'a>(remote: &'a RemoteModpack, path: &str) -> &'a RemoteFile {
+    remote
+      .files
+      .iter()
+      .find(|file| file.path == path)
+      .unwrap_or_else(|| panic!("{path} missing from {:?}", remote.files))
+  }
+
+  #[tokio::test]
+  async fn a_local_mrpack_is_described_by_its_manifest_and_overrides() {
+    let root = hashless_root();
+    let index = mrpack_index(r#""minecraft":"1.20.1","fabric-loader":"0.15.0""#);
+    let archive = local_zip(&[
+      ("modrinth.index.json", index.as_bytes()),
+      ("overrides/config/a.cfg", b"hello"),
+      ("overrides/mods/own.jar", b"jar"),
+      ("server-overrides/config/server.cfg", b"no"),
+    ]);
+    let listed = manifest_download(&root, "mods/listed.jar", Some(HELLO_SHA1), Some(5));
+    let shadowed = manifest_download(&root, "config/a.cfg", Some(&"cd".repeat(20)), Some(9));
+    let remote = offline_remote(&archive, &root, vec![listed, shadowed])
+      .await
+      .unwrap();
+
+    assert_eq!(remote.game_version, "1.20.1");
+    assert_eq!(
+      (remote.loader.loader_type, remote.loader.version.as_str()),
+      (ModLoaderType::Fabric, "0.15.0")
+    );
+    assert_eq!(remote.version_id, "ab".repeat(20));
+    assert!(remote.component_pack.is_none() && remote.components.is_none());
+    assert!(matches!(
+      file_of(&remote, "mods/listed.jar").source,
+      FileSource::Download(_)
+    ));
+    // An override wins over a download of the same path.
+    let shadow = file_of(&remote, "config/a.cfg");
+    assert!(matches!(shadow.source, FileSource::ArchiveEntry { .. }));
+    assert_eq!(shadow.key.sha1, HELLO_SHA1);
+    assert!(remote.files.iter().all(|f| f.path != "config/server.cfg"));
+    assert_eq!(remote.files.len(), 3);
+    let _ = fs::remove_file(archive);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn a_local_curseforge_pack_declares_its_loader_and_a_loaderless_pack_is_vanilla() {
+    let root = hashless_root();
+    let manifest = curseforge_manifest(r#"{"id":"forge-47.1.0","primary":true}"#);
+    let archive = local_zip(&[
+      ("manifest.json", manifest.as_bytes()),
+      ("overrides/options.txt", b"x"),
+    ]);
+    let remote = offline_remote(&archive, &root, Vec::new()).await.unwrap();
+    assert_eq!(
+      (remote.loader.loader_type, remote.loader.version.as_str()),
+      (ModLoaderType::Forge, "47.1.0")
+    );
+    assert_eq!(remote.files.len(), 1);
+    let _ = fs::remove_file(archive);
+
+    let manifest = curseforge_manifest("");
+    let archive = local_zip(&[("manifest.json", manifest.as_bytes())]);
+    let vanilla = offline_remote(&archive, &root, Vec::new()).await.unwrap();
+    assert_eq!(vanilla.loader.loader_type, ModLoaderType::Unknown);
+    assert!(vanilla.loader.version.is_empty());
+    let _ = fs::remove_file(archive);
+
+    let index = mrpack_index(r#""minecraft":"1.20.1""#);
+    let archive = local_zip(&[("modrinth.index.json", index.as_bytes())]);
+    let vanilla = offline_remote(&archive, &root, Vec::new()).await.unwrap();
+    assert_eq!(vanilla.loader.loader_type, ModLoaderType::Unknown);
+    let _ = fs::remove_file(archive);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn quilt_is_refused_for_the_platform_formats_but_kept_for_multimc() {
+    let root = hashless_root();
+    let index = mrpack_index(r#""minecraft":"1.20.1","quilt-loader":"0.20.0""#);
+    let mrpack = local_zip(&[("modrinth.index.json", index.as_bytes())]);
+    let manifest = curseforge_manifest(r#"{"id":"quilt-0.20.0","primary":true}"#);
+    let curseforge = local_zip(&[("manifest.json", manifest.as_bytes())]);
+    let liteloader = curseforge_manifest(r#"{"id":"liteloader-1.0","primary":true}"#);
+    let lite = local_zip(&[("manifest.json", liteloader.as_bytes())]);
+    for archive in [&mrpack, &curseforge, &lite] {
+      let error = offline_remote(archive, &root, Vec::new())
+        .await
+        .unwrap_err();
+      assert_eq!(error.0, InstanceError::UnsupportedModLoader.to_string());
+      let _ = fs::remove_file(archive);
+    }
+
+    let pack = mmc_pack_json(r#",{"uid":"org.quiltmc.quilt-loader","version":"0.20.0"}"#);
+    let archive = local_zip(&[
+      ("mmc-pack.json", pack.as_bytes()),
+      ("instance.cfg", b"name=Quilty\n"),
+    ]);
+    let remote = offline_remote(&archive, &root, Vec::new()).await.unwrap();
+    assert_eq!(remote.loader.loader_type, ModLoaderType::Quilt);
+    let _ = fs::remove_file(archive);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn a_multimc_pack_becomes_a_component_pack_with_its_shipped_files() {
+    let root = hashless_root();
+    let pack = mmc_pack_json(r#",{"uid":"net.fabricmc.fabric-loader","version":"0.15.0"}"#);
+    for base in ["", "Pack/"] {
+      let name = |rest: &str| format!("{base}{rest}");
+      let entries = [
+        (name("mmc-pack.json"), pack.as_bytes().to_vec()),
+        (
+          name("instance.cfg"),
+          b"name=Pack\nJvmArgs=-Xmx2G\n".to_vec(),
+        ),
+        (
+          name("patches/net.fabricmc.fabric-loader.json"),
+          b"{\"uid\":1}".to_vec(),
+        ),
+        (name("libraries/custom.jar"), b"hello".to_vec()),
+        (name("patches/../../evil.json"), b"x".to_vec()),
+        (name(".minecraft/mods/m.jar"), b"jar".to_vec()),
+        (name(".minecraft/config/c.cfg"), b"cfg".to_vec()),
+      ];
+      let refs: Vec<(&str, &[u8])> = entries
+        .iter()
+        .map(|(name, content)| (name.as_str(), content.as_slice()))
+        .collect();
+      let archive = local_zip(&refs);
+      let remote = offline_remote(&archive, &root, Vec::new()).await.unwrap();
+
+      assert_eq!(remote.game_version, "1.20.1");
+      assert_eq!(
+        (remote.loader.loader_type, remote.loader.version.as_str()),
+        (ModLoaderType::Fabric, "0.15.0")
+      );
+      let mut paths: Vec<&str> = remote.files.iter().map(|f| f.path.as_str()).collect();
+      paths.sort();
+      assert_eq!(paths, ["config/c.cfg", "mods/m.jar"], "base {base:?}");
+      let chain = remote.components.as_ref().unwrap();
+      assert!(chain.iter().any(|c| c.uid == "net.fabricmc.fabric-loader"));
+      let component_pack = remote.component_pack.as_ref().unwrap();
+      let mut shipped: Vec<&str> = component_pack
+        .files
+        .iter()
+        .map(|f| f.path.as_str())
+        .collect();
+      shipped.sort();
+      assert_eq!(
+        shipped,
+        [
+          "libraries/custom.jar",
+          "patches/net.fabricmc.fabric-loader.json"
+        ]
+      );
+      let library = component_pack
+        .files
+        .iter()
+        .find(|f| f.path == "libraries/custom.jar")
+        .unwrap();
+      assert_eq!(
+        (library.key.sha1.as_str(), library.key.size),
+        (HELLO_SHA1, 5)
+      );
+      assert_eq!(component_pack.instance_cfg["name"], "Pack");
+      assert_eq!(component_pack.instance_cfg["JvmArgs"], "-Xmx2G");
+      // The pack is kept as shipped, flags the typed manifest does not model included.
+      assert_eq!(component_pack.mmc_pack["components"][0]["important"], true);
+
+      // What the update engine stores between planning and applying.
+      let origin = local_origin();
+      let cache = RemoteCache::new(&origin, &root, &remote, Some((&"ab".repeat(20), 1)));
+      let bytes = serde_json::to_vec(&cache).unwrap();
+      let cache: RemoteCache = serde_json::from_slice(&bytes).unwrap();
+      let restored = RemoteModpack::from_stored(cache.remote, |_| unreachable!());
+      assert_eq!(restored.component_pack.unwrap().files.len(), 2);
+      assert_eq!(restored.files.len(), 2);
+      let _ = fs::remove_file(archive);
+    }
+    let _ = fs::remove_dir_all(root);
+  }
+
+  /// A picked archive is untrusted. A file it ships or asks for that would land
+  /// in the update folder, or outside the instance, must not get through: the
+  /// install validates the remote before it writes anything.
+  #[tokio::test]
+  async fn a_local_pack_cannot_reach_the_update_folder_or_leave_the_instance() {
+    let root = hashless_root();
+    let index = mrpack_index(r#""minecraft":"1.20.1""#);
+    for planted in [
+      ".ustbl-update/journal.json",
+      ".USTBL-UPDATE/backup/files/x.bat",
+    ] {
+      let entry = format!("overrides/{planted}");
+      let archive = local_zip(&[
+        ("modrinth.index.json", index.as_bytes()),
+        (entry.as_str(), br#"{"state":"committing"}"#),
+      ]);
+      let checked = offline_remote(&archive, &root, Vec::new())
+        .await
+        .and_then(|remote| remote.validate("inst"));
+      assert!(checked.is_err(), "{planted} was accepted");
+      let _ = fs::remove_file(archive);
+    }
+
+    let archive = local_zip(&[("modrinth.index.json", index.as_bytes())]);
+    let escaping = manifest_download(&root, "../escape.jar", Some(HELLO_SHA1), Some(5));
+    let checked = offline_remote(&archive, &root, vec![escaping])
+      .await
+      .and_then(|remote| remote.validate("inst"));
+    assert!(checked.is_err(), "a path leaving the instance was accepted");
+
+    // An absolute path replaces the instance root when joined; such a file is
+    // not one of the instance's and is left out.
+    let outside = std::env::temp_dir().join(format!("ustbl-outside-{}.jar", uuid::Uuid::new_v4()));
+    let mut absolute = manifest_download(&root, "mods/a.jar", Some(HELLO_SHA1), Some(5));
+    absolute.param.dest = outside.clone();
+    let remote = offline_remote(&archive, &root, vec![absolute])
+      .await
+      .unwrap();
+    assert!(remote.files.is_empty(), "{:?}", remote.files);
+    assert!(!outside.exists());
+    let _ = fs::remove_file(archive);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn an_archive_that_is_none_of_the_formats_is_refused() {
+    let root = hashless_root();
+    let archive = local_zip(&[("readme.txt", b"hi")]);
+    assert!(offline_remote(&archive, &root, Vec::new()).await.is_err());
+    // A broken manifest of a known format is not mistaken for a MultiMC pack.
+    let broken = local_zip(&[("modrinth.index.json", b"{")]);
+    assert!(offline_remote(&broken, &root, Vec::new()).await.is_err());
+    // A MultiMC pack without a game version is refused as well.
+    let no_game = local_zip(&[
+      ("mmc-pack.json", br#"{"formatVersion":1,"components":[]}"#),
+      ("instance.cfg", b"name=x\n"),
+    ]);
+    assert!(offline_remote(&no_game, &root, Vec::new()).await.is_err());
+    for path in [archive, broken, no_game] {
+      let _ = fs::remove_file(path);
+    }
     let _ = fs::remove_dir_all(root);
   }
 }

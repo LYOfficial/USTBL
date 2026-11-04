@@ -276,7 +276,7 @@ fn is_campus_install(origin: &InstanceOrigin, record: Option<&CampusInstallRecor
   origin.platform == OriginPlatform::Campus
     || matches!(
       origin.platform,
-      OriginPlatform::Modrinth | OriginPlatform::CurseForge
+      OriginPlatform::Modrinth | OriginPlatform::CurseForge | OriginPlatform::Local
     ) && record.is_some_and(|record| record.target.is_some())
 }
 
@@ -785,12 +785,22 @@ fn scan_campus_instances(
   instances
 }
 
+/// A local import is handled by the engine only while it installs. Afterwards
+/// it has no source to check, update, roll back to or unlink from, so the
+/// engine treats it as an instance without an origin.
+fn is_settled_local(origin: &InstanceOrigin, installing: bool) -> bool {
+  origin.platform == OriginPlatform::Local && !is_fresh(origin) && !installing
+}
+
 fn target(app: &AppHandle, instance_id: &str) -> USTBLResult<Option<Target>> {
   let instance = current_instance(app, instance_id)?;
   let Some(origin) = instance.origin.clone() else {
     return Ok(None);
   };
   let root = instance.version_path.clone();
+  if is_settled_local(&origin, has_campus_install(&root)) {
+    return Ok(None);
+  }
   Ok(Some(Target {
     instance,
     origin,
@@ -2191,7 +2201,7 @@ async fn plan_fresh_install(
     .filter(|_| {
       matches!(
         target.origin.platform,
-        OriginPlatform::Modrinth | OriginPlatform::CurseForge
+        OriginPlatform::Modrinth | OriginPlatform::CurseForge | OriginPlatform::Local
       )
     });
   let latest = if let Some(install_target) = install_target {
@@ -3677,6 +3687,36 @@ mod tests {
       &platform_origin(ModLoaderType::Fabric),
       Some(&no_target)
     ));
+    let local = InstanceOrigin {
+      platform: OriginPlatform::Local,
+      ..platform_origin(ModLoaderType::Unknown)
+    };
+    assert!(is_campus_install(&local, Some(&target)));
+    assert!(!is_campus_install(&local, None));
+    assert!(!is_campus_install(&local, Some(&no_target)));
+  }
+
+  #[test]
+  fn a_local_import_is_the_engines_only_while_it_installs() {
+    let local = |version_id: &str| InstanceOrigin {
+      platform: OriginPlatform::Local,
+      version_id: version_id.into(),
+      ..platform_origin(ModLoaderType::Unknown)
+    };
+    // Waiting for its install, or failed and kept for a retry.
+    assert!(!is_settled_local(&local(""), false));
+    assert!(!is_settled_local(&local(""), true));
+    // Committed but the install record is still being cleaned up.
+    assert!(!is_settled_local(&local("abc"), true));
+    // Done: nothing to check, update or roll back.
+    assert!(is_settled_local(&local("abc"), false));
+    // Other platforms are never settled this way.
+    let campus = InstanceOrigin {
+      platform: OriginPlatform::Campus,
+      version_id: "1".into(),
+      ..local("")
+    };
+    assert!(!is_settled_local(&campus, false));
   }
 
   #[test]

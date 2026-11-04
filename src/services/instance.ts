@@ -93,7 +93,6 @@ export class InstanceService {
     game: GameClientResourceInfo,
     modLoader: ModLoaderResourceInfo,
     optifine?: OptiFineResourceInfo,
-    modpackPath?: string,
     isInstallFabricApi?: boolean,
     modpackVersion?: string,
     origin?: ModpackOriginInput
@@ -106,7 +105,6 @@ export class InstanceService {
       game,
       modLoader,
       optifine,
-      modpackPath,
       isInstallFabricApi,
       modpackVersion,
       origin,

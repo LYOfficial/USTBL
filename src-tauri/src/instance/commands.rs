@@ -20,19 +20,13 @@ use crate::instance::helpers::misc::{
   refresh_and_update_instances, resolve_isolation, unify_instance_name,
 };
 use crate::instance::helpers::modpack::base_store;
-use crate::instance::helpers::modpack::baseline::{
-  components_of_mmc_pack, hash_existing_files, hash_file, BaselineFile, BaselineLoader,
-  ModpackBaseline,
-};
+use crate::instance::helpers::modpack::baseline::{hash_file, BaselineLoader, ModpackBaseline};
 use crate::instance::helpers::modpack::export::{
   build_component_export, collect_modrinth_files, create_modpack_zip, generate_modrinth_manifest,
   generate_multimc_instance_cfg, generate_multimc_manifest, list_files, validate_export_options,
   ExportFormat, ExportModpackOptions,
 };
-use crate::instance::helpers::modpack::misc::{
-  extract_overrides, get_download_params, retain_non_overridden_downloads, ModpackMetaInfo,
-};
-use crate::instance::helpers::modpack::multimc::profile::ResolvedMultiMc;
+use crate::instance::helpers::modpack::misc::ModpackMetaInfo;
 use crate::instance::helpers::modpack::multimc::snapshot::{
   is_component_instance, ComponentSnapshot,
 };
@@ -946,79 +940,71 @@ pub fn create_launch_desktop_shortcut(
   Ok(())
 }
 
-/// Accept the origin claimed by the download entry only when it is provably the
-/// modpack file being imported: the archive must match the SHA-1 the platform
-/// published. The pack's internal structure does not matter, a component profile
-/// is followed like any other pack.
-///
-/// One exception: a campus install has no archive. It creates an empty instance
-/// whose origin points at the placeholder version `""`, and the update engine
-/// then installs the real version into it like any other update.
-async fn verify_origin(
+/// The origin an instance is created with, for a modpack that installs after
+/// the instance exists. A campus or platform install has no archive yet; a
+/// local import has one, copied in by `create_instance`. Either way the origin
+/// starts at the placeholder version `""` and the update engine installs the
+/// real version into the instance like any other update.
+fn creation_origin(
   input: Option<ModpackOriginInput>,
-  modpack_path: Option<&String>,
   game_version: &str,
   loader_type: ModLoaderType,
 ) -> Option<InstanceOrigin> {
   let input = input?;
-  if modpack_path.is_none()
-    && input.platform == OriginPlatform::Campus
-    && input.expected_sha1.is_empty()
-  {
-    return Some(InstanceOrigin {
-      platform: input.platform,
-      project_id: input.project_id,
-      version_id: String::new(),
-      game_version: game_version.to_string(),
-      loader_type,
-      follow: true,
-    });
-  }
-  if modpack_path.is_none()
-    && matches!(
-      input.platform,
-      OriginPlatform::Modrinth | OriginPlatform::CurseForge
-    )
-    && !input.version_id.is_empty()
-    && !input.expected_sha1.is_empty()
-  {
-    return Some(InstanceOrigin {
-      platform: input.platform,
-      project_id: input.project_id,
-      version_id: String::new(),
-      game_version: game_version.to_string(),
-      loader_type: input.loader_type,
-      follow: true,
-    });
-  }
-  let path = PathBuf::from(modpack_path?);
-  let expected = input.expected_sha1.trim().to_lowercase();
-  let actual = tokio::task::spawn_blocking(move || hash_file(&path))
-    .await
-    .ok()?
-    .ok()?
-    .0;
-  if expected.is_empty() || expected != actual {
-    log::warn!("Dropping modpack origin: archive SHA-1 does not match the published one");
-    return None;
-  }
-  // No current caller passes an origin with an archive; keep this E4 path for compatibility.
+  let (loader_type, follow) = match input.platform {
+    OriginPlatform::Campus if input.expected_sha1.is_empty() => (loader_type, true),
+    OriginPlatform::Modrinth | OriginPlatform::CurseForge
+      if !input.version_id.is_empty() && !input.expected_sha1.is_empty() =>
+    {
+      (input.loader_type, true)
+    }
+    // Nothing is followed: the pack was picked from disk, not published.
+    OriginPlatform::Local if input.local_path.is_some() => (input.loader_type, false),
+    _ => return None,
+  };
   Some(InstanceOrigin {
     platform: input.platform,
     project_id: input.project_id,
-    version_id: input.version_id,
+    version_id: String::new(),
     game_version: game_version.to_string(),
     loader_type,
-    follow: true,
+    follow,
   })
 }
 
-fn should_lock_on_create(instance: &Instance, component_import: bool) -> bool {
-  component_import || owns_files(instance)
+/// Copy the picked archive into the instance's update folder under its SHA-1
+/// and describe it as the version to install. The original may be moved or
+/// deleted before the install runs, or while it is retried.
+async fn stage_local_archive(
+  source: &str,
+  version_path: &Path,
+  label: String,
+) -> USTBLResult<crate::instance::modpack_update::commands::InstallTarget> {
+  let (source, root) = (PathBuf::from(source), version_path.to_path_buf());
+  tokio::task::spawn_blocking(move || {
+    let (sha1, _) = hash_file(&source)?;
+    let target = crate::instance::modpack_update::sources::archive_path(&root, &sha1);
+    let parent = target
+      .parent()
+      .ok_or(InstanceError::FileCreationFailed)?
+      .to_path_buf();
+    fs::create_dir_all(&parent)?;
+    let temporary = target.with_extension("zip.part");
+    fs::copy(&source, &temporary)?;
+    fs::rename(&temporary, &target)?;
+    Ok::<_, crate::error::USTBLError>(crate::instance::modpack_update::commands::InstallTarget {
+      version_id: sha1.clone(),
+      label,
+      url: String::new(),
+      sha1,
+    })
+  })
+  .await
+  .map_err(|e| crate::error::USTBLError(e.to_string()))?
 }
 
-fn apply_creation_isolation(instance: &mut Instance, component_import: bool) {
-  if should_lock_on_create(instance, component_import) {
+fn apply_creation_isolation(instance: &mut Instance) {
+  if owns_files(instance) {
     instance.isolation_locked = true;
   }
 }
@@ -1033,7 +1019,6 @@ pub async fn create_instance(
   game: GameClientResourceInfo,
   mod_loader: ModLoaderResourceInfo,
   optifine: Option<OptiFineResourceInfo>,
-  modpack_path: Option<String>,
   mut is_install_fabric_api: Option<bool>,
   modpack_version: Option<String>,
   origin: Option<ModpackOriginInput>,
@@ -1055,34 +1040,8 @@ pub async fn create_instance(
   // Guard removes version_path on any early return (errors)
   let dir_guard = RemoveDirGuard::new(version_path.clone());
 
-  let modpack_file = modpack_path.as_ref().map(fs::File::open).transpose()?;
-  let mut component_import = if let Some(file) = &modpack_file {
-    ResolvedMultiMc::from_archive(client.inner(), file).await?
-  } else {
-    None
-  };
-  if component_import.is_some() && optifine.is_some() {
-    return Err(crate::error::USTBLError(
-      "Cannot overlay OptiFine on an imported component profile".into(),
-    ));
-  }
-  if component_import
-    .as_ref()
-    .is_some_and(|p| p.client.client_version.as_deref() != Some(&game.id))
-  {
-    return Err(crate::error::USTBLError(
-      "Selected Minecraft version differs from the imported component profile".into(),
-    ));
-  }
-
   let origin_input = origin.clone();
-  let origin = verify_origin(
-    origin.clone(),
-    modpack_path.as_ref(),
-    &game.id,
-    mod_loader.loader_type,
-  )
-  .await;
+  let origin = creation_origin(origin, &game.id, mod_loader.loader_type);
 
   let optifine_info = optifine.as_ref().map(|info| OptiFine {
     filename: info.filename.clone(),
@@ -1121,10 +1080,7 @@ pub async fn create_instance(
     isolation_locked: false,
   };
 
-  if component_import.is_some() {
-    instance.mod_loader.status = ModLoaderStatus::Installed;
-  }
-  apply_creation_isolation(&mut instance, component_import.is_some());
+  apply_creation_isolation(&mut instance);
 
   // Download version info, retrying through both official and mirror routes.
   let official_version_url =
@@ -1145,11 +1101,8 @@ pub async fn create_instance(
   if version_sources.is_empty() {
     version_sources.push(official_version_url);
   }
-  let mut version_info: McClientInfo = if let Some(import) = &component_import {
-    import.client.clone()
-  } else {
-    fetch_json_with_fallbacks(client.inner(), &version_sources, 10).await?
-  };
+  let mut version_info: McClientInfo =
+    fetch_json_with_fallbacks(client.inner(), &version_sources, 10).await?;
 
   version_info.id = name.clone();
   version_info.jar = Some(name.clone());
@@ -1162,23 +1115,6 @@ pub async fn create_instance(
   vanilla_patch.priority = Some(0);
   version_info.patches.push(vanilla_patch);
 
-  if let Some(import) = &mut component_import {
-    import.client = version_info;
-    import.materialize(
-      modpack_file.as_ref().unwrap(),
-      &directory.dir.join("libraries"),
-      &version_path,
-    )?;
-    version_info = import.client.clone();
-    if instance.mod_loader.loader_type != ModLoaderType::Unknown {
-      version_info.patches.push(McClientInfo {
-        id: instance.mod_loader.loader_type.to_string().to_lowercase(),
-        version: Some(instance.mod_loader.version.clone()),
-        ..Default::default()
-      });
-    }
-  }
-
   let mut task_params = Vec::<PTaskParam>::new();
 
   // Download client (use task)
@@ -1190,23 +1126,16 @@ pub async fn create_instance(
   if !client_download_info.url.is_empty() {
     let original_client_url = Url::parse(&client_download_info.url.clone())
       .map_err(|_| InstanceError::ClientJsonParseError)?;
-    let official_client_url = if component_import.is_some() {
-      original_client_url.clone()
-    } else {
-      Url::parse(&format!(
-        "https://piston-data.mojang.com/v1/objects/{}/client.jar",
-        client_download_info.sha1
-      ))
-      .map_err(|_| InstanceError::ClientJsonParseError)?
-    };
+    let official_client_url = Url::parse(&format!(
+      "https://piston-data.mojang.com/v1/objects/{}/client.jar",
+      client_download_info.sha1
+    ))
+    .map_err(|_| InstanceError::ClientJsonParseError)?;
     let mut client_sources = Vec::new();
     for source in &priority_list {
       let candidate = match source {
         SourceType::Official => official_client_url.clone(),
         SourceType::BMCLAPIMirror => {
-          if component_import.is_some() {
-            continue;
-          }
           get_download_api(SourceType::BMCLAPIMirror, ResourceType::Launcher)?
             .join(&format!("version/{}/client", game.id))?
         }
@@ -1258,14 +1187,17 @@ pub async fn create_instance(
   task_params
     .extend(get_invalid_assets(&app, &version_info, &priority_list, assets_dir, false).await?);
 
-  // When installing a modpack, skip auto-installing Fabric API to avoid
-  // duplicates — the modpack manifest already specifies the exact version needed.
-  if modpack_path.is_some() {
+  // A local import installs its own loader and mods afterwards; Fabric API
+  // would duplicate the one the pack names.
+  if origin_input
+    .as_ref()
+    .is_some_and(|input| input.platform == OriginPlatform::Local)
+  {
     is_install_fabric_api = Some(false);
   }
 
   // download loader (installer)
-  if component_import.is_none() && instance.mod_loader.loader_type != ModLoaderType::Unknown {
+  if instance.mod_loader.loader_type != ModLoaderType::Unknown {
     install_mod_loader(
       app.clone(),
       &priority_list,
@@ -1288,48 +1220,6 @@ pub async fn create_instance(
       &mut task_params,
     )
     .await?;
-  }
-
-  // If modpack path is provided, install it
-  let mut baseline_files = Vec::<BaselineFile>::new();
-  if let Some(file) = &modpack_file {
-    let mut downloads = get_download_params(&app, file, &version_path).await?;
-    let overrides = extract_overrides(file, &version_path)?;
-    // Overrides are the final layer of the pack. Do not schedule a download
-    // that would overwrite one after its baseline was recorded.
-    retain_non_overridden_downloads(&mut downloads, &version_path, &overrides);
-    // Downloaded files are recorded from the manifest: their hash and size are
-    // known before the transfer finishes.
-    for download in &downloads {
-      if let (Some(sha1), Some(size), Ok(relative)) = (
-        &download.param.sha1,
-        download.size,
-        download.param.dest.strip_prefix(&version_path),
-      ) {
-        baseline_files.push(BaselineFile::managed(
-          &relative.to_string_lossy().into_owned(),
-          crate::instance::modpack_update::diff::FileKey {
-            sha1: sha1.clone(),
-            size,
-          },
-          false,
-        ));
-      }
-    }
-    task_params.extend(
-      downloads
-        .into_iter()
-        .map(|download| PTaskParam::Download(download.param)),
-    );
-
-    if instance.origin.is_some() {
-      let root = version_path.clone();
-      let hashed = tokio::task::spawn_blocking(move || hash_existing_files(&root, &overrides))
-        .await
-        .map_err(|e| crate::error::USTBLError(e.to_string()))??;
-      // Listed last so an override wins over a download of the same path.
-      baseline_files.extend(hashed);
-    }
   }
 
   // Optionally skip first-screen options by adding options.txt (available for zh-Hans only)
@@ -1362,24 +1252,28 @@ pub async fn create_instance(
     .save_json_cfg()
     .await
     .map_err(|_| InstanceError::FileCreationFailed)?;
+  // A local import is copied in before the install is scheduled, so a failure
+  // here still rolls the whole instance back.
+  let local_target = match origin_input.as_ref() {
+    Some(input) if input.platform == OriginPlatform::Local => {
+      let source = input
+        .local_path
+        .as_deref()
+        .ok_or(InstanceError::ModpackManifestParseError)?;
+      let label = input.label.clone().unwrap_or_default();
+      Some(stage_local_archive(source, &version_path, label).await?)
+    }
+    _ => None,
+  };
   if let Some(origin) = &instance.origin {
-    let mut baseline = ModpackBaseline::build(
+    let baseline = ModpackBaseline::build(
       origin,
       BaselineLoader {
         loader_type: instance.mod_loader.loader_type,
         version: instance.mod_loader.version.clone(),
       },
-      baseline_files,
+      Vec::new(),
     );
-    // The chain of a component profile is taken from the snapshot the importer
-    // already wrote, so the baseline and the exported pack cannot disagree.
-    if component_import.is_some() {
-      let snapshot = ComponentSnapshot::load(&version_path)
-        .await
-        .map_err(|_| InstanceError::FileCreationFailed)?
-        .ok_or(InstanceError::FileCreationFailed)?;
-      baseline = baseline.with_components(components_of_mmc_pack(&snapshot.mmc_pack));
-    }
     baseline
       .save(&version_path)
       .await
@@ -1415,7 +1309,9 @@ pub async fn create_instance(
   crate::instance::modpack_update::commands::register_created_campus_instance(
     &instance,
     client_group.task_group,
-    crate::instance::modpack_update::commands::install_target_from_origin(origin_input.as_ref()),
+    local_target.or_else(|| {
+      crate::instance::modpack_update::commands::install_target_from_origin(origin_input.as_ref())
+    }),
   )?;
   dir_guard.commit(); // disarm the cleanup guard on success
   Ok(())
@@ -1778,6 +1674,7 @@ pub async fn retrieve_modpack_meta_info(
 ) -> USTBLResult<ModpackMetaInfo> {
   let path = PathBuf::from(path);
   let file = fs::File::open(&path).map_err(|_| InstanceError::FileNotFoundError)?;
+  crate::instance::modpack_update::sources::check_local_archive(&path).await?;
   ModpackMetaInfo::from_archive(&app, &file).await
 }
 
@@ -1912,120 +1809,123 @@ pub async fn export_modpack(
 #[cfg(test)]
 mod origin_tests {
   use super::*;
-  use std::io::Write;
 
-  fn input(sha1: &str) -> ModpackOriginInput {
+  fn input(platform: OriginPlatform, version_id: &str, sha1: &str) -> ModpackOriginInput {
     ModpackOriginInput {
-      platform: OriginPlatform::Modrinth,
+      platform,
       project_id: "p".into(),
-      version_id: "v".into(),
+      version_id: version_id.into(),
       expected_sha1: sha1.into(),
       url: None,
       label: None,
-      loader_type: ModLoaderType::Unknown,
+      loader_type: ModLoaderType::Fabric,
+      local_path: None,
     }
   }
 
-  fn archive() -> (PathBuf, String) {
-    let path = std::env::temp_dir().join(format!("ustbl-origin-{}.mrpack", uuid::Uuid::new_v4()));
-    fs::File::create(&path).unwrap().write_all(b"abc").unwrap();
-    // SHA-1 of "abc"
-    (path, "a9993e364706816aba3e25717850c26c9cd0d89d".into())
-  }
-
-  #[tokio::test]
-  async fn origin_is_kept_only_when_the_archive_matches_the_published_sha1() {
-    let (path, sha1) = archive();
-    let path_str = path.to_string_lossy().to_string();
-    let verify = |input| verify_origin(input, Some(&path_str), "1.21.1", ModLoaderType::NeoForge);
-
-    let kept = verify(Some(input(&sha1.to_uppercase()))).await.unwrap();
-    assert_eq!(
-      (kept.game_version.as_str(), kept.loader_type),
-      ("1.21.1", ModLoaderType::NeoForge)
-    );
-    assert!(kept.follow);
-    assert!(verify(Some(input("deadbeef"))).await.is_none());
-    assert!(verify(Some(input(""))).await.is_none());
-    assert!(verify(None).await.is_none());
-    let _ = fs::remove_file(path);
-  }
-
-  #[tokio::test]
-  async fn a_campus_install_without_an_archive_starts_from_the_placeholder_version() {
-    let campus = |sha1: &str| ModpackOriginInput {
-      platform: OriginPlatform::Campus,
-      project_id: "gtnh".into(),
-      version_id: "42".into(),
-      expected_sha1: sha1.into(),
-      url: None,
-      label: None,
-      loader_type: ModLoaderType::Unknown,
-    };
-    let origin = verify_origin(Some(campus("")), None, "1.7.10", ModLoaderType::Forge)
-      .await
-      .unwrap();
-    assert_eq!(origin.version_id, "");
-    assert!(origin.follow);
-    // A hash or another platform still has to be proven by an archive.
-    assert!(
-      verify_origin(Some(campus("abc")), None, "1.7.10", ModLoaderType::Forge)
-        .await
-        .is_none()
-    );
-    assert!(
-      verify_origin(Some(input("")), None, "1.21.1", ModLoaderType::Fabric)
-        .await
-        .is_none()
-    );
-  }
-
-  #[tokio::test]
-  async fn a_platform_install_without_an_archive_uses_the_input_loader() {
-    let platform = ModpackOriginInput {
-      platform: OriginPlatform::Modrinth,
-      project_id: "project".into(),
-      version_id: "version".into(),
-      expected_sha1: "abc".into(),
-      url: Some("https://example.test/pack.mrpack".into()),
-      label: Some("Pack".into()),
-      loader_type: ModLoaderType::Fabric,
-    };
-    let origin = verify_origin(
-      Some(platform.clone()),
-      None,
-      "1.21.1",
-      ModLoaderType::Unknown,
+  #[test]
+  fn a_campus_install_starts_from_the_placeholder_version() {
+    let origin = creation_origin(
+      Some(input(OriginPlatform::Campus, "42", "")),
+      "1.7.10",
+      ModLoaderType::Forge,
     )
-    .await
     .unwrap();
     assert_eq!(origin.version_id, "");
+    assert_eq!(origin.loader_type, ModLoaderType::Forge);
+    assert!(origin.follow);
+    // A hash on a campus input is not a campus install.
+    assert!(creation_origin(
+      Some(input(OriginPlatform::Campus, "42", "abc")),
+      "1.7.10",
+      ModLoaderType::Forge
+    )
+    .is_none());
+    assert!(creation_origin(None, "1.7.10", ModLoaderType::Forge).is_none());
+  }
+
+  #[test]
+  fn a_platform_install_uses_the_input_loader_and_needs_a_version_and_hash() {
+    let platform = input(OriginPlatform::Modrinth, "version", "abc");
+    let origin = creation_origin(Some(platform.clone()), "1.21.1", ModLoaderType::Unknown).unwrap();
+    assert_eq!(origin.version_id, "");
     assert_eq!(origin.loader_type, ModLoaderType::Fabric);
-    assert!(verify_origin(
-      Some(ModpackOriginInput {
+    assert!(origin.follow);
+    for broken in [
+      ModpackOriginInput {
         version_id: String::new(),
         ..platform.clone()
-      }),
-      None,
-      "1.21.1",
-      ModLoaderType::Unknown,
-    )
-    .await
-    .is_none());
-    assert!(verify_origin(
-      Some(ModpackOriginInput {
+      },
+      ModpackOriginInput {
         expected_sha1: String::new(),
         ..platform
+      },
+    ] {
+      assert!(creation_origin(Some(broken), "1.21.1", ModLoaderType::Unknown).is_none());
+    }
+  }
+
+  #[test]
+  fn a_local_import_needs_its_file_and_follows_nothing() {
+    let local = ModpackOriginInput {
+      local_path: Some("pack.zip".into()),
+      ..input(OriginPlatform::Local, "", "")
+    };
+    let origin = creation_origin(Some(local.clone()), "1.20.1", ModLoaderType::Unknown).unwrap();
+    assert_eq!(
+      (
+        origin.platform,
+        origin.version_id.as_str(),
+        origin.loader_type
+      ),
+      (OriginPlatform::Local, "", ModLoaderType::Fabric)
+    );
+    assert!(!origin.follow);
+    assert!(creation_origin(
+      Some(ModpackOriginInput {
+        local_path: None,
+        ..local
       }),
-      None,
-      "1.21.1",
-      ModLoaderType::Unknown,
+      "1.20.1",
+      ModLoaderType::Unknown
     )
-    .await
     .is_none());
   }
-}
 
+  #[tokio::test]
+  async fn the_staged_archive_is_kept_under_its_sha1_and_survives_the_original() {
+    let dir = std::env::temp_dir().join(format!("ustbl-stage-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&dir).unwrap();
+    let source = dir.join("pack.zip");
+    fs::write(&source, b"abc").unwrap();
+    let root = dir.join("versions").join("pack");
+    let target = stage_local_archive(source.to_str().unwrap(), &root, "1.0".into())
+      .await
+      .unwrap();
+    // SHA-1 of "abc"
+    assert_eq!(target.sha1, "a9993e364706816aba3e25717850c26c9cd0d89d");
+    assert_eq!(target.version_id, target.sha1);
+    assert_eq!((target.label.as_str(), target.url.as_str()), ("1.0", ""));
+    fs::remove_file(&source).unwrap();
+    let staged = crate::instance::modpack_update::sources::archive_path(&root, &target.sha1);
+    assert_eq!(fs::read(&staged).unwrap(), b"abc");
+    assert!(!staged.with_extension("zip.part").exists());
+    let _ = fs::remove_dir_all(dir);
+  }
+
+  #[tokio::test]
+  async fn a_missing_local_file_is_an_error_and_stages_nothing() {
+    let dir = std::env::temp_dir().join(format!("ustbl-stage-{}", uuid::Uuid::new_v4()));
+    let missing = dir.join("gone.zip");
+    let root = dir.join("versions").join("pack");
+    assert!(
+      stage_local_archive(missing.to_str().unwrap(), &root, String::new())
+        .await
+        .is_err()
+    );
+    assert!(!root.exists());
+  }
+}
 #[cfg(test)]
 mod removal_tests {
   use super::*;
@@ -2056,10 +1956,10 @@ mod isolation_tests {
   use super::*;
 
   #[test]
-  fn create_lock_detects_pack_loader_optifine_and_component_instances() {
+  fn create_lock_detects_origin_pack_loader_and_optifine() {
     let mut instance = Instance::default();
-    assert!(!should_lock_on_create(&instance, false));
-    assert!(should_lock_on_create(&instance, true));
+    apply_creation_isolation(&mut instance);
+    assert!(!instance.isolation_locked);
 
     instance.origin = Some(InstanceOrigin {
       platform: OriginPlatform::Campus,
@@ -2069,27 +1969,28 @@ mod isolation_tests {
       loader_type: ModLoaderType::Unknown,
       follow: true,
     });
-    assert!(should_lock_on_create(&instance, false));
-    apply_creation_isolation(&mut instance, false);
+    apply_creation_isolation(&mut instance);
     assert!(instance.isolation_locked);
 
-    instance.origin = None;
-    instance.modpack_version = Some("1.0.0".into());
-    assert!(should_lock_on_create(&instance, false));
-
-    instance.modpack_version = None;
-    instance.mod_loader.loader_type = ModLoaderType::Fabric;
-    assert!(should_lock_on_create(&instance, false));
-
-    instance.mod_loader.loader_type = ModLoaderType::Unknown;
-    instance.optifine = Some(OptiFine::default());
-    assert!(should_lock_on_create(&instance, false));
+    for change in [
+      |i: &mut Instance| i.modpack_version = Some("1.0.0".into()),
+      |i: &mut Instance| i.mod_loader.loader_type = ModLoaderType::Fabric,
+      |i: &mut Instance| i.optifine = Some(OptiFine::default()),
+    ] {
+      let mut instance = Instance::default();
+      change(&mut instance);
+      apply_creation_isolation(&mut instance);
+      assert!(instance.isolation_locked);
+    }
   }
 
   #[test]
   fn creation_isolation_does_not_enable_specific_game_settings() {
-    let mut instance = Instance::default();
-    apply_creation_isolation(&mut instance, true);
+    let mut instance = Instance {
+      modpack_version: Some("1.0.0".into()),
+      ..Default::default()
+    };
+    apply_creation_isolation(&mut instance);
     assert!(instance.isolation_locked);
     assert!(!instance.use_spec_game_config);
     assert!(instance.spec_game_config.is_none());

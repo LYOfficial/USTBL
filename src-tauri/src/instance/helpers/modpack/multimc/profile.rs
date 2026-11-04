@@ -8,6 +8,7 @@
 use super::snapshot::{
   ComponentSnapshot, LocalLibrary, COMPONENTS_FILE_NAME, SNAPSHOT_FILE_NAME, SNAPSHOT_SCHEMA,
 };
+#[cfg(test)]
 use super::{ModpackManifest, MultiMcManifest};
 use crate::error::{USTBLError, USTBLResult};
 use crate::file_error::AtPath;
@@ -279,6 +280,8 @@ impl Patch {
 pub struct ResolvedMultiMc {
   pub client: McClientInfo,
   patches: Vec<Patch>,
+  /// Only the test importer (`from_archive`, `materialize`) reads it.
+  #[cfg_attr(not(test), allow(dead_code))]
   base: String,
   cfg: HashMap<String, String>,
   /// Patch files the pack shipped, as written, by component uid.
@@ -290,7 +293,9 @@ pub struct ResolvedMultiMc {
 
 impl ResolvedMultiMc {
   /// Returns None only when the archive is not MultiMC. Malformed MultiMC input
-  /// is an error, not permission to drop its custom components.
+  /// is an error, not permission to drop its custom components. Test-only: the
+  /// launcher reads a pack's chain through `restore_component_profile`.
+  #[cfg(test)]
   pub async fn from_archive(client: &reqwest::Client, file: &File) -> USTBLResult<Option<Self>> {
     let archive = ZipArchive::new(file)?;
     if !archive
@@ -544,6 +549,7 @@ impl ResolvedMultiMc {
 
   /// Materialize local artifacts once, then reuse USTBL's normal validator and
   /// resumable downloader. Never add Maven-only files to the classpath.
+  #[cfg(test)]
   pub fn materialize(&mut self, file: &File, libraries: &Path, instance: &Path) -> USTBLResult<()> {
     let mut files = ZipFiles::new(file, &self.base)?;
     self.materialize_from(&mut files, libraries, instance)

@@ -87,6 +87,9 @@ pub enum OriginPlatform {
   Modrinth,
   CurseForge,
   Campus,
+  /// Imported from a local archive. There is no remote to follow: the version
+  /// id is the archive's SHA-1 and the instance is never checked for updates.
+  Local,
 }
 
 fn default_follow() -> bool {
@@ -129,6 +132,9 @@ pub struct ModpackOriginInput {
   pub label: Option<String>,
   #[serde(default)]
   pub loader_type: ModLoaderType,
+  /// Local only: the archive to install from, copied into the instance.
+  #[serde(default)]
+  pub local_path: Option<String>,
 }
 
 structstruck::strike! {

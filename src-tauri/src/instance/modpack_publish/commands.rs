@@ -1116,6 +1116,8 @@ fn may_follow(
 ) -> bool {
   match origin {
     None => true,
+    // A local import follows nothing, so it has no identity to keep.
+    Some(origin) if origin.platform == OriginPlatform::Local => true,
     Some(origin) => {
       origin.platform == OriginPlatform::Campus
         && origin.project_id == project
@@ -1242,7 +1244,11 @@ async fn try_adopt(
   version_number: &str,
 ) -> USTBLResult<(Adoption, usize)> {
   let loader_type = instance.mod_loader.loader_type;
-  let origin = instance.origin.as_ref();
+  // A local import has no source to keep: it adopts like an instance without one.
+  let origin = instance
+    .origin
+    .as_ref()
+    .filter(|origin| origin.platform != OriginPlatform::Local);
   // Only ask the platform when the instance follows another campus project;
   // any answer but a confirmed deletion keeps the identity.
   let gone = match origin {
@@ -1269,7 +1275,7 @@ async fn try_adopt(
     version_id: version_id.to_string(),
     game_version: instance.version.clone(),
     loader_type,
-    follow: instance.origin.as_ref().is_none_or(|origin| origin.follow),
+    follow: origin.is_none_or(|origin| origin.follow),
   };
   let loader = BaselineLoader {
     loader_type,
@@ -1820,6 +1826,19 @@ mod tests {
       "1.7.10",
       LegacyForge
     ));
+  }
+
+  #[test]
+  fn a_local_import_has_no_identity_to_keep() {
+    use crate::instance::models::misc::ModLoaderType::{Fabric, LegacyForge};
+    // Whatever line the imported pack was on, the release may take it over.
+    let local = followed(OriginPlatform::Local, "some-pack", "1.12.2");
+    assert!(may_follow(Some(&local), "gtnh", "1.7.10", LegacyForge));
+    assert!(may_follow(Some(&local), "gtnh", "1.7.10", Fabric));
+    assert_eq!(
+      adopt_action(Some(&local), "gtnh", "1.7.10", LegacyForge, false),
+      Adoption::Followed
+    );
   }
 
   #[test]

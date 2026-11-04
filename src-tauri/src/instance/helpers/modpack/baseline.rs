@@ -210,24 +210,6 @@ pub fn hash_file(path: &Path) -> std::io::Result<(String, u64)> {
   Ok((hex::encode(hasher.finalize()), size))
 }
 
-/// Hash files that already exist under `root`, given their relative paths.
-pub fn hash_existing_files(
-  root: &Path,
-  relative_paths: &[String],
-) -> std::io::Result<Vec<BaselineFile>> {
-  relative_paths
-    .iter()
-    .map(|relative| {
-      let (sha1, size) = hash_file(&root.join(relative)).rooted(root)?;
-      Ok(BaselineFile::managed(
-        &normalize_relative_path(relative),
-        FileKey { sha1, size },
-        false,
-      ))
-    })
-    .collect()
-}
-
 /// One file of the content-hash input. The baseline never records `once`;
 /// the remote side builds its entries straight from the manifest files.
 pub struct ContentHashFile {
@@ -733,23 +715,6 @@ mod tests {
     }
     let parsed: ModpackBaseline = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed, baseline);
-  }
-
-  #[test]
-  fn hashes_existing_files_with_sha1_and_size() {
-    let root = std::env::temp_dir().join(format!("ustbl-baseline-test-{}", uuid::Uuid::new_v4()));
-    fs::create_dir_all(root.join("config")).unwrap();
-    fs::write(root.join("config/a.toml"), b"abc").unwrap();
-    let files = hash_existing_files(&root, &["config\\a.toml".to_string()]).unwrap();
-    assert_eq!(
-      files,
-      vec![file(
-        "config/a.toml",
-        "a9993e364706816aba3e25717850c26c9cd0d89d",
-        3
-      )]
-    );
-    let _ = fs::remove_dir_all(root);
   }
 
   #[tokio::test]

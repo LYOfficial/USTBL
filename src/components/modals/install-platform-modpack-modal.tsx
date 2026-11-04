@@ -136,7 +136,6 @@ const InstallPlatformModpackModal: React.FC<
           stable: true,
         },
         undefined,
-        undefined,
         false,
         undefined,
         {

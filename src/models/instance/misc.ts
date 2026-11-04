@@ -28,7 +28,7 @@ export interface OptiFine {
   status: ModLoaderStatus;
 }
 
-export type OriginPlatform = "modrinth" | "curseforge" | "campus";
+export type OriginPlatform = "modrinth" | "curseforge" | "campus" | "local";
 
 /**
  * Origin claimed by the entry that downloaded a modpack. The backend only
@@ -51,6 +51,8 @@ export interface ModpackOriginInput {
   url?: string;
   label?: string;
   loaderType?: ModLoaderType;
+  /** A modpack archive picked from disk; the backend keeps its own copy. */
+  localPath?: string;
 }
 
 export interface InstanceSummary {
