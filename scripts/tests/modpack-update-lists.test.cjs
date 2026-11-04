@@ -121,3 +121,60 @@ test("the update dialog hands conflicts to memoized items with stable callbacks"
   );
   assert.equal(chooseAll.match(/setChoices\(/g).length, 1);
 });
+
+test("a conflict without text blocks is one row, not a collapsible card", () => {
+  const source = read("src/components/modpack-update-lists.tsx");
+  const item = source.slice(source.indexOf("export const ConflictItem"));
+  const wholeFile = item.slice(
+    item.indexOf("conflict.hunks.length === 0"),
+    item.indexOf("<DiffFile")
+  );
+  assert.ok(wholeFile.length > 0);
+  assert.doesNotMatch(wholeFile, /DiffFile/);
+  assert.match(wholeFile, /<ChoiceButtons/);
+});
+
+test("the file-level answer sets every block and shows none when they differ", () => {
+  const source = read("src/components/modpack-update-lists.tsx");
+  assert.match(source, /onPick=\{\(option\) => onChooseMany\(keys, option\)\}/);
+  assert.match(
+    source,
+    /const keys = conflict\.hunks\.map\(\(_, index\) => hunkKey/
+  );
+  assert.match(source, /\? first\s*: null/);
+  const modal = read("src/components/modals/update-modpack-modal.tsx");
+  const chooseMany = modal.slice(
+    modal.indexOf("const chooseMany"),
+    modal.indexOf("const [expandSignal")
+  );
+  assert.equal(chooseMany.match(/setChoices\(/g).length, 1);
+  assert.match(modal, /onChooseMany=\{chooseMany\}/);
+});
+
+test("the dialog can expand and collapse every conflict card", () => {
+  const modal = read("src/components/modals/update-modpack-modal.tsx");
+  // Two icon buttons, like an IDE's expand all / collapse all.
+  assert.match(modal, /\[true, "expandAll", LuUnfoldVertical\]/);
+  assert.match(modal, /\[false, "collapseAll", LuFoldVertical\]/);
+  assert.match(modal, /onClick=\{\(\) => expandAll\(open\)\}/);
+  assert.match(modal, /expandSignal=\{expandSignal\}/);
+  // Cards still start open.
+  assert.match(modal, /useState<DiffExpandSignal>\(\{\s*open: true,/);
+  const diff = read("src/components/common/diff-view.tsx");
+  assert.match(
+    diff,
+    /defaultIsOpen: expandSignal \? expandSignal\.open : defaultOpen/
+  );
+});
+
+test("a changed expand signal re-renders a conflict item", () => {
+  const file = { path: "a.cfg", kind: "x", hunks: [hunk()] };
+  const a = { open: false, token: 1 };
+  assert.equal(
+    lists.conflictItemEqual(
+      props(file, {}, { expandSignal: a }),
+      props(file, {}, { expandSignal: { ...a, token: 2 } })
+    ),
+    false
+  );
+});

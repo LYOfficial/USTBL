@@ -11,8 +11,9 @@ use super::merge::merge_with_choices;
 use super::notice::{read_update_notice, write_update_notice, UpdateNotice};
 use super::optional::{self, OptionalFile};
 use super::plan::{
-  compare, component_action, count_local_changes, finish, invalidate_scan_cache,
-  next_component_fingerprint, requires_reinstall, resolve, ComponentAction, Prepared,
+  compare, component_action, component_changes, count_local_changes, finish, invalidate_scan_cache,
+  next_component_fingerprint, requires_reinstall, resolve, ComponentAction, ComponentChange,
+  Prepared,
 };
 use super::plan_cache::{self, PlanCache};
 use super::release;
@@ -163,6 +164,11 @@ pub struct UpdatePlan {
   pub conflicts: Vec<Conflict>,
   pub auto_merged: Vec<FileChange>,
   pub loader_change: Option<LoaderChange>,
+  /// Components whose version differs between the installed chain and the new
+  /// version's chain. Display only: the chains already take part in
+  /// `plan_hash` through the baseline and the remote content hash.
+  #[serde(default)]
+  pub component_changes: Vec<ComponentChange>,
   /// The new version changes the component chain, so it has to be installed
   /// again. No changes are planned and `apply_modpack_update` refuses.
   pub reinstall_required: bool,
@@ -2192,6 +2198,7 @@ async fn plan_prepared(
       diff: run.prepared.diff,
       plan_hash: run.prepared.plan_hash,
       loader_change: run.loader_change,
+      component_changes: component_changes(baseline, &run.remote),
       reinstall_required: false,
       restore_components: run.prepared.restore_components,
       remote: run.remote,
@@ -2214,6 +2221,7 @@ async fn plan_prepared(
       diff: Default::default(),
       plan_hash: String::new(),
       loader_change: None,
+      component_changes: component_changes(baseline, &remote),
       reinstall_required: true,
       restore_components: false,
       remote,
@@ -2250,6 +2258,7 @@ async fn plan_prepared(
     diff: prepared.diff,
     plan_hash: prepared.plan_hash,
     loader_change,
+    component_changes: component_changes(baseline, &remote),
     reinstall_required: false,
     restore_components: prepared.restore_components,
     remote,
@@ -2263,6 +2272,7 @@ struct PlannedRun {
   diff: super::diff::Diff,
   plan_hash: String,
   loader_change: Option<LoaderChange>,
+  component_changes: Vec<ComponentChange>,
   reinstall_required: bool,
   restore_components: bool,
   remote: super::remote::RemoteModpack,
@@ -2357,6 +2367,7 @@ fn plan_of(origin: &InstanceOrigin, prepared: PlannedRun) -> UpdatePlan {
     conflicts: prepared.diff.conflicts,
     auto_merged: prepared.diff.auto_merged,
     loader_change: prepared.loader_change,
+    component_changes: prepared.component_changes,
     reinstall_required: prepared.reinstall_required,
     restore_components: prepared.restore_components,
     plan_hash: prepared.plan_hash,
@@ -2450,6 +2461,7 @@ async fn plan_fresh_install(
       conflicts: Vec::new(),
       auto_merged: Vec::new(),
       loader_change: None,
+      component_changes: component_changes(&baseline, &remote),
       reinstall_required: true,
       restore_components: false,
       fast_forward: false,
@@ -2539,6 +2551,7 @@ async fn plan_fresh_install(
     conflicts: prepared.diff.conflicts.clone(),
     auto_merged: prepared.diff.auto_merged.clone(),
     loader_change,
+    component_changes: component_changes(&baseline, &remote),
     reinstall_required: false,
     restore_components: prepared.restore_components,
     plan_hash: prepared.plan_hash.clone(),
@@ -5159,6 +5172,7 @@ mod tests {
       diff: Default::default(),
       plan_hash: "hh".into(),
       loader_change: None,
+      component_changes: Vec::new(),
       reinstall_required: true,
       restore_components: false,
       new_optional: Vec::new(),
@@ -5205,6 +5219,7 @@ mod tests {
       diff: Default::default(),
       plan_hash: "hh".into(),
       loader_change: None,
+      component_changes: Vec::new(),
       reinstall_required: false,
       restore_components,
       new_optional: Vec::new(),

@@ -211,6 +211,48 @@ pub fn requires_reinstall(baseline: &ModpackBaseline, remote: &RemoteModpack, fr
   component_action(baseline, remote, fresh) == ComponentAction::Reinstall
 }
 
+/// One component whose version differs between the installed chain and the
+/// new version's chain. `from` is `None` for an added component, `to` for a
+/// removed one.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComponentChange {
+  pub uid: String,
+  pub from: Option<String>,
+  pub to: Option<String>,
+}
+
+/// The components that differ between the installed chain and the new
+/// version's chain, sorted by uid. Empty when the new version carries no chain
+/// (Modrinth/CurseForge packs) or the chains are equal. An instance without a
+/// recorded chain counts as an empty one, so every component is an addition.
+pub fn component_changes(
+  baseline: &ModpackBaseline,
+  remote: &RemoteModpack,
+) -> Vec<ComponentChange> {
+  let Some(wanted) = &remote.components else {
+    return Vec::new();
+  };
+  let have = baseline.component_refs().unwrap_or_default();
+  let versions = |chain: &[ComponentRef]| -> BTreeMap<String, String> {
+    chain
+      .iter()
+      .map(|component| (component.uid.clone(), component.version.clone()))
+      .collect()
+  };
+  let (from, to) = (versions(&have), versions(wanted));
+  let uids: BTreeSet<&String> = from.keys().chain(to.keys()).collect();
+  uids
+    .into_iter()
+    .filter(|uid| from.get(*uid) != to.get(*uid))
+    .map(|uid| ComponentChange {
+      uid: uid.clone(),
+      from: from.get(uid).cloned(),
+      to: to.get(uid).cloned(),
+    })
+    .collect()
+}
+
 /// The fingerprint to record in the baseline an update writes: the new pack's
 /// when the profile is rebuilt, the recorded one otherwise.
 pub fn next_component_fingerprint(
@@ -1633,6 +1675,69 @@ mod tests {
     assert!(!requires_reinstall(&plain, &remote, false));
     remote.components = chain_of(&gtnh_pack("10.13.4.1614"));
     assert!(requires_reinstall(&plain, &remote, false));
+  }
+
+  fn change(uid: &str, from: Option<&str>, to: Option<&str>) -> ComponentChange {
+    ComponentChange {
+      uid: uid.into(),
+      from: from.map(Into::into),
+      to: to.map(Into::into),
+    }
+  }
+
+  #[test]
+  fn component_changes_list_versions_additions_and_removals() {
+    let installed = component_baseline(&gtnh_pack("10.13.4.1614"));
+    let mut remote = remote(&[("mods/a.jar", "a2")]);
+
+    remote.components = chain_of(&gtnh_pack("10.13.4.1615"));
+    assert_eq!(
+      component_changes(&installed, &remote),
+      vec![change(
+        "net.minecraftforge",
+        Some("10.13.4.1614"),
+        Some("10.13.4.1615")
+      )]
+    );
+
+    let mut extra = gtnh_pack("10.13.4.1614");
+    extra["components"]
+      .as_array_mut()
+      .unwrap()
+      .push(serde_json::json!({"uid": "org.lwjgl3", "version": "3.3.1"}));
+    remote.components = chain_of(&extra);
+    assert_eq!(
+      component_changes(&installed, &remote),
+      vec![change("org.lwjgl3", None, Some("3.3.1"))]
+    );
+
+    // The installed chain has a component the new one dropped.
+    let with_lwjgl = component_baseline(&extra);
+    remote.components = chain_of(&gtnh_pack("10.13.4.1614"));
+    assert_eq!(
+      component_changes(&with_lwjgl, &remote),
+      vec![change("org.lwjgl3", Some("3.3.1"), None)]
+    );
+  }
+
+  #[test]
+  fn component_changes_are_empty_without_a_difference_or_a_chain() {
+    let installed = component_baseline(&gtnh_pack("10.13.4.1614"));
+    let mut remote = remote(&[("mods/a.jar", "a2")]);
+    remote.components = chain_of(&serde_json::json!({
+      "components": [
+        {"uid": "net.minecraftforge", "version": "10.13.4.1614"},
+        {"uid": "net.minecraft", "version": "1.7.10"},
+      ]
+    }));
+    assert!(component_changes(&installed, &remote).is_empty());
+    remote.components = None;
+    assert!(component_changes(&installed, &remote).is_empty());
+
+    // An instance without a recorded chain gets every component as new.
+    let plain = baseline(&[("mods/a.jar", "a1")]);
+    remote.components = chain_of(&gtnh_pack("10.13.4.1614"));
+    assert_eq!(component_changes(&plain, &remote).len(), 2);
   }
 
   fn lwjgl3ify_pack(forge: &str, patch: &str) -> ComponentPack {

@@ -3468,6 +3468,12 @@
       "enable": "啟用 {{count}}",
       "retire": "休眠 {{count}}",
       "loaderChange": "{{loader}} 將從 {{from}} 切換到 {{to}}",
+      "componentChanges": {
+        "title": "組件變化",
+        "changed": "{{name}} {{from}} → {{to}}",
+        "added": "{{name}} 新增 {{to}}",
+        "removed": "{{name}} 移除"
+      },
       "restoreComponents": "新版本調整了遊戲元件，更新時會一併重建遊戲的版本設定與相依函式庫",
       "conflicts": "{{count}} 個檔案和你的修改衝突，預設保留本地，可以逐個處理",
       "autoMerged": "自動合併 {{count}}",
@@ -3498,6 +3504,8 @@
       "hunk": "第 {{number}} 處衝突（原檔案第 {{from}}-{{to}} 行）",
       "allKeepLocal": "全部保留本機",
       "allTakeRemote": "全部使用新版本",
+      "expandAll": "全部展開",
+      "collapseAll": "全部摺疊",
       "localSide": "本機",
       "remoteSide": "新版本"
     },

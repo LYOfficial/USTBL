@@ -10,7 +10,12 @@ import {
 import React, { memo, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LuChevronDown, LuChevronRight } from "react-icons/lu";
-import { DiffFile, DiffHunks, regionHunk } from "@/components/common/diff-view";
+import {
+  DiffExpandSignal,
+  DiffFile,
+  DiffHunks,
+  regionHunk,
+} from "@/components/common/diff-view";
 import {
   ModpackConflict,
   ModpackConflictChoice,
@@ -229,6 +234,36 @@ export type ChooseConflict = (
 
 const hunkKey = (path: string, index: number) => `${path}#${index}`;
 
+/** Answers every key at once: all blocks of one file. */
+export type ChooseConflictKeys = (
+  keys: string[],
+  choice: ModpackConflictChoice
+) => void;
+
+/** The two answer buttons; `choice` null highlights neither (mixed answers). */
+const ChoiceToggle: React.FC<{
+  choice: ModpackConflictChoice | null;
+  primaryColor: string;
+  onPick: (choice: ModpackConflictChoice) => void;
+}> = ({ choice, primaryColor, onPick }) => {
+  const { t } = useTranslation();
+  return (
+    <ButtonGroup size="xs" isAttached variant="outline" flexShrink={0}>
+      {(["keepLocal", "takeRemote"] as const).map((option) => (
+        <Button
+          key={option}
+          colorScheme={choice === option ? primaryColor : undefined}
+          variant={choice === option ? "solid" : "outline"}
+          aria-pressed={choice === option}
+          onClick={() => onPick(option)}
+        >
+          {t(`UpdateModpackModal.choice.${option}`)}
+        </Button>
+      ))}
+    </ButtonGroup>
+  );
+};
+
 const ChoiceButtons = memo(function ChoiceButtons({
   choiceKey,
   choice,
@@ -240,21 +275,12 @@ const ChoiceButtons = memo(function ChoiceButtons({
   primaryColor: string;
   onChoose: ChooseConflict;
 }) {
-  const { t } = useTranslation();
   return (
-    <ButtonGroup size="xs" isAttached variant="outline" flexShrink={0}>
-      {(["keepLocal", "takeRemote"] as const).map((option) => (
-        <Button
-          key={option}
-          colorScheme={choice === option ? primaryColor : undefined}
-          variant={choice === option ? "solid" : "outline"}
-          aria-pressed={choice === option}
-          onClick={() => onChoose(choiceKey, option)}
-        >
-          {t(`UpdateModpackModal.choice.${option}`)}
-        </Button>
-      ))}
-    </ButtonGroup>
+    <ChoiceToggle
+      choice={choice}
+      primaryColor={primaryColor}
+      onPick={(option) => onChoose(choiceKey, option)}
+    />
   );
 });
 
@@ -339,7 +365,9 @@ interface ConflictItemProps {
   choices: Record<string, ModpackConflictChoice>;
   primaryColor: string;
   onChoose: ChooseConflict;
+  onChooseMany: ChooseConflictKeys;
   onReveal: (path: string) => void;
+  expandSignal?: DiffExpandSignal;
 }
 
 const choiceOf = (
@@ -359,7 +387,9 @@ export const conflictItemEqual = (
     prev.conflict !== next.conflict ||
     prev.primaryColor !== next.primaryColor ||
     prev.onChoose !== next.onChoose ||
-    prev.onReveal !== next.onReveal
+    prev.onChooseMany !== next.onChooseMany ||
+    prev.onReveal !== next.onReveal ||
+    prev.expandSignal !== next.expandSignal
   ) {
     return false;
   }
@@ -379,55 +409,93 @@ export const ConflictItem = memo(function ConflictItem({
   choices,
   primaryColor,
   onChoose,
+  onChooseMany,
   onReveal,
+  expandSignal,
 }: ConflictItemProps) {
   const { t } = useTranslation();
-  // A text conflict is answered block by block; anything else as
-  // a whole file. Never both, so each answer has one control.
-  const byHunk = conflict.hunks.length > 0;
+  const revealButton = (
+    <Button size="xs" variant="ghost" onClick={() => onReveal(conflict.path)}>
+      {t("UpdateModpackModal.choice.revealFile")}
+    </Button>
+  );
+  const kindText = (
+    <Text fontSize="xs" className="secondary-text" noOfLines={1}>
+      {t(`UpdateModpackModal.conflictKind.${conflict.kind}`)}
+    </Text>
+  );
+  // A conflict without text blocks (a binary or replaced file) has nothing to
+  // expand, so it is one row answered as a whole file.
+  if (conflict.hunks.length === 0) {
+    return (
+      <HStack
+        borderWidth="1px"
+        borderRadius="md"
+        px={2}
+        py={1.5}
+        spacing={2}
+        justify="space-between"
+      >
+        <VStack align="stretch" spacing={0} minW={0}>
+          <Text
+            fontFamily="mono"
+            fontSize="xs"
+            fontWeight="semibold"
+            noOfLines={1}
+            wordBreak="break-all"
+          >
+            {conflict.path}
+          </Text>
+          {kindText}
+        </VStack>
+        <HStack spacing={1} flexShrink={0}>
+          {revealButton}
+          <ChoiceButtons
+            choiceKey={conflict.path}
+            choice={choiceOf(choices, conflict.path)}
+            primaryColor={primaryColor}
+            onChoose={onChoose}
+          />
+        </HStack>
+      </HStack>
+    );
+  }
+  // A text conflict is answered block by block, or for all blocks of the file
+  // at once; the file buttons show an answer only when every block has it.
+  const keys = conflict.hunks.map((_, index) => hunkKey(conflict.path, index));
+  const first = choiceOf(choices, keys[0]);
+  const fileChoice = keys.every((key) => choiceOf(choices, key) === first)
+    ? first
+    : null;
   return (
     <DiffFile
       path={conflict.path}
-      tags={
-        <Text fontSize="xs" className="secondary-text" noOfLines={1}>
-          {t(`UpdateModpackModal.conflictKind.${conflict.kind}`)}
-        </Text>
-      }
+      expandSignal={expandSignal}
+      tags={kindText}
       actions={
         <>
-          <Button
-            size="xs"
-            variant="ghost"
-            onClick={() => onReveal(conflict.path)}
-          >
-            {t("UpdateModpackModal.choice.revealFile")}
-          </Button>
-          {!byHunk && (
-            <ChoiceButtons
-              choiceKey={conflict.path}
-              choice={choiceOf(choices, conflict.path)}
-              primaryColor={primaryColor}
-              onChoose={onChoose}
-            />
-          )}
+          {revealButton}
+          <ChoiceToggle
+            choice={fileChoice}
+            primaryColor={primaryColor}
+            onPick={(option) => onChooseMany(keys, option)}
+          />
         </>
       }
     >
-      {byHunk && (
-        <VStack align="stretch" spacing={0}>
-          {conflict.hunks.map((hunk, index) => (
-            <ConflictHunk
-              key={hunkKey(conflict.path, index)}
-              path={conflict.path}
-              index={index}
-              hunk={hunk}
-              choice={choiceOf(choices, hunkKey(conflict.path, index))}
-              primaryColor={primaryColor}
-              onChoose={onChoose}
-            />
-          ))}
-        </VStack>
-      )}
+      <VStack align="stretch" spacing={0}>
+        {conflict.hunks.map((hunk, index) => (
+          <ConflictHunk
+            key={keys[index]}
+            path={conflict.path}
+            index={index}
+            hunk={hunk}
+            choice={choiceOf(choices, keys[index])}
+            primaryColor={primaryColor}
+            onChoose={onChoose}
+          />
+        ))}
+      </VStack>
     </DiffFile>
   );
 }, conflictItemEqual);

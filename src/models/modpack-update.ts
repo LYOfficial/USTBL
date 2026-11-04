@@ -177,6 +177,13 @@ export interface ModpackBaselineLoader {
   version: string;
 }
 
+/** A component of the pack's chain; `from` is absent when added, `to` when removed. */
+export interface ModpackComponentChange {
+  uid: string;
+  from?: string | null;
+  to?: string | null;
+}
+
 export interface ModpackUpdatePlan {
   fromVersionId: string;
   toVersionId: string;
@@ -185,6 +192,8 @@ export interface ModpackUpdatePlan {
   conflicts: ModpackConflict[];
   autoMerged: ModpackFileChange[];
   loaderChange?: { from: ModpackBaselineLoader; to: ModpackBaselineLoader };
+  /** Components whose version differs; absent from plans cached by older builds. */
+  componentChanges?: ModpackComponentChange[];
   restoreComponents?: boolean;
   reinstallRequired: boolean;
   fastForward: boolean;

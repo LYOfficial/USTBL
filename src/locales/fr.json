@@ -3468,6 +3468,12 @@
       "enable": "{{count}} activé(s)",
       "retire": "Mettre en sommeil {{count}}",
       "loaderChange": "{{loader}} passera de {{from}} à {{to}}",
+      "componentChanges": {
+        "title": "Changements de composants",
+        "changed": "{{name}} {{from}} → {{to}}",
+        "added": "{{name}} ajouté en {{to}}",
+        "removed": "{{name}} supprimé"
+      },
       "restoreComponents": "Cette version modifie les composants du jeu. La mise à jour reconstruira aussi le profil de version et les bibliothèques.",
       "conflicts": "{{count}} fichiers sont en conflit avec vos modifications ; conserver le local par défaut et les traiter individuellement",
       "autoMerged": "{{count}} fusionnés automatiquement",
@@ -3498,6 +3504,8 @@
       "hunk": "Conflit {{number}} (lignes {{from}}–{{to}} du fichier original)",
       "allKeepLocal": "Tout garder en local",
       "allTakeRemote": "Tout prendre de la nouvelle version",
+      "expandAll": "Tout développer",
+      "collapseAll": "Tout réduire",
       "localSide": "Local",
       "remoteSide": "Nouvelle version"
     },

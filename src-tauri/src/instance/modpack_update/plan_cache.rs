@@ -10,7 +10,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 const CACHE_FILE: &str = "plan-cache.json";
-const CACHE_SCHEMA: u32 = 1;
+/// Schema 2 added `component_changes` to the plan; a schema 1 cache would show
+/// a plan without them, so it is recomputed once.
+const CACHE_SCHEMA: u32 = 2;
 
 fn cache_path(root: &Path) -> PathBuf {
   root.join(UPDATE_DIR).join(CACHE_FILE)
@@ -211,12 +213,44 @@ mod tests {
       conflicts: Vec::new(),
       auto_merged: Vec::new(),
       loader_change: None,
+      component_changes: Vec::new(),
       reinstall_required: false,
       restore_components: false,
       fast_forward: true,
       plan_hash: "hh".into(),
       new_optional: Vec::new(),
     }
+  }
+
+  #[test]
+  fn an_old_plan_without_component_changes_still_deserializes() {
+    let mut value = serde_json::to_value(plan()).unwrap();
+    value.as_object_mut().unwrap().remove("componentChanges");
+    let old: UpdatePlan = serde_json::from_value(value).unwrap();
+    assert!(old.component_changes.is_empty());
+  }
+
+  #[test]
+  fn a_cache_of_the_previous_schema_is_not_used() {
+    let root = std::env::temp_dir().join(format!("ustbl-cache-test-{}", uuid::Uuid::new_v4()));
+    let cache = PlanCache::new(
+      "1".into(),
+      "b".into(),
+      Vec::new(),
+      "f".into(),
+      Vec::new(),
+      plan(),
+    );
+    let mut old = serde_json::to_value(&cache).unwrap();
+    old["schema"] = 1.into();
+    old["plan"]
+      .as_object_mut()
+      .unwrap()
+      .remove("componentChanges");
+    fs::create_dir_all(root.join(UPDATE_DIR)).unwrap();
+    fs::write(cache_path(&root), serde_json::to_vec(&old).unwrap()).unwrap();
+    assert!(load_plan_cache(&root).is_none());
+    let _ = fs::remove_dir_all(&root);
   }
 
   #[test]
@@ -284,6 +318,7 @@ mod tests {
     assert_eq!(loaded.fingerprint, fingerprint);
     assert_eq!(loaded.paths, paths);
     assert_eq!(loaded.plan.plan_hash, "hh");
+    assert!(loaded.plan.component_changes.is_empty());
 
     clear_plan_cache(&root);
     assert!(load_plan_cache(&root).is_none());

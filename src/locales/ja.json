@@ -3468,6 +3468,12 @@
       "enable": "有効化 {{count}}",
       "retire": "休止 {{count}}",
       "loaderChange": "{{loader}}が{{from}}から{{to}}に切り替わります",
+      "componentChanges": {
+        "title": "コンポーネントの変更",
+        "changed": "{{name}} {{from}} → {{to}}",
+        "added": "{{name}} {{to}} を追加",
+        "removed": "{{name}} を削除"
+      },
       "restoreComponents": "このバージョンではゲームコンポーネントが変更されています。更新時にバージョン構成とライブラリも再構築されます。",
       "conflicts": "{{count}}個のファイルが変更と競合しています。初期設定はローカルを保持し、個別に処理できます",
       "autoMerged": "自動マージ {{count}}",
@@ -3498,6 +3504,8 @@
       "hunk": "競合 {{number}}（元ファイルの{{from}}～{{to}}行）",
       "allKeepLocal": "すべてローカルを保持",
       "allTakeRemote": "すべて新しいバージョンを使用",
+      "expandAll": "すべて展開",
+      "collapseAll": "すべて折りたたむ",
       "localSide": "ローカル",
       "remoteSide": "新しいバージョン"
     },
