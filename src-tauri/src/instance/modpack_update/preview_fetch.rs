@@ -158,6 +158,7 @@ pub async fn plan_by_ranges(
   baseline: &ModpackBaseline,
   latest: &LatestVersion,
   fresh: bool,
+  optional_choice: &[String],
 ) -> Option<PreviewRun> {
   let (url, sha1) = range_target(origin, root, latest, fresh)?;
   let started = Instant::now();
@@ -170,6 +171,7 @@ pub async fn plan_by_ranges(
     latest,
     &url,
     &sha1,
+    optional_choice,
   )
   .await
   {
@@ -202,6 +204,7 @@ async fn attempt(
   latest: &LatestVersion,
   url: &str,
   sha1: &str,
+  optional_choice: &[String],
 ) -> USTBLResult<PreviewRun> {
   let param = plain_download(url)?;
   let cached = load_listing_cache(root, origin.platform, &latest.version_id, sha1);
@@ -220,7 +223,7 @@ async fn attempt(
   )
   .await?;
   let facts = archive_facts(app, &manifest, root, origin).await?;
-  let remote = preview_remote(
+  let mut remote = preview_remote(
     facts,
     latest,
     &listing,
@@ -230,6 +233,7 @@ async fn attempt(
     baseline,
   )
   .await?;
+  super::optional::select(&mut remote, root, baseline, optional_choice);
   let run = run_preview(root, baseline, remote, &listing, &source, false).await?;
   log::info!(
     "modpack preview range: served by {}",
@@ -378,6 +382,7 @@ mod tests {
       },
       overrides_paths: vec!["overrides".into()],
       recommended_memory_mb: None,
+      optional: Vec::new(),
       downloads: Vec::new(),
     };
     assemble_remote(latest, facts, files)

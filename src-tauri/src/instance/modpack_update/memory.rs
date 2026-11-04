@@ -407,6 +407,7 @@ mod tests {
       rules: Vec::new(),
       rules_manifest: false,
       disabled_authoritative: true,
+      optional: Vec::new(),
       path_index: Default::default(),
     }
   }

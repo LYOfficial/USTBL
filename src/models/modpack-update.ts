@@ -189,6 +189,16 @@ export interface ModpackUpdatePlan {
   reinstallRequired: boolean;
   fastForward: boolean;
   planHash: string;
+  /** Optional files this version added that the player has not been asked about. */
+  newOptional?: ModpackOptionalFile[];
+}
+
+/** A file the modpack author marked optional. */
+export interface ModpackOptionalFile {
+  /** Identifies the file across versions; what the picks are made of. */
+  key: string;
+  path: string;
+  name: string;
 }
 
 export interface ModpackUpdateOutcome {

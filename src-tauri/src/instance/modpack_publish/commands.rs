@@ -1575,6 +1575,7 @@ mod tests {
       rules,
       rules_manifest: true,
       disabled_authoritative: true,
+      optional: Vec::new(),
       path_index: Default::default(),
     }
   }

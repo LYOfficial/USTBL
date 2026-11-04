@@ -9,7 +9,9 @@ use tauri::AppHandle;
 use zip::ZipArchive;
 
 use crate::error::USTBLResult;
-use crate::instance::helpers::modpack::misc::{ModpackDownload, ModpackManifest, ModpackMetaInfo};
+use crate::instance::helpers::modpack::misc::{
+  select_key_of_path, ModpackDownload, ModpackManifest, ModpackMetaInfo,
+};
 use crate::instance::models::misc::{InstanceError, ModLoader, ModLoaderType};
 use crate::resource::models::OtherResourceSource;
 use crate::tasks::download::{DownloadParam, DownloadTransferOptions};
@@ -46,7 +48,34 @@ pub struct ModrinthManifest {
   pub dependencies: HashMap<String, String>,
 }
 
+/// The project a Modrinth file belongs to, read from its download address
+/// `https://cdn.modrinth.com/data/<projectId>/versions/<versionId>/<file>`.
+fn project_id_of_url(url: &str) -> Option<String> {
+  let url = url::Url::parse(url).ok()?;
+  if !url.host_str()?.ends_with("modrinth.com") {
+    return None;
+  }
+  let mut segments = url.path_segments()?;
+  let (data, project, versions) = (segments.next()?, segments.next()?, segments.next()?);
+  (data == "data"
+    && versions == "versions"
+    && !project.is_empty()
+    && project.bytes().all(|byte| byte.is_ascii_alphanumeric()))
+  .then(|| project.to_string())
+}
+
 impl ModrinthManifest {
+  /// The key a choice about `file` is remembered under: its project when the
+  /// address names one, else its path.
+  fn select_key(file: &ModrinthFile) -> String {
+    file
+      .downloads
+      .iter()
+      .find_map(|url| project_id_of_url(url))
+      .map(|project| format!("modrinth:{project}"))
+      .unwrap_or_else(|| select_key_of_path(&file.path))
+  }
+
   fn download_params(&self, instance_path: &Path) -> USTBLResult<Vec<ModpackDownload>> {
     self
       .files
@@ -80,6 +109,11 @@ impl ModrinthManifest {
             transfer_options: DownloadTransferOptions::with_fallbacks(fallbacks),
           },
           size: Some(file.file_size),
+          optional: file
+            .env
+            .as_ref()
+            .is_some_and(|env| env.client == "optional"),
+          select_key: Self::select_key(file),
         })
       })
       .collect::<USTBLResult<Vec<_>>>()
@@ -156,6 +190,15 @@ impl ModpackManifest for ModrinthManifest {
     self.download_params(instance_path)
   }
 
+  fn has_optional_files(&self) -> bool {
+    self.files.iter().any(|file| {
+      file
+        .env
+        .as_ref()
+        .is_some_and(|env| env.client == "optional")
+    })
+  }
+
   fn get_overrides_paths(&self) -> Vec<String> {
     // Format order: `overrides/` applies everywhere, `client-overrides/` is laid on
     // top of it. `server-overrides/` never applies to a client.
@@ -213,6 +256,81 @@ mod tests {
         root.join("mods/both.jar"),
         root.join("mods/optional.jar"),
         root.join("mods/no-env.jar"),
+      ]
+    );
+  }
+
+  #[test]
+  fn files_the_author_marked_optional_are_flagged() {
+    let pack = manifest(serde_json::json!([
+      file("mods/a.jar", Some(("optional", "optional"))),
+      file("mods/b.jar", Some(("required", "optional"))),
+      file("mods/c.jar", None),
+    ]));
+    assert!(pack.has_optional_files());
+    let flags: Vec<_> = pack
+      .download_params(Path::new("inst"))
+      .unwrap()
+      .into_iter()
+      .map(|download| download.optional)
+      .collect();
+    assert_eq!(flags, [true, false, false]);
+
+    let none = manifest(serde_json::json!([file(
+      "mods/b.jar",
+      Some(("required", "optional"))
+    )]));
+    assert!(!none.has_optional_files());
+  }
+
+  #[test]
+  fn the_select_key_is_the_project_of_the_download_address() {
+    let mut entry = file("mods/a-1.0.jar", Some(("optional", "optional")));
+    entry["downloads"] = serde_json::json!([
+      "https://cdn.modrinth.com/data/m5T5xmUy/versions/8qcmuwZa/BetterGrassify-1.8.8%2Bfabric.26.3.jar"
+    ]);
+    let mut renamed = entry.clone();
+    renamed["path"] = "mods/a-2.0.jar".into();
+    renamed["downloads"] = serde_json::json!([
+      "https://cdn.modrinth.com/data/m5T5xmUy/versions/OTHERVER/BetterGrassify-2.0.jar"
+    ]);
+    let keys = |files: serde_json::Value| -> Vec<String> {
+      manifest(files)
+        .download_params(Path::new("inst"))
+        .unwrap()
+        .into_iter()
+        .map(|download| download.select_key)
+        .collect()
+    };
+    assert_eq!(keys(serde_json::json!([entry])), ["modrinth:m5T5xmUy"]);
+    assert_eq!(keys(serde_json::json!([renamed])), ["modrinth:m5T5xmUy"]);
+  }
+
+  #[test]
+  fn the_select_key_falls_back_to_the_path() {
+    let mut other_host = file("mods/Keep.jar", None);
+    other_host["downloads"] =
+      serde_json::json!(["https://raw.githubusercontent.com/o/r/main/data/x/versions/y/a.jar"]);
+    let mut odd_path = file("mods/odd.jar", None);
+    odd_path["downloads"] =
+      serde_json::json!(["https://cdn.modrinth.com/other/m5T5xmUy/versions/y/odd.jar"]);
+    let mut second = file("mods/second.jar", None);
+    second["downloads"] = serde_json::json!([
+      "https://mirror.example/second.jar",
+      "https://cdn.modrinth.com/data/AbCd1234/versions/y/second.jar"
+    ]);
+    let keys: Vec<_> = manifest(serde_json::json!([other_host, odd_path, second]))
+      .download_params(Path::new("inst"))
+      .unwrap()
+      .into_iter()
+      .map(|download| download.select_key)
+      .collect();
+    assert_eq!(
+      keys,
+      [
+        "path:mods/keep.jar",
+        "path:mods/odd.jar",
+        "modrinth:AbCd1234"
       ]
     );
   }

@@ -263,6 +263,7 @@ mod tests {
         state: RuleState::Ignore,
       }],
       rules_manifest: true,
+      optional: Vec::new(),
       path_index: Arc::new(OnceLock::new()),
     };
     let release = Release::from_remote(&remote);

@@ -650,6 +650,18 @@
       "missingSha1": "Ce fichier n'a pas de SHA-1 et ne peut pas être installé"
     }
   },
+  "OptionalFiles": {
+    "entry": "Fichiers optionnels ({{selected}}/{{total}} sélectionnés)",
+    "title": "Choisir les fichiers optionnels",
+    "description": "L'auteur du modpack a marqué ces fichiers comme optionnels ; aucun n'est installé par défaut. Les fichiers cochés sont installés normalement. Les mods non cochés sont ajoutés désactivés et peuvent être activés plus tard dans la gestion des mods ; les autres fichiers non cochés ne sont pas installés.",
+    "button": {
+      "selectAll": "Tout sélectionner",
+      "selectNone": "Ne rien sélectionner",
+      "invert": "Inverser"
+    },
+    "newTitle": "Nouveaux fichiers optionnels",
+    "newDescription": "Ces fichiers ne sont pas activés par défaut. Cochez ceux que vous voulez."
+  },
   "InstallPlatformModpackModal": {
     "header": {
       "title": "Installer le modpack"

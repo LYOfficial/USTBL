@@ -8,6 +8,8 @@ pub mod local_scan;
 pub mod memory;
 pub mod merge;
 pub mod notice;
+pub mod optional;
+pub mod optional_list;
 pub mod packs;
 pub mod plan;
 pub mod plan_cache;

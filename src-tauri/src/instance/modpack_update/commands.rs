@@ -8,6 +8,7 @@ use super::apply::{
 use super::diff::{Conflict, ConflictChoice, Diff, FileChange};
 use super::merge::merge_with_choices;
 use super::notice::{read_update_notice, write_update_notice, UpdateNotice};
+use super::optional::{self, OptionalFile};
 use super::plan::{
   compare, component_action, count_local_changes, finish, invalidate_scan_cache,
   next_component_fingerprint, requires_reinstall, resolve, ComponentAction, Prepared,
@@ -173,6 +174,11 @@ pub struct UpdatePlan {
   /// while the component profile is rebuilt.
   pub fast_forward: bool,
   pub plan_hash: String,
+  /// Optional files the pack has that the player was never asked about. They
+  /// are not enabled unless the player's pick (`optional_choice` of the
+  /// preview) names them.
+  #[serde(default)]
+  pub new_optional: Vec<OptionalFile>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -456,6 +462,7 @@ pub async fn register_campus_modpack_install(
   app: AppHandle,
   instance_id: String,
   label: String,
+  optional_selected: Option<Vec<String>>,
 ) -> USTBLResult<()> {
   let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let old_record = load_campus_install_record(&target.root);
@@ -466,7 +473,13 @@ pub async fn register_campus_modpack_install(
   save_campus_install_record(
     &target.root,
     &rewrite_install_record(instance_id, target.instance.name, label, old_record),
-  )
+  )?;
+  // The install reads the picks back when it plans; they outlive a restart.
+  if let Some(selected) = optional_selected {
+    optional::write_picks(&target.root, &selected)
+      .map_err(|error| crate::error::USTBLError(error.to_string()))?;
+  }
+  Ok(())
 }
 
 #[tauri::command]
@@ -1864,12 +1877,14 @@ pub fn reveal_modpack_conflict_file(
 pub async fn prepare_modpack_update(
   app: AppHandle,
   instance_id: String,
+  optional_choice: Option<Vec<String>>,
 ) -> USTBLResult<UpdatePlan> {
   // A new preview supersedes a previous one of this instance.
   cancel_prepare(&instance_id);
   let app_clone = app.clone();
   let id = instance_id.clone();
-  let spawned = tokio::spawn(async move { prepare_inner(&app_clone, &id).await });
+  let choice = normalized_choice(optional_choice);
+  let spawned = tokio::spawn(async move { prepare_inner(&app_clone, &id, &choice).await });
   let abort_id = spawned.abort_handle().id();
   if let Ok(mut handles) = prepare_handles().lock() {
     handles.insert(instance_id.clone(), spawned.abort_handle());
@@ -1897,7 +1912,11 @@ pub async fn prepare_modpack_update(
 
 /// Compare the newest version with the instance, hitting the cache when the
 /// baseline and the local files are unchanged since the last plan.
-async fn prepare_inner(app: &AppHandle, instance_id: &str) -> USTBLResult<UpdatePlan> {
+async fn prepare_inner(
+  app: &AppHandle,
+  instance_id: &str,
+  optional_choice: &[String],
+) -> USTBLResult<UpdatePlan> {
   let target = target(app, instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   // The preview this one replaces was cancelled by the caller and may not have
   // dropped its guard yet.
@@ -1905,13 +1924,23 @@ async fn prepare_inner(app: &AppHandle, instance_id: &str) -> USTBLResult<Update
   if has_campus_install(&target.root) {
     return Err(InstanceError::ModpackInstallInterrupted.into());
   }
-  prepare_target(app, instance_id, &target).await
+  prepare_target(app, instance_id, &target, optional_choice).await
+}
+
+/// The keys the player picked among the new optional files, sorted and
+/// without repeats, so equal picks compare equal.
+fn normalized_choice(choice: Option<Vec<String>>) -> Vec<String> {
+  let mut choice = choice.unwrap_or_default();
+  choice.sort();
+  choice.dedup();
+  choice
 }
 
 async fn prepare_target(
   app: &AppHandle,
   instance_id: &str,
   target: &Target,
+  optional_choice: &[String],
 ) -> USTBLResult<UpdatePlan> {
   ensure_not_running(app, instance_id)?;
   let _reporter = AppEnv::preparing(app, target);
@@ -1943,6 +1972,7 @@ async fn prepare_target(
     if cache.to_version_id == latest.version_id
       && cache.from_version_id == from_version_id
       && cache.baseline_sha1 == baseline_sha1
+      && cache.optional_choice == optional_choice
     {
       let root = target.root.clone();
       let paths = cache.paths.clone();
@@ -1962,7 +1992,7 @@ async fn prepare_target(
   // The line answers the manifest; its version is authoritative for the plan
   // even when it is newer than what the check just saw.
   let latest = resolve_latest_for_plan(app, &target).await?;
-  let prepared = plan_prepared(app, &target, &baseline, &latest).await?;
+  let prepared = plan_prepared(app, &target, &baseline, &latest, optional_choice).await?;
   // The fingerprint is taken over the same paths the plan covers.
   let paths = plan_cache::plan_paths(&baseline, &prepared.remote);
   let plan = plan_of(&target.origin, prepared);
@@ -1978,6 +2008,7 @@ async fn prepare_target(
     baseline_sha1,
     paths,
     fingerprint,
+    optional_choice.to_vec(),
     plan.clone(),
   );
   if let Err(error) = plan_cache::write_plan_cache(&target.root, &cache) {
@@ -1993,6 +2024,7 @@ async fn plan_prepared(
   target: &Target,
   baseline: &ModpackBaseline,
   latest: &LatestVersion,
+  optional_choice: &[String],
 ) -> USTBLResult<PlannedRun> {
   // A platform pack is previewed through byte ranges of its archive when it
   // can be; the archive itself is only downloaded when the update is confirmed.
@@ -2004,10 +2036,19 @@ async fn plan_prepared(
     baseline,
     latest,
     is_fresh(&target.origin),
+    optional_choice,
   )
   .await
   {
+    let new_optional = optional::resolve(
+      &target.root,
+      baseline,
+      optional_choice,
+      &run.remote.optional,
+    )
+    .new;
     return Ok(PlannedRun {
+      new_optional,
       version_id: run.remote.version_id.clone(),
       label: run.remote.label.clone(),
       diff: run.prepared.diff,
@@ -2018,7 +2059,7 @@ async fn plan_prepared(
       remote: run.remote,
     });
   }
-  let remote = resolve_remote(
+  let mut remote = resolve_remote(
     app,
     &target.origin,
     &target.root,
@@ -2026,8 +2067,10 @@ async fn plan_prepared(
     latest,
   )
   .await?;
+  let new_optional = optional::select(&mut remote, &target.root, baseline, optional_choice).new;
   if requires_reinstall(baseline, &remote, is_fresh(&target.origin)) {
     return Ok(PlannedRun {
+      new_optional,
       version_id: remote.version_id.clone(),
       label: remote.label.clone(),
       diff: Default::default(),
@@ -2063,6 +2106,7 @@ async fn plan_prepared(
     materialize_text_candidates(app, target, &remote, &compared.diff.conflicts).await?;
   let prepared = finish(compared, &target.root, &remote, &remote_contents)?;
   Ok(PlannedRun {
+    new_optional,
     version_id: remote.version_id.clone(),
     label: remote.label.clone(),
     diff: prepared.diff,
@@ -2084,6 +2128,7 @@ struct PlannedRun {
   reinstall_required: bool,
   restore_components: bool,
   remote: super::remote::RemoteModpack,
+  new_optional: Vec<OptionalFile>,
 }
 
 /// Drop files an interrupted preview could have left behind.
@@ -2168,6 +2213,7 @@ fn plan_of(origin: &InstanceOrigin, prepared: PlannedRun) -> UpdatePlan {
     reinstall_required: prepared.reinstall_required,
     restore_components: prepared.restore_components,
     plan_hash: prepared.plan_hash,
+    new_optional: prepared.new_optional,
   }
 }
 
@@ -2177,6 +2223,7 @@ fn plan_of(origin: &InstanceOrigin, prepared: PlannedRun) -> UpdatePlan {
 /// dialog would show is never built; both are computed once, from the same
 /// remote, and the apply below never asks the platform again.
 struct InstallPlan {
+  resolution: optional::Resolution,
   plan: UpdatePlan,
   prepared: Prepared,
   remote: RemoteModpack,
@@ -2231,7 +2278,7 @@ async fn plan_fresh_install(
     },
     Vec::new(),
   );
-  let remote = resolve_remote(
+  let mut remote = resolve_remote(
     app,
     &target.origin,
     &target.root,
@@ -2239,6 +2286,8 @@ async fn plan_fresh_install(
     &latest,
   )
   .await?;
+  // What the player picked in the install dialog was stored with the install.
+  let resolution = optional::select(&mut remote, &target.root, &baseline, &[]);
   log::info!(
     "modpack install details: instance={} version={} elapsed_ms={}",
     target.instance.id,
@@ -2258,8 +2307,10 @@ async fn plan_fresh_install(
       restore_components: false,
       fast_forward: false,
       plan_hash: String::new(),
+      new_optional: Vec::new(),
     };
     return Ok(InstallPlan {
+      resolution,
       plan,
       prepared: Prepared {
         diff: Diff::default(),
@@ -2344,8 +2395,10 @@ async fn plan_fresh_install(
     reinstall_required: false,
     restore_components: prepared.restore_components,
     plan_hash: prepared.plan_hash.clone(),
+    new_optional: Vec::new(),
   };
   Ok(InstallPlan {
+    resolution,
     plan,
     prepared,
     remote,
@@ -2575,7 +2628,9 @@ pub async fn apply_modpack_update(
   instance_id: String,
   plan_hash: String,
   choices: BTreeMap<String, ConflictChoice>,
+  optional_choice: Option<Vec<String>>,
 ) -> USTBLResult<UpdateStarted> {
+  let optional_choice = normalized_choice(optional_choice);
   let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let guard = PlanGuard::acquire(&target.root)?;
   if has_campus_install(&target.root) {
@@ -2604,6 +2659,7 @@ pub async fn apply_modpack_update(
       instance_id.clone(),
       plan_hash.clone(),
       choices,
+      optional_choice,
       tasks.clone(),
     ))
     .await;
@@ -2661,6 +2717,7 @@ async fn apply_modpack_update_inner(
   instance_id: String,
   plan_hash: String,
   choices: BTreeMap<String, ConflictChoice>,
+  optional_choice: Vec<String>,
   tasks: CampusInstallTasks,
 ) -> USTBLResult<UpdateOutcome> {
   // What the player answered, before anything is checked: a Stale answer
@@ -2686,7 +2743,7 @@ async fn apply_modpack_update_inner(
   let latest = latest_version(&app, &target.origin)
     .await?
     .ok_or(InstanceError::ModpackUpdateStale)?;
-  let remote = resolve_remote(
+  let mut remote = resolve_remote(
     &app,
     &target.origin,
     &target.root,
@@ -2694,6 +2751,7 @@ async fn apply_modpack_update_inner(
     &latest,
   )
   .await?;
+  let resolution = optional::select(&mut remote, &target.root, &baseline, &optional_choice);
   let fresh = is_fresh(&target.origin);
   let action = component_action(&baseline, &remote, fresh);
   if action == ComponentAction::Reinstall {
@@ -2735,7 +2793,14 @@ async fn apply_modpack_update_inner(
   let prepared = finish(compared, &target.root, &remote, &remote_contents)?;
   if prepared.plan_hash != plan_hash
     && !preview_was_confirmed(
-      &app, &target, &baseline, &latest, &prepared, &plan_hash, fresh,
+      &app,
+      &target,
+      &baseline,
+      &latest,
+      &prepared,
+      &plan_hash,
+      fresh,
+      &optional_choice,
     )
     .await
   {
@@ -2768,6 +2833,7 @@ async fn apply_modpack_update_inner(
   );
   let ignores = super::ignores::plan_update(&target.root, &prepared, &remote);
   let recommendation = super::memory::Recommendation::of(&remote);
+  let remote_optional = remote.optional.clone();
   let result = apply(
     &env,
     UpdateRequest {
@@ -2784,6 +2850,7 @@ async fn apply_modpack_update_inner(
       base_texts,
       next_baseline: prepared.next_baseline.clone(),
       ignores,
+      optional: Some(resolution.record(&remote_optional)),
       // The staging record carries the hash of the plan that is applied; for a
       // confirmed preview that is the full plan's, not the previewed one.
       plan_hash: prepared.plan_hash.clone(),
@@ -2812,6 +2879,7 @@ async fn preview_was_confirmed(
   full: &super::plan::Prepared,
   confirmed: &str,
   fresh: bool,
+  optional_choice: &[String],
 ) -> bool {
   if fresh {
     return false;
@@ -2840,6 +2908,7 @@ async fn preview_was_confirmed(
     &target.instance.name,
     baseline,
     fresh,
+    optional_choice,
     confirmed,
     full,
     &full_loader_change,
@@ -3412,6 +3481,7 @@ async fn install_beside_client(
 ) -> USTBLResult<UpdateOutcome> {
   let planning_started = Instant::now();
   let InstallPlan {
+    resolution,
     plan,
     prepared,
     remote,
@@ -3489,6 +3559,7 @@ async fn install_beside_client(
       base_texts: BTreeMap::new(),
       next_baseline: prepared.next_baseline.clone(),
       ignores,
+      optional: Some(resolution.record(&remote.optional)),
       plan_hash: plan.plan_hash.clone(),
     },
   )
@@ -4710,6 +4781,7 @@ mod tests {
       loader_change: None,
       reinstall_required: true,
       restore_components: false,
+      new_optional: Vec::new(),
       remote: crate::instance::modpack_update::remote::RemoteModpack {
         version_id: "2".into(),
         label: "2.0".into(),
@@ -4725,6 +4797,7 @@ mod tests {
         rules: Vec::new(),
         rules_manifest: false,
         disabled_authoritative: false,
+        optional: Vec::new(),
         path_index: std::sync::Arc::new(std::sync::OnceLock::new()),
       },
     };
@@ -4753,6 +4826,7 @@ mod tests {
       loader_change: None,
       reinstall_required: false,
       restore_components,
+      new_optional: Vec::new(),
       remote: crate::instance::modpack_update::remote::RemoteModpack {
         version_id: "2".into(),
         label: "2.0".into(),
@@ -4768,6 +4842,7 @@ mod tests {
         rules: Vec::new(),
         rules_manifest: true,
         disabled_authoritative: true,
+        optional: Vec::new(),
         path_index: std::sync::Arc::new(std::sync::OnceLock::new()),
       },
     };

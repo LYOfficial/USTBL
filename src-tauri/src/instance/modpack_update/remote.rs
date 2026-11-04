@@ -3,6 +3,7 @@
 
 use super::decide::{Policy, ShipInput};
 use super::diff::FileKey;
+use super::optional::OptionalFile;
 use super::packs::PackSession;
 use crate::error::USTBLResult;
 use crate::instance::helpers::modpack::baseline::{
@@ -271,6 +272,11 @@ pub struct RemoteModpack {
   /// and applied. Set for `/3` manifests and for platform archives, where a
   /// `.disabled` file is read as a disabled mod; a `/2` manifest never says.
   pub disabled_authoritative: bool,
+  /// The files of a platform archive the pack author marked optional, every
+  /// one of them also listed in `files`. The player's choice is applied to
+  /// `files` after the remote is built (see `optional::apply`), so this table
+  /// and the cached remote do not depend on it.
+  pub optional: Vec<OptionalFile>,
   /// Case-folded lookup over `files` and the `file` rules, built on first
   /// use and shared by every clone. Filled only by [`RemoteModpack::index`].
   pub(crate) path_index: Arc<OnceLock<PathIndex>>,
@@ -320,6 +326,8 @@ pub struct StoredRemoteModpack {
   pub rules_manifest: bool,
   #[serde(default)]
   pub disabled_authoritative: bool,
+  #[serde(default)]
+  pub optional: Vec<OptionalFile>,
 }
 
 impl From<&RemoteModpack> for StoredRemoteModpack {
@@ -350,6 +358,7 @@ impl From<&RemoteModpack> for StoredRemoteModpack {
       rules: remote.rules.clone(),
       rules_manifest: remote.rules_manifest,
       disabled_authoritative: remote.disabled_authoritative,
+      optional: remote.optional.clone(),
     }
   }
 }
@@ -403,6 +412,7 @@ impl RemoteModpack {
       // A cache written before the field existed holds a `/3` remote or an
       // archive that never carried `disabled`; the former is authoritative.
       disabled_authoritative: stored.disabled_authoritative || stored.rules_manifest,
+      optional: stored.optional,
       path_index: Arc::new(OnceLock::new()),
     }
   }
@@ -656,6 +666,7 @@ mod tests {
       rules: Vec::new(),
       rules_manifest: false,
       disabled_authoritative: false,
+      optional: Vec::new(),
       path_index: Arc::new(OnceLock::new()),
     }
   }

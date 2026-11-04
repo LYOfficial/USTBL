@@ -650,6 +650,18 @@
       "missingSha1": "此檔案沒有 SHA-1，無法安裝"
     }
   },
+  "OptionalFiles": {
+    "entry": "可選檔案（已選 {{selected}}/{{total}}）",
+    "title": "選擇可選檔案",
+    "description": "以下檔案由整合包作者標為可選，預設不安裝。勾選的檔案會正常安裝；未勾選的模組以停用狀態放入，之後可在模組管理中啟用；其他未勾選的檔案不安裝。",
+    "button": {
+      "selectAll": "全選",
+      "selectNone": "全不選",
+      "invert": "反選"
+    },
+    "newTitle": "新增的可選檔案",
+    "newDescription": "這些檔案預設不啟用，可勾選需要的。"
+  },
   "InstallPlatformModpackModal": {
     "header": {
       "title": "安裝整合包"

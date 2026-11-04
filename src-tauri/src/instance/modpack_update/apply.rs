@@ -252,6 +252,10 @@ pub struct UpdateRequest {
   /// The local ignores as the plan saw them and as the update leaves them;
   /// `None` leaves the file alone. Written inside the transaction.
   pub ignores: Option<super::ignores::IgnoresUpdate>,
+  /// The optional files the instance holds after the update and which of them
+  /// the player chose; `None` leaves the record alone. Written inside the
+  /// transaction.
+  pub optional: Option<super::optional::OptionalRecord>,
   /// Identifies the plan whose staged files may be reused after a failure.
   pub plan_hash: String,
 }
@@ -345,6 +349,7 @@ fn meta_files(instance_name: &str, restoring_components: bool) -> Vec<String> {
     format!("{instance_name}.json"),
     super::ignores::meta_name(),
     super::release::meta_name(),
+    super::optional::meta_name(),
   ];
   if restoring_components {
     names.extend([
@@ -1390,6 +1395,9 @@ async fn run(env: &dyn UpdateEnv, request: &UpdateRequest) -> USTBLResult<()> {
     if let Some(update) = &request.ignores {
       super::ignores::write(root, &update.to).map_err(io_error)?;
     }
+    if let Some(record) = &request.optional {
+      super::optional::write(root, record).map_err(io_error)?;
+    }
     // Cache the new text bases fetched during planning. Merged or kept-local
     // files do not match the new baseline on disk, so `sync` below would not
     // pick them up. A failed validation is only logged.
@@ -1689,6 +1697,7 @@ mod tests {
       .collect();
     UpdateRequest {
       ignores: None,
+      optional: None,
       root: root.0.clone(),
       instance_name: "pack".into(),
       operations,
@@ -1704,6 +1713,7 @@ mod tests {
         rules: Vec::new(),
         rules_manifest: false,
         disabled_authoritative: false,
+        optional: Vec::new(),
         path_index: Arc::new(OnceLock::new()),
       },
       origin: origin("1"),
@@ -2104,6 +2114,38 @@ mod tests {
     );
     assert!(!can_roll_back_last(&root.0));
     assert!(!roll_back_last(&root.0).unwrap());
+  }
+
+  #[tokio::test]
+  async fn the_optional_record_is_written_kept_and_taken_back_with_the_update() {
+    use super::super::optional::{self, OptionalFile, OptionalRecord};
+    let root = setup();
+    let old = OptionalRecord {
+      known: vec![OptionalFile {
+        key: "k:1".into(),
+        path: "mods/a.jar".into(),
+        name: "a.jar".into(),
+      }],
+      ..Default::default()
+    };
+    optional::write(&root.0, &old).unwrap();
+    let mut env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let new = url_file("mods/new.jar", "new", &mut env);
+    let mut update = request(&root, vec![new.clone()], vec![write_op(&new)], "0.15.0");
+    let mut record = old.clone();
+    record.selected = vec!["k:1".into()];
+    update.optional = Some(record.clone());
+
+    apply(&env, update).await.unwrap();
+
+    assert_eq!(optional::read(&root.0).selected, record.selected);
+    assert!(roll_back_last(&root.0).unwrap());
+    let back = optional::read(&root.0);
+    assert_eq!(back.known, old.known);
+    assert!(back.selected.is_empty());
   }
 
   #[tokio::test]
