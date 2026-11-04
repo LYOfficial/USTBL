@@ -53,6 +53,7 @@ import { InvokeResponse } from "@/models/response";
 import { VustbAccount, isVustbManager } from "@/models/vustb";
 import { AccountService } from "@/services/account";
 import { ModpackUpdateService } from "@/services/modpack-update";
+import { diffReasonKey } from "@/utils/diff-reason";
 import {
   AUTO_EXPAND_LIMIT,
   createPathMatcher,
@@ -376,7 +377,10 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
           );
         }
         return note(
-          t(`ModpackLocalChangesModal.noDiff.${entry.noDiff ?? "notText"}`)
+          t(
+            diffReasonKey(entry.noDiff ?? "notTextType") ??
+              `ModpackLocalChangesModal.noDiff.${entry.noDiff}`
+          )
         );
       default:
         return null;

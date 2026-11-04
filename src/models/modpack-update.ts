@@ -112,7 +112,27 @@ export interface ModpackDiffHunk {
 export interface ModpackFileDiff {
   /** Empty when only line endings, a BOM or a timestamp differ. */
   hunks: ModpackDiffHunk[] | null;
-  unavailable: "notText" | "unavailable" | null;
+  unavailable:
+    | "notTextType"
+    | "tooLarge"
+    | "binary"
+    | "notUtf8"
+    | "unavailable"
+    | null;
+}
+
+export type PublishDiffUnavailable =
+  | "notTextType"
+  | "tooLarge"
+  | "binary"
+  | "notUtf8"
+  | "localMissing"
+  | "baseMissing";
+
+export interface PublishFileDiff {
+  /** Empty when only line endings, a BOM or a properties timestamp differ. */
+  hunks: ModpackDiffHunk[] | null;
+  unavailable: PublishDiffUnavailable | null;
 }
 
 /** How a path differs from the release the instance last matched. */
@@ -142,7 +162,13 @@ export interface ModpackChangeDetailEntry {
   local?: ModpackFileKey;
   /** Normalized line diff, installed → local; only for modified text files. */
   hunks?: ModpackDiffHunk[];
-  noDiff?: "notText" | "baseMissing" | "bothVariants";
+  noDiff?:
+    | "notTextType"
+    | "tooLarge"
+    | "binary"
+    | "notUtf8"
+    | "baseMissing"
+    | "bothVariants";
   /** The disabled state also differs from the release. */
   toggled: boolean;
   /** The file sits at `<path>.disabled` on disk. */

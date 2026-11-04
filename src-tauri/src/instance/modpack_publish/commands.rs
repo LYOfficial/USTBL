@@ -36,7 +36,6 @@ use crate::instance::modpack_update::remote::RemoteRule;
 use crate::instance::modpack_update::sources::{
   campus_base_remote, campus_client, loader_slug, CAMPUS_API,
 };
-use crate::instance::modpack_update::text_diff::DiffHunk;
 use crate::utils::web::build_part_upload_client;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -518,8 +517,8 @@ pub async fn prepare_campus_modpack_publish_tree(
 }
 
 /// The line diff of one file from the previous release's text to the file on
-/// disk. `None` when the previous text is not kept locally or the file is not
-/// text; the tree then only says the content differs.
+/// disk. Without hunks, `unavailable` says why; the tree then only says the
+/// content differs.
 #[tauri::command]
 pub async fn diff_campus_modpack_publish_file(
   app: AppHandle,
@@ -528,7 +527,7 @@ pub async fn diff_campus_modpack_publish_file(
   previous_sha1: String,
   previous_version_id: String,
   previous_project_id: String,
-) -> USTBLResult<Option<Vec<DiffHunk>>> {
+) -> USTBLResult<super::changes::PublishFileDiff> {
   if !valid_publish_diff_inputs(
     &path,
     &previous_sha1,

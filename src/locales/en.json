@@ -869,7 +869,13 @@
     "expandAll": "Expand all",
     "collapseAll": "Collapse all",
     "expandSubtree": "Expand recursively",
-    "collapseSubtree": "Collapse recursively"
+    "collapseSubtree": "Collapse recursively",
+    "noDiff": {
+      "notTextType": "Not a text file; differences are not shown",
+      "tooLarge": "File exceeds 2 MB; differences are not shown",
+      "binary": "Binary file; differences are not shown",
+      "notUtf8": "Not UTF-8 encoded; differences are not shown"
+    }
   },
   "FileError": {
     "FILE_BLOCKED_BY_ANTIVIRUS": "File {{file}} was blocked by antivirus software. Allow the file in Windows Security, or add the game directory to the exclusions, then try again.",
@@ -3500,7 +3506,6 @@
       "fileDiff": {
         "show": "Show diff",
         "hide": "Hide diff",
-        "notText": "Not text or too large to show a diff",
         "unavailable": "Unable to get the new version's content; try again later",
         "formatOnly": "Only line endings or other formatting differ"
       },
@@ -3580,7 +3585,6 @@
     "incomplete": "Unable to get the previous version’s change rules; try again",
     "disabled": "Disabled",
     "noDiff": {
-      "notText": "Non-text or too large; differences are not shown",
       "baseMissing": "No copy from installation exists; differences cannot be shown",
       "bothVariants": "A file and its .disabled variant both exist. Delete one of them"
     },

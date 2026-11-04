@@ -294,12 +294,26 @@ pub enum LocalChangeKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum NoDiffReason {
-  /// Not a text file the launcher compares by line (or too large).
-  NotText,
+  /// The local file is not text, for the reason given (`NotTextReason`).
+  NotTextType,
+  TooLarge,
+  Binary,
+  NotUtf8,
   /// The installed text was not kept, so there is nothing to compare with.
   BaseMissing,
   /// Both variants sit on disk; delete one to see what it holds.
   BothVariants,
+}
+
+impl From<text::NotTextReason> for NoDiffReason {
+  fn from(reason: text::NotTextReason) -> Self {
+    match reason {
+      text::NotTextReason::NotTextType => Self::NotTextType,
+      text::NotTextReason::TooLarge => Self::TooLarge,
+      text::NotTextReason::Binary => Self::Binary,
+      text::NotTextReason::NotUtf8 => Self::NotUtf8,
+    }
+  }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -450,7 +464,14 @@ pub async fn local_changes(
           None,
         ),
         (None, Some(_)) => (None, Some(NoDiffReason::BaseMissing)),
-        _ => (None, Some(NoDiffReason::NotText)),
+        _ => (
+          None,
+          Some(
+            text::text_reason(&path, &local_bytes)
+              .err()
+              .map_or(NoDiffReason::NotTextType, Into::into),
+          ),
+        ),
       };
       changes.push(LocalChange {
         path,
@@ -2118,13 +2139,49 @@ mod tests {
       by_path["config/b.toml"].no_diff,
       Some(NoDiffReason::BaseMissing)
     );
-    assert_eq!(by_path["mods/a.jar"].no_diff, Some(NoDiffReason::NotText));
+    assert_eq!(
+      by_path["mods/a.jar"].no_diff,
+      Some(NoDiffReason::NotTextType)
+    );
     assert_eq!(by_path["mods/gone.jar"].kind, LocalChangeKind::Deleted);
 
     // Without diffs the same files are listed, only lighter.
     let light = local_changes(&root, &installed, false).await.unwrap();
     assert_eq!(light.len(), 4);
     assert!(light.iter().all(|change| change.hunks.is_none()));
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn a_modified_non_text_file_says_which_check_failed() {
+    let root = instance(&[]);
+    fs::create_dir_all(root.join("config")).unwrap();
+    fs::write(root.join("config/bin.toml"), b"a\0b").unwrap();
+    fs::write(root.join("config/latin.toml"), b"a=\xE4\n").unwrap();
+    fs::write(
+      root.join("config/big.toml"),
+      vec![b'a'; text::MAX_TEXT_SIZE + 1],
+    )
+    .unwrap();
+    let installed = baseline(&[
+      ("config/bin.toml", "x=0\n"),
+      ("config/latin.toml", "x=0\n"),
+      ("config/big.toml", "x=0\n"),
+    ]);
+    let changes = local_changes(&root, &installed, true).await.unwrap();
+    let by_path: BTreeMap<_, _> = changes.iter().map(|c| (c.path.as_str(), c)).collect();
+    assert_eq!(
+      by_path["config/bin.toml"].no_diff,
+      Some(NoDiffReason::Binary)
+    );
+    assert_eq!(
+      by_path["config/latin.toml"].no_diff,
+      Some(NoDiffReason::NotUtf8)
+    );
+    assert_eq!(
+      by_path["config/big.toml"].no_diff,
+      Some(NoDiffReason::TooLarge)
+    );
     let _ = fs::remove_dir_all(root);
   }
 

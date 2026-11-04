@@ -16,7 +16,7 @@ import {
   CampusUnfinishedInstall,
   CampusUnfinishedPublish,
 } from "@/models/campus-modpack";
-import { ModpackDiffHunk } from "@/models/modpack-update";
+import { PublishFileDiff } from "@/models/modpack-update";
 import { InvokeResponse } from "@/models/response";
 import { responseHandler } from "@/utils/response";
 
@@ -191,8 +191,8 @@ export class CampusModpackService {
 
   /**
    * The line diff of a file from the previous release's text to the file on
-   * disk. `null` when the previous text is not kept locally or the file is not
-   * text; empty when the texts only differ in line endings and the like.
+   * disk. `unavailable` says why the line diff cannot be shown; empty when the
+   * texts only differ in line endings and the like.
    */
   @responseHandler("instance")
   static async diffCampusModpackPublishFile(
@@ -201,7 +201,7 @@ export class CampusModpackService {
     previousSha1: string,
     previousVersionId: string,
     previousProjectId: string
-  ): Promise<InvokeResponse<ModpackDiffHunk[] | null>> {
+  ): Promise<InvokeResponse<PublishFileDiff>> {
     return await invoke("diff_campus_modpack_publish_file", {
       instanceId,
       path,

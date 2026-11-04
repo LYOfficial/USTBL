@@ -563,7 +563,7 @@ async fn detail_lists_every_class_in_release_then_first_install_then_added_order
           "sha1": "df0dcaf65c12307eff962a51ea3abd7f41491383",
           "size": 10
         },
-        "noDiff": "notText",
+        "noDiff": "notTextType",
         "path": "mods/switched.jar",
         "size": 10,
         "toggled": true
@@ -722,7 +722,7 @@ async fn the_count_pass_omits_first_install_files_and_the_size_of_added_ones() {
           "sha1": "df0dcaf65c12307eff962a51ea3abd7f41491383",
           "size": 10
         },
-        "noDiff": "notText",
+        "noDiff": "notTextType",
         "path": "mods/switched.jar",
         "size": 10,
         "toggled": true

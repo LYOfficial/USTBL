@@ -869,7 +869,13 @@
     "expandAll": "全部展開",
     "collapseAll": "全部摺疊",
     "expandSubtree": "遞迴展開",
-    "collapseSubtree": "遞迴摺疊"
+    "collapseSubtree": "遞迴摺疊",
+    "noDiff": {
+      "notTextType": "不是文字檔案，不顯示差異",
+      "tooLarge": "檔案超過 2 MB，不顯示差異",
+      "binary": "二進位檔案，不顯示差異",
+      "notUtf8": "不是 UTF-8 編碼，不顯示差異"
+    }
   },
   "FileError": {
     "FILE_BLOCKED_BY_ANTIVIRUS": "檔案 {{file}} 被防毒軟體攔截。請在 Windows 安全性中允許該檔案，或把遊戲目錄加入排除項後重試。",
@@ -3500,7 +3506,6 @@
       "fileDiff": {
         "show": "查看差異",
         "hide": "收起差異",
-        "notText": "非文字或檔案太大，無法顯示差異",
         "unavailable": "無法取得新版本的內容，請稍後再試",
         "formatOnly": "僅換行等格式不同"
       },
@@ -3580,7 +3585,6 @@
     "incomplete": "無法獲取上一版改動規則，請重試",
     "disabled": "已停用",
     "noDiff": {
-      "notText": "非文字或檔案太大，不顯示差異",
       "baseMissing": "沒有安裝時的副本，無法顯示差異",
       "bothVariants": "同名檔案及其 .disabled 變體同時存在，請刪除其中一個"
     },

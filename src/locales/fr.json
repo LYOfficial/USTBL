@@ -869,7 +869,13 @@
     "expandAll": "Tout développer",
     "collapseAll": "Tout réduire",
     "expandSubtree": "Développer récursivement",
-    "collapseSubtree": "Réduire récursivement"
+    "collapseSubtree": "Réduire récursivement",
+    "noDiff": {
+      "notTextType": "Ce n’est pas un fichier texte ; les différences ne sont pas affichées",
+      "tooLarge": "Le fichier dépasse 2 Mo ; les différences ne sont pas affichées",
+      "binary": "Fichier binaire ; les différences ne sont pas affichées",
+      "notUtf8": "Le fichier n’est pas encodé en UTF-8 ; les différences ne sont pas affichées"
+    }
   },
   "FileError": {
     "FILE_BLOCKED_BY_ANTIVIRUS": "Le fichier {{file}} a été bloqué par l'antivirus. Autorisez-le dans Sécurité Windows, ou ajoutez le dossier du jeu aux exclusions, puis réessayez.",
@@ -3500,7 +3506,6 @@
       "fileDiff": {
         "show": "Afficher les différences",
         "hide": "Masquer les différences",
-        "notText": "Non textuel ou trop volumineux pour afficher les différences",
         "unavailable": "Impossible d’obtenir le contenu de la nouvelle version, réessayez plus tard",
         "formatOnly": "Seuls les sauts de ligne ou autres formats diffèrent"
       },
@@ -3580,7 +3585,6 @@
     "incomplete": "Impossible d’obtenir les règles de modification précédentes ; réessayez",
     "disabled": "Désactivé",
     "noDiff": {
-      "notText": "Fichier non textuel ou trop volumineux ; différence non affichée",
       "baseMissing": "Aucune copie de l’installation ; impossible d’afficher la différence",
       "bothVariants": "Un fichier et sa variante .disabled existent tous les deux. Supprimez l'un des deux"
     },
