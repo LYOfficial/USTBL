@@ -1,6 +1,9 @@
 use crate::error::USTBLResult;
 use crate::instance::helpers::client_jar::load_game_version_from_jar;
 use crate::instance::helpers::client_json::{libraries_to_info, patches_to_info, McClientInfo};
+use crate::instance::helpers::identity::{
+  dedup_instance_ids, migrated_selected_id, read_or_assign_id,
+};
 use crate::instance::helpers::loader::forge::download_forge_libraries;
 use crate::instance::helpers::loader::neoforge::download_neoforge_libraries;
 use crate::instance::helpers::loader::optifine::download_optifine_libraries;
@@ -13,14 +16,14 @@ use crate::instance::models::misc::{
 use crate::launcher_config::helpers::misc::get_global_game_config;
 use crate::launcher_config::models::{GameConfig, GameDirectory, LauncherConfig};
 use crate::resource::helpers::misc::get_source_priority_list;
-use crate::storage::load_json_async;
+use crate::storage::{load_json_async, Storage};
 use sanitize_filename;
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Cursor;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 use zip::ZipArchive;
@@ -180,6 +183,44 @@ pub fn unify_instance_name(src_version_path: &PathBuf, tgt_name: &String) -> UST
   Ok(dst_dir)
 }
 
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceFolderCheck {
+  pub available: bool,
+  /// The first `<folder>-N` (N from 2) that is free, when `folder` is taken.
+  pub suggestion: Option<String>,
+}
+
+/// Lowercased names of everything under a `versions` directory.
+pub fn existing_folder_names(versions_dir: &Path) -> HashSet<String> {
+  fs::read_dir(versions_dir)
+    .map(|entries| {
+      entries
+        .flatten()
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .map(|name| name.to_lowercase())
+        .collect()
+    })
+    .unwrap_or_default()
+}
+
+/// Names compare case-insensitively: `GTNH` and `gtnh` are one folder on Windows.
+pub fn check_folder(existing: &HashSet<String>, folder: &str) -> InstanceFolderCheck {
+  if !existing.contains(&folder.to_lowercase()) {
+    return InstanceFolderCheck {
+      available: true,
+      suggestion: None,
+    };
+  }
+  let suggestion = (2..)
+    .map(|n| format!("{folder}-{n}"))
+    .find(|candidate| !existing.contains(&candidate.to_lowercase()));
+  InstanceFolderCheck {
+    available: false,
+    suggestion,
+  }
+}
+
 async fn refresh_instance(
   app: &AppHandle,
   mut version_path: PathBuf,
@@ -211,6 +252,7 @@ async fn refresh_instance(
   .load_json_cfg()
   .await
   .unwrap_or_default();
+  cfg_read.id = read_or_assign_id(&version_path, &cfg_read.id);
 
   if cfg_read.mod_loader.status != ModLoaderStatus::Installed {
     let priority_list = {
@@ -413,7 +455,10 @@ async fn refresh_instances_inner(
     )
     .await
     {
-      Ok(Some(instance)) => instances.push(instance),
+      Ok(Some(mut instance)) => {
+        instance.game_dir = game_directory.name.clone();
+        instances.push(instance);
+      }
       Ok(None) => {}
       Err(e) => {
         log::warn!(
@@ -426,6 +471,8 @@ async fn refresh_instances_inner(
     }
   }
 
+  // Directory listing order is arbitrary; duplicate ids resolve by folder name.
+  instances.sort_by(|a, b| a.name.cmp(&b.name));
   Ok(instances)
 }
 
@@ -434,23 +481,36 @@ async fn refresh_all_instances(
   game_directories: &[GameDirectory],
   is_first_run: bool,
 ) -> HashMap<String, Instance> {
-  let mut instance_map = HashMap::new();
-
+  let mut ordered = vec![];
   for game_directory in game_directories {
-    let dir_name = game_directory.name.clone();
-    match refresh_instances_inner(app, game_directory, is_first_run).await {
-      Ok(vs) => {
-        for mut instance in vs {
-          let composed_id = format!("{}:{}", dir_name, instance.name);
-          instance.id = composed_id.clone();
-          instance_map.insert(composed_id, instance);
-        }
-      }
-      Err(_) => continue,
+    if let Ok(instances) = refresh_instances_inner(app, game_directory, is_first_run).await {
+      ordered.extend(instances);
     }
   }
+  dedup_instance_ids(ordered.iter_mut(), &HashSet::new());
+  ordered
+    .into_iter()
+    .map(|instance| (instance.id.clone(), instance))
+    .collect()
+}
 
-  instance_map
+/// Rewrites a selected instance id saved by an older version to the instance's
+/// current id. Safe to repeat: it does nothing once the id is current.
+pub fn migrate_selected_instance_id(app: &AppHandle, instances: &HashMap<String, Instance>) {
+  let binding = app.state::<Mutex<LauncherConfig>>();
+  let Ok(mut config) = binding.lock() else {
+    return;
+  };
+  let Some(id) = migrated_selected_id(instances, &config.states.shared.selected_instance_id) else {
+    return;
+  };
+  let value = serde_json::to_string(&id).unwrap_or_default();
+  if config
+    .partial_update(app, "states.shared.selected_instance_id", &value)
+    .is_ok()
+  {
+    let _ = config.save();
+  }
 }
 
 pub async fn refresh_and_update_instances(app: &AppHandle, is_first_run: bool) {
@@ -468,9 +528,12 @@ async fn refresh_and_update_instances_inner(app: &AppHandle, is_first_run: bool)
   };
   let instances = refresh_all_instances(app, &local_game_directories, is_first_run).await;
   // update the instances in the app state
-  let binding = app.state::<Mutex<HashMap<String, Instance>>>();
-  let mut state = binding.lock().unwrap();
-  *state = instances;
+  {
+    let binding = app.state::<Mutex<HashMap<String, Instance>>>();
+    let mut state = binding.lock().unwrap();
+    *state = instances.clone();
+  }
+  migrate_selected_instance_id(app, &instances);
 }
 
 #[cfg(test)]
@@ -549,6 +612,58 @@ mod tests {
         );
       }
     }
+  }
+
+  fn taken(names: &[&str]) -> HashSet<String> {
+    names.iter().map(|name| name.to_lowercase()).collect()
+  }
+
+  #[test]
+  fn a_free_folder_name_is_available() {
+    assert_eq!(
+      check_folder(&taken(&["other"]), "GTNH"),
+      InstanceFolderCheck {
+        available: true,
+        suggestion: None
+      }
+    );
+  }
+
+  #[test]
+  fn a_taken_folder_name_suggests_the_first_free_suffix() {
+    let check = check_folder(&taken(&["GTNH", "GTNH-2", "gtnh-3", "GTNH-5"]), "GTNH");
+    assert!(!check.available);
+    assert_eq!(check.suggestion.as_deref(), Some("GTNH-4"));
+    assert_eq!(
+      check_folder(&taken(&["pack"]), "pack")
+        .suggestion
+        .as_deref(),
+      Some("pack-2")
+    );
+  }
+
+  #[test]
+  fn folder_names_compare_without_case() {
+    let existing = taken(&["GTNH"]);
+    for name in ["gtnh", "GTNH", "GtNh"] {
+      assert!(!check_folder(&existing, name).available);
+    }
+    // The suggestion keeps the caller's spelling and is checked without case too.
+    let existing = taken(&["gtnh", "GTNH-2"]);
+    assert_eq!(
+      check_folder(&existing, "Gtnh").suggestion.as_deref(),
+      Some("Gtnh-3")
+    );
+  }
+
+  #[test]
+  fn existing_folder_names_lists_the_versions_directory_lowercased() {
+    let root = std::env::temp_dir().join(format!("ustbl-folders-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(root.join("Pack")).unwrap();
+    fs::create_dir_all(root.join("other")).unwrap();
+    assert_eq!(existing_folder_names(&root), taken(&["pack", "other"]));
+    assert!(existing_folder_names(&root.join("missing")).is_empty());
+    fs::remove_dir_all(root).unwrap();
   }
 
   #[test]

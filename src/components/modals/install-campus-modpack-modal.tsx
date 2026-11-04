@@ -170,7 +170,7 @@ const InstallCampusModpackModal: React.FC<InstallCampusModpackModalProps> = ({
       if (createResp.status === "success") {
         const registered =
           await CampusModpackService.registerCampusModpackInstall(
-            `${gameDirectory.name}:${name}`,
+            createResp.data,
             project.name
           );
         if (registered.status !== "success") {
@@ -186,7 +186,7 @@ const InstallCampusModpackModal: React.FC<InstallCampusModpackModalProps> = ({
         }
         getInstanceList(true);
         runCampusInstall(
-          { instanceId: `${gameDirectory.name}:${name}`, label: project.name },
+          { instanceId: createResp.data, label: project.name },
           toast,
           t
         );

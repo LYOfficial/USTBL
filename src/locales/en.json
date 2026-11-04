@@ -442,9 +442,6 @@
       "installFabricApi": "Install Fabric API Mod"
     }
   },
-  "CreateRenamedInstShortcutAlertDialog": {
-    "content": "The name of this instance has recently been changed. Please refresh the instance list or restart the launcher before trying to add a launch shortcut again."
-  },
   "DeleteAuthServerAlertDialog": {
     "dialog": {
       "title": "Delete Authentication Server",
@@ -1389,6 +1386,11 @@
     "label": {
       "details": "Instance Details",
       "delete": "Delete"
+    }
+  },
+  "InstanceNameEditor": {
+    "tooltip": {
+      "location": "{{gameDir}} · versions/{{folder}}"
     }
   },
   "InstanceModsPage": {
@@ -2525,10 +2527,7 @@
           "title": "Failed to rename instance",
           "description": {
             "INSTANCE_NOT_FOUND_BY_ID": "Instance ID does not exist",
-            "CONFLICT_NAME_ERROR": "A duplicate instance name exists",
-            "INVALID_NAME_ERROR": "Invalid instance name",
-            "INVALID_SOURCE_PATH": "Invalid source path",
-            "FILE_MOVE_FAILED": "Failed to move instance files"
+            "FILE_CREATION_FAILED": "Failed to create target file"
           }
         }
       },

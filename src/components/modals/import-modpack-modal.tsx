@@ -207,7 +207,7 @@ const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
           });
           return;
         }
-        const instanceId = `${gameDirectory.name}:${name}`;
+        const instanceId = createResp.data;
         const registered =
           await CampusModpackService.registerCampusModpackInstall(
             instanceId,

@@ -167,7 +167,7 @@ pub async fn monitor_process(
     binding.lock().ok().and_then(|instances| {
       instances
         .get(&instance_id)
-        .map(|instance| instance.name.clone())
+        .map(|instance| instance.shown_name().to_string())
     })
   };
   let playtime_stop = Arc::new(Notify::new());

@@ -156,8 +156,15 @@ structstruck::strike! {
   #[strikethrough[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize, Default)]]
   #[strikethrough[serde(rename_all = "camelCase", default)]]
   pub struct Instance {
+    /// UUID v4 kept in ustblcfg.json; the only identity other data refers to.
     pub id: String,
+    /// Folder name under `versions`, also the version json id and the jar name.
     pub name: String,
+    /// What the UI shows; empty means the same as `name`.
+    pub display_name: String,
+    /// Name of the game directory holding the instance. Set on refresh, never persisted.
+    #[serde(skip)]
+    pub game_dir: String,
     pub description: String,
     pub icon_src: String,
     pub starred: bool,
@@ -183,6 +190,15 @@ structstruck::strike! {
 }
 
 impl Instance {
+  /// The name to show to people: the display name, else the folder name.
+  pub fn shown_name(&self) -> &str {
+    if self.display_name.trim().is_empty() {
+      &self.name
+    } else {
+      &self.display_name
+    }
+  }
+
   pub fn get_json_cfg_path(&self) -> PathBuf {
     self.version_path.join(INSTANCE_CFG_FILE_NAME)
   }
@@ -191,7 +207,10 @@ impl Instance {
   where
     Self: Sized + serde::de::DeserializeOwned + Send,
   {
-    load_json_async::<Self>(&self.get_json_cfg_path()).await
+    let mut loaded = load_json_async::<Self>(&self.get_json_cfg_path()).await?;
+    // Not persisted, so carry it over from the snapshot that was reloaded.
+    loaded.game_dir = self.game_dir.clone();
+    Ok(loaded)
   }
 
   pub async fn save_json_cfg(&self) -> Result<(), std::io::Error> {
@@ -203,7 +222,10 @@ impl Instance {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct InstanceSummary {
   pub id: String,
+  /// The custom display name, or the folder name when none is set.
   pub name: String,
+  pub folder: String,
+  pub game_dir: String,
   pub description: String,
   pub icon_src: String,
   pub starred: bool,
@@ -247,7 +269,9 @@ impl InstanceSummary {
   ) -> Self {
     InstanceSummary {
       id,
-      name: instance.name.clone(),
+      name: instance.shown_name().to_string(),
+      folder: instance.name.clone(),
+      game_dir: instance.game_dir.clone(),
       description: instance.description.clone(),
       icon_src: instance.icon_src.clone(),
       starred: instance.starred,

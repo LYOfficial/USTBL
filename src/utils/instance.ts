@@ -50,6 +50,25 @@ export const getInstanceIconSrc = (
     : src;
 };
 
+/**
+ * Find an instance by id. An id written by an older version, `<game dir>:<folder>`
+ * (kept by desktop shortcuts), is matched by game directory and folder.
+ */
+export const findInstanceById = (
+  instances: InstanceSummary[] | undefined,
+  id: string
+): InstanceSummary | undefined => {
+  const exact = instances?.find((instance) => instance.id === id);
+  if (exact) return exact;
+  const split = id.lastIndexOf(":");
+  if (split <= 0) return undefined;
+  const gameDir = id.slice(0, split);
+  const folder = id.slice(split + 1);
+  return instances?.find(
+    (instance) => instance.gameDir === gameDir && instance.folder === folder
+  );
+};
+
 export const ownsInstanceFiles = (instance: InstanceSummary): boolean =>
   instance.origin != null ||
   instance.modpackVersion != null ||

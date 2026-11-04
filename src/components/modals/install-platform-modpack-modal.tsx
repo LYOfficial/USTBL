@@ -190,7 +190,7 @@ const InstallPlatformModpackModal: React.FC<
         });
         return;
       }
-      const instanceId = `${gameDirectory.name}:${name}`;
+      const instanceId = createResp.data;
       const registered =
         await CampusModpackService.registerCampusModpackInstall(
           instanceId,

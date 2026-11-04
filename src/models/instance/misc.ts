@@ -61,6 +61,8 @@ export interface InstanceSummary {
   id: string;
   iconSrc: string;
   name: string;
+  folder: string;
+  gameDir: string;
   description?: string;
   starred: boolean;
   playTime: number;

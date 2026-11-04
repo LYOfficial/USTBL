@@ -442,9 +442,6 @@
       "installFabricApi": "同時安裝 Fabric API 模組"
     }
   },
-  "CreateRenamedInstShortcutAlertDialog": {
-    "content": "您最近更改了此實例的名稱，請重新整理實例清單或重啟啟動器後，再次嘗試新增啟動捷徑。"
-  },
   "DeleteAuthServerAlertDialog": {
     "dialog": {
       "title": "刪除認證伺服器",
@@ -1389,6 +1386,11 @@
     "label": {
       "details": "實例詳情",
       "delete": "刪除實例"
+    }
+  },
+  "InstanceNameEditor": {
+    "tooltip": {
+      "location": "{{gameDir}} · versions/{{folder}}"
     }
   },
   "InstanceModsPage": {
@@ -2522,13 +2524,10 @@
       },
       "renameInstance": {
         "error": {
-          "title": "實例重新命名失敗",
+          "title": "實例改名失敗",
           "description": {
             "INSTANCE_NOT_FOUND_BY_ID": "實例 ID 不存在",
-            "CONFLICT_NAME_ERROR": "目前實例目錄存在重名實例",
-            "INVALID_NAME_ERROR": "實例名稱無效",
-            "INVALID_SOURCE_PATH": "實例目錄無效",
-            "FILE_MOVE_FAILED": "實例目錄移動失敗"
+            "FILE_CREATION_FAILED": "目標檔案建立失敗"
           }
         }
       },

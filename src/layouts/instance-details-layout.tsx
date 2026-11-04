@@ -23,6 +23,7 @@ import { CommonIconButton } from "@/components/common/common-icon-button";
 import NavMenu from "@/components/common/nav-menu";
 import { Section } from "@/components/common/section";
 import { InstanceLaunchButton } from "@/components/instance-launch-button";
+import { InstanceNameEditor } from "@/components/instance-name-editor";
 import { useLauncherConfig } from "@/contexts/config";
 import { useGlobalData } from "@/contexts/global-data";
 import {
@@ -55,12 +56,12 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
   const router = useRouter();
   const toast = useToast();
   const { t } = useTranslation();
-  const { openSharedModal, openGenericConfirmDialog, closeSharedModal } =
-    useSharedModals();
+  const { openSharedModal } = useSharedModals();
   const { id } = router.query;
   const instanceId = Array.isArray(id) ? id[0] : id;
 
-  const { summary, handleUpdateInstanceConfig } = useInstanceSharedData();
+  const { summary, handleUpdateInstanceConfig, updateSummaryInContext } =
+    useInstanceSharedData();
   const { tasks, installProgress } = useTaskContext();
   const { getInstanceList } = useGlobalData();
   const { discard, discarding } = useDiscardCampusInstall();
@@ -81,22 +82,6 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
     (instanceId: string) => {
       if (!instanceId || !summary) return;
 
-      const colonIndex = instanceId.indexOf(":");
-      const nameFromRouter =
-        colonIndex !== -1 ? instanceId.slice(colonIndex + 1) : instanceId;
-
-      if (nameFromRouter && summary.name && nameFromRouter !== summary.name) {
-        openGenericConfirmDialog({
-          title: t("General.notice"),
-          body: t("CreateRenamedInstShortcutAlertDialog.content"),
-          btnCancel: "",
-          onOKCallback: () => {
-            closeSharedModal("generic-confirm");
-          },
-        });
-        return;
-      }
-
       InstanceService.createLaunchDesktopShortcut(
         instanceId,
         summary.iconSrc
@@ -115,7 +100,7 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
         }
       });
     },
-    [summary, toast, closeSharedModal, openGenericConfirmDialog, t]
+    [summary, toast]
   );
 
   const instanceSecMenuOperations = [
@@ -202,7 +187,14 @@ const InstanceDetailsLayoutContent: React.FC<{ children: React.ReactNode }> = ({
       display="flex"
       flexDirection="column"
       height="100%"
-      title={summary?.name}
+      title={
+        summary ? (
+          <InstanceNameEditor
+            instance={summary}
+            onRenamed={(name) => updateSummaryInContext("name", name)}
+          />
+        ) : undefined
+      }
       withBackButton={navBarType !== "instance"}
       backRoutePath="/instances/list"
       titleExtra={

@@ -14,8 +14,8 @@ import {
 import { useRouter } from "next/router";
 import { LuArrowLeft, LuChevronRight } from "react-icons/lu";
 
-export interface SectionProps extends Omit<BoxProps, "children"> {
-  title?: string;
+export interface SectionProps extends Omit<BoxProps, "children" | "title"> {
+  title?: React.ReactNode;
   titleExtra?: React.ReactNode;
   headExtra?: React.ReactNode;
   description?: string;

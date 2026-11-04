@@ -442,9 +442,6 @@
       "installFabricApi": "同時に Fabric API をインストール"
     }
   },
-  "CreateRenamedInstShortcutAlertDialog": {
-    "content": "このインスタンスの名前が変更されました。インスタンスリストを更新するか、ランチャーを再起動してから、起動ショートカットの追加を再試行してください。"
-  },
   "DeleteAuthServerAlertDialog": {
     "dialog": {
       "title": "認証サーバーを削除",
@@ -1389,6 +1386,11 @@
     "label": {
       "details": "インスタンス情報",
       "delete": "インスタンス削除"
+    }
+  },
+  "InstanceNameEditor": {
+    "tooltip": {
+      "location": "{{gameDir}} · versions/{{folder}}"
     }
   },
   "InstanceModsPage": {
@@ -2525,10 +2527,7 @@
           "title": "インスタンスの名前変更に失敗",
           "description": {
             "INSTANCE_NOT_FOUND_BY_ID": "指定された ID のインスタンスが見つからない",
-            "CONFLICT_NAME_ERROR": "現在のゲームディレクターにインスタンス名が重複",
-            "INVALID_NAME_ERROR": "インスタンス名が無効です",
-            "INVALID_SOURCE_PATH": "インスタンスディレクトリが無効です",
-            "FILE_MOVE_FAILED": "インスタンスディレクトリの移動に失敗"
+            "FILE_CREATION_FAILED": "ターゲットファイルの作成に失敗"
           }
         }
       },

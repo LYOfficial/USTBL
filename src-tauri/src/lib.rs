@@ -226,6 +226,7 @@ pub async fn run() -> i32 {
       instance::commands::retrieve_instance_subdir_path,
       instance::commands::delete_instance,
       instance::commands::rename_instance,
+      instance::commands::check_instance_folder,
       instance::commands::copy_resource_to_instances,
       instance::commands::move_resource_to_instance,
       instance::commands::retrieve_world_list,

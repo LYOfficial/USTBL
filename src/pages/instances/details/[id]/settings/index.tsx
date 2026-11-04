@@ -22,20 +22,14 @@ import { InstanceIconSelectorPopover } from "@/components/instance-icon-selector
 import { useLauncherConfig } from "@/contexts/config";
 import { useInstanceSharedData } from "@/contexts/instance";
 import { useSharedModals } from "@/contexts/shared-modal";
-import { useToast } from "@/contexts/toast";
-import { InstanceService } from "@/services/instance";
-import {
-  getInstanceIconSrc,
-  isInstanceNameInvalid,
-  ownsInstanceFiles,
-} from "@/utils/instance";
+import { useRenameInstance } from "@/hooks/rename-instance";
+import { getInstanceIconSrc, ownsInstanceFiles } from "@/utils/instance";
 
 const getSharedGameDirectory = (versionPath: string) =>
   versionPath.replace(/[\\/][^\\/]+[\\/][^\\/]+$/, "");
 
 const InstanceSettingsPage = () => {
   const router = useRouter();
-  const toast = useToast();
   const { t } = useTranslation();
   const { config } = useLauncherConfig();
   const primaryColor = config.appearance.theme.primaryColor;
@@ -82,22 +76,15 @@ const InstanceSettingsPage = () => {
     });
   };
 
+  const renameInstance = useRenameInstance();
   const handleRenameInstance = useCallback(
-    (name: string) => {
-      if (!instanceId) return;
-      InstanceService.renameInstance(instanceId, name).then((response) => {
-        if (response.status === "success") {
-          updateSummaryInContext("versionPath", response.data);
-          updateSummaryInContext("name", name);
-        } else
-          toast({
-            title: response.message,
-            description: response.details,
-            status: "error",
-          });
-      });
+    async (name: string) => {
+      // An empty name keeps the current one.
+      if (!instanceId || !name.trim()) return;
+      const shown = await renameInstance(instanceId, name);
+      if (shown !== null) updateSummaryInContext("name", shown);
     },
-    [instanceId, toast, updateSummaryInContext]
+    [instanceId, renameInstance, updateSummaryInContext]
   );
 
   const instanceSpecSettingsGroups: OptionItemGroupProps[] = [
@@ -112,9 +99,6 @@ const InstanceSettingsPage = () => {
               onEditSubmit={handleRenameInstance}
               textProps={{ className: "secondary-text", fontSize: "xs-sm" }}
               inputProps={{ fontSize: "xs-sm" }}
-              formErrMsgProps={{ fontSize: "xs-sm" }}
-              checkError={isInstanceNameInvalid}
-              localeKey="InstanceSettingsPage.errorMessage"
               flex={1}
             />
           ),

@@ -442,9 +442,6 @@
       "installFabricApi": "同时安装 Fabric API 模组"
     }
   },
-  "CreateRenamedInstShortcutAlertDialog": {
-    "content": "您最近更改了此实例的名称，请刷新实例列表或重启启动器后，再次尝试添加启动快捷方式。"
-  },
   "DeleteAuthServerAlertDialog": {
     "dialog": {
       "title": "删除认证服务器",
@@ -1389,6 +1386,11 @@
     "label": {
       "details": "实例详情",
       "delete": "删除实例"
+    }
+  },
+  "InstanceNameEditor": {
+    "tooltip": {
+      "location": "{{gameDir}} · versions/{{folder}}"
     }
   },
   "InstanceModsPage": {
@@ -2522,13 +2524,10 @@
       },
       "renameInstance": {
         "error": {
-          "title": "实例重命名失败",
+          "title": "实例改名失败",
           "description": {
             "INSTANCE_NOT_FOUND_BY_ID": "实例 ID 不存在",
-            "CONFLICT_NAME_ERROR": "当前实例目录存在重名实例",
-            "INVALID_NAME_ERROR": "实例名称无效",
-            "INVALID_SOURCE_PATH": "实例目录无效",
-            "FILE_MOVE_FAILED": "实例目录移动失败"
+            "FILE_CREATION_FAILED": "目标文件创建失败"
           }
         }
       },

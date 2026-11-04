@@ -23,6 +23,7 @@ use crate::error::USTBLResult;
 use crate::file_error::AtPath;
 use crate::instance::commands::{remove_instance_blocking, switch_mod_loader};
 use crate::instance::helpers::client_json::McClientInfo;
+use crate::instance::helpers::identity::{dedup_instance_ids, read_or_assign_id, reassign_id};
 use crate::instance::helpers::loader::common::installer_task_group;
 use crate::instance::helpers::misc::{
   get_instance_game_config, get_instance_subdir_paths, refresh_and_update_instances,
@@ -52,7 +53,7 @@ use crate::tasks::PTaskParam;
 use crate::utils::fs::validate_sha1;
 use async_trait::async_trait;
 use serde::Serialize;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -401,7 +402,7 @@ fn unfinished_campus_install(instance: &Instance) -> Option<CampusUnfinishedInst
   let interrupted = record.phase == "installing";
   Some(CampusUnfinishedInstall {
     instance_id: instance.id.clone(),
-    instance_name: instance.name.clone(),
+    instance_name: instance.shown_name().to_string(),
     label: record.label,
     resumable: true,
     phase: if interrupted {
@@ -761,18 +762,37 @@ fn campus_instances_on_disk(app: &AppHandle) -> HashMap<String, Instance> {
     Ok(config) => config.local_game_directories.clone(),
     Err(_) => return HashMap::new(),
   };
-  scan_campus_instances(&directories)
+  // The same instance can sit in both tables; only another folder with the same
+  // id counts as taken.
+  let main_table: HashMap<String, PathBuf> = {
+    let binding = app.state::<Mutex<HashMap<String, Instance>>>();
+    let table = binding.lock();
+    table
+      .map(|table| {
+        table
+          .iter()
+          .map(|(id, instance)| (id.clone(), instance.version_path.clone()))
+          .collect()
+      })
+      .unwrap_or_default()
+  };
+  scan_campus_instances(&directories, &main_table)
 }
 
+/// Reads the instances that have not been through the normal refresh yet. Ids come
+/// from the same function as the refresh uses, so both tables agree on them.
 fn scan_campus_instances(
   directories: &[crate::launcher_config::models::GameDirectory],
+  main_table: &HashMap<String, PathBuf>,
 ) -> HashMap<String, Instance> {
-  let mut instances = HashMap::new();
+  let mut found = Vec::new();
   for directory in directories {
     let Ok(entries) = fs::read_dir(directory.dir.join("versions")) else {
       continue;
     };
-    for entry in entries.flatten() {
+    let mut entries: Vec<_> = entries.flatten().collect();
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
       let root = entry.path();
       let Ok(bytes) = fs::read(root.join(crate::instance::constants::INSTANCE_CFG_FILE_NAME))
       else {
@@ -791,13 +811,27 @@ fn scan_campus_instances(
       let Some(name) = entry.file_name().to_str().map(str::to_string) else {
         continue;
       };
-      instance.id = format!("{}:{}", directory.name, name);
       instance.name = name;
+      instance.game_dir = directory.name.clone();
       instance.version_path = root;
-      instances.insert(instance.id.clone(), instance);
+      instance.id = read_or_assign_id(&instance.version_path, &instance.id);
+      found.push(instance);
     }
   }
-  instances
+  // An id the main table gives to another folder is not ours to keep.
+  for instance in &mut found {
+    if main_table
+      .get(&instance.id)
+      .is_some_and(|path| *path != instance.version_path)
+    {
+      instance.id = reassign_id(&instance.version_path);
+    }
+  }
+  dedup_instance_ids(found.iter_mut(), &HashSet::new());
+  found
+    .into_iter()
+    .map(|instance| (instance.id.clone(), instance))
+    .collect()
 }
 
 /// A local import is handled by the engine only while it installs. Afterwards
@@ -2748,7 +2782,8 @@ pub async fn apply_modpack_update(
     return Err(InstanceError::ModpackInstallInterrupted.into());
   }
   ensure_not_running(&app, &instance_id)?;
-  let tasks = CampusInstallTasks::register_kind(&app, &instance_id, &target.instance.name, true);
+  let tasks =
+    CampusInstallTasks::register_kind(&app, &instance_id, target.instance.shown_name(), true);
   let monitor = app.state::<Pin<Box<TaskMonitor>>>();
   monitor.register_modpack_update_group(
     &instance_id,
@@ -2801,7 +2836,7 @@ pub async fn apply_modpack_update(
       "modpack-update:finished",
       ModpackUpdateFinished {
         instance_id,
-        instance_name: target.instance.name,
+        instance_name: target.instance.shown_name().to_string(),
         group: group_for_job,
         plan_hash,
         outcome,
@@ -3083,7 +3118,7 @@ async fn start_campus_modpack_install(
   let label = old_record
     .as_ref()
     .map(|record| record.label.clone())
-    .unwrap_or_else(|| instance.name.clone());
+    .unwrap_or_else(|| instance.shown_name().to_string());
   let tasks = CampusInstallTasks::register(&app, &instance_id, &label);
   save_campus_install_record(
     &instance.version_path,
@@ -4774,13 +4809,30 @@ mod tests {
     };
     save_campus_install_record(&version, &record).unwrap();
     save_campus_install_record(&version, &record).unwrap();
-    let scanned = scan_campus_instances(&[GameDirectory {
+    let directories = [GameDirectory {
       name: "games".into(),
       dir: root.clone(),
-    }]);
-    let found = &scanned["games:pending"];
+    }];
+    let scanned = scan_campus_instances(&directories, &HashMap::new());
+    let (id, found) = scanned.iter().next().unwrap();
+    assert!(crate::instance::helpers::identity::is_instance_id(id));
+    assert_eq!(found.id, *id);
     assert_eq!(found.name, "pending");
+    assert_eq!(found.game_dir, "games");
     assert_eq!(found.version_path, version);
+    // The id is written back, so the next scan and the main refresh agree on it.
+    assert_eq!(
+      crate::instance::helpers::identity::read_or_assign_id(&version, "games:pending"),
+      *id
+    );
+    assert!(scan_campus_instances(&directories, &HashMap::new()).contains_key(id));
+    // The same folder in the main table keeps its id.
+    let same = HashMap::from([(id.clone(), version.clone())]);
+    assert!(scan_campus_instances(&directories, &same).contains_key(id));
+    // Another folder in the main table already holds this id: the pending one gets a new id.
+    let other = HashMap::from([(id.clone(), root.join("versions").join("elsewhere"))]);
+    let rescanned = scan_campus_instances(&directories, &other);
+    assert!(!rescanned.contains_key(id) && rescanned.len() == 1);
     assert_eq!(
       load_campus_install_record(&found.version_path)
         .unwrap()
@@ -4829,12 +4881,18 @@ mod tests {
       }),
     };
     save_campus_install_record(&with_target, &record).unwrap();
-    let scanned = scan_campus_instances(&[GameDirectory {
-      name: "games".into(),
-      dir: root.clone(),
-    }]);
-    assert!(scanned.contains_key("games:with-target"));
-    assert!(!scanned.contains_key("games:without-record"));
+    let scanned = scan_campus_instances(
+      &[GameDirectory {
+        name: "games".into(),
+        dir: root.clone(),
+      }],
+      &HashMap::new(),
+    );
+    let names: Vec<_> = scanned
+      .values()
+      .map(|instance| instance.name.as_str())
+      .collect();
+    assert_eq!(names, ["with-target"]);
     fs::remove_dir_all(root).unwrap();
   }
 

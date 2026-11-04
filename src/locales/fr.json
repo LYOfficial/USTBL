@@ -442,9 +442,6 @@
       "installFabricApi": "Installez également le mod Fabric API."
     }
   },
-  "CreateRenamedInstShortcutAlertDialog": {
-    "content": "Vous avez récemment renommé cette instance. Veuillez actualiser la liste des instances ou redémarrer le lanceur, puis réessayez d'ajouter le raccourci."
-  },
   "DeleteAuthServerAlertDialog": {
     "dialog": {
       "title": "Supprimer le serveur d'authentification",
@@ -1389,6 +1386,11 @@
     "label": {
       "details": "Détails de l'instance",
       "delete": "Supprimer l'instance"
+    }
+  },
+  "InstanceNameEditor": {
+    "tooltip": {
+      "location": "{{gameDir}} · versions/{{folder}}"
     }
   },
   "InstanceModsPage": {
@@ -2525,10 +2527,7 @@
           "title": "Échec du renommage de l'instance",
           "description": {
             "INSTANCE_NOT_FOUND_BY_ID": "ID d'instance introuvable",
-            "CONFLICT_NAME_ERROR": "Une instance portant le même nom existe déjà dans ce répertoire",
-            "INVALID_NAME_ERROR": "Le nom de l'instance est invalide",
-            "INVALID_SOURCE_PATH": "Le répertoire de l'instance est invalide",
-            "FILE_MOVE_FAILED": "Échec du déplacement du répertoire de l'instance"
+            "FILE_CREATION_FAILED": "Échec de la création du fichier cible"
           }
         }
       },
