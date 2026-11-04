@@ -111,7 +111,11 @@
       },
       "campusModpack": {
         "title": "安装北科整合包",
-        "description": "前往「实例同步与更新」安装像素北科校内整合包"
+        "description": "前往「发现 - 校园整合包」安装像素北科校内整合包"
+      },
+      "discoverModpacks": {
+        "title": "发现整合包",
+        "description": "浏览 Modrinth 与 CurseForge 上的整合包"
       },
       "manageDirs": {
         "title": "管理游戏目录",
@@ -3556,11 +3560,9 @@
     }
   },
   "InstanceSyncPage": {
-    "title": "实例同步与更新",
-    "description": "跟随整合包的实例状态，以及校内整合包与推荐",
+    "title": "同步与更新",
+    "description": "检查并应用更新，可以从本地导入更新",
     "platform": {
-      "title": "校内整合包",
-      "description": "由校内管理员发布的整合包，安装后可跟随新版本更新。",
       "recommended": "推荐",
       "vanilla": "原版",
       "onOtherPlatform": "不在校内平台上，前往 {{platform}} 获取",
@@ -3575,8 +3577,8 @@
       }
     },
     "ledger": {
-      "title": "我的整合包实例",
       "checkAll": "全部检查",
+      "installMore": "安装更多",
       "group": {
         "platform": "平台",
         "local": "本地"

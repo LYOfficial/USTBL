@@ -111,7 +111,11 @@
       },
       "campusModpack": {
         "title": "Installer le modpack USTB",
-        "description": "Installez les packs du campus depuis « Synchronisation et mises à jour »"
+        "description": "Installez les packs du campus depuis « Découvrir - Modpacks du campus »"
+      },
+      "discoverModpacks": {
+        "title": "Découvrir des modpacks",
+        "description": "Parcourir les modpacks de Modrinth et CurseForge"
       },
       "manageDirs": {
         "title": "Gérer les répertoires du jeu",
@@ -3557,10 +3561,8 @@
   },
   "InstanceSyncPage": {
     "title": "Synchronisation et mises à jour",
-    "description": "Instances qui suivent un pack, packs du campus et recommandations",
+    "description": "Vérifiez et appliquez les mises à jour, ou importez une mise à jour depuis un fichier local",
     "platform": {
-      "title": "Modpacks du campus",
-      "description": "Modpacks publiés par les responsables du campus. Les instances installées peuvent suivre les nouvelles versions.",
       "recommended": "Recommandé",
       "vanilla": "Vanilla",
       "onOtherPlatform": "Disponible sur {{platform}}",
@@ -3575,8 +3577,8 @@
       }
     },
     "ledger": {
-      "title": "Mes instances de packs",
       "checkAll": "Tout vérifier",
+      "installMore": "Installer plus",
       "group": {
         "platform": "Plateforme",
         "local": "Local"

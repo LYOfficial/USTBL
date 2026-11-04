@@ -1,6 +1,5 @@
 import {
   Badge,
-  Box,
   HStack,
   Text,
   Tooltip,
@@ -45,7 +44,7 @@ export interface CampusPlatformSectionProps {
   onRefresh: () => void;
   /** Local instances, to mark what is already installed. */
   instances: InstanceSummary[];
-  /** Jumps to the ledger row of an instance. */
+  /** Opens the details page of an instance. */
   onFocusInstance: (instanceId: string) => void;
 }
 
@@ -231,7 +230,7 @@ export const CampusPlatformSection: React.FC<CampusPlatformSectionProps> = ({
     requireVustbAccount(installModal.onOpen);
   };
 
-  /** Marks a line that already has a local instance; click jumps to its row. */
+  /** Marks a line that already has a local instance; click opens it. */
   const installedBadge = (matches: InstanceSummary[]) =>
     matches.length > 0 && (
       <Badge
@@ -339,24 +338,6 @@ export const CampusPlatformSection: React.FC<CampusPlatformSectionProps> = ({
 
   return (
     <VStack align="stretch" spacing={3}>
-      <Box px={1}>
-        <HStack spacing={2} mb={1} justify="space-between" w="100%">
-          <Text fontSize="sm" fontWeight="bold">
-            {t("InstanceSyncPage.platform.title")}
-          </Text>
-          <CommonIconButton
-            icon="refresh"
-            onClick={onRefresh}
-            isDisabled={loading}
-            size="xs"
-            h={21}
-          />
-        </HStack>
-        <Text fontSize="xs" className="secondary-text">
-          {t("InstanceSyncPage.platform.description")}
-        </Text>
-      </Box>
-
       {loading ? (
         <VStack my={8}>
           <BeatLoader size={14} color="gray" />

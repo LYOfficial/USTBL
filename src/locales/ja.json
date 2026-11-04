@@ -111,7 +111,11 @@
       },
       "campusModpack": {
         "title": "北京科技大学モッドパックをインストール",
-        "description": "「インスタンスの同期と更新」から校内モッドパックをインストール"
+        "description": "「ディスカバー - 学内 Modpack」から校内モッドパックをインストール"
+      },
+      "discoverModpacks": {
+        "title": "モッドパックを探す",
+        "description": "Modrinth と CurseForge のモッドパックを閲覧"
       },
       "manageDirs": {
         "title": "ゲームディレクトリ管理",
@@ -3556,11 +3560,9 @@
     }
   },
   "InstanceSyncPage": {
-    "title": "インスタンスの同期と更新",
-    "description": "モッドパックを追従するインスタンスの状態と、校内モッドパック・おすすめ",
+    "title": "同期と更新",
+    "description": "更新を確認して適用します。ローカルから更新をインポートすることもできます",
     "platform": {
-      "title": "学内 Modpack",
-      "description": "学内の管理者が公開した Modpack です。インストール後は新しいバージョンに追従できます。",
       "recommended": "おすすめ",
       "vanilla": "バニラ",
       "onOtherPlatform": "{{platform}} で提供されています",
@@ -3575,8 +3577,8 @@
       }
     },
     "ledger": {
-      "title": "モッドパックのインスタンス",
       "checkAll": "すべて確認",
+      "installMore": "さらにインストール",
       "group": {
         "platform": "プラットフォーム",
         "local": "ローカル"
