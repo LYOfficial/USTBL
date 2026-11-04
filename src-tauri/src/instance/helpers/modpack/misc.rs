@@ -147,6 +147,9 @@ pub struct ModpackMetaInfo {
 
 pub(crate) fn is_launcher_metadata_path(relative: &str, instance_name: &str) -> bool {
   relative.eq_ignore_ascii_case("ustblcfg.json")
+    // The launcher writes this itself while installing Forge/NeoForge; a pack
+    // must not supply one, since its processors would run at install time.
+    || relative.eq_ignore_ascii_case("install_profile.json")
     || relative.eq_ignore_ascii_case("ustbl-multimc-components.json")
     || relative.eq_ignore_ascii_case(super::multimc::snapshot::SNAPSHOT_FILE_NAME)
     || relative.eq_ignore_ascii_case(super::baseline::BASELINE_FILE_NAME)
@@ -275,17 +278,30 @@ mod tests {
       ("overrides/ustblcfg.json", "old config"),
       ("overrides/ustbl-modpack-baseline.json", "old baseline"),
       ("overrides/ustbl-multimc-profile.json", "old profile"),
+      ("overrides/install_profile.json", "{\"processors\":[]}"),
+      ("overrides/Install_Profile.JSON", "{\"processors\":[]}"),
+      (
+        "overrides/config/install_profile.json",
+        "nested is a normal file",
+      ),
       ("overrides/config/example.cfg", "kept"),
     ]);
 
     assert!(!instance_path.join("ustblcfg.json").exists());
     assert!(!instance_path.join("ustbl-modpack-baseline.json").exists());
     assert!(!instance_path.join("ustbl-multimc-profile.json").exists());
+    assert!(!instance_path.join("install_profile.json").exists());
     assert_eq!(
       fs::read_to_string(instance_path.join("config/example.cfg")).unwrap(),
       "kept"
     );
-    assert_eq!(extracted, vec!["config/example.cfg".to_string()]);
+    assert_eq!(
+      extracted,
+      vec![
+        "config/example.cfg".to_string(),
+        "config/install_profile.json".to_string()
+      ]
+    );
     let _ = fs::remove_dir_all(root);
   }
 

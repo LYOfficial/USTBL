@@ -370,7 +370,74 @@ fn roll_back(root: &Path, journal: &Journal) -> io::Result<()> {
   roll_back_from(root, &backup_dir(root), journal)
 }
 
+/// Whether `path` is a relative path with `/` separators that stays inside the
+/// instance. Stricter than a host needs: a drive letter, a backslash or a `..`
+/// could name a file outside the instance once joined to the root.
+fn is_inside_instance(path: &str) -> bool {
+  !path.is_empty()
+    && !path.starts_with('/')
+    && !path.contains(['\\', ':', '\0'])
+    && path
+      .split('/')
+      .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
+    && Path::new(path)
+      .components()
+      .all(|component| matches!(component, std::path::Component::Normal(_)))
+}
+
+/// [`is_inside_instance`] and not inside the update directory. Windows ignores
+/// trailing dots and spaces, so `.ustbl-update.` counts as that directory.
+fn journal_path_is_safe(path: &str) -> bool {
+  is_inside_instance(path)
+    && !path.split('/').next().is_some_and(|first| {
+      first
+        .trim_end_matches(['.', ' '])
+        .eq_ignore_ascii_case(UPDATE_DIR)
+    })
+}
+
+/// A meta name is a bare file name in the instance root, or one of the files
+/// the engine keeps in the update directory.
+fn journal_meta_name_is_safe(name: &str) -> bool {
+  let in_update_dir = [
+    super::ignores::meta_name(),
+    super::release::meta_name(),
+    super::optional::meta_name(),
+  ]
+  .iter()
+  .any(|known| known == name);
+  in_update_dir || (!name.contains('/') && journal_path_is_safe(name))
+}
+
+/// A journal is read back from the instance folder, which a modpack could have
+/// written to, so nothing in it is trusted before a rollback deletes or writes.
+/// Every path must stay inside the instance and out of the update directory.
+/// Nothing is touched when any entry is refused.
+fn validate_journal(journal: &Journal) -> io::Result<()> {
+  let refuse = |kind: &str, value: &str| {
+    log::warn!("Refused to roll back a modpack update: unsafe {kind} in the journal: {value:?}");
+    Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      format!("unsafe {kind} in the update journal"),
+    ))
+  };
+  for op in &journal.ops {
+    if !journal_path_is_safe(&op.path) {
+      return refuse("path", &op.path);
+    }
+    if let Some(dir) = op.pruned_dirs.iter().find(|dir| !journal_path_is_safe(dir)) {
+      return refuse("pruned directory", dir);
+    }
+  }
+  for name in journal.meta_present.iter().chain(&journal.meta_absent) {
+    if !journal_meta_name_is_safe(name) {
+      return refuse("meta file name", name);
+    }
+  }
+  Ok(())
+}
 fn roll_back_from(root: &Path, backup: &Path, journal: &Journal) -> io::Result<()> {
+  validate_journal(journal)?;
   for op in journal.ops.iter().rev() {
     let target = root.join(&op.path);
     let saved = backup.join("files").join(&op.path);
@@ -3027,6 +3094,97 @@ mod tests {
     assert!(!journal_path(&root.0).exists());
   }
 
+  #[test]
+  fn recovery_refuses_a_journal_that_names_paths_outside_the_instance() {
+    let victim_dir = Root::new();
+    victim_dir.write("victim.txt", "keep");
+    let victim = victim_dir.0.join("victim.txt");
+    let absolute = victim.to_string_lossy().replace('\\', "/");
+    let op = |path: &str, pruned: &[&str]| JournalOp {
+      path: path.into(),
+      had_original: false,
+      moves_disabled: false,
+      writes_enabled: Some(true),
+      writes_disabled: false,
+      pruned_dirs: pruned.iter().map(|dir| dir.to_string()).collect(),
+    };
+    let escaping = format!(
+      "../{}/victim.txt",
+      victim_dir.0.file_name().unwrap().to_string_lossy()
+    );
+    let cases: Vec<(&str, Vec<JournalOp>, Vec<String>, Vec<String>)> = vec![
+      ("absolute op", vec![op(&absolute, &[])], vec![], vec![]),
+      (
+        "windows drive",
+        vec![op("C:/Windows/x", &[])],
+        vec![],
+        vec![],
+      ),
+      (
+        "backslash",
+        vec![op("mods\\..\\..\\x", &[])],
+        vec![],
+        vec![],
+      ),
+      ("parent dir", vec![op(&escaping, &[])], vec![], vec![]),
+      (
+        "update dir",
+        vec![op(".ustbl-update/journal.json", &[])],
+        vec![],
+        vec![],
+      ),
+      (
+        "update dir case",
+        vec![op(".USTBL-Update/backup/x", &[])],
+        vec![],
+        vec![],
+      ),
+      (
+        "update dir dots",
+        vec![op(".ustbl-update./x", &[])],
+        vec![],
+        vec![],
+      ),
+      (
+        "pruned dir",
+        vec![op("mods/a.jar", &["../outside"])],
+        vec![],
+        vec![],
+      ),
+      ("meta present", vec![], vec![escaping.clone()], vec![]),
+      ("meta absent", vec![], vec![], vec![absolute.clone()]),
+      ("meta nested", vec![], vec![], vec!["config/x.json".into()]),
+    ];
+    for (label, ops, meta_present, meta_absent) in cases {
+      let root = setup();
+      let journal = Journal {
+        schema: JOURNAL_SCHEMA,
+        state: JournalState::Committing,
+        from_version: "1".into(),
+        to_version: "2".into(),
+        ops,
+        meta_present,
+        meta_absent,
+      };
+      // The planted "backup" the old rollback would have moved out.
+      root.write(".ustbl-update/backup/files/mods/a.jar", "planted");
+      write_journal(&root.0, &journal).unwrap();
+
+      assert!(recover(&root.0).is_err(), "{label}");
+
+      assert_eq!(fs::read_to_string(&victim).unwrap(), "keep", "{label}");
+      assert!(
+        !victim_dir.0.parent().unwrap().join("outside").exists(),
+        "{label}"
+      );
+      assert_eq!(root.read("mods/old.jar").as_deref(), Some("old"), "{label}");
+      assert!(journal_path(&root.0).is_file(), "{label}");
+      assert!(
+        backup_dir(&root.0).join("files/mods/a.jar").is_file(),
+        "{label}"
+      );
+    }
+  }
   #[test]
   fn unlink_is_refused_while_an_update_is_mid_flight() {
     let root = setup();
