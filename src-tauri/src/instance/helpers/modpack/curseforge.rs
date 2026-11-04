@@ -484,10 +484,16 @@ async fn fetch_file_metas_cached(
   Ok(ResolvedMetas { metas, cache_hits })
 }
 /// Where a file of the given CurseForge class belongs in the instance.
+///
+/// Classes: 6 mods, 12 resource packs, 17 worlds, 6552 shaders, 6945 data
+/// packs. Anything else (including an unknown class) stays in `mods`. A world
+/// is delivered as a zip; it is only placed in `saves` and not unpacked.
 fn target_folder(class_id: Option<i32>) -> &'static str {
   match class_id {
-    Some(12) | Some(6945) => "resourcepacks",
+    Some(12) => "resourcepacks",
+    Some(6945) => "datapacks",
     Some(6552) => "shaderpacks",
+    Some(17) => "saves",
     _ => "mods",
   }
 }
@@ -898,8 +904,11 @@ mod tests {
       (Some(6), "mods"),
       (None, "mods"),
       (Some(12), "resourcepacks"),
-      (Some(6945), "resourcepacks"),
+      (Some(6945), "datapacks"),
       (Some(6552), "shaderpacks"),
+      (Some(17), "saves"),
+      (Some(4471), "mods"),
+      (Some(0), "mods"),
     ] {
       let download =
         build_download(root, 9, &meta(class_id, Some("https://x.test/a.jar"))).unwrap();
