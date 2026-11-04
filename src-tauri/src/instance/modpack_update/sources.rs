@@ -13,7 +13,7 @@ use crate::instance::helpers::modpack::baseline::{
   components_of_mmc_pack, hash_file, normalize_relative_path, BaselineLoader,
 };
 use crate::instance::helpers::modpack::misc::{
-  list_override_entries, parse_platform_manifest, ManifestBox,
+  list_override_entries, parse_platform_manifest, ManifestBox, ModpackDownload,
 };
 use crate::instance::models::misc::{InstanceError, InstanceOrigin, ModLoaderType, OriginPlatform};
 use crate::resource::commands::fetch_resource_version_packs;
@@ -481,7 +481,10 @@ pub fn matching_remote_cache(
 ) -> Option<RemoteCache> {
   let bytes = fs::read(remote_cache_path(root, &version.version_id)).ok()?;
   let cache: RemoteCache = serde_json::from_slice(&bytes).ok()?;
-  (cache.matches(origin, root, version) && !cache.remote.has_listed_files()).then_some(cache)
+  (cache.matches(origin, root, version)
+    && !cache.remote.has_listed_files()
+    && cache.remote.cached_files_present())
+  .then_some(cache)
 }
 
 pub fn load_remote_cache(
@@ -655,6 +658,122 @@ pub struct ArchiveFacts {
   pub downloads: Vec<RemoteFile>,
 }
 
+/// How many hash-less files are fetched at once while the remote is built.
+const HASHLESS_CONCURRENCY: usize = 8;
+
+/// Where a file the manifest gave no hash or size for is kept once fetched.
+fn hashless_cache_path(root: &Path, url: &str, relative: &str) -> PathBuf {
+  let name = hex::encode(Sha1::digest(format!("{url}\n{relative}").as_bytes()));
+  remote_dir(root).join("files").join(name)
+}
+
+/// Turn the downloads a manifest asks for into remote files. A download with a
+/// hash and size is described as is. One without is fetched now, into the
+/// remote cache, and hashed, so that it compares and installs like any other
+/// file: its key is only known afterwards. A file already fetched by an
+/// earlier call is reused, which keeps a preview and the apply on one key.
+async fn download_files<F, Fut>(
+  root: &Path,
+  downloads: Vec<ModpackDownload>,
+  fetch: F,
+) -> USTBLResult<Vec<RemoteFile>>
+where
+  F: Fn(DownloadParam) -> Fut,
+  Fut: std::future::Future<Output = USTBLResult<()>>,
+{
+  use futures::stream::{StreamExt, TryStreamExt};
+
+  let mut files = Vec::new();
+  let mut hashless = Vec::new();
+  for download in downloads {
+    let Ok(relative) = download.param.dest.strip_prefix(root) else {
+      continue;
+    };
+    let path = normalize_relative_path(&relative.to_string_lossy());
+    match (download.param.sha1.clone(), download.size) {
+      (Some(sha1), Some(size)) => files.push(RemoteFile {
+        path,
+        key: FileKey {
+          sha1: sha1.to_lowercase(),
+          size,
+        },
+        source: FileSource::Download(Box::new(download.param)),
+        disabled: false,
+        once: false,
+      }),
+      _ => hashless.push((path, download.param)),
+    }
+  }
+  if hashless.is_empty() {
+    return Ok(files);
+  }
+  log::info!(
+    "modpack archive: fetching {} files that carry no hash or size",
+    hashless.len()
+  );
+  let fetch = &fetch;
+  let fetched: Vec<RemoteFile> = futures::stream::iter(hashless)
+    .map(|(path, param)| async move {
+      let cached = hashless_cache_path(root, param.src.as_str(), &path);
+      fetch_hashless(root, &cached, param, fetch)
+        .await
+        .map(|key| RemoteFile {
+          path,
+          key,
+          source: FileSource::Cached { path: cached },
+          disabled: false,
+          once: false,
+        })
+    })
+    .buffer_unordered(HASHLESS_CONCURRENCY)
+    .try_collect()
+    .await?;
+  files.extend(fetched);
+  Ok(files)
+}
+
+/// Make sure `cached` holds the file of `param` and return its key. The
+/// download is written under another name and moved into place whole, like an
+/// archive. The manifest's hash, when it has one, is still checked.
+async fn fetch_hashless<F, Fut>(
+  root: &Path,
+  cached: &Path,
+  mut param: DownloadParam,
+  fetch: &F,
+) -> USTBLResult<FileKey>
+where
+  F: Fn(DownloadParam) -> Fut,
+  Fut: std::future::Future<Output = USTBLResult<()>>,
+{
+  let expected = param.sha1.as_ref().map(|sha1| sha1.to_lowercase());
+  let hash = |path: PathBuf| async move {
+    tokio::task::spawn_blocking(move || hash_file(&path))
+      .await
+      .map_err(|e| USTBLError(e.to_string()))
+  };
+  if let Ok(Ok((sha1, size))) = hash(cached.to_path_buf()).await {
+    if expected.as_ref().is_none_or(|expected| *expected == sha1) {
+      return Ok(FileKey { sha1, size });
+    }
+  }
+  remove_parts_of(cached);
+  let part = part_path(cached);
+  param.dest = part.clone();
+  if let Err(error) = fetch(param).await {
+    let _ = fs::remove_file(&part);
+    return Err(error);
+  }
+  let key = match hash(part.clone()).await? {
+    Ok((sha1, size)) => FileKey { sha1, size },
+    Err(error) => {
+      let _ = fs::remove_file(&part);
+      return Err(USTBLError(error.to_string()));
+    }
+  };
+  fs::rename(&part, cached).at_in(&part, root)?;
+  Ok(key)
+}
+
 /// Check the manifest against the followed line and look up its downloads.
 pub async fn archive_facts(
   app: &AppHandle,
@@ -671,28 +790,12 @@ pub async fn archive_facts(
   }
 
   let params_started = std::time::Instant::now();
-  let mut downloads = Vec::new();
-  for download in manifest.get_download_params(app, root).await? {
-    // Without a hash and size a file cannot be compared; a fresh install does
-    // not track it either.
-    let (Some(sha1), Some(size), Ok(relative)) = (
-      download.param.sha1.clone(),
-      download.size,
-      download.param.dest.strip_prefix(root),
-    ) else {
-      continue;
-    };
-    downloads.push(RemoteFile {
-      path: normalize_relative_path(&relative.to_string_lossy()),
-      key: FileKey {
-        sha1: sha1.to_lowercase(),
-        size,
-      },
-      source: FileSource::Download(Box::new(download.param)),
-      disabled: false,
-      once: false,
-    });
-  }
+  let downloads = download_files(
+    root,
+    manifest.get_download_params(app, root).await?,
+    |param| download_param(app, param),
+  )
+  .await?;
 
   log::info!(
     "modpack archive files: {} downloads, platform lookup elapsed_ms={}",
@@ -2186,5 +2289,151 @@ mod tests {
     let _ = fs::remove_file(&path);
     assert_eq!(key.size, 5);
     assert_eq!(key.sha1, "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d");
+  }
+
+  fn manifest_download(
+    root: &Path,
+    relative: &str,
+    sha1: Option<&str>,
+    size: Option<u64>,
+  ) -> ModpackDownload {
+    let mut param = *plain_download(&format!("https://cdn.example/{relative}")).unwrap();
+    param.dest = root.join(relative);
+    param.sha1 = sha1.map(str::to_string);
+    ModpackDownload { param, size }
+  }
+
+  fn hashless_root() -> PathBuf {
+    let root = std::env::temp_dir().join(format!("ustbl-hashless-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    root
+  }
+
+  const HELLO_SHA1: &str = "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d";
+
+  #[tokio::test]
+  async fn downloads_missing_a_hash_or_size_are_fetched_and_keyed() {
+    let root = hashless_root();
+    let calls = Mutex::new(Vec::new());
+    let fetch = |param: DownloadParam| {
+      calls.lock().unwrap().push(param.src.to_string());
+      async move {
+        fs::create_dir_all(param.dest.parent().unwrap()).unwrap();
+        fs::write(&param.dest, b"hello").unwrap();
+        Ok(())
+      }
+    };
+    let files = download_files(
+      &root,
+      vec![
+        manifest_download(&root, "mods/full.jar", Some(&"AB".repeat(20)), Some(7)),
+        manifest_download(&root, "mods/no-sha.jar", None, Some(5)),
+        manifest_download(&root, "mods/no-size.jar", Some(HELLO_SHA1), None),
+        manifest_download(&root, "mods/neither.jar", None, None),
+      ],
+      fetch,
+    )
+    .await
+    .unwrap();
+
+    // The complete one is described as is and never fetched.
+    let by_path: HashMap<_, _> = files.iter().map(|f| (f.path.as_str(), f)).collect();
+    assert_eq!(files.len(), 4);
+    let full = by_path["mods/full.jar"];
+    assert!(matches!(full.source, FileSource::Download(_)));
+    assert_eq!(full.key.sha1, "ab".repeat(20));
+    assert_eq!(full.key.size, 7);
+    for name in ["mods/no-sha.jar", "mods/no-size.jar", "mods/neither.jar"] {
+      let file = by_path[name];
+      assert_eq!(file.key.sha1, HELLO_SHA1, "{name}");
+      assert_eq!(file.key.size, 5, "{name}");
+      let FileSource::Cached { path } = &file.source else {
+        panic!("{name} is not cached");
+      };
+      assert_eq!(fs::read(path).unwrap(), b"hello");
+    }
+    let mut fetched = calls.lock().unwrap().clone();
+    fetched.sort();
+    assert_eq!(fetched.len(), 3);
+    assert!(!fetched.iter().any(|url| url.ends_with("full.jar")));
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn a_file_fetched_before_is_reused_and_a_stale_one_is_fetched_again() {
+    let root = hashless_root();
+    let count = Mutex::new(0usize);
+    let content = Mutex::new(b"hello".to_vec());
+    let fetch = |param: DownloadParam| {
+      *count.lock().unwrap() += 1;
+      let bytes = content.lock().unwrap().clone();
+      async move {
+        fs::create_dir_all(param.dest.parent().unwrap()).unwrap();
+        fs::write(&param.dest, bytes).unwrap();
+        Ok(())
+      }
+    };
+    let ask = |sha1: Option<&str>| vec![manifest_download(&root, "mods/a.jar", sha1, None)];
+
+    let first = download_files(&root, ask(None), &fetch).await.unwrap();
+    let again = download_files(&root, ask(None), &fetch).await.unwrap();
+    assert_eq!(*count.lock().unwrap(), 1);
+    assert_eq!(first[0].key, again[0].key);
+
+    // The manifest's own hash disagrees with the kept file: fetch anew.
+    *content.lock().unwrap() = b"new".to_vec();
+    let wanted = hex::encode(Sha1::digest(b"new"));
+    let renewed = download_files(&root, ask(Some(&wanted)), &fetch)
+      .await
+      .unwrap();
+    assert_eq!(*count.lock().unwrap(), 2);
+    assert_eq!(renewed[0].key.sha1, wanted);
+    assert_eq!(renewed[0].key.size, 3);
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn a_failed_download_of_a_hashless_file_is_an_error_and_leaves_no_file() {
+    let root = hashless_root();
+    let fetch = |param: DownloadParam| async move {
+      fs::create_dir_all(param.dest.parent().unwrap()).unwrap();
+      fs::write(&param.dest, b"partial").unwrap();
+      Err::<(), _>(USTBLError("boom".into()))
+    };
+    let result = download_files(
+      &root,
+      vec![manifest_download(&root, "mods/a.jar", None, None)],
+      fetch,
+    )
+    .await;
+    assert!(result.is_err());
+    let files_dir = remote_dir(&root).join("files");
+    assert!(fs::read_dir(&files_dir).unwrap().next().is_none());
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn a_remote_cache_with_a_missing_kept_file_is_not_a_hit() {
+    let root = hashless_root();
+    let kept = root.join("kept.bin");
+    fs::write(&kept, b"hello").unwrap();
+    let mut remote = remote_for_test();
+    remote.files.push(RemoteFile {
+      path: "mods/a.jar".into(),
+      key: FileKey {
+        sha1: HELLO_SHA1.into(),
+        size: 5,
+      },
+      source: FileSource::Cached { path: kept.clone() },
+      disabled: false,
+      once: false,
+    });
+    let stored = super::super::remote::StoredRemoteModpack::from(&remote);
+    assert!(stored.cached_files_present());
+    fs::write(&kept, b"hi").unwrap();
+    assert!(!stored.cached_files_present());
+    fs::remove_file(&kept).unwrap();
+    assert!(!stored.cached_files_present());
+    let _ = fs::remove_dir_all(root);
   }
 }
