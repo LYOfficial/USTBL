@@ -824,13 +824,50 @@ fn target(app: &AppHandle, instance_id: &str) -> USTBLResult<Option<Target>> {
 fn ensure_not_running(app: &AppHandle, instance_id: &str) -> USTBLResult<()> {
   let binding = app.state::<Mutex<Vec<LaunchingState>>>();
   let queue = binding.lock()?;
-  if queue
-    .iter()
-    .any(|launching| launching.selected_instance.id == instance_id)
-  {
+  let now = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .map(|elapsed| elapsed.as_secs())
+    .unwrap_or(0);
+  if queue.iter().enumerate().any(|(index, launching)| {
+    launching.selected_instance.id == instance_id
+      && launch_is_live(launching, index + 1 == queue.len(), now, process_alive)
+  }) {
     return Err(InstanceError::ModpackUpdateRunning.into());
   }
   Ok(())
+}
+
+/// How long a launch may sit between its steps before it counts as abandoned.
+const LAUNCH_STEPS_WINDOW_SECS: u64 = 15 * 60;
+
+/// Whether a queued launch still has a game running or starting. An entry
+/// outlives its game when the game crashed (the error window reads it) and
+/// when a launch step failed before the game started, so being queued alone
+/// does not say it runs. Once the game started its process decides; before
+/// that only the newest entry can be in its steps (they work on the last
+/// one), and only for a while. `id` is the launch's start in Unix seconds.
+fn launch_is_live(
+  launching: &LaunchingState,
+  is_newest: bool,
+  now: u64,
+  alive: impl Fn(u32) -> bool,
+) -> bool {
+  if launching.pid != 0 {
+    return alive(launching.pid);
+  }
+  is_newest && now.saturating_sub(launching.id) < LAUNCH_STEPS_WINDOW_SECS
+}
+
+fn process_alive(pid: u32) -> bool {
+  use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+  let pid = Pid::from_u32(pid);
+  let mut system = System::new();
+  system.refresh_processes_specifics(
+    ProcessesToUpdate::Some(&[pid]),
+    true,
+    ProcessRefreshKind::nothing(),
+  );
+  system.process(pid).is_some()
 }
 
 /// Instances an install or an update is being planned or applied to, from
@@ -3791,6 +3828,33 @@ mod tests {
       ..local("")
     };
     assert!(!is_settled_local(&campus, false));
+  }
+
+  #[test]
+  fn a_queued_launch_blocks_updates_only_while_its_game_runs_or_starts() {
+    let launch = |id: u64, pid: u32| LaunchingState {
+      id,
+      pid,
+      ..LaunchingState::default()
+    };
+    let now = 10_000;
+    // Started: the process decides, however old the entry is.
+    assert!(launch_is_live(&launch(1, 42), false, now, |pid| pid == 42));
+    assert!(!launch_is_live(&launch(now, 42), true, now, |_| false));
+    // Still in its steps: only the newest entry, and not forever.
+    assert!(launch_is_live(&launch(now - 60, 0), true, now, |_| true));
+    assert!(!launch_is_live(&launch(now - 60, 0), false, now, |_| true));
+    assert!(!launch_is_live(
+      &launch(now - LAUNCH_STEPS_WINDOW_SECS, 0),
+      true,
+      now,
+      |_| true
+    ));
+  }
+
+  #[test]
+  fn this_process_is_alive() {
+    assert!(process_alive(std::process::id()));
   }
 
   #[test]
