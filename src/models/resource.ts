@@ -48,6 +48,7 @@ export interface OtherResourceFileInfo {
   fileName: string;
   dependencies: OtherResourceDependency[];
   loader?: string; // "forge", "fabric", "iris", "optifine", etc.
+  updateExcluded?: boolean; // Listed, but never a modpack update target
 }
 
 export interface OtherResourceDependency {

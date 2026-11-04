@@ -704,6 +704,8 @@ async fn stage_file(env: &dyn UpdateEnv, dest: PathBuf, file: &RemoteFile) -> US
         .map_err(|e| crate::error::USTBLError(e.to_string()))?;
     }
     FileSource::Pack(session) => session.fetch(&file.key.sha1, &dest).await?,
+    // A preview has no bytes to stage.
+    FileSource::Listed { .. } => return Err(InstanceError::ModpackUpdateRemoteInvalid.into()),
   }
   let check = dest.clone();
   let actual = tokio::task::spawn_blocking(move || hash_file(&check))
@@ -900,6 +902,9 @@ pub async fn apply(env: &dyn UpdateEnv, request: UpdateRequest) -> USTBLResult<(
   env.ensure_not_running()?;
   recover_locked(&root)?;
   request.remote.validate(&request.instance_name)?;
+  if request.remote.has_listed_files() {
+    return Err(InstanceError::ModpackUpdateRemoteInvalid.into());
+  }
 
   match run(env, &request).await {
     Ok(()) => Ok(()),
@@ -3529,6 +3534,36 @@ mod tests {
         .is_err()
     );
     assert!(!root.0.parent().unwrap().join("evil.jar").exists());
+  }
+
+  #[tokio::test]
+  async fn a_preview_remote_is_never_applied() {
+    let root = setup();
+    let env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let file = RemoteFile {
+      path: "config/a.toml".into(),
+      key: FileKey {
+        sha1: "ab".repeat(20),
+        size: 3,
+      },
+      source: FileSource::Listed {
+        entry: "overrides/config/a.toml".into(),
+        exact: false,
+      },
+      disabled: false,
+      once: false,
+    };
+    let operations = vec![write_op(&file)];
+
+    assert!(
+      apply(&env, request(&root, vec![file], operations, "0.15.0"))
+        .await
+        .is_err()
+    );
+    assert!(!root.0.join("config/a.toml").exists());
   }
 
   /// "Take remote" on every conflict leaves no modified file. The 2 that

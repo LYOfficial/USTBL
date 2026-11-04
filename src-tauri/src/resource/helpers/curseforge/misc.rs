@@ -294,6 +294,8 @@ pub struct CurseForgeFile {
   /// the fingerprint that was asked for.
   #[serde(default)]
   pub file_fingerprint: u32,
+  #[serde(default)]
+  pub is_server_pack: bool,
 }
 
 #[derive(Deserialize, Debug)]
@@ -557,6 +559,7 @@ impl From<&CurseForgeFile> for OtherResourceFileInfo {
         })
         .collect(),
       loader: loader_of_game_versions(&file.game_versions),
+      update_excluded: file.is_server_pack,
     }
   }
 }
@@ -616,6 +619,20 @@ mod tests {
     release_type_of, resource_type_of_class_id, sort_field_of, CurseForgeFile, CLASS_ID_DATAPACK,
     CLASS_ID_MOD, CLASS_ID_MODPACK, CLASS_ID_RESOURCE_PACK, CLASS_ID_SHADER, CLASS_ID_WORLD,
   };
+
+  #[test]
+  fn server_packs_are_flagged_but_still_listed() {
+    let files: Vec<CurseForgeFile> = serde_json::from_str(
+      r#"[{"id":1,"modId":9,"downloadUrl":"https://example.invalid/a.zip","isServerPack":true},
+        {"id":2,"modId":9,"downloadUrl":"https://example.invalid/b.zip","isServerPack":false},
+        {"id":3,"modId":9,"downloadUrl":"https://example.invalid/c.zip"}]"#,
+    )
+    .unwrap();
+    let infos: Vec<super::OtherResourceFileInfo> = files.iter().map(Into::into).collect();
+    assert_eq!(infos.len(), 3);
+    let flags: Vec<bool> = infos.iter().map(|info| info.update_excluded).collect();
+    assert_eq!(flags, vec![true, false, false]);
+  }
 
   #[test]
   fn resource_types_map_to_curseforge_classes() {
@@ -703,6 +720,7 @@ mod tests {
       hashes: vec![],
       dependencies: vec![],
       file_fingerprint: 0,
+      is_server_pack: false,
     };
 
     assert_eq!(game_versions_of(&file), vec!["1.20.1".to_string()]);
