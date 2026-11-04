@@ -3,76 +3,19 @@
 //! One function decides every entry, for the detail list and for the count of
 //! the status badge alike: the count is the entries marked `counted`.
 
-use super::diff::{FileKey, LocalState, DISABLED_SUFFIX};
+use super::change_core::{classify as classify_against, Baseline, Judge, Spec};
+pub use super::change_core::{ChangeClass, ChangeDetailEntry};
+use super::diff::{FileKey, DISABLED_SUFFIX};
 use super::ignores::{self, IgnoreError, Ignores};
-use super::local_scan::collect_states_cached;
-use super::plan::{local_changes, scan_cache, LocalChange, LocalChangeKind, NoDiffReason};
+use super::plan::{local_changes, scan_cache, LocalChange};
 use super::release::Release;
-use super::remote::{RuleKind, RuleState};
+use super::remote::RuleKind;
 use crate::error::USTBLResult;
-use crate::instance::helpers::modpack::baseline::{hash_file, ModpackBaseline};
-use crate::instance::helpers::modpack::export::CONTENT_DIRS;
+use crate::instance::helpers::modpack::baseline::ModpackBaseline;
 use crate::instance::models::misc::{ModpackFileList, SuggestedEntry};
 use crate::instance::modpack_publish::defaults::{self, create_initial_model};
-use serde::Serialize;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum ChangeClass {
-  Modified,
-  Deleted,
-  Toggled,
-  OnceChanged,
-  Added,
-  AddedExcluded,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ChangeDetailEntry {
-  pub path: String,
-  pub class: ChangeClass,
-  /// Whether the entry counts toward the instance's local-change number.
-  pub counted: bool,
-  /// The nearest previous-release rule covering an added file.
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub rule: Option<RuleState>,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub size: Option<u64>,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub baseline: Option<FileKey>,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub local: Option<FileKey>,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub hunks: Option<Vec<super::text_diff::DiffHunk>>,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub no_diff: Option<NoDiffReason>,
-  #[serde(default)]
-  pub toggled: bool,
-  /// The file sits at `<path>.disabled` on disk.
-  #[serde(default)]
-  pub disabled: bool,
-}
-
-impl ChangeDetailEntry {
-  fn new(path: &str, class: ChangeClass, counted: bool) -> Self {
-    Self {
-      path: path.to_string(),
-      class,
-      counted,
-      rule: None,
-      size: None,
-      baseline: None,
-      local: None,
-      hunks: None,
-      no_diff: None,
-      toggled: false,
-      disabled: false,
-    }
-  }
-}
 
 /// The manifest name represented by a disk path. Only mods use `.disabled` as
 /// a file attribute; a file with that suffix elsewhere is an ordinary path.
@@ -83,58 +26,6 @@ pub(crate) fn logical_disk_path(path: &str) -> &str {
   } else {
     path
   }
-}
-
-fn in_content_dir(path: &str) -> bool {
-  let folded = path.to_lowercase();
-  CONTENT_DIRS
-    .iter()
-    .any(|dir| folded.starts_with(&format!("{dir}/")))
-}
-
-/// Which variant of a path is on disk, as `(disabled, both)`.
-fn variant_on_disk(root: &Path, path: &str) -> Option<(bool, bool)> {
-  let enabled = root.join(path).is_file();
-  let disabled = root.join(format!("{path}{DISABLED_SUFFIX}")).is_file();
-  match (enabled, disabled) {
-    (false, false) => None,
-    (true, both) => Some((false, both)),
-    (false, true) => Some((true, false)),
-  }
-}
-
-fn size_on_disk(root: &Path, path: &str, disabled: bool) -> Option<u64> {
-  let name = if disabled {
-    format!("{path}{DISABLED_SUFFIX}")
-  } else {
-    path.to_string()
-  };
-  std::fs::metadata(root.join(name))
-    .ok()
-    .map(|meta| meta.len())
-}
-
-/// Whether the content of a first-install file differs from the release.
-/// The scan reports a size mismatch without hashing, so an empty hash on an
-/// equal size means "not hashed here" and the file is hashed once.
-fn once_differs(root: &Path, path: &str, state: &LocalState, wanted: &FileKey) -> bool {
-  let Some(found) = state.key() else {
-    return true;
-  };
-  if found.size != wanted.size {
-    return true;
-  }
-  if found.sha1 == wanted.sha1 {
-    return false;
-  }
-  if !found.sha1.is_empty() {
-    return true;
-  }
-  let name = match state.variant_disabled() {
-    Some(true) => format!("{path}{DISABLED_SUFFIX}"),
-    _ => path.to_string(),
-  };
-  hash_file(&root.join(name)).map_or(true, |(sha1, _)| sha1 != wanted.sha1)
 }
 
 fn suggested_of(listed: &[SuggestedEntry]) -> Vec<defaults::SuggestedEntry> {
@@ -173,7 +64,6 @@ pub async fn compute_changes(
   suggested: &[SuggestedEntry],
   with_diff: bool,
 ) -> USTBLResult<Vec<ChangeDetailEntry>> {
-  let listed = release.index();
   let whole_ignored: HashSet<String> = ignored
     .files
     .iter()
@@ -192,100 +82,33 @@ pub async fn compute_changes(
     .filter(|file| file.is_managed())
     .filter_map(|file| file.key().map(|key| (file.path.to_lowercase(), key)))
     .collect();
-
-  let mut entries = Vec::new();
-  let mut once_keys = BTreeMap::new();
-  for file in &release.files {
-    let folded = file.path.to_lowercase();
-    if whole_ignored.contains(&folded) {
-      continue;
-    }
-    if file.once {
-      if with_diff {
-        once_keys.insert(file.path.clone(), file.key());
-      }
-      continue;
-    }
-    let change = local.get(&folded);
-    let base_key = managed.get(&folded).cloned().unwrap_or_else(|| file.key());
-    let Some((disabled, _)) = variant_on_disk(root, &file.path) else {
-      let mut entry = ChangeDetailEntry::new(&file.path, ChangeClass::Deleted, true);
-      entry.baseline = Some(base_key);
-      entries.push(entry);
-      continue;
-    };
-    let switched = disabled != file.disabled;
-    let modified = change.filter(|change| change.kind == LocalChangeKind::Modified);
-    if modified.is_none() && !switched {
-      continue;
-    }
-    let class = if modified.is_some() {
-      ChangeClass::Modified
-    } else {
-      ChangeClass::Toggled
-    };
-    let mut entry = ChangeDetailEntry::new(&file.path, class, true);
-    entry.size = size_on_disk(root, &file.path, disabled);
-    entry.toggled = switched;
-    entry.disabled = disabled;
-    entry.baseline = Some(base_key);
-    if let Some(change) = change {
-      entry.local = change.local.clone();
-    }
-    if let Some(change) = modified {
-      entry.hunks = change.hunks.clone();
-      entry.no_diff = change.no_diff;
-    }
-    entries.push(entry);
-  }
-
-  if !once_keys.is_empty() {
-    let states = {
-      let root = root.to_path_buf();
-      let keys = once_keys.clone();
-      tokio::task::spawn_blocking(move || collect_states_cached(scan_cache(), &root, &keys))
-        .await
-        .map_err(|error| crate::error::USTBLError(error.to_string()))??
-    };
-    for (path, wanted) in &once_keys {
-      let state = states.get(path).unwrap_or(&LocalState::Absent);
-      if once_differs(root, path, state, wanted) {
-        let mut entry = ChangeDetailEntry::new(path, ChangeClass::OnceChanged, false);
-        entry.size = state.key().map(|key| key.size);
-        entry.disabled = state.variant_disabled() == Some(true);
-        entries.push(entry);
-      }
-    }
-  }
-
-  let defaults = create_initial_model(disk, Some(&release.to_previous()), &suggested_of(suggested));
-  for file in &defaults.files {
-    if listed.contains_key(&file.path.to_lowercase()) || ignored.ignores_added(&file.path) {
-      continue;
-    }
-    let published = defaults.publishes(&file.path);
-    let class = if published {
-      ChangeClass::Added
-    } else {
-      ChangeClass::AddedExcluded
-    };
-    let mut entry =
-      ChangeDetailEntry::new(&file.path, class, published && in_content_dir(&file.path));
-    entry.rule = release
-      .rules
-      .iter()
-      .find(|rule| rule.kind == RuleKind::File && rule.path.eq_ignore_ascii_case(&file.path))
-      .or_else(|| defaults::covering_rule(&release.rules, &file.path))
-      .map(|rule| rule.state);
-    entry.disabled = file.disabled;
-    if with_diff {
-      entry.size = size_on_disk(root, &file.path, file.disabled);
-    }
-    entries.push(entry);
-  }
+  let previous = release.to_previous();
+  let defaults = create_initial_model(disk, Some(&previous), &suggested_of(suggested));
+  let ignored = ignored.clone();
+  let root = root.to_path_buf();
+  let entries = tokio::task::spawn_blocking(move || {
+    let ignored_added = |path: &str| ignored.ignores_added(path);
+    let published = |path: &str| defaults.publishes(path);
+    classify_against(&Spec {
+      root: &root,
+      cache: scan_cache(),
+      release: &previous.files,
+      files: &defaults.files,
+      judge: Judge::Baseline(Baseline {
+        changes: &local,
+        managed: &managed,
+        ignored_whole: &whole_ignored,
+        ignored_added: &ignored_added,
+        published: &published,
+        rules: &previous.rules,
+        with_diff,
+      }),
+    })
+  })
+  .await
+  .map_err(|error| crate::error::USTBLError(error.to_string()))??;
   Ok(entries)
 }
-
 /// The detail list: every entry for the files `list_files` found.
 pub async fn classify(
   root: &Path,

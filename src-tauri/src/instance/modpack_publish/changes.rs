@@ -2,7 +2,7 @@
 //! publish tree marks them. Deleted files are not here: the tree already shows
 //! them as ghosts.
 
-use super::commands::{PreviousFile, PreviousRelease};
+use super::commands::PreviousRelease;
 use super::defaults::DiskFile;
 use crate::error::USTBLResult;
 use crate::instance::helpers::modpack::base_store;
@@ -10,38 +10,28 @@ use crate::instance::helpers::modpack::baseline::ModpackBaseline;
 use crate::instance::helpers::modpack::multimc::profile::safe_relative;
 use crate::instance::helpers::modpack::text::{self, normalize_text, MAX_TEXT_SIZE};
 use crate::instance::models::misc::InstanceError;
+use crate::instance::modpack_update::change_core::{self, ChangeClass, Judge, Spec};
 use crate::instance::modpack_update::changes::logical_disk_path;
-use crate::instance::modpack_update::diff::{FileKey, LocalState, DISABLED_SUFFIX};
+use crate::instance::modpack_update::diff::DISABLED_SUFFIX;
 use crate::instance::modpack_update::ignores;
-use crate::instance::modpack_update::local_scan::{collect_states_cached, LocalScanCache};
+use crate::instance::modpack_update::local_scan::LocalScanCache;
 use crate::instance::modpack_update::text_diff::{
   lines_of, unified_diff_hiding, DiffHunk, CONTEXT_LINES,
 };
 use serde::Serialize;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::HashSet;
 use std::io;
 use std::path::Path;
 use std::sync::Mutex;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum PublishChangeKind {
-  /// The previous release lists it with other content.
-  Modified,
-  /// The previous release does not list it.
-  Added,
-  /// Same content, other enabled/disabled state.
-  Toggled,
-  /// A first-install file of the previous release whose content differs.
-  OnceChanged,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PublishChange {
   /// The enabled name, as the tree lists the file.
   pub path: String,
-  pub kind: PublishChangeKind,
+  /// Never `Deleted` or `AddedExcluded`: the tree shows deleted files as
+  /// ghosts, and every unlisted file is just added.
+  pub kind: ChangeClass,
   /// The previous release's content; absent for an added file.
   pub previous_sha1: Option<String>,
   pub previous_size: Option<u64>,
@@ -87,46 +77,6 @@ fn folded(path: &str) -> String {
   path.to_lowercase()
 }
 
-/// The files to look at on disk, with the content the previous release lists
-/// for them. An added file has no entry, so it is never read.
-pub fn scan_targets(
-  files: &[DiskFile],
-  previous: Option<&PreviousRelease>,
-) -> BTreeMap<String, FileKey> {
-  let Some(previous) = previous else {
-    return BTreeMap::new();
-  };
-  let listed: HashMap<String, &PreviousFile> = previous
-    .files
-    .iter()
-    .map(|file| (folded(&file.path), file))
-    .collect();
-  files
-    .iter()
-    .filter_map(|file| {
-      let found = listed.get(&folded(&file.path))?;
-      Some((
-        file.path.clone(),
-        FileKey {
-          sha1: found.sha1.clone(),
-          size: found.size,
-        },
-      ))
-    })
-    .collect()
-}
-
-fn local_size(root: &Path, file: &DiskFile) -> Option<u64> {
-  let name = if file.disabled {
-    format!("{}{DISABLED_SUFFIX}", file.path)
-  } else {
-    file.path.clone()
-  };
-  std::fs::metadata(root.join(name))
-    .ok()
-    .map(|meta| meta.len())
-}
-
 /// One entry per changed file. A file whose size differs from the previous
 /// release is changed without being hashed; an added file is not read at all.
 /// Hashes come from `cache`, which the local-change scan shares.
@@ -137,62 +87,29 @@ pub fn classify(
   previous: Option<&PreviousRelease>,
   locally_ignored: &HashSet<String>,
 ) -> io::Result<Vec<PublishChange>> {
-  let targets = scan_targets(files, previous);
-  let states = collect_states_cached(cache, root, &targets)?;
-  let listed: HashMap<String, &PreviousFile> = previous
-    .map(|release| {
-      release
-        .files
-        .iter()
-        .map(|file| (folded(&file.path), file))
-        .collect()
-    })
-    .unwrap_or_default();
-  let mut changes = Vec::new();
-  for file in files {
-    let ignored = locally_ignored.contains(&folded(&file.path));
-    let Some(before) = listed.get(&folded(&file.path)) else {
-      changes.push(PublishChange {
-        path: file.path.clone(),
-        kind: PublishChangeKind::Added,
-        previous_sha1: None,
-        previous_size: None,
-        local_size: local_size(root, file),
-        local_ignored: ignored,
+  let entries = change_core::classify(&Spec {
+    root,
+    cache,
+    release: previous.map_or(&[], |release| &release.files),
+    files,
+    judge: Judge::Release,
+  })?;
+  Ok(
+    entries
+      .into_iter()
+      .map(|entry| PublishChange {
+        local_ignored: locally_ignored.contains(&folded(&entry.path)),
+        path: entry.path,
+        kind: entry.class,
+        previous_sha1: entry.baseline.as_ref().map(|key| key.sha1.clone()),
+        previous_size: entry.baseline.as_ref().map(|key| key.size),
+        local_size: entry.size,
         previous_version_id: previous.and_then(|release| release.version_id.clone()),
         previous_project_id: previous.and_then(|release| release.project_id.clone()),
-      });
-      continue;
-    };
-    let state = states.get(&file.path).unwrap_or(&LocalState::Absent);
-    let Some(found) = state.key() else {
-      // Gone between the listing and the scan.
-      continue;
-    };
-    let same = found.size == before.size && found.sha1 == before.sha1;
-    let kind = if !same && before.once {
-      PublishChangeKind::OnceChanged
-    } else if !same {
-      PublishChangeKind::Modified
-    } else if state.variant_disabled() != Some(before.disabled) {
-      PublishChangeKind::Toggled
-    } else {
-      continue;
-    };
-    changes.push(PublishChange {
-      path: file.path.clone(),
-      kind,
-      previous_sha1: Some(before.sha1.clone()),
-      previous_size: Some(before.size),
-      local_size: Some(found.size),
-      local_ignored: ignored,
-      previous_version_id: previous.and_then(|release| release.version_id.clone()),
-      previous_project_id: previous.and_then(|release| release.project_id.clone()),
-    });
-  }
-  Ok(changes)
+      })
+      .collect(),
+  )
 }
-
 /// Paths the player ignored: records of managed files and of added files, in
 /// the form the tree lists them. Empty without a baseline.
 pub fn locally_ignored(root: &Path, baseline: Option<&ModpackBaseline>) -> HashSet<String> {
@@ -266,8 +183,11 @@ mod tests {
   use super::*;
   use crate::instance::helpers::modpack::baseline::{BaselineFile, BaselineLoader};
   use crate::instance::models::misc::{InstanceOrigin, ModLoaderType, OriginPlatform};
+  use crate::instance::modpack_publish::commands::PreviousFile;
+  use crate::instance::modpack_update::change_core::scan_targets;
+  use crate::instance::modpack_update::diff::FileKey;
   use sha1::{Digest, Sha1};
-  use std::collections::BTreeSet;
+  use std::collections::{BTreeMap, BTreeSet};
   use std::fs;
   use std::path::PathBuf;
 
@@ -384,7 +304,7 @@ mod tests {
     classify(root, &cache, files, previous, ignored).unwrap()
   }
 
-  fn kinds(changes: &[PublishChange]) -> Vec<(String, PublishChangeKind)> {
+  fn kinds(changes: &[PublishChange]) -> Vec<(String, ChangeClass)> {
     changes
       .iter()
       .map(|change| (change.path.clone(), change.kind))
@@ -409,11 +329,8 @@ mod tests {
     assert_eq!(
       kinds(&changes),
       vec![
-        ("config/longer.cfg".to_string(), PublishChangeKind::Modified),
-        (
-          "config/same-size.cfg".to_string(),
-          PublishChangeKind::Modified
-        ),
+        ("config/longer.cfg".to_string(), ChangeClass::Modified),
+        ("config/same-size.cfg".to_string(), ChangeClass::Modified),
       ]
     );
     assert_eq!(changes[0].previous_size, Some(3));
@@ -427,12 +344,12 @@ mod tests {
     let root = root(&[("mods/new.jar", "new"), ("mods/old.jar", "old")]);
     let previous = release(vec![listed("mods/old.jar", "old", false, false)]);
     let files = [disk("mods/new.jar", false), disk("mods/old.jar", false)];
-    let targets = scan_targets(&files, Some(&previous));
+    let targets = scan_targets(&files, &previous.files);
     assert_eq!(targets.keys().collect::<Vec<_>>(), vec!["mods/old.jar"]);
     let changes = run(&root, &files, Some(&previous), &HashSet::new());
     assert_eq!(
       kinds(&changes),
-      vec![("mods/new.jar".to_string(), PublishChangeKind::Added)]
+      vec![("mods/new.jar".to_string(), ChangeClass::Added)]
     );
     assert_eq!(changes[0].previous_sha1, None);
     assert_eq!(changes[0].local_size, Some(3));
@@ -451,8 +368,8 @@ mod tests {
     assert_eq!(
       kinds(&changes),
       vec![
-        ("mods/off.jar".to_string(), PublishChangeKind::Toggled),
-        ("mods/on.jar".to_string(), PublishChangeKind::Toggled),
+        ("mods/off.jar".to_string(), ChangeClass::Toggled),
+        ("mods/on.jar".to_string(), ChangeClass::Toggled),
       ]
     );
     assert_eq!(changes[0].local_size, Some(3));
@@ -480,13 +397,10 @@ mod tests {
     assert_eq!(
       kinds(&changes),
       vec![
-        (
-          "config/changed.cfg".to_string(),
-          PublishChangeKind::OnceChanged
-        ),
+        ("config/changed.cfg".to_string(), ChangeClass::OnceChanged),
         (
           "config/other-size.cfg".to_string(),
-          PublishChangeKind::OnceChanged
+          ChangeClass::OnceChanged
         ),
       ]
     );
@@ -515,8 +429,8 @@ mod tests {
       assert_eq!(
         kinds(&changes),
         vec![
-          ("config/a.cfg".to_string(), PublishChangeKind::Added),
-          ("mods/b.jar".to_string(), PublishChangeKind::Added),
+          ("config/a.cfg".to_string(), ChangeClass::Added),
+          ("mods/b.jar".to_string(), ChangeClass::Added),
         ]
       );
     }
@@ -531,7 +445,7 @@ mod tests {
     let changes = run(&root, &files, Some(&previous), &HashSet::new());
     assert_eq!(
       kinds(&changes),
-      vec![("Config/A.cfg".to_string(), PublishChangeKind::Modified)]
+      vec![("Config/A.cfg".to_string(), ChangeClass::Modified)]
     );
     let _ = fs::remove_dir_all(root);
   }

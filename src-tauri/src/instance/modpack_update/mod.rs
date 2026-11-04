@@ -1,4 +1,7 @@
 pub mod apply;
+pub mod change_core;
+#[cfg(test)]
+mod change_parity;
 pub mod changes;
 pub mod commands;
 pub mod decide;
