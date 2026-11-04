@@ -1294,6 +1294,7 @@ mod tests {
       game_version: "1.21.1".into(),
       loader_type: ModLoaderType::Fabric,
       follow: true,
+      pack_format: None,
     };
     ModpackBaseline::build(
       &origin,

@@ -578,6 +578,7 @@ mod tests {
       game_version: "1.21.1".into(),
       loader_type: ModLoaderType::Unknown,
       follow: true,
+      pack_format: None,
     });
     assert!(owns_files(&instance));
 

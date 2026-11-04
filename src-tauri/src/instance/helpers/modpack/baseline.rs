@@ -433,6 +433,7 @@ mod tests {
       game_version: "1.21.11".into(),
       loader_type: ModLoaderType::Fabric,
       follow: true,
+      pack_format: None,
     }
   }
 

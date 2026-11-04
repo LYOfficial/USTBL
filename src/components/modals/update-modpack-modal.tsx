@@ -65,6 +65,18 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
   const { getInstanceList, checkModpackUpdate } = useGlobalData();
   const primaryColor = config.appearance.theme.primaryColor;
 
+  // A file picked to update a local import is only kept while this dialog is
+  // open. An applied update clears it itself, so this is a no-op then.
+  const handleClose = useCallback(() => {
+    const platform = getInstanceList()?.find(
+      (instance) => instance.id === instanceId
+    )?.origin?.platform;
+    if (platform === "local") {
+      void ModpackUpdateService.discardLocalModpackUpdate(instanceId);
+    }
+    modalProps.onClose();
+  }, [getInstanceList, instanceId, modalProps]);
+
   const [checkPhase, setCheckPhase] = useState<CheckPhase>("checking");
   const [planPhase, setPlanPhase] = useState<PlanPhase>("planning");
   const [check, setCheck] = useState<ModpackUpdateCheck | null>(null);
@@ -639,6 +651,7 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
       closeOnOverlayClick={!applying}
       closeOnEsc={!applying}
       {...modalProps}
+      onClose={handleClose}
     >
       <ModalOverlay />
       <ModalContent>

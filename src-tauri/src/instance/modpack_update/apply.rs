@@ -610,11 +610,20 @@ async fn extract_archive_unit(
       _ => None,
     })
     .collect();
-  let stop = Arc::new(AtomicBool::new(false));
   let archive = archive.to_path_buf();
+  run_blocking_cancellable(env, move |stop| extract_entries(&archive, entries, stop)).await
+}
+
+/// Run `work` on the blocking pool with a stop flag that a cancel sets. The
+/// work is always awaited, see [`extract_archive_unit`].
+async fn run_blocking_cancellable<T: Send + 'static>(
+  env: &dyn UpdateEnv,
+  work: impl FnOnce(&AtomicBool) -> USTBLResult<T> + Send + 'static,
+) -> USTBLResult<T> {
+  let stop = Arc::new(AtomicBool::new(false));
   let worker = tokio::task::spawn_blocking({
     let stop = stop.clone();
-    move || extract_entries(&archive, entries, &stop)
+    move || work(&stop)
   });
   tokio::pin!(worker);
   let joined = tokio::select! {
@@ -625,6 +634,99 @@ async fn extract_archive_unit(
     }
   };
   joined.map_err(|e| crate::error::USTBLError(e.to_string()))?
+}
+
+/// Read `entries` of one archive into memory through a single open
+/// `ZipArchive`, in order. Each entry is read at most its declared size plus
+/// one byte, and rejected unless sha1 and size match.
+fn read_entries(
+  archive: &Path,
+  entries: Vec<(String, FileKey)>,
+  stop: &AtomicBool,
+) -> USTBLResult<Vec<Vec<u8>>> {
+  use io::Read;
+  let mut zip = zip::ZipArchive::new(fs::File::open(archive).at(archive).map_err(io_error)?)?;
+  let mut contents = Vec::with_capacity(entries.len());
+  for (entry, key) in entries {
+    if stop.load(Ordering::SeqCst) {
+      return Err(cancelled_error());
+    }
+    let source = zip.by_name(&entry)?;
+    let mut bytes = Vec::new();
+    source
+      .take(key.size.saturating_add(1))
+      .read_to_end(&mut bytes)
+      .at(archive)
+      .map_err(io_error)?;
+    if bytes.len() as u64 != key.size || hex::encode(Sha1::digest(&bytes)) != key.sha1 {
+      return Err(InstanceError::ModpackUpdateVerifyFailed.into());
+    }
+    contents.push(bytes);
+  }
+  Ok(contents)
+}
+
+/// The bytes of `files`, in order, verified against their keys. Entries of one
+/// archive are read through a single open archive and never touch the disk;
+/// other sources are staged under `scratch` and read back, which the caller
+/// cleans up.
+pub async fn read_remote_files(
+  env: &dyn UpdateEnv,
+  scratch: &Path,
+  files: &[&RemoteFile],
+) -> USTBLResult<Vec<Vec<u8>>> {
+  let mut contents: Vec<Option<Vec<u8>>> = vec![None; files.len()];
+  let mut per_archive: Vec<(PathBuf, Vec<usize>)> = Vec::new();
+  for (index, file) in files.iter().enumerate() {
+    match &file.source {
+      FileSource::ArchiveEntry { archive, .. } => {
+        match per_archive.iter_mut().find(|(known, _)| known == archive) {
+          Some((_, indexes)) => indexes.push(index),
+          None => per_archive.push((archive.clone(), vec![index])),
+        }
+      }
+      _ => {
+        let dest = scratch.join(&file.path);
+        stage_file(env, dest.clone(), file).await?;
+        contents[index] = Some(fs::read(&dest).at(&dest).map_err(io_error)?);
+      }
+    }
+  }
+  for (archive, indexes) in per_archive {
+    let mut batch: Vec<usize> = Vec::new();
+    let mut bytes = 0u64;
+    let mut batches = Vec::new();
+    for index in indexes {
+      let size = files[index].key.size;
+      if !batch.is_empty()
+        && (batch.len() >= ARCHIVE_UNIT_FILES || bytes + size > ARCHIVE_UNIT_BYTES)
+      {
+        batches.push(std::mem::take(&mut batch));
+        bytes = 0;
+      }
+      bytes += size;
+      batch.push(index);
+    }
+    if !batch.is_empty() {
+      batches.push(batch);
+    }
+    for batch in batches {
+      let entries: Vec<(String, FileKey)> = batch
+        .iter()
+        .filter_map(|&index| match &files[index].source {
+          FileSource::ArchiveEntry { entry, .. } => Some((entry.clone(), files[index].key.clone())),
+          _ => None,
+        })
+        .collect();
+      let path = archive.clone();
+      let read =
+        run_blocking_cancellable(env, move |stop| read_entries(&path, entries, stop)).await?;
+      for (index, bytes) in batch.into_iter().zip(read) {
+        contents[index] = Some(bytes);
+      }
+    }
+  }
+  Ok(contents.into_iter().flatten().collect())
 }
 
 /// Tell every pack session which of its files are about to be fetched, so it
@@ -1487,6 +1589,7 @@ mod tests {
       game_version: "1.21.1".into(),
       loader_type: ModLoaderType::Fabric,
       follow: true,
+      pack_format: None,
     }
   }
 
@@ -2606,6 +2709,57 @@ mod tests {
       assert_eq!(root.read("mods/gone.jar").as_deref(), Some("gone"));
       assert_eq!(root.read("config/a.toml"), None);
       assert!(!staging_dir(&root.0).join("config/a.toml").exists());
+    }
+  }
+
+  #[tokio::test]
+  async fn archive_entries_are_read_in_order_across_archives_and_verified() {
+    let root = setup();
+    let (first, second) = (root.0.join("a.zip"), root.0.join("b.zip"));
+    let mut files = archive_files(&first, ARCHIVE_UNIT_FILES + 3);
+    let others = archive_files(&second, 2);
+    files.insert(1, others[1].clone());
+    let env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let scratch = root.0.join("scratch");
+    let refs: Vec<&RemoteFile> = files.iter().collect();
+
+    let contents = read_remote_files(&env, &scratch, &refs).await.unwrap();
+
+    let expected: Vec<Vec<u8>> = files
+      .iter()
+      .map(|file| {
+        let index = file
+          .path
+          .trim_start_matches("config/")
+          .trim_end_matches(".toml");
+        format!("v{index}").into_bytes()
+      })
+      .collect();
+    assert_eq!(contents, expected);
+    assert!(!scratch.exists());
+
+    for bad in [
+      sha1_of(b"something else"),
+      FileKey {
+        size: 99,
+        ..files[3].key.clone()
+      },
+      FileKey {
+        size: 1,
+        ..files[3].key.clone()
+      },
+    ] {
+      let mut tampered = files.clone();
+      tampered[3].key = bad;
+      let refs: Vec<&RemoteFile> = tampered.iter().collect();
+      let error = read_remote_files(&env, &scratch, &refs).await.unwrap_err();
+      assert_eq!(
+        error.0,
+        InstanceError::ModpackUpdateVerifyFailed.to_string()
+      );
     }
   }
 

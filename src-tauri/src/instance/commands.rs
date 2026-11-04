@@ -969,6 +969,7 @@ fn creation_origin(
     game_version: game_version.to_string(),
     loader_type,
     follow,
+    pack_format: None,
   })
 }
 
@@ -1968,6 +1969,7 @@ mod isolation_tests {
       game_version: "1.21.1".into(),
       loader_type: ModLoaderType::Unknown,
       follow: true,
+      pack_format: None,
     });
     apply_creation_isolation(&mut instance);
     assert!(instance.isolation_locked);

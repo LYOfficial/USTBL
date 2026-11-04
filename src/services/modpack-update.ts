@@ -99,6 +99,31 @@ export class ModpackUpdateService {
   }
 
   /**
+   * Check a picked archive against a settled local import and keep it as the
+   * pending update target. `unchanged` means it is the file already installed.
+   */
+  @responseHandler("instance")
+  static async stageLocalModpackUpdate(
+    instanceId: string,
+    path: string,
+    label: string
+  ): Promise<InvokeResponse<{ unchanged: boolean }>> {
+    return await invoke("stage_local_modpack_update", {
+      instanceId,
+      path,
+      label,
+    });
+  }
+
+  /** Drop the pending target of a local update that was not applied. */
+  @responseHandler("instance")
+  static async discardLocalModpackUpdate(
+    instanceId: string
+  ): Promise<InvokeResponse<null>> {
+    return await invoke("discard_local_modpack_update", { instanceId });
+  }
+
+  /**
    * The download addresses of a modpack archive picked from disk that are
    * outside the approved hosts. Empty when the pack has none or is not a
    * Modrinth pack.

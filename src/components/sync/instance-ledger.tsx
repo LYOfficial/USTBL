@@ -6,20 +6,26 @@ import {
   VStack,
   useColorModeValue,
 } from "@chakra-ui/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { CommonIconButton } from "@/components/common/common-icon-button";
 import { OptionItemGroup } from "@/components/common/option-item";
+import { Section } from "@/components/common/section";
 import { useLauncherConfig } from "@/contexts/config";
 import { useGlobalData } from "@/contexts/global-data";
 import { useSharedModals } from "@/contexts/shared-modal";
 import { ModLoaderType } from "@/enums/instance";
+import { useLocalModpackUpdate } from "@/hooks/local-modpack-update";
 import { InstanceSummary } from "@/models/instance/misc";
-import { shouldCheckInstance } from "@/utils/installing-instance";
+import {
+  isInstallingInstance,
+  shouldCheckInstance,
+} from "@/utils/installing-instance";
 import {
   LedgerBadge,
   ledgerBadge,
   ledgerInstances,
+  ledgerLocalInstances,
   ledgerScanned,
   ledgerUpdateDisabled,
   loaderSlug,
@@ -66,7 +72,26 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
 
   const [checking, setChecking] = useState(false);
 
+  const { updateFromFile, pickingId } = useLocalModpackUpdate();
+
   const rows = useMemo(() => ledgerInstances(instances), [instances]);
+  const localRows = useMemo(() => ledgerLocalInstances(instances), [instances]);
+
+  // A collapsed group keeps its rows in the DOM but hidden. A jump from a
+  // project card remounts the platform group expanded, then scrolls to the row.
+  const platformOpenRef = useRef(true);
+  const [platformKey, setPlatformKey] = useState(0);
+  useEffect(() => {
+    if (!highlightId || platformOpenRef.current) return;
+    if (!rows.some((instance) => instance.id === highlightId)) return;
+    platformOpenRef.current = true;
+    setPlatformKey((key) => key + 1);
+    requestAnimationFrame(() =>
+      document
+        .getElementById(ledgerRowId(highlightId))
+        ?.scrollIntoView({ behavior: "smooth", block: "center" })
+    );
+  }, [highlightId, rows]);
   const followedKey = rows
     .filter(shouldCheckInstance)
     .map((instance) => instance.id)
@@ -118,7 +143,7 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
     ].join(" · ");
   };
 
-  if (rows.length === 0) return null;
+  if (rows.length === 0 && localRows.length === 0) return null;
 
   return (
     <VStack align="stretch" spacing={3}>
@@ -136,90 +161,160 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
           h={21}
         />
       </HStack>
-      <OptionItemGroup
-        items={rows.map((instance) => {
-          const check = modpackChecks[instance.id];
-          const badge = ledgerBadge(instance, check);
-          const openDetails = () =>
-            openSharedModal("modpack-instance-details", {
-              instanceId: instance.id,
-              instanceName: instance.name,
-            });
-          const openUpdate = () =>
-            openSharedModal("update-modpack", {
-              instanceId: instance.id,
-              instanceName: instance.name,
-            });
-          const openChanges = () =>
-            openSharedModal("modpack-local-changes", {
-              instanceId: instance.id,
-              instanceName: instance.name,
-            });
+      {rows.length > 0 && (
+        <Section
+          key={platformKey}
+          title={t("InstanceSyncPage.ledger.group.platform")}
+          isAccordion
+          onAccordionToggle={(isOpen) => {
+            platformOpenRef.current = isOpen;
+          }}
+        >
+          <OptionItemGroup
+            items={rows.map((instance) => {
+              const check = modpackChecks[instance.id];
+              const badge = ledgerBadge(instance, check);
+              const openDetails = () =>
+                openSharedModal("modpack-instance-details", {
+                  instanceId: instance.id,
+                  instanceName: instance.name,
+                });
+              const openUpdate = () =>
+                openSharedModal("update-modpack", {
+                  instanceId: instance.id,
+                  instanceName: instance.name,
+                });
+              const openChanges = () =>
+                openSharedModal("modpack-local-changes", {
+                  instanceId: instance.id,
+                  instanceName: instance.name,
+                });
 
-          const detail =
-            badge === "available" && check?.latestLabel
-              ? t("InstanceSyncPage.ledger.updateTo", {
-                  latest: check.latestLabel,
-                })
-              : (badge === "needsRepair" || badge === "unknown") &&
-                  check?.reason
-                ? t(`UpdateModpackModal.reason.${check.reason}`, {
-                    defaultValue: check.reason,
-                  })
-                : null;
+              const detail =
+                badge === "available" && check?.latestLabel
+                  ? t("InstanceSyncPage.ledger.updateTo", {
+                      latest: check.latestLabel,
+                    })
+                  : (badge === "needsRepair" || badge === "unknown") &&
+                      check?.reason
+                    ? t(`UpdateModpackModal.reason.${check.reason}`, {
+                        defaultValue: check.reason,
+                      })
+                    : null;
 
-          const actions = (
-            <HStack spacing={1}>
-              <Button size="xs" variant="outline" onClick={openDetails}>
-                {t("InstanceSyncPage.ledger.action.details")}
-              </Button>
-              <Button
-                size="xs"
-                variant="outline"
-                isDisabled={!ledgerScanned(check)}
-                onClick={openChanges}
-              >
-                {t("InstanceSyncPage.ledger.action.viewChanges")}
-              </Button>
-              <Button
-                size="xs"
-                colorScheme={primaryColor}
-                onClick={openUpdate}
-                isDisabled={ledgerUpdateDisabled(instance, check)}
-              >
-                {t("InstanceSyncPage.ledger.action.update")}
-              </Button>
-            </HStack>
-          );
+              const actions = (
+                <HStack spacing={1}>
+                  <Button size="xs" variant="outline" onClick={openDetails}>
+                    {t("InstanceSyncPage.ledger.action.details")}
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    isDisabled={!ledgerScanned(check)}
+                    onClick={openChanges}
+                  >
+                    {t("InstanceSyncPage.ledger.action.viewChanges")}
+                  </Button>
+                  <Button
+                    size="xs"
+                    colorScheme={primaryColor}
+                    onClick={openUpdate}
+                    isDisabled={ledgerUpdateDisabled(instance, check)}
+                  >
+                    {t("InstanceSyncPage.ledger.action.update")}
+                  </Button>
+                </HStack>
+              );
 
-          return {
-            id: ledgerRowId(instance.id),
-            bg: highlightId === instance.id ? highlightBg : undefined,
-            transition: "background-color 0.4s ease-in-out",
-            title: (
-              <HStack spacing={2}>
-                <Text fontSize="xs-sm">{instance.name}</Text>
-                <Badge colorScheme={BADGE_COLORS[badge]}>
-                  {t(`InstanceSyncPage.ledger.badge.${badge}`)}
-                </Badge>
-              </HStack>
-            ),
-            description: (
-              <VStack spacing={0} align="stretch">
-                <Text fontSize="xs" className="secondary-text">
-                  {lineLabel(instance)}
-                </Text>
-                <Text fontSize="xs" className="secondary-text">
-                  {[check?.currentLabel ?? instance.modpackVersion, detail]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </Text>
-              </VStack>
-            ),
-            children: actions,
-          };
-        })}
-      />
+              return {
+                id: ledgerRowId(instance.id),
+                bg: highlightId === instance.id ? highlightBg : undefined,
+                transition: "background-color 0.4s ease-in-out",
+                title: (
+                  <HStack spacing={2}>
+                    <Text fontSize="xs-sm">{instance.name}</Text>
+                    <Badge colorScheme={BADGE_COLORS[badge]}>
+                      {t(`InstanceSyncPage.ledger.badge.${badge}`)}
+                    </Badge>
+                  </HStack>
+                ),
+                description: (
+                  <VStack spacing={0} align="stretch">
+                    <Text fontSize="xs" className="secondary-text">
+                      {lineLabel(instance)}
+                    </Text>
+                    <Text fontSize="xs" className="secondary-text">
+                      {[check?.currentLabel ?? instance.modpackVersion, detail]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </Text>
+                  </VStack>
+                ),
+                children: actions,
+              };
+            })}
+          />
+        </Section>
+      )}
+      {localRows.length > 0 && (
+        <Section title={t("InstanceSyncPage.ledger.group.local")} isAccordion>
+          <OptionItemGroup
+            items={localRows.map((instance) => {
+              const installing = isInstallingInstance(instance);
+              return {
+                id: ledgerRowId(instance.id),
+                title: (
+                  <HStack spacing={2}>
+                    <Text fontSize="xs-sm">{instance.name}</Text>
+                    {installing && (
+                      <Badge colorScheme={BADGE_COLORS.installing}>
+                        {t("InstanceSyncPage.ledger.badge.installing")}
+                      </Badge>
+                    )}
+                  </HStack>
+                ),
+                description: (
+                  <VStack spacing={0} align="stretch">
+                    <Text fontSize="xs" className="secondary-text">
+                      {lineLabel(instance)}
+                    </Text>
+                    {instance.modpackVersion && (
+                      <Text fontSize="xs" className="secondary-text">
+                        {instance.modpackVersion}
+                      </Text>
+                    )}
+                  </VStack>
+                ),
+                children: (
+                  <HStack spacing={1}>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() =>
+                        openSharedModal("modpack-instance-details", {
+                          instanceId: instance.id,
+                          instanceName: instance.name,
+                        })
+                      }
+                    >
+                      {t("InstanceSyncPage.ledger.action.details")}
+                    </Button>
+                    <Button
+                      size="xs"
+                      colorScheme={primaryColor}
+                      isLoading={pickingId === instance.id}
+                      isDisabled={installing || pickingId !== null}
+                      onClick={() => updateFromFile(instance.id, instance.name)}
+                    >
+                      {t("InstanceSyncPage.ledger.action.update")}
+                    </Button>
+                  </HStack>
+                ),
+              };
+            })}
+          />
+        </Section>
+      )}
     </VStack>
   );
 };

@@ -2,10 +2,11 @@
 
 use super::apply::{
   apply, can_roll_back_last, ensure_unlink_safe, materialize_remote_file, pack_wanted,
-  prepare_packs, recover_checked, roll_back_last_checked, wrap_locate, Progress, Recovery, Stage,
-  UpdateEnv, UpdateGuard, UpdateRequest,
+  prepare_packs, read_remote_files, recover_checked, roll_back_last_checked, wrap_locate, Progress,
+  Recovery, Stage, UpdateEnv, UpdateGuard, UpdateRequest,
 };
 use super::diff::{Conflict, ConflictChoice, Diff, FileChange};
+use super::local_update;
 use super::merge::merge_with_choices;
 use super::notice::{read_update_notice, write_update_notice, UpdateNotice};
 use super::optional::{self, OptionalFile};
@@ -27,12 +28,12 @@ use crate::instance::helpers::misc::{
   get_instance_game_config, get_instance_subdir_paths, refresh_and_update_instances,
 };
 use crate::instance::helpers::modpack::baseline::{
-  BaselineLoader, ModpackBaseline, BASELINE_FILE_NAME,
+  hash_file, BaselineLoader, ModpackBaseline, BASELINE_FILE_NAME,
 };
 use crate::instance::helpers::modpack::text;
 use crate::instance::models::misc::{
   Instance, InstanceError, InstanceOrigin, ModLoader, ModLoaderStatus, ModLoaderType,
-  OriginPlatform,
+  OriginPlatform, PackFormat,
 };
 use crate::launch::helpers::file_validator::{get_invalid_assets, get_invalid_library_files};
 use crate::launch::models::LaunchingState;
@@ -672,6 +673,7 @@ pub async fn recover_publish_base(
     game_version: instance.version.clone(),
     loader_type: instance.mod_loader.loader_type,
     follow: false,
+    pack_format: None,
   });
   origin.project_id = project.to_string();
   origin.version_id = version_id.to_string();
@@ -805,13 +807,45 @@ fn is_settled_local(origin: &InstanceOrigin, installing: bool) -> bool {
   origin.platform == OriginPlatform::Local && !is_fresh(origin) && !installing
 }
 
+/// Whether the engine handles an instance with this origin. A settled local
+/// import is left out, unless the caller works on an update and an archive
+/// picked for it is staged.
+fn engine_handles(
+  origin: &InstanceOrigin,
+  root: &Path,
+  installing: bool,
+  with_picked_archive: bool,
+) -> bool {
+  !is_settled_local(origin, installing)
+    || (with_picked_archive && local_update::pending_target(root, origin).is_some())
+}
+
 fn target(app: &AppHandle, instance_id: &str) -> USTBLResult<Option<Target>> {
+  target_with(app, instance_id, false)
+}
+
+/// [`target`] for the commands that compare and apply an update: a settled
+/// local import is theirs too while an archive picked to update it is staged.
+fn update_target(app: &AppHandle, instance_id: &str) -> USTBLResult<Option<Target>> {
+  target_with(app, instance_id, true)
+}
+
+fn target_with(
+  app: &AppHandle,
+  instance_id: &str,
+  with_picked_archive: bool,
+) -> USTBLResult<Option<Target>> {
   let instance = current_instance(app, instance_id)?;
   let Some(origin) = instance.origin.clone() else {
     return Ok(None);
   };
   let root = instance.version_path.clone();
-  if is_settled_local(&origin, has_campus_install(&root)) {
+  if !engine_handles(
+    &origin,
+    &root,
+    has_campus_install(&root),
+    with_picked_archive,
+  ) {
     return Ok(None);
   }
   Ok(Some(Target {
@@ -1282,6 +1316,19 @@ impl AppEnv {
     reporter
   }
 
+  /// The format of the archive a local import is being installed from, read
+  /// while the archive is still staged. Other origins have none.
+  fn local_pack_format(&self, version_id: &str) -> Option<PackFormat> {
+    let instance = current_instance(&self.app, &self.instance_id).ok()?;
+    if instance.origin.as_ref()?.platform != OriginPlatform::Local {
+      return None;
+    }
+    super::sources::detect_pack_format(&super::sources::archive_path(
+      &instance.version_path,
+      version_id,
+    ))
+  }
+
   fn progress(&self, stage: Stage) {
     self.report(Progress {
       stage,
@@ -1386,12 +1433,16 @@ impl UpdateEnv for AppEnv {
   }
 
   async fn commit_origin(&self, version_id: &str) -> USTBLResult<()> {
+    let pack_format = self.local_pack_format(version_id);
     store_instance(&self.app, &self.instance_id, |instance| {
       if let Some(origin) = instance.origin.as_mut() {
         if origin.version_id.is_empty() {
           origin.loader_type = self.loader.loader_type;
         }
         origin.version_id = version_id.to_string();
+        if origin.platform == OriginPlatform::Local && pack_format.is_some() {
+          origin.pack_format = pack_format;
+        }
       }
       instance.modpack_version = Some(self.label.clone());
     })
@@ -1487,6 +1538,9 @@ pub async fn check_modpack_update(
   scan_local: Option<bool>,
 ) -> USTBLResult<UpdateCheck> {
   let Some(target) = target(&app, &instance_id)? else {
+    if let Some(target) = update_target(&app, &instance_id)? {
+      return Ok(picked_archive_check(&target));
+    }
     return Ok(UpdateCheck {
       status: CheckStatus::NotFollowing,
       follow: false,
@@ -1514,6 +1568,19 @@ pub async fn prime_campus_listing(app: AppHandle) {
 #[tauri::command]
 pub fn clear_campus_listing() {
   super::sources::campus_listing().clear();
+}
+
+/// The check of a local import with an archive picked to update it: the
+/// archive is the update. Nothing is asked of a platform. Rolling back is not
+/// offered: `rollback_modpack_update` does not serve local imports.
+fn picked_archive_check(target: &Target) -> UpdateCheck {
+  let picked = local_update::pending_target(&target.root, &target.origin);
+  UpdateCheck {
+    latest_version_id: picked.as_ref().map(|picked| picked.sha1.clone()),
+    latest_label: picked.map(|picked| picked.label),
+    can_roll_back: false,
+    ..check_of(CheckStatus::Available, target)
+  }
 }
 
 async fn check_installed_modpack(
@@ -1627,7 +1694,7 @@ enum LightCheck {
 /// version lists as before.
 async fn light_check(app: &AppHandle, target: &Target) -> USTBLResult<LightCheck> {
   if target.origin.platform != OriginPlatform::Campus {
-    return match latest_version(app, &target.origin).await? {
+    return match newest_version(app, target).await? {
       Some(latest) => Ok(LightCheck::Available {
         latest_version_id: latest.version_id,
         latest_label: latest.label,
@@ -1954,7 +2021,7 @@ async fn prepare_inner(
   instance_id: &str,
   optional_choice: &[String],
 ) -> USTBLResult<UpdatePlan> {
-  let target = target(app, instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let target = update_target(app, instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   // The preview this one replaces was cancelled by the caller and may not have
   // dropped its guard yet.
   let _guard = acquire_over_preview(&target.root, None, true).await?;
@@ -2188,9 +2255,18 @@ fn cleanup_preview_leftovers(root: &Path) {
 /// Ask the line for the manifest of the newest version; the plan is computed
 /// against whatever the line answers, not against the check's answer.
 async fn resolve_latest_for_plan(app: &AppHandle, target: &Target) -> USTBLResult<LatestVersion> {
-  latest_version(app, &target.origin)
+  newest_version(app, target)
     .await?
     .ok_or(InstanceError::ModpackUpdateStale.into())
+}
+
+/// The newest version of the instance's line, or the archive picked to update
+/// a local import, which has no line.
+async fn newest_version(app: &AppHandle, target: &Target) -> USTBLResult<Option<LatestVersion>> {
+  if let Some(picked) = local_update::pending_target(&target.root, &target.origin) {
+    return Ok(Some(picked.latest()));
+  }
+  latest_version(app, &target.origin).await
 }
 
 /// An instance created for a modpack that has not installed a version yet.
@@ -2502,10 +2578,8 @@ async fn recover_base_copies(
       let mut recovered = false;
       env.progress(Stage::Locating);
       prepare_packs(&files).await?;
-      for file in files {
-        let dest = preview.join(&file.path);
-        materialize_remote_file(&env, dest.clone(), file).await?;
-        let bytes = tokio::fs::read(&dest).await.at_in(&dest, &target.root)?;
+      let contents = read_remote_files(&env, &preview, &files).await?;
+      for (file, bytes) in files.into_iter().zip(contents) {
         if let Some(base) = wanted.iter().find(|b| b.path == file.path) {
           base_store::store(&target.root, base, &bytes)?;
           recovered = true;
@@ -2642,18 +2716,18 @@ async fn materialize_text_candidates(
     .collect();
   env.progress(Stage::Locating);
   prepare_packs(&candidates).await?;
-  for file in candidates {
-    if !wanted.contains_key(file.path.as_str()) {
-      continue;
-    }
-    let dest = preview.join(&file.path);
-    materialize_remote_file(&env, dest.clone(), file).await?;
-    let bytes = tokio::fs::read(&dest).await.at_in(&dest, &target.root)?;
+  // A file over the text limit never qualifies, so it is not fetched at all.
+  let fetchable: Vec<_> = candidates
+    .into_iter()
+    .filter(|file| file.key.size <= text::MAX_TEXT_SIZE as u64)
+    .collect();
+  let contents = read_remote_files(&env, &preview, &fetchable).await;
+  let _ = tokio::fs::remove_dir_all(&preview).await;
+  for (file, bytes) in fetchable.into_iter().zip(contents?) {
     if text::is_text_path(&file.path, &bytes) {
       result.insert(file.path.clone(), bytes);
     }
   }
-  let _ = tokio::fs::remove_dir_all(&preview).await;
   Ok(result)
 }
 
@@ -2668,7 +2742,7 @@ pub async fn apply_modpack_update(
   optional_choice: Option<Vec<String>>,
 ) -> USTBLResult<UpdateStarted> {
   let optional_choice = normalized_choice(optional_choice);
-  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let target = update_target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let guard = PlanGuard::acquire(&target.root)?;
   if has_campus_install(&target.root) {
     return Err(InstanceError::ModpackInstallInterrupted.into());
@@ -2770,14 +2844,14 @@ async fn apply_modpack_update_inner(
       received.join(","),
     );
   }
-  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let target = update_target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   ensure_not_running(&app, &instance_id)?;
   let mut reporter = AppEnv::preparing(&app, &target);
   reporter.tasks = Some(tasks);
   reporter.progress(Stage::Preparing);
   let baseline = load_baseline(&target).await?;
   recover_checked(&target.root, || ensure_not_running(&app, &instance_id))?;
-  let latest = latest_version(&app, &target.origin)
+  let latest = newest_version(&app, &target)
     .await?
     .ok_or(InstanceError::ModpackUpdateStale)?;
   let mut remote = resolve_remote(
@@ -2897,6 +2971,7 @@ async fn apply_modpack_update_inner(
   // The supervisor refreshes memory on every error, including preparation and
   // panic failures, and consumes the preview while it still holds PlanGuard.
   result?;
+  local_update::clear_target(&target.root);
   recommendation.record(&target.root, &target.instance.name);
   Ok(UpdateOutcome {
     version_id,
@@ -3684,6 +3759,104 @@ async fn resume_campus_client(app: &AppHandle, instance: &Instance) -> USTBLResu
   Ok(Some(group.task_group))
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalUpdateStaged {
+  /// The picked file is the version already installed: nothing was staged.
+  pub unchanged: bool,
+}
+
+/// Pick an archive from disk to update a local import with. The archive must
+/// be in the same format and for the same Minecraft version as the import.
+/// Once it is staged the update dialog takes over, like for any other update.
+/// `label` names the version; a blank one falls back to the file name.
+#[tauri::command]
+pub async fn stage_local_modpack_update(
+  app: AppHandle,
+  instance_id: String,
+  path: String,
+  label: String,
+) -> USTBLResult<LocalUpdateStaged> {
+  let instance = current_instance(&app, &instance_id)?;
+  let root = instance.version_path.clone();
+  let origin = instance
+    .origin
+    .clone()
+    .filter(|origin| is_settled_local(origin, has_campus_install(&root)))
+    .ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  ensure_not_running(&app, &instance_id)?;
+  // A preview of an earlier pick is cancelled, not reported as busy.
+  let _guard = acquire_over_preview(&root, Some(&instance_id), false).await?;
+
+  let source = PathBuf::from(&path);
+  let (sha1, _) = tokio::task::spawn_blocking({
+    let source = source.clone();
+    move || hash_file(&source)
+  })
+  .await
+  .map_err(|e| crate::error::USTBLError(e.to_string()))??;
+  if sha1 == origin.version_id {
+    return Ok(LocalUpdateStaged { unchanged: true });
+  }
+
+  let facts = super::sources::local_pack_facts(&source).await?;
+  // Only the baseline of an import from before the format was recorded is
+  // needed, to tell a component chain from a platform pack.
+  let has_components = match origin.pack_format {
+    Some(_) => false,
+    None => ModpackBaseline::load(&root)
+      .await
+      .is_ok_and(|baseline| baseline.component_refs().is_some()),
+  };
+  local_update::check_compatible(
+    origin.pack_format,
+    has_components,
+    &origin,
+    facts.format,
+    &facts.game_version,
+  )?;
+
+  let previous = local_update::load_target(&root);
+  tokio::task::spawn_blocking({
+    let (root, sha1) = (root.clone(), sha1.clone());
+    move || local_update::stage_archive(&source, &root, &sha1)
+  })
+  .await
+  .map_err(|e| crate::error::USTBLError(e.to_string()))??;
+  // Replacing an earlier pick: its archive is not needed any more.
+  if let Some(previous) = previous.filter(|previous| previous.sha1 != sha1) {
+    let _ = fs::remove_file(super::sources::archive_path(&root, &previous.sha1));
+  }
+  let label = Some(label.trim().to_string())
+    .filter(|label| !label.is_empty())
+    .or_else(|| {
+      Path::new(&path)
+        .file_stem()
+        .map(|name| name.to_string_lossy().into_owned())
+    })
+    .unwrap_or_else(|| sha1.clone());
+  local_update::save_target(&root, &local_update::LocalTarget { sha1, label })?;
+  plan_cache::clear_plan_cache(&root);
+  Ok(LocalUpdateStaged { unchanged: false })
+}
+
+/// Drop the archive picked to update a local import, when the player leaves
+/// the update dialog without applying it. Does nothing while an update runs.
+#[tauri::command]
+pub async fn discard_local_modpack_update(app: AppHandle, instance_id: String) -> USTBLResult<()> {
+  let instance = current_instance(&app, &instance_id)?;
+  let root = instance.version_path;
+  if local_update::load_target(&root).is_none() {
+    return Ok(());
+  }
+  let Ok(_guard) = acquire_over_preview(&root, Some(&instance_id), false).await else {
+    return Ok(());
+  };
+  local_update::discard_target(&root);
+  plan_cache::clear_plan_cache(&root);
+  Ok(())
+}
+
 /// Undo or finish an update that was interrupted. Returns whether anything
 /// had to be done.
 #[tauri::command]
@@ -3728,6 +3901,7 @@ mod tests {
       game_version: "1.21.1".into(),
       loader_type,
       follow: true,
+      pack_format: None,
     }
   }
 
@@ -3828,6 +4002,86 @@ mod tests {
       ..local("")
     };
     assert!(!is_settled_local(&campus, false));
+  }
+
+  fn picked_root() -> PathBuf {
+    let root = std::env::temp_dir().join(format!("ustbl-picked-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    root
+  }
+
+  fn stage_picked(root: &Path, sha1: &str) {
+    local_update::save_target(
+      root,
+      &local_update::LocalTarget {
+        sha1: sha1.into(),
+        label: "2.9.0".into(),
+      },
+    )
+    .unwrap();
+    let source = root.join("source.zip");
+    fs::write(&source, b"zip").unwrap();
+    local_update::stage_archive(&source, root, sha1).unwrap();
+  }
+
+  #[test]
+  fn a_settled_local_import_is_the_engines_only_with_a_picked_archive() {
+    let root = picked_root();
+    let local = InstanceOrigin {
+      platform: OriginPlatform::Local,
+      version_id: "old".into(),
+      ..platform_origin(ModLoaderType::Unknown)
+    };
+    // Without a pick it stays out of every command, update or not.
+    assert!(!engine_handles(&local, &root, false, false));
+    assert!(!engine_handles(&local, &root, false, true));
+
+    stage_picked(&root, "new");
+    // The pick opens it to the update commands only.
+    assert!(!engine_handles(&local, &root, false, false));
+    assert!(engine_handles(&local, &root, false, true));
+
+    // Other origins do not depend on the pick; an installing import neither.
+    let modrinth = platform_origin(ModLoaderType::Unknown);
+    assert!(engine_handles(&modrinth, &root, false, false));
+    let installing = InstanceOrigin {
+      version_id: String::new(),
+      ..local.clone()
+    };
+    assert!(engine_handles(&installing, &root, true, false));
+
+    // Applied or discarded: the instance is out of the engine again.
+    local_update::clear_target(&root);
+    assert!(!engine_handles(&local, &root, false, true));
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn the_check_of_a_picked_archive_offers_it_as_the_update() {
+    let root = picked_root();
+    stage_picked(&root, "new");
+    let origin = InstanceOrigin {
+      platform: OriginPlatform::Local,
+      version_id: "old".into(),
+      follow: false,
+      ..platform_origin(ModLoaderType::Unknown)
+    };
+    let target = Target {
+      instance: Instance {
+        modpack_version: Some("2.8.4".into()),
+        ..Default::default()
+      },
+      origin,
+      root: root.clone(),
+    };
+    let check = picked_archive_check(&target);
+    assert_eq!(check.status, CheckStatus::Available);
+    assert!(!check.follow);
+    assert!(!check.can_roll_back);
+    assert_eq!(check.current_label.as_deref(), Some("2.8.4"));
+    assert_eq!(check.latest_version_id.as_deref(), Some("new"));
+    assert_eq!(check.latest_label.as_deref(), Some("2.9.0"));
+    let _ = fs::remove_dir_all(root);
   }
 
   #[test]
@@ -4156,6 +4410,7 @@ mod tests {
         game_version: "1.21".into(),
         loader_type: ModLoaderType::Unknown,
         follow: true,
+        pack_format: None,
       },
       root: root.clone(),
     };
@@ -4457,6 +4712,7 @@ mod tests {
       game_version: "1.21.1".into(),
       loader_type: ModLoaderType::Fabric,
       follow: true,
+      pack_format: None,
     };
     assert!(is_fresh(&origin));
     origin.version_id = "v1".into();
@@ -4480,6 +4736,7 @@ mod tests {
         game_version: "1.21.1".into(),
         loader_type: ModLoaderType::Fabric,
         follow: true,
+        pack_format: None,
       }),
       ..Default::default()
     };
@@ -4836,6 +5093,7 @@ mod tests {
       game_version: "1.21.1".into(),
       loader_type: ModLoaderType::Fabric,
       follow: true,
+      pack_format: None,
     };
     let run = PlannedRun {
       version_id: "2".into(),
@@ -4881,6 +5139,7 @@ mod tests {
       game_version: "1.7.10".into(),
       loader_type: ModLoaderType::Forge,
       follow: true,
+      pack_format: None,
     };
     let run = |restore_components| PlannedRun {
       version_id: "2".into(),

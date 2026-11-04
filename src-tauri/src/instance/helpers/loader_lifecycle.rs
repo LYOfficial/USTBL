@@ -467,6 +467,7 @@ mod tests {
       game_version: "1.21.1".into(),
       loader_type: ModLoaderType::NeoForge,
       follow: true,
+      pack_format: None,
     });
     on_disk.save_json_cfg().await.unwrap();
   }

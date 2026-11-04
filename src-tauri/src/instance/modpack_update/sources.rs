@@ -13,12 +13,15 @@ use crate::file_error::AtPath;
 use crate::instance::helpers::modpack::baseline::{
   components_of_mmc_pack, hash_file, normalize_relative_path, BaselineLoader,
 };
+use crate::instance::helpers::modpack::curseforge::CurseForgeManifest;
 use crate::instance::helpers::modpack::misc::{
   list_override_entries, parse_platform_manifest, ManifestBox, ModpackDownload, ModpackManifest,
 };
 use crate::instance::helpers::modpack::multimc::profile::{safe_relative, PackFiles, ZipFiles};
 use crate::instance::helpers::modpack::multimc::MultiMcManifest;
-use crate::instance::models::misc::{InstanceError, InstanceOrigin, ModLoaderType, OriginPlatform};
+use crate::instance::models::misc::{
+  InstanceError, InstanceOrigin, ModLoaderType, OriginPlatform, PackFormat,
+};
 use crate::resource::commands::fetch_resource_version_packs;
 use crate::resource::models::{
   OtherResourceFileInfo, OtherResourceSource, OtherResourceVersionPackQuery,
@@ -758,6 +761,56 @@ pub async fn check_local_archive(archive: &Path) -> USTBLResult<()> {
   tokio::task::spawn_blocking(move || LocalPack::open(&archive).map(|_| ()))
     .await
     .map_err(|e| USTBLError(e.to_string()))?
+}
+
+/// What updating a local import with a picked archive needs to know about it.
+pub struct LocalPackFacts {
+  pub format: PackFormat,
+  pub game_version: String,
+}
+
+/// Read a picked archive the way the install does and say which format it is
+/// and which Minecraft version it names.
+pub async fn local_pack_facts(archive: &Path) -> USTBLResult<LocalPackFacts> {
+  let archive = archive.to_path_buf();
+  tokio::task::spawn_blocking(move || {
+    Ok(match LocalPack::open(&archive)? {
+      LocalPack::Platform(manifest) => LocalPackFacts {
+        format: platform_format(&archive),
+        game_version: manifest.get_client_version()?,
+      },
+      LocalPack::MultiMc(facts, _) => LocalPackFacts {
+        format: PackFormat::MultiMc,
+        game_version: facts.game_version,
+      },
+    })
+  })
+  .await
+  .map_err(|e| USTBLError(e.to_string()))?
+}
+
+/// The format of an archive the install can read, without reading its files.
+/// `None` when it is none of the three.
+pub fn detect_pack_format(archive: &Path) -> Option<PackFormat> {
+  let file = File::open(archive).ok()?;
+  if parse_platform_manifest(&file).is_ok() {
+    return Some(platform_format(archive));
+  }
+  MultiMcManifest::from_archive(&file)
+    .ok()
+    .map(|_| PackFormat::MultiMc)
+}
+
+/// Which platform's manifest `parse_platform_manifest` reads from the archive;
+/// it tries CurseForge first.
+fn platform_format(archive: &Path) -> PackFormat {
+  let curseforge =
+    File::open(archive).is_ok_and(|file| CurseForgeManifest::from_archive(&file).is_ok());
+  if curseforge {
+    PackFormat::CurseForge
+  } else {
+    PackFormat::Modrinth
+  }
 }
 
 /// Read a modpack archive the user picked from disk. A Modrinth or CurseForge
@@ -1732,6 +1785,7 @@ mod project_gone_tests {
       game_version: "1.21.1".into(),
       loader_type: ModLoaderType::Fabric,
       follow: true,
+      pack_format: None,
     }
   }
 
@@ -2388,6 +2442,7 @@ mod tests {
       game_version: "1.21.1".into(),
       loader_type: ModLoaderType::Fabric,
       follow: true,
+      pack_format: None,
     }
   }
 
@@ -2979,6 +3034,36 @@ mod tests {
     assert_eq!(remote.loader.loader_type, ModLoaderType::Quilt);
     let _ = fs::remove_file(archive);
     let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn a_picked_archive_tells_its_format_and_game_version() {
+    let index = mrpack_index(r#""minecraft":"1.20.1","fabric-loader":"0.15.0""#);
+    let mrpack = local_zip(&[("modrinth.index.json", index.as_bytes())]);
+    let manifest = curseforge_manifest(r#"{"id":"forge-47.1.0","primary":true}"#);
+    let curseforge = local_zip(&[("manifest.json", manifest.as_bytes())]);
+    let pack = mmc_pack_json(r#",{"uid":"net.fabricmc.fabric-loader","version":"0.15.0"}"#);
+    let multimc = local_zip(&[
+      ("mmc-pack.json", pack.as_bytes()),
+      ("instance.cfg", b"name=Pack\n"),
+    ]);
+    let other = local_zip(&[("readme.txt", b"no pack")]);
+    for (archive, format) in [
+      (&mrpack, PackFormat::Modrinth),
+      (&curseforge, PackFormat::CurseForge),
+      (&multimc, PackFormat::MultiMc),
+    ] {
+      let facts = local_pack_facts(archive).await.unwrap();
+      assert_eq!(facts.format, format);
+      assert_eq!(facts.game_version, "1.20.1");
+      assert_eq!(detect_pack_format(archive), Some(format));
+    }
+    assert!(local_pack_facts(&other).await.is_err());
+    assert_eq!(detect_pack_format(&other), None);
+    assert_eq!(detect_pack_format(Path::new("missing.zip")), None);
+    for archive in [mrpack, curseforge, multimc, other] {
+      let _ = fs::remove_file(archive);
+    }
   }
 
   #[tokio::test]
