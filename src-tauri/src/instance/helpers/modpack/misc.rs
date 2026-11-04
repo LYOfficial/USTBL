@@ -27,9 +27,18 @@ pub trait ModpackManifest {
     app: &AppHandle,
     instance_path: &Path,
   ) -> USTBLResult<Vec<ModpackDownload>>;
+  /// Whether the manifest marks any file as optional, which is known without
+  /// asking a platform for file metadata.
+  fn has_optional_files(&self) -> bool {
+    false
+  }
   /// Archive directories holding files to copy into the instance, in layering
   /// order: when several contain the same file, the later directory wins.
   fn get_overrides_paths(&self) -> Vec<String>;
+  /// Memory in MiB the manifest recommends, for formats that carry one.
+  fn recommended_memory_mb(&self) -> Option<u32> {
+    None
+  }
 }
 
 /// A file the modpack manifest asks the launcher to download.
@@ -37,6 +46,19 @@ pub struct ModpackDownload {
   pub param: DownloadParam,
   /// Size in bytes when the manifest (or the platform API) reports it.
   pub size: Option<u64>,
+  /// The pack author marked the file as optional: Modrinth `env.client` is
+  /// `optional`, CurseForge `required` is `false`.
+  pub optional: bool,
+  /// Identifies the file across versions of the same pack, so a choice made
+  /// for one version carries over to the next: the CurseForge project id, the
+  /// Modrinth project id taken from the download address, or the path when the
+  /// address does not name a project.
+  pub select_key: String,
+}
+
+/// The select key of a file whose manifest names no project.
+pub fn select_key_of_path(path: &str) -> String {
+  format!("path:{}", path.replace('\\', "/").to_lowercase())
 }
 
 pub(crate) type ManifestBox = Box<dyn ModpackManifest + Send + Sync>;

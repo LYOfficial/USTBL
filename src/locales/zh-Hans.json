@@ -650,6 +650,18 @@
       "missingSha1": "该文件没有 SHA-1，无法安装"
     }
   },
+  "OptionalFiles": {
+    "entry": "可选文件（已选 {{selected}}/{{total}}）",
+    "title": "选择可选文件",
+    "description": "以下文件由整合包作者标为可选，默认不安装。勾选的文件会正常安装；未勾选的模组以禁用状态放入，之后可在模组管理中启用；其他未勾选的文件不安装。",
+    "button": {
+      "selectAll": "全选",
+      "selectNone": "全不选",
+      "invert": "反选"
+    },
+    "newTitle": "新增的可选文件",
+    "newDescription": "这些文件默认不启用，可勾选需要的。"
+  },
   "InstallPlatformModpackModal": {
     "header": {
       "title": "安装整合包"
@@ -1330,6 +1342,12 @@
       "author": "作者",
       "modLoader": "模组加载器",
       "gameVersion": "游戏版本"
+    },
+    "unofficial": {
+      "title": "整合包包含非官方下载地址",
+      "description": "该整合包要从以下不在 Modrinth 认可范围内的地址下载 {{count}} 个文件。这些文件未经平台审核，可能不安全，请仅在信任整合包作者时继续。",
+      "trust": "信任并继续",
+      "cancel": "取消导入"
     }
   },
   "InstanceBasicSettings": {
@@ -2443,6 +2461,14 @@
             "NETWORK_ERROR": "网络错误",
             "CLIENT_JSON_PARSE_ERROR": "实例版本信息解析错误",
             "ASSET_INDEX_PARSE_ERROR": "资源索引文件解析错误"
+          }
+        }
+      },
+      "answerMemorySuggestion": {
+        "error": {
+          "title": "实例设置更新失败",
+          "description": {
+            "INSTANCE_NOT_FOUND_BY_ID": "实例 ID 不存在"
           }
         }
       },
@@ -3601,6 +3627,22 @@
     "button": {
       "later": "稍后",
       "goToSync": "前往更新"
+    }
+  },
+  "MemorySuggestionModal": {
+    "title": "整合包建议分配更多内存",
+    "body": "「{{pack}}」建议使用 {{suggested}} 内存，该实例当前使用 {{current}}（{{source}}）。",
+    "source": {
+      "global": "全局设置",
+      "instance": "实例设置",
+      "auto": "自动分配"
+    },
+    "note": "应用后该实例改用独立的游戏设置，只把内存调整为建议值，其余设置不变，之后可随时在实例设置中修改。",
+    "clamped": "你的设备共有 {{total}} 内存，建议值已调整为 {{clamped}}。",
+    "button": {
+      "apply": "应用建议",
+      "keep": "保持当前",
+      "later": "稍后再说"
     }
   }
 }

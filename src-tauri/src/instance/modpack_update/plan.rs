@@ -1269,6 +1269,7 @@ mod tests {
       loader: loader(),
       components: None,
       component_pack: None,
+      recommended_memory_mb: None,
       files: files
         .iter()
         .map(|(path, content)| RemoteFile {
@@ -1285,6 +1286,7 @@ mod tests {
       rules,
       rules_manifest: true,
       disabled_authoritative: true,
+      optional: Vec::new(),
       path_index: std::sync::Arc::new(std::sync::OnceLock::new()),
     }
   }

@@ -387,6 +387,7 @@ pub async fn accepts(
   instance_name: &str,
   baseline: &ModpackBaseline,
   fresh: bool,
+  optional_choice: &[String],
   confirmed: &str,
   full: &Prepared,
   full_loader_change: &Option<LoaderChange>,
@@ -394,7 +395,7 @@ pub async fn accepts(
   let attempt = async {
     let source = LocalSource::new(PathBuf::from(archive));
     let listing = read_listing(&source).await?;
-    let remote = preview_remote(
+    let mut remote = preview_remote(
       facts,
       latest,
       &listing,
@@ -404,6 +405,7 @@ pub async fn accepts(
       baseline,
     )
     .await?;
+    super::optional::select(&mut remote, root, baseline, optional_choice);
     run_preview(root, baseline, remote, &listing, &source, fresh).await
   };
   let run = match attempt.await {
@@ -488,6 +490,8 @@ mod tests {
       game_version: "1.21.1".into(),
       loader: loader(),
       overrides_paths: vec!["overrides".into()],
+      recommended_memory_mb: None,
+      optional: Vec::new(),
       downloads: vec![RemoteFile {
         path: "mods/a.jar".into(),
         key: real_key(b"jar-a"),
@@ -842,6 +846,7 @@ mod tests {
       "pack",
       baseline,
       false,
+      &[],
       confirmed,
       &full,
       &None,
@@ -925,6 +930,7 @@ mod tests {
       "pack",
       &baseline,
       false,
+      &[],
       &run.prepared.plan_hash,
       &full,
       &None,

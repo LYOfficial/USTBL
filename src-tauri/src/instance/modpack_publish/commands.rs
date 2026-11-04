@@ -1555,6 +1555,7 @@ mod tests {
       },
       components: None,
       component_pack: None,
+      recommended_memory_mb: None,
       files: files
         .iter()
         .map(|(path, content, disabled, once)| RemoteFile {
@@ -1574,6 +1575,7 @@ mod tests {
       rules,
       rules_manifest: true,
       disabled_authoritative: true,
+      optional: Vec::new(),
       path_index: Default::default(),
     }
   }

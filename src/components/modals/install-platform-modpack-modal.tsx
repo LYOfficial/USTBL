@@ -8,10 +8,12 @@ import {
   ModalHeader,
   ModalOverlay,
   ModalProps,
+  Text,
   VStack,
+  useDisclosure,
 } from "@chakra-ui/react";
 import { useRouter } from "next/router";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { OptionItemGroup } from "@/components/common/option-item";
 import { InstanceBasicSettings } from "@/components/instance-basic-settings";
@@ -19,14 +21,17 @@ import {
   gameTypesToIcon,
   loaderTypesToIcon,
 } from "@/components/modals/create-instance-modal";
+import { OptionalFilesList } from "@/components/optional-files-list";
 import { useLauncherConfig } from "@/contexts/config";
 import { useGlobalData } from "@/contexts/global-data";
 import { useToast } from "@/contexts/toast";
 import { ModLoaderType } from "@/enums/instance";
 import { OtherResourceSource } from "@/enums/resource";
+import { ModpackOptionalFile } from "@/models/modpack-update";
 import { OtherResourceFileInfo } from "@/models/resource";
 import { CampusModpackService } from "@/services/campus-modpack";
 import { InstanceService } from "@/services/instance";
+import { ModpackUpdateService } from "@/services/modpack-update";
 import { ResourceService } from "@/services/resource";
 import { runCampusInstall } from "@/utils/campus-install";
 import { localizeCampusInstallError } from "@/utils/campus-install-task";
@@ -89,6 +94,32 @@ const InstallPlatformModpackModal: React.FC<
     config.localGameDirectories[0]
   );
   const [isLoading, setIsLoading] = useState(false);
+  const [optionalFiles, setOptionalFiles] = useState<ModpackOptionalFile[]>([]);
+  const [optionalPicks, setOptionalPicks] = useState<string[]>([]);
+  const {
+    isOpen: isOptionalOpen,
+    onOpen: onOptionalOpen,
+    onClose: onOptionalClose,
+  } = useDisclosure();
+
+  // The list is a convenience: when it cannot be read the pack installs with
+  // no optional file, the default.
+  useEffect(() => {
+    let cancelled = false;
+    setOptionalFiles([]);
+    setOptionalPicks([]);
+    if (!file.downloadUrl || !file.sha1) return;
+    ModpackUpdateService.listModpackOptionalFiles(file.downloadUrl, file.sha1)
+      .then((response) => {
+        if (!cancelled && response.status === "success") {
+          setOptionalFiles(response.data);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [file.downloadUrl, file.sha1]);
 
   const infoItems = useMemo(
     () => [
@@ -163,7 +194,8 @@ const InstallPlatformModpackModal: React.FC<
       const registered =
         await CampusModpackService.registerCampusModpackInstall(
           instanceId,
-          file.name
+          file.name,
+          optionalPicks
         );
       if (registered.status !== "success") {
         toast({
@@ -193,6 +225,7 @@ const InstallPlatformModpackModal: React.FC<
     loaderType,
     name,
     onClose,
+    optionalPicks,
     projectId,
     router,
     source,
@@ -201,50 +234,90 @@ const InstallPlatformModpackModal: React.FC<
   ]);
 
   return (
-    <Modal
-      scrollBehavior="inside"
-      size={{ base: "2xl", lg: "3xl", xl: "4xl" }}
-      autoFocus={false}
-      {...modalProps}
-    >
-      <ModalOverlay />
-      <ModalContent>
-        <ModalHeader>
-          {t("InstallPlatformModpackModal.header.title")}
-        </ModalHeader>
-        <ModalCloseButton />
-        <ModalBody>
-          <VStack w="100%" spacing={4}>
-            <InstanceBasicSettings
-              name={name}
-              setName={setName}
-              description={description}
-              setDescription={setDescription}
-              iconSrc={iconSrc}
-              setIconSrc={setIconSrc}
-              gameDirectory={gameDirectory}
-              setGameDirectory={setGameDirectory}
-              descriptionLabel={t("InstallPlatformModpackModal.label.summary")}
-              descriptionMaxLines={3}
-            />
-            <OptionItemGroup
-              title={t("InstallPlatformModpackModal.label.modpackInfo")}
-              items={infoItems}
-              w="100%"
-            />
-          </VStack>
-        </ModalBody>
-        <ModalFooter>
-          <Button
-            colorScheme={primaryColor}
-            onClick={handleInstall}
-            isLoading={isLoading}
-          >
-            {t("InstallPlatformModpackModal.button.install")}
-          </Button>
-        </ModalFooter>
-      </ModalContent>
-    </Modal>
+    <>
+      <Modal
+        scrollBehavior="inside"
+        size={{ base: "2xl", lg: "3xl", xl: "4xl" }}
+        autoFocus={false}
+        {...modalProps}
+      >
+        <ModalOverlay />
+        <ModalContent>
+          <ModalHeader>
+            {t("InstallPlatformModpackModal.header.title")}
+          </ModalHeader>
+          <ModalCloseButton />
+          <ModalBody>
+            <VStack w="100%" spacing={4}>
+              <InstanceBasicSettings
+                name={name}
+                setName={setName}
+                description={description}
+                setDescription={setDescription}
+                iconSrc={iconSrc}
+                setIconSrc={setIconSrc}
+                gameDirectory={gameDirectory}
+                setGameDirectory={setGameDirectory}
+                descriptionLabel={t(
+                  "InstallPlatformModpackModal.label.summary"
+                )}
+                descriptionMaxLines={3}
+              />
+              <OptionItemGroup
+                title={t("InstallPlatformModpackModal.label.modpackInfo")}
+                items={infoItems}
+                w="100%"
+              />
+              {optionalFiles.length > 0 && (
+                <Button
+                  variant="outline"
+                  alignSelf="flex-start"
+                  onClick={onOptionalOpen}
+                >
+                  {t("OptionalFiles.entry", {
+                    selected: optionalPicks.length,
+                    total: optionalFiles.length,
+                  })}
+                </Button>
+              )}
+            </VStack>
+          </ModalBody>
+          <ModalFooter>
+            <Button
+              colorScheme={primaryColor}
+              onClick={handleInstall}
+              isLoading={isLoading}
+            >
+              {t("InstallPlatformModpackModal.button.install")}
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+      <Modal
+        isOpen={isOptionalOpen}
+        onClose={onOptionalClose}
+        scrollBehavior="inside"
+        autoFocus={false}
+      >
+        <ModalOverlay />
+        <ModalContent>
+          <ModalHeader>{t("OptionalFiles.title")}</ModalHeader>
+          <ModalCloseButton />
+          <ModalBody>
+            <VStack align="stretch" spacing={3}>
+              <Text fontSize="xs-sm" className="secondary-text">
+                {t("OptionalFiles.description")}
+              </Text>
+              <OptionalFilesList
+                files={optionalFiles}
+                selected={optionalPicks}
+                onChange={setOptionalPicks}
+              />
+            </VStack>
+          </ModalBody>
+        </ModalContent>
+      </Modal>
+    </>
   );
 };
 

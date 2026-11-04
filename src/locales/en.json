@@ -650,6 +650,18 @@
       "missingSha1": "This file has no SHA-1 and cannot be installed"
     }
   },
+  "OptionalFiles": {
+    "entry": "Optional files ({{selected}}/{{total}} selected)",
+    "title": "Choose optional files",
+    "description": "The modpack author marked these files as optional; none are installed by default. Checked files are installed normally. Unchecked mods are added disabled and can be enabled later in mod management; other unchecked files are not installed.",
+    "button": {
+      "selectAll": "Select all",
+      "selectNone": "Select none",
+      "invert": "Invert"
+    },
+    "newTitle": "New optional files",
+    "newDescription": "These files are not enabled by default. Check the ones you want."
+  },
   "InstallPlatformModpackModal": {
     "header": {
       "title": "Install Modpack"
@@ -1330,6 +1342,12 @@
       "author": "Author",
       "modLoader": "Mod Loader",
       "gameVersion": "Game Version"
+    },
+    "unofficial": {
+      "title": "The modpack contains unofficial download addresses",
+      "description": "This modpack downloads {{count}} files from the addresses below, which Modrinth does not approve. These files have not been reviewed by the platform and may be unsafe. Continue only if you trust the modpack author.",
+      "trust": "Trust and continue",
+      "cancel": "Cancel import"
     }
   },
   "InstanceBasicSettings": {
@@ -2443,6 +2461,14 @@
             "NETWORK_ERROR": "Failed to connect to the server",
             "CLIENT_JSON_PARSE_ERROR": "Failed to parse instance version info",
             "ASSET_INDEX_PARSE_ERROR": "Failed to parse asset index"
+          }
+        }
+      },
+      "answerMemorySuggestion": {
+        "error": {
+          "title": "Failed to update instance settings",
+          "description": {
+            "INSTANCE_NOT_FOUND_BY_ID": "Instance ID does not exist"
           }
         }
       },
@@ -3601,6 +3627,22 @@
     "button": {
       "later": "Later",
       "goToSync": "Go to update"
+    }
+  },
+  "MemorySuggestionModal": {
+    "title": "The modpack recommends more memory",
+    "body": "\"{{pack}}\" recommends {{suggested}} of memory. This instance currently uses {{current}} ({{source}}).",
+    "source": {
+      "global": "global settings",
+      "instance": "instance settings",
+      "auto": "automatic allocation"
+    },
+    "note": "Applying switches this instance to its own game settings and only sets the memory to the recommended value; other settings stay the same. You can change it at any time in the instance settings.",
+    "clamped": "Your device has {{total}} of memory, so the recommendation was adjusted to {{clamped}}.",
+    "button": {
+      "apply": "Apply recommendation",
+      "keep": "Keep current",
+      "later": "Later"
     }
   }
 }

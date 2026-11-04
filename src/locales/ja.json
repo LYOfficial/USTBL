@@ -650,6 +650,18 @@
       "missingSha1": "このファイルには SHA-1 がないため、インストールできません"
     }
   },
+  "OptionalFiles": {
+    "entry": "オプションファイル（{{selected}}/{{total}} 選択済み）",
+    "title": "オプションファイルを選択",
+    "description": "以下のファイルはモッドパック作者によってオプションに指定されており、既定ではインストールされません。チェックしたファイルは通常どおりインストールされます。チェックしていない Mod は無効の状態で追加され、後で Mod 管理から有効にできます。その他のチェックしていないファイルはインストールされません。",
+    "button": {
+      "selectAll": "すべて選択",
+      "selectNone": "すべて解除",
+      "invert": "選択を反転"
+    },
+    "newTitle": "新しいオプションファイル",
+    "newDescription": "これらのファイルは既定では有効になりません。必要なものにチェックを入れてください。"
+  },
   "InstallPlatformModpackModal": {
     "header": {
       "title": "Modpack をインストール"
@@ -1330,6 +1342,12 @@
       "author": "作者",
       "modLoader": "モッドローダー",
       "gameVersion": "ゲームバージョン"
+    },
+    "unofficial": {
+      "title": "モッドパックに非公式のダウンロード先が含まれています",
+      "description": "このモッドパックは、Modrinth が認めていない以下のアドレスから {{count}} 個のファイルをダウンロードします。これらのファイルはプラットフォームの審査を受けておらず、安全でない可能性があります。作者を信頼できる場合のみ続行してください。",
+      "trust": "信頼して続行",
+      "cancel": "インポートをキャンセル"
     }
   },
   "InstanceBasicSettings": {
@@ -2443,6 +2461,14 @@
             "NETWORK_ERROR": "ネットワークエラー",
             "CLIENT_JSON_PARSE_ERROR": "インスタンスバージョン情報の解析エラー",
             "ASSET_INDEX_PARSE_ERROR": "リソースインデックスファイルの解析エラー"
+          }
+        }
+      },
+      "answerMemorySuggestion": {
+        "error": {
+          "title": "インスタンス設定の更新に失敗",
+          "description": {
+            "INSTANCE_NOT_FOUND_BY_ID": "指定された ID のインスタンスが見つからない"
           }
         }
       },
@@ -3601,6 +3627,22 @@
     "button": {
       "later": "後で",
       "goToSync": "更新へ"
+    }
+  },
+  "MemorySuggestionModal": {
+    "title": "モッドパックはより多くのメモリを推奨しています",
+    "body": "「{{pack}}」は {{suggested}} のメモリを推奨しています。このインスタンスは現在 {{current}}（{{source}}）を使用しています。",
+    "source": {
+      "global": "グローバル設定",
+      "instance": "インスタンス設定",
+      "auto": "自動割り当て"
+    },
+    "note": "適用すると、このインスタンスは独自のゲーム設定を使うようになり、メモリだけが推奨値に変更されます。その他の設定は変わりません。インスタンス設定からいつでも変更できます。",
+    "clamped": "このデバイスのメモリは合計 {{total}} のため、推奨値を {{clamped}} に調整しました。",
+    "button": {
+      "apply": "推奨値を適用",
+      "keep": "現在の設定を維持",
+      "later": "あとで"
     }
   }
 }

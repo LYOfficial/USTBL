@@ -411,7 +411,7 @@ test("reopened dialog restores a failed plan's choices, submits once and closes 
     );
     await Promise.all([apply(), apply()]);
     assert.deepEqual(submitted, [
-      ["test", plan.planHash, samePlan ? answer : {}],
+      ["test", plan.planHash, samePlan ? answer : {}, []],
     ]);
     assert.equal(closed, 1);
     assert.equal(

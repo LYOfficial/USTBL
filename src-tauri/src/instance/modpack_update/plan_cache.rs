@@ -26,6 +26,10 @@ pub struct PlanCache {
   /// Paths the plan was computed over: every baseline and remote path.
   pub paths: Vec<String>,
   pub fingerprint: String,
+  /// The new optional files the player picked when the plan was made; a plan
+  /// is only reused for the same picks.
+  #[serde(default)]
+  pub optional_choice: Vec<String>,
   pub plan: UpdatePlan,
 }
 
@@ -35,6 +39,7 @@ impl PlanCache {
     baseline_sha1: String,
     paths: Vec<String>,
     fingerprint: String,
+    optional_choice: Vec<String>,
     plan: UpdatePlan,
   ) -> Self {
     Self {
@@ -44,6 +49,7 @@ impl PlanCache {
       baseline_sha1,
       paths,
       fingerprint,
+      optional_choice,
       plan,
     }
   }
@@ -208,6 +214,7 @@ mod tests {
       restore_components: false,
       fast_forward: true,
       plan_hash: "hh".into(),
+      new_optional: Vec::new(),
     }
   }
 
@@ -264,6 +271,7 @@ mod tests {
       baseline_sha1(&base),
       paths.clone(),
       fingerprint.clone(),
+      Vec::new(),
       plan(),
     );
 

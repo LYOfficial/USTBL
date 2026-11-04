@@ -77,6 +77,8 @@ structstruck::strike! {
     pub minecraft: struct {
       pub version: String,
       pub mod_loaders: Vec<CurseForgeModLoader>,
+      #[serde(default, skip_serializing_if = "Option::is_none")]
+      pub recommended_ram: Option<u32>,
     },
     pub files: Vec<CurseForgeFiles>,
   }
@@ -500,9 +502,10 @@ fn target_folder(class_id: Option<i32>) -> &'static str {
 
 fn build_download(
   instance_path: &Path,
-  file_id: u64,
+  file: &CurseForgeFiles,
   meta: &CurseForgeFileMeta,
 ) -> USTBLResult<ModpackDownload> {
+  let file_id = file.file_id;
   let download_url = meta.download_url.clone().unwrap_or_else(|| {
     format!(
       "https://edge.forgecdn.net/files/{}/{}/{}",
@@ -524,11 +527,17 @@ fn build_download(
       transfer_options: Default::default(),
     },
     size: meta.file_length,
+    optional: !file.required,
+    select_key: format!("curseforge:{}", file.project_id),
   })
 }
 
 #[async_trait]
 impl ModpackManifest for CurseForgeManifest {
+  fn recommended_memory_mb(&self) -> Option<u32> {
+    self.minecraft.recommended_ram.filter(|mb| *mb > 0)
+  }
+
   fn from_archive(file: &File) -> USTBLResult<Self> {
     let mut archive = ZipArchive::new(file)?;
     let mut manifest_file = archive.by_name("manifest.json")?;
@@ -610,7 +619,7 @@ impl ModpackManifest for CurseForgeManifest {
       let meta = metas
         .get(&file.file_id)
         .ok_or(InstanceError::NetworkError)?;
-      downloads.push(build_download(instance_path, file.file_id, meta)?);
+      downloads.push(build_download(instance_path, file, meta)?);
     }
 
     log::info!(
@@ -622,6 +631,11 @@ impl ModpackManifest for CurseForgeManifest {
     );
     Ok(downloads)
   }
+
+  fn has_optional_files(&self) -> bool {
+    self.files.iter().any(|file| !file.required)
+  }
+
   fn get_overrides_paths(&self) -> Vec<String> {
     vec![self.overrides.clone()]
   }
@@ -632,6 +646,23 @@ mod tests {
   use super::*;
   use std::sync::Mutex as StdMutex;
 
+  #[test]
+  fn recommended_ram_is_read_from_the_manifest() {
+    let parse = |minecraft: &str| -> CurseForgeManifest {
+      serde_json::from_str(&format!(
+        r#"{{"name":"P","author":"A","overrides":"overrides","files":[],"minecraft":{minecraft}}}"#
+      ))
+      .unwrap()
+    };
+    let with = parse(r#"{"version":"1.21.1","modLoaders":[],"recommendedRam":8196}"#);
+    assert_eq!(with.recommended_memory_mb(), Some(8196));
+    let without = parse(r#"{"version":"1.21.1","modLoaders":[]}"#);
+    assert_eq!(without.recommended_memory_mb(), None);
+    let zero = parse(r#"{"version":"1.21.1","modLoaders":[],"recommendedRam":0}"#);
+    assert_eq!(zero.recommended_memory_mb(), None);
+    let null = parse(r#"{"version":"1.21.1","modLoaders":[],"recommendedRam":null}"#);
+    assert_eq!(null.recommended_memory_mb(), None);
+  }
   /// A fake CurseForge that knows a fixed set of files, and can be told to
   /// leave ids out of the first N batch answers or to fail.
   #[derive(Default)]
@@ -897,6 +928,45 @@ mod tests {
     }
   }
 
+  fn listed(file_id: u64, required: bool) -> CurseForgeFiles {
+    CurseForgeFiles {
+      project_id: 1,
+      file_id,
+      required,
+    }
+  }
+
+  #[test]
+  fn optional_files_are_flagged_and_keyed_by_project() {
+    let optional = build_download(
+      Path::new("inst"),
+      &listed(9, false),
+      &meta(None, Some("https://x.test/a.jar")),
+    )
+    .unwrap();
+    assert!(optional.optional);
+    assert_eq!(optional.select_key, "curseforge:1");
+    // A newer file of the same project is the same choice.
+    let newer = build_download(
+      Path::new("inst"),
+      &CurseForgeFiles {
+        file_id: 10,
+        ..listed(9, false)
+      },
+      &meta(None, Some("https://x.test/b.jar")),
+    )
+    .unwrap();
+    assert_eq!(newer.select_key, optional.select_key);
+
+    let required = build_download(
+      Path::new("inst"),
+      &listed(9, true),
+      &meta(None, Some("https://x.test/a.jar")),
+    )
+    .unwrap();
+    assert!(!required.optional);
+  }
+
   #[test]
   fn downloads_go_to_the_folder_of_their_class() {
     let root = Path::new("inst");
@@ -910,8 +980,12 @@ mod tests {
       (Some(4471), "mods"),
       (Some(0), "mods"),
     ] {
-      let download =
-        build_download(root, 9, &meta(class_id, Some("https://x.test/a.jar"))).unwrap();
+      let download = build_download(
+        root,
+        &listed(9, true),
+        &meta(class_id, Some("https://x.test/a.jar")),
+      )
+      .unwrap();
       assert_eq!(download.param.dest, root.join(folder).join("a b.jar"));
       assert_eq!(download.param.sha1.as_deref(), Some("abc"));
       assert_eq!(download.size, Some(5));
@@ -920,7 +994,12 @@ mod tests {
 
   #[test]
   fn a_missing_download_url_falls_back_to_the_forge_cdn() {
-    let download = build_download(Path::new("inst"), 5_123_456, &meta(None, None)).unwrap();
+    let download = build_download(
+      Path::new("inst"),
+      &listed(5_123_456, true),
+      &meta(None, None),
+    )
+    .unwrap();
     assert_eq!(
       download.param.src.as_str(),
       "https://edge.forgecdn.net/files/5123/456/a%20b.jar"

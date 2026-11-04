@@ -4,6 +4,8 @@ import {
   ModpackChangeDetail,
   ModpackConflictChoice,
   ModpackIgnoredItem,
+  ModpackOptionalFile,
+  ModpackUnofficialDownloads,
   ModpackUpdateCheck,
   ModpackUpdateFinished,
   ModpackUpdatePlan,
@@ -64,9 +66,48 @@ export class ModpackUpdateService {
    */
   @responseHandler("instance")
   static async prepareModpackUpdate(
-    instanceId: string
+    instanceId: string,
+    optionalChoice?: string[]
   ): Promise<InvokeResponse<ModpackUpdatePlan>> {
-    return await invoke("prepare_modpack_update", { instanceId });
+    return await invoke("prepare_modpack_update", {
+      instanceId,
+      optionalChoice,
+    });
+  }
+
+  /**
+   * The optional files of a platform modpack archive, before any instance
+   * exists. Empty when the pack has none.
+   */
+  @responseHandler("instance")
+  static async listModpackOptionalFiles(
+    url: string,
+    sha1: string
+  ): Promise<InvokeResponse<ModpackOptionalFile[]>> {
+    return await invoke("list_modpack_optional_files", { url, sha1 });
+  }
+
+  /**
+   * The optional files of a modpack archive picked from disk. Empty when the
+   * pack has none.
+   */
+  @responseHandler("instance")
+  static async listLocalModpackOptionalFiles(
+    path: string
+  ): Promise<InvokeResponse<ModpackOptionalFile[]>> {
+    return await invoke("list_local_modpack_optional_files", { path });
+  }
+
+  /**
+   * The download addresses of a modpack archive picked from disk that are
+   * outside the approved hosts. Empty when the pack has none or is not a
+   * Modrinth pack.
+   */
+  @responseHandler("instance")
+  static async listLocalModpackUnofficialDownloads(
+    path: string
+  ): Promise<InvokeResponse<ModpackUnofficialDownloads>> {
+    return await invoke("list_local_modpack_unofficial_downloads", { path });
   }
 
   /**
@@ -88,12 +129,14 @@ export class ModpackUpdateService {
   static async applyModpackUpdate(
     instanceId: string,
     planHash: string,
-    choices: Record<string, ModpackConflictChoice>
+    choices: Record<string, ModpackConflictChoice>,
+    optionalChoice?: string[]
   ): Promise<InvokeResponse<ModpackUpdateStarted>> {
     return await invoke("apply_modpack_update", {
       instanceId,
       planHash,
       choices,
+      optionalChoice,
     });
   }
 

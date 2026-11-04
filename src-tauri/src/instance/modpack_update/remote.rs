@@ -3,6 +3,7 @@
 
 use super::decide::{Policy, ShipInput};
 use super::diff::FileKey;
+use super::optional::OptionalFile;
 use super::packs::PackSession;
 use crate::error::USTBLResult;
 use crate::instance::helpers::modpack::baseline::{
@@ -257,6 +258,9 @@ pub struct RemoteModpack {
   pub components: Option<Vec<ComponentRef>>,
   /// Present exactly when `components` is.
   pub component_pack: Option<ComponentPack>,
+  /// Memory in MiB the platform manifest recommends (CurseForge
+  /// `recommendedRam`); a component pack's is read from its `instance_cfg`.
+  pub recommended_memory_mb: Option<u32>,
   pub files: Vec<RemoteFile>,
   /// Publish rules of a `ustbl.modpack/3` manifest; empty for the other
   /// platforms, where every unlisted path is unmentioned.
@@ -268,6 +272,11 @@ pub struct RemoteModpack {
   /// and applied. Set for `/3` manifests and for platform archives, where a
   /// `.disabled` file is read as a disabled mod; a `/2` manifest never says.
   pub disabled_authoritative: bool,
+  /// The files of a platform archive the pack author marked optional, every
+  /// one of them also listed in `files`. The player's choice is applied to
+  /// `files` after the remote is built (see `optional::apply`), so this table
+  /// and the cached remote do not depend on it.
+  pub optional: Vec<OptionalFile>,
   /// Case-folded lookup over `files` and the `file` rules, built on first
   /// use and shared by every clone. Filled only by [`RemoteModpack::index`].
   pub(crate) path_index: Arc<OnceLock<PathIndex>>,
@@ -308,6 +317,8 @@ pub struct StoredRemoteModpack {
   pub components: Option<Vec<ComponentRef>>,
   #[serde(default)]
   pub component_pack: Option<StoredComponentPack>,
+  #[serde(default)]
+  pub recommended_memory_mb: Option<u32>,
   pub files: Vec<StoredRemoteFile>,
   #[serde(default)]
   pub rules: Vec<RemoteRule>,
@@ -315,6 +326,8 @@ pub struct StoredRemoteModpack {
   pub rules_manifest: bool,
   #[serde(default)]
   pub disabled_authoritative: bool,
+  #[serde(default)]
+  pub optional: Vec<OptionalFile>,
 }
 
 impl From<&RemoteModpack> for StoredRemoteModpack {
@@ -340,10 +353,12 @@ impl From<&RemoteModpack> for StoredRemoteModpack {
           instance_cfg: pack.instance_cfg.clone(),
           files: pack.files.iter().map(file).collect(),
         }),
+      recommended_memory_mb: remote.recommended_memory_mb,
       files: remote.files.iter().map(file).collect(),
       rules: remote.rules.clone(),
       rules_manifest: remote.rules_manifest,
       disabled_authoritative: remote.disabled_authoritative,
+      optional: remote.optional.clone(),
     }
   }
 }
@@ -390,12 +405,14 @@ impl RemoteModpack {
       loader: stored.loader,
       components: stored.components,
       component_pack,
+      recommended_memory_mb: stored.recommended_memory_mb,
       files,
       rules: stored.rules,
       rules_manifest: stored.rules_manifest,
       // A cache written before the field existed holds a `/3` remote or an
       // archive that never carried `disabled`; the former is authoritative.
       disabled_authoritative: stored.disabled_authoritative || stored.rules_manifest,
+      optional: stored.optional,
       path_index: Arc::new(OnceLock::new()),
     }
   }
@@ -625,6 +642,7 @@ mod tests {
       },
       components: None,
       component_pack: None,
+      recommended_memory_mb: None,
       files: paths
         .iter()
         .map(|path| RemoteFile {
@@ -648,6 +666,7 @@ mod tests {
       rules: Vec::new(),
       rules_manifest: false,
       disabled_authoritative: false,
+      optional: Vec::new(),
       path_index: Arc::new(OnceLock::new()),
     }
   }
@@ -828,6 +847,23 @@ mod tests {
     RemoteModpack::from_stored(stored, |version_id| {
       PackSession::new(Arc::new(NoTransport), version_id)
     })
+  }
+
+  #[test]
+  fn the_recommended_memory_survives_the_stored_form_and_old_caches_read_cleanly() {
+    let mut archive = pack(&["mods/a.jar"]);
+    archive.recommended_memory_mb = Some(8196);
+    let json = serde_json::to_string(&StoredRemoteModpack::from(&archive)).unwrap();
+    assert_eq!(
+      rebuilt(serde_json::from_str(&json).unwrap()).recommended_memory_mb,
+      Some(8196)
+    );
+    let mut value = serde_json::to_value(StoredRemoteModpack::from(&archive)).unwrap();
+    value.as_object_mut().unwrap().remove("recommendedMemoryMb");
+    assert_eq!(
+      rebuilt(serde_json::from_value(value).unwrap()).recommended_memory_mb,
+      None
+    );
   }
 
   #[test]

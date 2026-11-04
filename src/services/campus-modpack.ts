@@ -59,11 +59,13 @@ export class CampusModpackService {
   @responseHandler("instance")
   static async registerCampusModpackInstall(
     instanceId: string,
-    label: string
+    label: string,
+    optionalSelected?: string[]
   ): Promise<InvokeResponse<null>> {
     return await invoke("register_campus_modpack_install", {
       instanceId,
       label,
+      optionalSelected,
     });
   }
 

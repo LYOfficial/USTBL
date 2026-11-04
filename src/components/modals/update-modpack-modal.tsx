@@ -22,6 +22,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LuChevronDown, LuChevronRight } from "react-icons/lu";
 import { DiffFile, DiffHunks, regionHunk } from "@/components/common/diff-view";
+import { OptionalFilesList } from "@/components/optional-files-list";
 import { useLauncherConfig } from "@/contexts/config";
 import { useGlobalData } from "@/contexts/global-data";
 import { useToast } from "@/contexts/toast";
@@ -183,6 +184,14 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
   const [planError, setPlanError] = useState<PlanError | null>(null);
   const choicesRef = useRef(choices);
   choicesRef.current = choices;
+  // Picks among the optional files this version added. They are part of the
+  // plan: the backend hashes them, so a change prepares the plan again.
+  const [optionalPicks, setOptionalPicks] = useState<string[]>([]);
+  const [replanning, setReplanning] = useState(false);
+  const optionalPicksRef = useRef(optionalPicks);
+  optionalPicksRef.current = optionalPicks;
+  const plannedPicksRef = useRef<string[]>([]);
+  const replanInFlight = useRef(false);
   // Each run of the open/retry flow gets a token; a preview that answers to
   // an older token is stale (cancelled by the check or a retry) and dropped.
   const roundRef = useRef(0);
@@ -205,10 +214,13 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
       if (prepareInFlight.current) return;
       prepareInFlight.current = true;
       try {
-        const response =
-          await ModpackUpdateService.prepareModpackUpdate(instanceId);
+        const response = await ModpackUpdateService.prepareModpackUpdate(
+          instanceId,
+          optionalPicksRef.current
+        );
         if (roundRef.current !== round) return;
         if (response.status === "success") {
+          plannedPicksRef.current = optionalPicksRef.current;
           const recheck = keepChoicesForRecheckRef.current;
           keepChoicesForRecheckRef.current = false;
           const failedPlanHash = failedPlanHashRef.current;
@@ -351,6 +363,47 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
     });
   }, [instanceId]);
 
+  const replanForPicks = useCallback(async () => {
+    if (replanInFlight.current) return;
+    replanInFlight.current = true;
+    setReplanning(true);
+    try {
+      let asked: string[];
+      do {
+        asked = optionalPicksRef.current;
+        const response = await ModpackUpdateService.prepareModpackUpdate(
+          instanceId,
+          asked
+        );
+        if (response.status === "success") {
+          plannedPicksRef.current = asked;
+          setPlan(response.data);
+        } else {
+          toast({
+            title: response.message,
+            description: response.details,
+            status: "error",
+          });
+          optionalPicksRef.current = plannedPicksRef.current;
+          setOptionalPicks(plannedPicksRef.current);
+          break;
+        }
+      } while (optionalPicksRef.current !== asked);
+    } finally {
+      replanInFlight.current = false;
+      setReplanning(false);
+    }
+  }, [instanceId, toast]);
+
+  const handlePicksChange = useCallback(
+    (picks: string[]) => {
+      optionalPicksRef.current = picks;
+      setOptionalPicks(picks);
+      void replanForPicks();
+    },
+    [replanForPicks]
+  );
+
   const handleApply = useCallback(async () => {
     if (!plan || applyInFlight.current) return;
     applyInFlight.current = true;
@@ -363,7 +416,8 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
       const response = await ModpackUpdateService.applyModpackUpdate(
         instanceId,
         plan.planHash,
-        choices
+        choices,
+        optionalPicksRef.current
       );
       if (response.status === "success") {
         toast({
@@ -586,6 +640,20 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
         <Text>
           {t("UpdateModpackModal.plan.summary", { latest: plan.toLabel })}
         </Text>
+        {!!plan.newOptional?.length && (
+          <VStack align="stretch" spacing={2}>
+            <Text fontWeight="bold">{t("OptionalFiles.newTitle")}</Text>
+            <Text fontSize="xs-sm" className="secondary-text">
+              {t("OptionalFiles.newDescription")}
+            </Text>
+            <OptionalFilesList
+              files={plan.newOptional}
+              selected={optionalPicks}
+              onChange={handlePicksChange}
+              isDisabled={replanning}
+            />
+          </VStack>
+        )}
         {plan.loaderChange && (
           <Text fontSize="xs-sm">
             {t("UpdateModpackModal.plan.loaderChange", {
@@ -957,7 +1025,11 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
             planPhase === "planned" &&
             plan &&
             !plan.reinstallRequired && (
-              <Button colorScheme={primaryColor} onClick={handleApply}>
+              <Button
+                colorScheme={primaryColor}
+                onClick={handleApply}
+                isDisabled={replanning}
+              >
                 {t(
                   plan.fastForward
                     ? "UpdateModpackModal.button.sync"
