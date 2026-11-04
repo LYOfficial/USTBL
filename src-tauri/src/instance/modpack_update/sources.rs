@@ -96,6 +96,8 @@ fn loader_matches(listed: Option<&str>, wanted: ModLoaderType) -> bool {
 
 /// The file to update to, if any. The newest listed file wins regardless of its
 /// release channel; nothing newer than the current file means nothing to do.
+/// Files flagged `update_excluded` (Modrinth additional files, CurseForge server
+/// packs) are not candidates.
 pub fn select_update(
   items: Vec<OtherResourceFileInfo>,
   loader: ModLoaderType,
@@ -103,7 +105,7 @@ pub fn select_update(
 ) -> Option<OtherResourceFileInfo> {
   let candidates: Vec<OtherResourceFileInfo> = items
     .into_iter()
-    .filter(|item| loader_matches(item.loader.as_deref(), loader))
+    .filter(|item| !item.update_excluded && loader_matches(item.loader.as_deref(), loader))
     .collect();
   let best = candidates
     .iter()
@@ -1545,6 +1547,69 @@ mod tests {
       "forge"
     );
     assert!(select_update(vec![], ModLoaderType::Fabric, "x").is_none());
+  }
+
+  fn excluded(id: &str, date: &str) -> OtherResourceFileInfo {
+    OtherResourceFileInfo {
+      update_excluded: true,
+      ..item(id, date, None)
+    }
+  }
+
+  #[test]
+  fn excluded_files_are_never_selected_as_the_update() {
+    // The newest file is a server pack: the older client pack wins.
+    let items = vec![
+      item("client", "2024-01-01T00:00:00Z", None),
+      excluded("server", "2024-02-01T00:00:00Z"),
+    ];
+    assert_eq!(
+      select_update(items.clone(), ModLoaderType::Fabric, "old")
+        .unwrap()
+        .file_id,
+      "client"
+    );
+    // Current is the client pack and only a newer excluded file exists.
+    assert!(select_update(items, ModLoaderType::Fabric, "client").is_none());
+  }
+
+  #[test]
+  fn a_newer_additional_file_does_not_hide_or_replace_the_primary() {
+    let items = vec![
+      item("v2", "2024-03-01T00:00:00Z", None),
+      excluded("v2", "2024-03-01T00:00:00Z"),
+      item("v1", "2024-01-01T00:00:00Z", None),
+      excluded("v1", "2024-01-01T00:00:00Z"),
+    ];
+    assert!(select_update(items.clone(), ModLoaderType::Fabric, "v2").is_none());
+    let update = select_update(items, ModLoaderType::Fabric, "v1").unwrap();
+    assert_eq!(update.file_id, "v2");
+    assert!(!update.update_excluded);
+  }
+
+  #[test]
+  fn nothing_is_selected_when_every_file_is_excluded() {
+    let items = vec![
+      excluded("a", "2024-01-01T00:00:00Z"),
+      excluded("b", "2024-02-01T00:00:00Z"),
+    ];
+    assert!(select_update(items, ModLoaderType::Fabric, "x").is_none());
+  }
+
+  #[test]
+  fn same_date_selection_ignores_excluded_files_in_any_order() {
+    let date = "2024-01-01T00:00:00Z";
+    for items in [
+      vec![item("main", date, None), excluded("extra", date)],
+      vec![excluded("extra", date), item("main", date, None)],
+    ] {
+      assert_eq!(
+        select_update(items, ModLoaderType::Fabric, "x")
+          .unwrap()
+          .file_id,
+        "main"
+      );
+    }
   }
 
   fn campus(files: serde_json::Value) -> CampusVersion {

@@ -141,6 +141,10 @@ pub struct OtherResourceFileInfo {
   pub file_name: String,
   pub dependencies: Vec<OtherResourceDependency>,
   pub loader: Option<String>,
+  /// Set for files that are listed but never a modpack update target: Modrinth
+  /// additional files (`primary: false`) and CurseForge server packs.
+  #[serde(default)]
+  pub update_excluded: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Deserialize, Serialize, Default)]

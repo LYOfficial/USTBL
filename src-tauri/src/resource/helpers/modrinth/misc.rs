@@ -279,6 +279,8 @@ structstruck::strike! {
   pub struct ModrinthFileInfo {
     pub url: String,
     pub filename: String,
+    #[serde(default)]
+    pub primary: Option<bool>,
     pub hashes: pub struct {
       pub sha1: String,
     },
@@ -427,6 +429,7 @@ impl From<(&ModrinthVersionPack, &ModrinthFileInfo, Option<String>)> for OtherRe
         })
         .collect(),
       loader,
+      update_excluded: file.primary == Some(false),
     }
   }
 }
@@ -510,5 +513,24 @@ mod tests {
       (info.resource_id.as_str(), info.file_id.as_str()),
       ("proj1", "ver1")
     );
+  }
+
+  #[test]
+  fn only_an_explicit_non_primary_file_is_excluded_from_updates() {
+    let version: ModrinthVersionPack = serde_json::from_str(
+      r#"{"id":"ver1","project_id":"proj1","dependencies":[],"game_versions":["1.21.1"],"loaders":["neoforge"],
+        "name":"n","date_published":"d","downloads":1,"version_type":"release",
+        "files":[
+          {"url":"u1","filename":"a.mrpack","hashes":{"sha1":"aa"},"primary":true},
+          {"url":"u2","filename":"b.zip","hashes":{"sha1":"bb"},"primary":false},
+          {"url":"u3","filename":"c.mrpack","hashes":{"sha1":"cc"}}]}"#,
+    )
+    .unwrap();
+    let flags: Vec<bool> = version
+      .files
+      .iter()
+      .map(|file| OtherResourceFileInfo::from((&version, file, None)).update_excluded)
+      .collect();
+    assert_eq!(flags, vec![false, true, false]);
   }
 }
