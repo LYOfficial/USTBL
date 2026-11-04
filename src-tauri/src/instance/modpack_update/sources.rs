@@ -872,6 +872,56 @@ async fn download_url(
   download_param(app, param).await
 }
 
+/// Marks a download in progress next to the archive it will become.
+const PART_SUFFIX: &str = ".part";
+
+/// The name a download of the archive at `path` is written under: one of its
+/// own, so a cancelled earlier download whose writer is still winding down
+/// cannot write into it.
+fn part_path(path: &Path) -> PathBuf {
+  let mut name = path.as_os_str().to_os_string();
+  name.push(format!(".{}{PART_SUFFIX}", uuid::Uuid::new_v4().simple()));
+  PathBuf::from(name)
+}
+
+/// Remove what earlier downloads of the archive at `path` left behind.
+fn remove_parts_of(path: &Path) {
+  let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+    return;
+  };
+  let prefix = format!("{}.", name.to_string_lossy());
+  let Ok(entries) = fs::read_dir(dir) else {
+    return;
+  };
+  for entry in entries.flatten() {
+    let entry_name = entry.file_name().to_string_lossy().into_owned();
+    if entry_name.starts_with(&prefix) && entry_name.ends_with(PART_SUFFIX) {
+      let _ = fs::remove_file(entry.path());
+    }
+  }
+}
+
+/// Download a modpack archive to `path`. It is written under another name and
+/// moved into place once its SHA-1 has been verified, so `path` is either
+/// missing or a whole archive: a cancelled download leaves nothing there for
+/// the next preview to mistake for the archive.
+async fn download_archive(
+  app: &AppHandle,
+  url: &str,
+  path: &Path,
+  sha1: &str,
+  root: &Path,
+) -> USTBLResult<()> {
+  remove_parts_of(path);
+  let part = part_path(path);
+  if let Err(error) = download_url(app, url, &part, Some(sha1)).await {
+    let _ = fs::remove_file(&part);
+    return Err(error);
+  }
+  fs::rename(&part, path).at_in(&part, root)?;
+  Ok(())
+}
+
 async fn campus_get<T: serde::de::DeserializeOwned>(
   app: &AppHandle,
   path: &str,
@@ -1487,7 +1537,7 @@ pub async fn resolve_remote(
         .map_err(|e| USTBLError(e.to_string()))?;
         let download_started = std::time::Instant::now();
         if !cached {
-          download_url(app, url, &path, Some(sha1)).await?;
+          download_archive(app, url, &path, sha1, root).await?;
         }
         log::info!(
           "modpack archive ready: cached={cached} elapsed_ms={}",
@@ -2064,6 +2114,38 @@ mod tests {
     // The archive must still be there with the same size.
     fs::write(archive_path(&root, &sha1), b"changed").unwrap();
     assert!(!back.matches(&origin, &root, &version));
+    let _ = fs::remove_dir_all(&root);
+  }
+
+  #[test]
+  fn a_download_gets_a_part_name_of_its_own_and_old_parts_are_swept() {
+    let root = std::env::temp_dir().join(format!("ustbl-archive-part-{}", uuid::Uuid::new_v4()));
+    let sha1 = "dd".repeat(20);
+    fs::create_dir_all(remote_dir(&root)).unwrap();
+    let archive = archive_path(&root, &sha1);
+
+    let (first, second) = (part_path(&archive), part_path(&archive));
+    assert_ne!(first, second);
+    assert_eq!(first.parent(), archive.parent());
+    assert!(first
+      .file_name()
+      .unwrap()
+      .to_string_lossy()
+      .starts_with(&format!("{sha1}.zip.")));
+    assert!(first.to_string_lossy().ends_with(PART_SUFFIX));
+
+    // The finished archive, another version's parts and the cache are kept.
+    let other = archive_path(&root, &"ee".repeat(20));
+    let other_part = part_path(&other);
+    let cache = remote_cache_path(&root, "v1");
+    for path in [&first, &second, &archive, &other, &other_part, &cache] {
+      fs::write(path, b"x").unwrap();
+    }
+    remove_parts_of(&archive);
+    assert!(!first.exists() && !second.exists());
+    for path in [&archive, &other, &other_part, &cache] {
+      assert!(path.exists(), "{path:?} must stay");
+    }
     let _ = fs::remove_dir_all(&root);
   }
 

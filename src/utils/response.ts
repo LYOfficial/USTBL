@@ -1,4 +1,5 @@
 import { t } from "i18next";
+import { InstanceError } from "@/enums/service-error";
 import { InvokeResponse } from "@/models/response";
 import { isDev } from "@/utils/env";
 import { localizeFileError } from "@/utils/file-error";
@@ -41,7 +42,11 @@ export function responseHandler(serviceDomain: string): MethodDecorator {
         // Session expiration is reported once by the native session event.
         const sessionExpired =
           serviceDomain === "account" && String(error) === "EXPIRED";
-        if (isDev && !sessionExpired) {
+        // A cancelled preview is a normal outcome that callers ignore.
+        const previewCancelled =
+          serviceDomain === "instance" &&
+          String(error) === InstanceError.ModpackUpdatePrepareCancelled;
+        if (isDev && !sessionExpired && !previewCancelled) {
           const errorSet = {
             Key: String(error),
             "Service Domain": serviceDomain,
@@ -51,7 +56,7 @@ export function responseHandler(serviceDomain: string): MethodDecorator {
           };
           console.table(errorSet);
         }
-        if (!sessionExpired) {
+        if (!sessionExpired && !previewCancelled) {
           logger.error(
             `Invoke ${String(propertyKey)} failed: ${message} - ${details}`
           );

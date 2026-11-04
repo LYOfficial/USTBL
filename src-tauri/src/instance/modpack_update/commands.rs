@@ -9,8 +9,8 @@ use super::diff::{Conflict, ConflictChoice, Diff, FileChange};
 use super::merge::merge_with_choices;
 use super::notice::{read_update_notice, write_update_notice, UpdateNotice};
 use super::plan::{
-  compare, count_local_changes, finish, invalidate_scan_cache, requires_reinstall, resolve,
-  Prepared,
+  compare, component_action, count_local_changes, finish, invalidate_scan_cache,
+  next_component_fingerprint, requires_reinstall, resolve, ComponentAction, Prepared,
 };
 use super::plan_cache::{self, PlanCache};
 use super::release;
@@ -163,8 +163,14 @@ pub struct UpdatePlan {
   /// The new version changes the component chain, so it has to be installed
   /// again. No changes are planned and `apply_modpack_update` refuses.
   pub reinstall_required: bool,
+  /// The update rebuilds the instance's component profile (client json,
+  /// libraries, launch arguments) from the new version's component pack, which
+  /// differs from the one the instance was set up with.
+  #[serde(default)]
+  pub restore_components: bool,
   /// The instance already matches the new version: applying only moves the
-  /// recorded version forward, nothing is written to the files.
+  /// recorded version forward, nothing is written to the files. Never set
+  /// while the component profile is rebuilt.
   pub fast_forward: bool,
   pub plan_hash: String,
 }
@@ -378,7 +384,11 @@ fn campus_install_records(app: &AppHandle) -> Vec<CampusUnfinishedInstall> {
 
 fn unfinished_campus_install(instance: &Instance) -> Option<CampusUnfinishedInstall> {
   let record = load_campus_install_record(&instance.version_path)?;
-  if active_plans().lock().ok()?.contains(&instance.version_path) {
+  if active_plans()
+    .lock()
+    .ok()?
+    .contains_key(&instance.version_path)
+  {
     return None;
   }
   let interrupted = record.phase == "installing";
@@ -804,8 +814,11 @@ fn ensure_not_running(app: &AppHandle, instance_id: &str) -> USTBLResult<()> {
 /// the command's first step (prepare included) until it answers. The
 /// `UpdateGuard` only covers the transaction on disk; this one covers the
 /// whole run, so a second request is told busy instead of re-planning.
-fn active_plans() -> &'static Mutex<std::collections::HashSet<PathBuf>> {
-  static ACTIVE: OnceLock<Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
+///
+/// The value tells whether the holder is only a preview, which a newer request
+/// for the same instance may cancel (see [`acquire_over_preview`]).
+fn active_plans() -> &'static Mutex<HashMap<PathBuf, bool>> {
+  static ACTIVE: OnceLock<Mutex<HashMap<PathBuf, bool>>> = OnceLock::new();
   ACTIVE.get_or_init(Default::default)
 }
 
@@ -813,11 +826,22 @@ struct PlanGuard(PathBuf);
 
 impl PlanGuard {
   fn acquire(root: &Path) -> USTBLResult<Self> {
+    Self::claim(root, false)
+  }
+
+  fn claim(root: &Path, preview: bool) -> USTBLResult<Self> {
+    Self::try_claim(root, preview)?.map_err(|_| InstanceError::ModpackUpdateBusy.into())
+  }
+
+  /// Claim `root`, or say in the same locked step whether its holder is a
+  /// preview.
+  fn try_claim(root: &Path, preview: bool) -> USTBLResult<Result<Self, bool>> {
     let mut active = active_plans().lock()?;
-    if !active.insert(root.to_path_buf()) {
-      return Err(InstanceError::ModpackUpdateBusy.into());
+    if let Some(holder_is_preview) = active.get(root) {
+      return Ok(Err(*holder_is_preview));
     }
-    Ok(Self(root.to_path_buf()))
+    active.insert(root.to_path_buf(), preview);
+    Ok(Ok(Self(root.to_path_buf())))
   }
 }
 
@@ -969,6 +993,46 @@ async fn wait_for_plan_guard(root: &Path) -> USTBLResult<PlanGuard> {
   }
   Err(InstanceError::ModpackUpdateBusy.into())
 }
+
+/// Whether the plan guard of `root` is held by a preview, not by an apply or an
+/// install.
+#[cfg(test)]
+fn held_by_preview(root: &Path) -> bool {
+  active_plans()
+    .lock()
+    .is_ok_and(|active| active.get(root) == Some(&true))
+}
+
+/// Take the plan guard while a preview of the same instance may still hold it:
+/// an aborted preview lets go only when its task is dropped, a moment after
+/// the abort. A guard held by anything but a preview stays busy. With
+/// `supersede` the preview of that instance is cancelled here; a preview
+/// waiting for its predecessor passes `None`, its own handle is registered
+/// under the same id.
+async fn acquire_over_preview(
+  root: &Path,
+  supersede: Option<&str>,
+  preview: bool,
+) -> USTBLResult<PlanGuard> {
+  for _ in 0..PREVIEW_RELEASE_POLLS {
+    match PlanGuard::try_claim(root, preview)? {
+      Ok(guard) => return Ok(guard),
+      // Only a holder seen as a non-preview in the very step that failed to
+      // claim is final; a preview that let go meanwhile is simply retried.
+      Err(false) => return Err(InstanceError::ModpackUpdateBusy.into()),
+      Err(true) => {
+        if let Some(instance_id) = supersede {
+          cancel_prepare(instance_id);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+      }
+    }
+  }
+  Err(InstanceError::ModpackUpdateBusy.into())
+}
+
+/// Polls (10 ms apart) before a cancelled preview is given up on.
+const PREVIEW_RELEASE_POLLS: usize = 500;
 
 /// The baseline is the record of what the modpack installed. Without a
 /// matching one the instance cannot be compared safely.
@@ -1825,7 +1889,9 @@ pub async fn prepare_modpack_update(
 /// baseline and the local files are unchanged since the last plan.
 async fn prepare_inner(app: &AppHandle, instance_id: &str) -> USTBLResult<UpdatePlan> {
   let target = target(app, instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
-  let _guard = PlanGuard::acquire(&target.root)?;
+  // The preview this one replaces was cancelled by the caller and may not have
+  // dropped its guard yet.
+  let _guard = acquire_over_preview(&target.root, None, true).await?;
   if has_campus_install(&target.root) {
     return Err(InstanceError::ModpackInstallInterrupted.into());
   }
@@ -1938,6 +2004,7 @@ async fn plan_prepared(
       plan_hash: run.prepared.plan_hash,
       loader_change: run.loader_change,
       reinstall_required: false,
+      restore_components: run.prepared.restore_components,
       remote: run.remote,
     });
   }
@@ -1957,6 +2024,7 @@ async fn plan_prepared(
       plan_hash: String::new(),
       loader_change: None,
       reinstall_required: true,
+      restore_components: false,
       remote,
     });
   }
@@ -1991,6 +2059,7 @@ async fn plan_prepared(
     plan_hash: prepared.plan_hash,
     loader_change,
     reinstall_required: false,
+    restore_components: prepared.restore_components,
     remote,
   })
 }
@@ -2003,6 +2072,7 @@ struct PlannedRun {
   plan_hash: String,
   loader_change: Option<LoaderChange>,
   reinstall_required: bool,
+  restore_components: bool,
   remote: super::remote::RemoteModpack,
 }
 
@@ -2071,6 +2141,7 @@ fn plan_of(origin: &InstanceOrigin, prepared: PlannedRun) -> UpdatePlan {
     to_version_id: prepared.version_id.clone(),
     to_label: prepared.label.clone(),
     fast_forward: !prepared.reinstall_required
+      && !prepared.restore_components
       && fast_forward(
         prepared
           .diff
@@ -2085,6 +2156,7 @@ fn plan_of(origin: &InstanceOrigin, prepared: PlannedRun) -> UpdatePlan {
     auto_merged: prepared.diff.auto_merged,
     loader_change: prepared.loader_change,
     reinstall_required: prepared.reinstall_required,
+    restore_components: prepared.restore_components,
     plan_hash: prepared.plan_hash,
   }
 }
@@ -2173,6 +2245,7 @@ async fn plan_fresh_install(
       auto_merged: Vec::new(),
       loader_change: None,
       reinstall_required: true,
+      restore_components: false,
       fast_forward: false,
       plan_hash: String::new(),
     };
@@ -2189,6 +2262,7 @@ async fn plan_fresh_install(
         prune_dirs: BTreeMap::new(),
         ignores: super::ignores::Ignores::default(),
         ignores_on_disk: super::ignores::Ignores::default(),
+        restore_components: false,
       },
       remote,
     });
@@ -2243,20 +2317,22 @@ async fn plan_fresh_install(
     from_version_id: target.origin.version_id.clone(),
     to_version_id: remote.version_id.clone(),
     to_label: remote.label.clone(),
-    fast_forward: fast_forward(
-      prepared
-        .diff
-        .changes
-        .iter()
-        .chain(&prepared.diff.auto_merged),
-      prepared.diff.conflicts.len(),
-      loader_change.is_some(),
-    ),
+    fast_forward: !prepared.restore_components
+      && fast_forward(
+        prepared
+          .diff
+          .changes
+          .iter()
+          .chain(&prepared.diff.auto_merged),
+        prepared.diff.conflicts.len(),
+        loader_change.is_some(),
+      ),
     changes: prepared.diff.changes.clone(),
     conflicts: prepared.diff.conflicts.clone(),
     auto_merged: prepared.diff.auto_merged.clone(),
     loader_change,
     reinstall_required: false,
+    restore_components: prepared.restore_components,
     plan_hash: prepared.plan_hash.clone(),
   };
   Ok(InstallPlan {
@@ -2609,11 +2685,15 @@ async fn apply_modpack_update_inner(
   )
   .await?;
   let fresh = is_fresh(&target.origin);
-  if requires_reinstall(&baseline, &remote, fresh) {
+  let action = component_action(&baseline, &remote, fresh);
+  if action == ComponentAction::Reinstall {
     return Err(InstanceError::ModpackUpdateReinstallRequired.into());
   }
-  // A fresh instance has no chain yet; the engine restores the version's own.
-  let restore_components = fresh && remote.component_pack.is_some();
+  // A fresh instance has no chain yet, and a version whose component pack
+  // differs from the recorded one changes it: the engine rebuilds the profile
+  // from the version's own pack instead of switching the loader.
+  let restore_components = action == ComponentAction::Restore;
+  let component_fingerprint = next_component_fingerprint(&baseline, &remote, action);
   let components = if restore_components {
     remote.components.clone()
   } else {
@@ -2653,7 +2733,7 @@ async fn apply_modpack_update_inner(
     // so a retry re-plans instead of serving it again.
     plan_cache::clear_plan_cache(&target.root);
     log::info!(
-      "modpack update apply stale: instance={instance_id} expected plan_hash={} got plan_hash={plan_hash}",
+      "modpack update apply stale: instance={instance_id} confirmed plan_hash={plan_hash} current plan_hash={}",
       prepared.plan_hash,
     );
     return Err(InstanceError::ModpackUpdateStale.into());
@@ -2687,6 +2767,7 @@ async fn apply_modpack_update_inner(
       origin: target.origin.clone(),
       previous_loader: baseline.loader.clone(),
       components,
+      component_fingerprint,
       restore_components,
       merged_contents,
       base_texts,
@@ -3372,6 +3453,10 @@ async fn install_beside_client(
   } else {
     None
   };
+  let component_fingerprint = remote
+    .component_pack
+    .as_ref()
+    .map(|pack| pack.fingerprint());
   let ignores = super::ignores::plan_update(&target.root, &prepared, &remote);
   let result = apply(
     &env,
@@ -3386,6 +3471,7 @@ async fn install_beside_client(
         version: target.instance.mod_loader.version.clone(),
       },
       components,
+      component_fingerprint,
       restore_components,
       merged_contents,
       base_texts: BTreeMap::new(),
@@ -3483,7 +3569,9 @@ async fn resume_campus_client(app: &AppHandle, instance: &Instance) -> USTBLResu
 pub async fn recover_modpack_update(app: AppHandle, instance_id: String) -> USTBLResult<bool> {
   let instance = current_instance(&app, &instance_id)?;
   let root = instance.version_path.clone();
-  let guard = PlanGuard::acquire(&root)?;
+  // A preview left running by a closed dialog is cancelled, not reported as
+  // busy: the dialog is about to start a new one.
+  let guard = acquire_over_preview(&root, Some(&instance_id), false).await?;
   let check_app = app.clone();
   let outcome = tokio::task::spawn_blocking({
     let root = root.clone();
@@ -4345,6 +4433,96 @@ mod tests {
     assert_eq!(mapped.0, "MODPACK_UPDATE_PREPARE_CANCELLED");
   }
 
+  fn spawn_preview_holding(root: &Path, instance_id: &str, release_after_ms: Option<u64>) {
+    let guard = PlanGuard::claim(root, true).unwrap();
+    let task = tokio::spawn(async move {
+      let _guard = guard;
+      match release_after_ms {
+        Some(ms) => tokio::time::sleep(std::time::Duration::from_millis(ms)).await,
+        None => std::future::pending::<()>().await,
+      }
+    });
+    prepare_handles()
+      .lock()
+      .unwrap()
+      .insert(instance_id.to_string(), task.abort_handle());
+  }
+
+  #[tokio::test]
+  async fn a_command_cancels_the_running_preview_instead_of_reporting_busy() {
+    let root = PathBuf::from(format!("preview-over-{}", uuid::Uuid::new_v4()));
+    let id = format!("games:{}", uuid::Uuid::new_v4());
+    spawn_preview_holding(&root, &id, None);
+    assert!(held_by_preview(&root));
+    let guard = acquire_over_preview(&root, Some(&id), false).await.unwrap();
+    // The guard of the command is not a preview's: a second command is busy.
+    assert!(!held_by_preview(&root));
+    assert_eq!(
+      acquire_over_preview(&root, Some(&id), false)
+        .await
+        .err()
+        .unwrap()
+        .0,
+      "MODPACK_UPDATE_BUSY"
+    );
+    drop(guard);
+    assert!(PlanGuard::acquire(&root).is_ok());
+  }
+
+  #[test]
+  fn a_failed_claim_reports_its_holder_in_the_same_step() {
+    let root = PathBuf::from(format!("claim-holder-{}", uuid::Uuid::new_v4()));
+    let preview = PlanGuard::try_claim(&root, true).unwrap().ok().unwrap();
+    assert_eq!(
+      PlanGuard::try_claim(&root, false).unwrap().err(),
+      Some(true)
+    );
+    drop(preview);
+    // Released: the claim succeeds instead of reporting a holder, so a
+    // preview that lets go between two polls is never taken for an apply.
+    let apply = PlanGuard::try_claim(&root, false).unwrap().ok().unwrap();
+    assert_eq!(
+      PlanGuard::try_claim(&root, true).unwrap().err(),
+      Some(false)
+    );
+    drop(apply);
+    assert!(PlanGuard::try_claim(&root, true).unwrap().is_ok());
+  }
+
+  #[tokio::test]
+  async fn an_apply_or_install_is_never_cancelled_for_a_command() {
+    let root = PathBuf::from(format!("apply-over-{}", uuid::Uuid::new_v4()));
+    let id = format!("games:{}", uuid::Uuid::new_v4());
+    let apply = PlanGuard::acquire(&root).unwrap();
+    let preview = tokio::spawn(std::future::pending::<()>());
+    prepare_handles()
+      .lock()
+      .unwrap()
+      .insert(id.clone(), preview.abort_handle());
+    let error = acquire_over_preview(&root, Some(&id), false)
+      .await
+      .err()
+      .unwrap();
+    assert_eq!(error.0, "MODPACK_UPDATE_BUSY");
+    // A busy answer leaves the registered preview alone.
+    assert!(prepare_handles().lock().unwrap().contains_key(&id));
+    cancel_prepare(&id);
+    drop(apply);
+  }
+
+  #[tokio::test]
+  async fn a_new_preview_waits_for_the_one_it_replaced_to_let_go() {
+    let root = PathBuf::from(format!("preview-next-{}", uuid::Uuid::new_v4()));
+    let id = format!("games:{}", uuid::Uuid::new_v4());
+    spawn_preview_holding(&root, &id, Some(60));
+    // Without waiting, the replacement would have answered busy here.
+    assert!(PlanGuard::claim(&root, true).is_err());
+    let guard = acquire_over_preview(&root, None, true).await.unwrap();
+    assert!(held_by_preview(&root));
+    drop(guard);
+    cancel_prepare(&id);
+  }
+
   #[test]
   fn a_merge_that_kept_nothing_local_writes_the_published_bytes() {
     let remote = b"x = 3\ny = 1\n";
@@ -4488,6 +4666,7 @@ mod tests {
       plan_hash: "hh".into(),
       loader_change: None,
       reinstall_required: true,
+      restore_components: false,
       remote: crate::instance::modpack_update::remote::RemoteModpack {
         version_id: "2".into(),
         label: "2.0".into(),
@@ -4512,6 +4691,49 @@ mod tests {
     assert_eq!(plan.plan_hash, "hh");
   }
 
+  #[test]
+  fn a_plan_that_rebuilds_the_components_is_not_a_fast_forward() {
+    let origin = InstanceOrigin {
+      platform: OriginPlatform::Campus,
+      project_id: "p".into(),
+      version_id: "1".into(),
+      game_version: "1.7.10".into(),
+      loader_type: ModLoaderType::Forge,
+      follow: true,
+    };
+    let run = |restore_components| PlannedRun {
+      version_id: "2".into(),
+      label: "2.0".into(),
+      diff: Default::default(),
+      plan_hash: "hh".into(),
+      loader_change: None,
+      reinstall_required: false,
+      restore_components,
+      remote: crate::instance::modpack_update::remote::RemoteModpack {
+        version_id: "2".into(),
+        label: "2.0".into(),
+        game_version: "1.7.10".into(),
+        loader: BaselineLoader {
+          loader_type: ModLoaderType::Forge,
+          version: "10.13.4.1614".into(),
+        },
+        components: None,
+        component_pack: None,
+        files: Vec::new(),
+        rules: Vec::new(),
+        rules_manifest: true,
+        disabled_authoritative: true,
+        path_index: std::sync::Arc::new(std::sync::OnceLock::new()),
+      },
+    };
+    // No file differs. Without a rebuild that is a fast forward.
+    let idle = plan_of(&origin, run(false));
+    assert!(idle.fast_forward && !idle.restore_components);
+    let rebuilding = plan_of(&origin, run(true));
+    assert!(!rebuilding.fast_forward);
+    assert!(rebuilding.restore_components);
+    assert!(!rebuilding.reinstall_required);
+  }
   #[test]
   fn a_cancelled_install_cannot_enter_the_commit() {
     let control = InstallControl::new();

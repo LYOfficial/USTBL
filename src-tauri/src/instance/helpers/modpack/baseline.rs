@@ -139,6 +139,12 @@ pub struct ModpackBaseline {
   /// [`ComponentRef`] sorted by uid. `None` for Modrinth/CurseForge packs.
   #[serde(default)]
   pub components: Option<Value>,
+  /// Fingerprint of the component pack the instance was last rebuilt from (see
+  /// `ComponentPack::fingerprint`). `None` before the field existed, which
+  /// reads as "differs from every pack". Kept out of `content_hash`, so
+  /// baselines written without it stay consistent with their hash.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub component_fingerprint: Option<String>,
   pub files: Vec<BaselineFile>,
   pub content_hash: String,
 }
@@ -338,9 +344,16 @@ impl ModpackBaseline {
       },
       loader,
       components: None,
+      component_fingerprint: None,
       files,
       content_hash,
     }
+  }
+
+  /// Record the fingerprint of the component pack the instance was rebuilt from.
+  pub fn with_component_fingerprint(mut self, fingerprint: Option<String>) -> Self {
+    self.component_fingerprint = fingerprint;
+    self
   }
 
   /// Record the component chain of a component-profile pack.
@@ -655,6 +668,48 @@ mod tests {
     let parsed: ModpackBaseline =
       serde_json::from_str(&serde_json::to_string(&with).unwrap()).unwrap();
     assert_eq!(parsed, with);
+  }
+
+  #[tokio::test]
+  async fn a_baseline_written_before_the_fingerprint_existed_still_loads() {
+    let root = std::env::temp_dir().join(format!("ustbl-baseline-test-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    let chain = vec![ComponentRef {
+      uid: "net.minecraft".into(),
+      version: "1.7.10".into(),
+    }];
+    let old = ModpackBaseline::build(&origin(), loader("0.16.0"), vec![file("a", "aa", 1)])
+      .with_components(chain.clone());
+    // The old writer never produced the key at all.
+    let json = serde_json::to_string_pretty(&old).unwrap();
+    assert!(!json.contains("componentFingerprint"));
+    fs::write(root.join(BASELINE_FILE_NAME), &json).unwrap();
+
+    let loaded = ModpackBaseline::load(&root).await.unwrap();
+    assert_eq!(loaded, old);
+    assert_eq!(loaded.component_fingerprint, None);
+    assert_eq!(loaded.component_refs(), Some(chain));
+    assert!(loaded.is_consistent_with(&origin()));
+    assert_eq!(
+      loaded.content_hash,
+      compute_content_hash(
+        &loaded.loader,
+        loaded.components.as_ref(),
+        &loaded.files,
+        &[]
+      )
+    );
+
+    // A recorded fingerprint round-trips and leaves the content hash alone.
+    let recorded = loaded
+      .clone()
+      .with_component_fingerprint(Some("abc123".into()));
+    assert_eq!(recorded.content_hash, loaded.content_hash);
+    recorded.save(&root).await.unwrap();
+    let again = ModpackBaseline::load(&root).await.unwrap();
+    assert_eq!(again, recorded);
+    assert_eq!(again.component_fingerprint.as_deref(), Some("abc123"));
+    let _ = fs::remove_dir_all(root);
   }
 
   #[test]

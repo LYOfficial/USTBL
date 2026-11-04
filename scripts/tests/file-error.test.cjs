@@ -184,7 +184,9 @@ test("the response handler turns a file error into the localised details", async
           ? fileError
           : name === "@/utils/logging"
             ? { logger: { error: () => {} } }
-            : {}
+            : name === "@/enums/service-error"
+              ? load("src/enums/service-error.ts")
+              : {}
   );
   const text = wire("DISK_FULL", "mods\\a.jar", "full");
   const descriptor = {

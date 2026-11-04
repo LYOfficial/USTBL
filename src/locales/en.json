@@ -3384,6 +3384,7 @@
       "enable": "{{count}} enabled",
       "retire": "Stop managing {{count}}",
       "loaderChange": "{{loader}} will switch from {{from}} to {{to}}",
+      "restoreComponents": "This version changes the game components. The update will also rebuild the game's version profile and libraries.",
       "conflicts": "{{count}} files conflict with your changes; keep local by default and handle them individually",
       "autoMerged": "{{count}} auto-merged",
       "showAll": "Show all ({{count}} more)",
