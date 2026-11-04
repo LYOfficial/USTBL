@@ -867,7 +867,9 @@
       "disable": "禁用"
     },
     "expandAll": "全部展开",
-    "collapseAll": "全部折叠"
+    "collapseAll": "全部折叠",
+    "expandSubtree": "递归展开",
+    "collapseSubtree": "递归折叠"
   },
   "FileError": {
     "FILE_BLOCKED_BY_ANTIVIRUS": "文件 {{file}} 被杀毒软件拦截。请在 Windows 安全中心允许该文件，或把游戏目录加入排除项后重试。",
@@ -3493,7 +3495,7 @@
         "removedTag": "移除"
       },
       "restoreComponents": "新版本调整了游戏组件，更新时会一并重建游戏的版本配置与依赖库",
-      "conflicts": "{{count}} 个文件和你的修改冲突，默认应用新版，可以逐个处理",
+      "conflicts": "{{count}} 个本地修改与新版冲突",
       "autoMerged": "自动合并 {{count}}",
       "fileDiff": {
         "show": "查看差异",

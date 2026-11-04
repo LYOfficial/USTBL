@@ -27,6 +27,8 @@ export interface TreeNodeRenderContext<T = unknown> {
   depth: number;
   isLeaf: boolean;
   isExpanded: boolean;
+  /** Open or close this branch and every branch below it. */
+  expandSubtree: (open: boolean) => void;
 }
 
 interface TreeViewProps<T = unknown> {
@@ -37,6 +39,11 @@ interface TreeViewProps<T = unknown> {
   spacing?: number;
   /** The tallest the tree grows in px before it scrolls. */
   maxHeight?: number;
+  /**
+   * Grow to the full height of the rows and let the nearest scrolling ancestor
+   * scroll them; `maxHeight` is then ignored.
+   */
+  scrollParent?: boolean;
   defaultExpandedDepth?: number;
   preserveExpanded?: boolean;
   expandRequest?: { ids: Set<string> };
@@ -96,6 +103,7 @@ const TreeView = <T,>({
   indentSize = 3,
   spacing = 1,
   maxHeight = 320,
+  scrollParent = false,
   defaultExpandedDepth = 0,
   preserveExpanded = false,
   expandRequest,
@@ -173,6 +181,27 @@ const TreeView = <T,>({
     [expandAll]
   );
 
+  const expandSubtree = useCallback(
+    (node: TreeNode<T>, open: boolean) => {
+      const branches = branchIds([node]);
+      applyBulkExpansion(expansionHistory.current, branches, open);
+      if (expandAll) {
+        setClosedIds((prev) => {
+          const next = new Set(prev);
+          branches.forEach((id) => (open ? next.delete(id) : next.add(id)));
+          return next;
+        });
+      } else {
+        setExpandedIds((prev) => {
+          const next = new Set(prev);
+          branches.forEach((id) => (open ? next.add(id) : next.delete(id)));
+          return next;
+        });
+      }
+    },
+    [expandAll]
+  );
+
   const isOpen = useCallback(
     (id: string) => (expandAll ? !closedIds.has(id) : expandedIds.has(id)),
     [expandAll, closedIds, expandedIds]
@@ -184,6 +213,7 @@ const TreeView = <T,>({
     const { node, depth, isLeaf, isExpanded, posInSet, setSize } = rows[index];
     return (
       <HStack
+        data-group
         role="treeitem"
         aria-level={depth + 1}
         aria-posinset={posInSet}
@@ -208,7 +238,13 @@ const TreeView = <T,>({
           <Box w={`${leafPlaceholderWidth}px`} flexShrink={0} />
         ) : null}
         <Box flex="1" minW={0}>
-          {renderNode({ node, depth, isLeaf, isExpanded })}
+          {renderNode({
+            node,
+            depth,
+            isLeaf,
+            isExpanded,
+            expandSubtree: (open) => expandSubtree(node, open),
+          })}
         </Box>
       </HStack>
     );
@@ -222,6 +258,7 @@ const TreeView = <T,>({
         renderRow={renderRow}
         layoutKey={rows}
         maxHeight={maxHeight}
+        scrollParent={scrollParent}
         role="tree"
         rowRole="presentation"
       />

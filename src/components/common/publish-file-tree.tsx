@@ -31,6 +31,7 @@ import {
   ChangeTag,
   FilePanelEmpty,
   FilePanelToolbar,
+  RecursiveToggle,
 } from "@/components/common/file-panel";
 import PublishChangeDiff from "@/components/common/publish-change-diff";
 import TreeView, { TreeCommand } from "@/components/common/tree-view";
@@ -200,49 +201,33 @@ const PublishFileTree: React.FC<PublishFileTreeProps> = ({
   const label = (state: ShownState) => t(`PublishModpackModal.tree.${state}`);
 
   return (
-    <Box w="100%">
+    // The card behind is opaque; the toolbar that sticks to the top takes its color.
+    <Box w="100%" bg="inherit">
       {!isLoading && (
-        <VStack align="stretch" spacing={2} mb={2}>
-          <FilePanelToolbar
-            query={query}
-            onQueryChange={setQuery}
-            onExpandAll={() => setCommand({ type: "expand" })}
-            onCollapseAll={() => setCommand({ type: "collapse" })}
-            controls={
-              <>
-                <Text fontSize="xs" className="secondary-text">
-                  {t("PublishModpackModal.tree.filter.title")}
-                </Text>
-                {CHANGE_CATEGORIES.map((category) => (
-                  <Tooltip
-                    key={category}
-                    label={t(`PublishModpackModal.tree.changeHint.${category}`)}
-                  >
-                    <span>
-                      <ChangeFilterButton
-                        visual={category}
-                        count={counts[category]}
-                        selected={filter.categories.has(category)}
-                        isDisabled={counts[category] === 0}
-                        onClick={() =>
-                          setFilter((prev) => toggleCategory(prev, category))
-                        }
-                      />
-                    </span>
-                  </Tooltip>
-                ))}
-                <BlockToggle
-                  checked={filter.onlyChanged}
-                  onChange={(checked) =>
-                    setFilter((prev) => ({ ...prev, onlyChanged: checked }))
-                  }
-                  aria-label={t("PublishModpackModal.tree.filter.onlyChanged")}
-                >
-                  {t("PublishModpackModal.tree.filter.onlyChanged")}
-                </BlockToggle>
-              </>
-            }
-          />
+        <VStack align="stretch" spacing={1} mb={2}>
+          <HStack spacing={2} flexWrap="wrap">
+            <Text fontSize="xs" className="secondary-text">
+              {t("PublishModpackModal.tree.filter.title")}
+            </Text>
+            {CHANGE_CATEGORIES.map((category) => (
+              <Tooltip
+                key={category}
+                label={t(`PublishModpackModal.tree.changeHint.${category}`)}
+              >
+                <span>
+                  <ChangeFilterButton
+                    visual={category}
+                    count={counts[category]}
+                    selected={filter.categories.has(category)}
+                    isDisabled={counts[category] === 0}
+                    onClick={() =>
+                      setFilter((prev) => toggleCategory(prev, category))
+                    }
+                  />
+                </span>
+              </Tooltip>
+            ))}
+          </HStack>
           {previous === null && (
             <Text fontSize="xs" className="secondary-text">
               {t("PublishModpackModal.tree.noPrevious")}
@@ -270,6 +255,34 @@ const PublishFileTree: React.FC<PublishFileTreeProps> = ({
         ))}
         <Text w="100%">{t("PublishModpackModal.tree.legend.cycle")}</Text>
       </HStack>
+      {!isLoading && (
+        <Box
+          data-sticky-top
+          position="sticky"
+          top={-2}
+          zIndex="sticky"
+          bg="inherit"
+          py={1.5}
+        >
+          <FilePanelToolbar
+            query={query}
+            onQueryChange={setQuery}
+            onExpandAll={() => setCommand({ type: "expand" })}
+            onCollapseAll={() => setCommand({ type: "collapse" })}
+            controls={
+              <BlockToggle
+                checked={filter.onlyChanged}
+                onChange={(checked) =>
+                  setFilter((prev) => ({ ...prev, onlyChanged: checked }))
+                }
+                aria-label={t("PublishModpackModal.tree.filter.onlyChanged")}
+              >
+                {t("PublishModpackModal.tree.filter.onlyChanged")}
+              </BlockToggle>
+            }
+          />
+        </Box>
+      )}
       <Box>
         {isLoading ? (
           <Center py={4}>
@@ -278,15 +291,18 @@ const PublishFileTree: React.FC<PublishFileTreeProps> = ({
         ) : tree.length > 0 ? (
           <TreeView
             nodes={tree}
+            scrollParent
             defaultExpandedDepth={0}
             preserveExpanded
             expandRequest={expandRequest}
             expandAll={expandAll}
             command={command}
-            renderNode={({ node: { data } }) => (
+            renderNode={({ node: { data }, isExpanded, expandSubtree }) => (
               <PublishTreeRow
                 instanceId={instanceId}
                 data={data}
+                isExpanded={isExpanded}
+                onExpandSubtree={expandSubtree}
                 context={context}
                 draft={draft}
                 view={view}
@@ -315,6 +331,8 @@ const PublishFileTree: React.FC<PublishFileTreeProps> = ({
 interface PublishTreeRowProps {
   instanceId: string;
   data: PublishNode;
+  isExpanded: boolean;
+  onExpandSubtree: (open: boolean) => void;
   context: PublishContext;
   draft: PublishDraft;
   view: ReturnType<typeof viewOf>;
@@ -333,6 +351,8 @@ interface PublishTreeRowProps {
 const PublishTreeRow: React.FC<PublishTreeRowProps> = ({
   instanceId,
   data,
+  isExpanded,
+  onExpandSubtree,
   context,
   draft,
   view,
@@ -536,6 +556,9 @@ const PublishTreeRow: React.FC<PublishTreeRowProps> = ({
             </TagLabel>
           </Tag>
         ) : null}
+        {isDir && (
+          <RecursiveToggle open={isExpanded} onOpenChange={onExpandSubtree} />
+        )}
         <Box flex="1" />
         {canDiff ? (
           <Button

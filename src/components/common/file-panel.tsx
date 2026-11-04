@@ -71,6 +71,32 @@ export const FilePanelToolbar: React.FC<FilePanelToolbarProps> = ({
   );
 };
 
+/** A directory or group button that opens or closes its whole subtree. */
+export const RecursiveToggle: React.FC<{
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}> = ({ open, onOpenChange }) => {
+  const { t } = useTranslation();
+  const label = t(`FilePanel.${open ? "collapseSubtree" : "expandSubtree"}`);
+  return (
+    <Tooltip label={label}>
+      <IconButton
+        size="xs"
+        variant="ghost"
+        flexShrink={0}
+        opacity={0}
+        _groupHover={{ opacity: 1 }}
+        _groupFocusWithin={{ opacity: 1 }}
+        _focusVisible={{ opacity: 1 }}
+        aria-label={label}
+        aria-expanded={open}
+        icon={<Icon as={open ? LuFoldVertical : LuUnfoldVertical} />}
+        onClick={() => onOpenChange(!open)}
+      />
+    </Tooltip>
+  );
+};
+
 /** The colored label of a kind of change. */
 export const ChangeTag: React.FC<{ visual: ChangeVisual }> = ({ visual }) => {
   const { t } = useTranslation();

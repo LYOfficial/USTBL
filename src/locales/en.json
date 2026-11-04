@@ -867,7 +867,9 @@
       "disable": "Disable"
     },
     "expandAll": "Expand all",
-    "collapseAll": "Collapse all"
+    "collapseAll": "Collapse all",
+    "expandSubtree": "Expand recursively",
+    "collapseSubtree": "Collapse recursively"
   },
   "FileError": {
     "FILE_BLOCKED_BY_ANTIVIRUS": "File {{file}} was blocked by antivirus software. Allow the file in Windows Security, or add the game directory to the exclusions, then try again.",
@@ -3493,7 +3495,7 @@
         "removedTag": "Removed"
       },
       "restoreComponents": "This version changes the game components. The update will also rebuild the game's version profile and libraries.",
-      "conflicts": "{{count}} files conflict with your changes; the new version is applied by default, and you can handle them individually",
+      "conflicts": "{{count}} local changes conflict with the new version",
       "autoMerged": "{{count}} auto-merged",
       "fileDiff": {
         "show": "Show diff",

@@ -867,7 +867,9 @@
       "disable": "無効化"
     },
     "expandAll": "すべて展開",
-    "collapseAll": "すべて折りたたむ"
+    "collapseAll": "すべて折りたたむ",
+    "expandSubtree": "再帰的に展開",
+    "collapseSubtree": "再帰的に折りたたむ"
   },
   "FileError": {
     "FILE_BLOCKED_BY_ANTIVIRUS": "ファイル {{file}} がウイルス対策ソフトにブロックされました。Windows セキュリティでこのファイルを許可するか、ゲームのフォルダーを除外に追加してから、もう一度お試しください。",
@@ -3493,7 +3495,7 @@
         "removedTag": "削除"
       },
       "restoreComponents": "このバージョンではゲームコンポーネントが変更されています。更新時にバージョン構成とライブラリも再構築されます。",
-      "conflicts": "{{count}}件のファイルがあなたの変更と競合しています。既定では新バージョンを適用します。個別に処理できます",
+      "conflicts": "{{count}} 件のローカル変更が新バージョンと競合しています",
       "autoMerged": "自動マージ {{count}}",
       "fileDiff": {
         "show": "差分を表示",

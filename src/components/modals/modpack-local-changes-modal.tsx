@@ -36,11 +36,10 @@ import {
   ChangeTag,
   FilePanelEmpty,
   FilePanelToolbar,
+  RecursiveToggle,
 } from "@/components/common/file-panel";
 import TreeView, { TreeCommand } from "@/components/common/tree-view";
-import VirtualRows, {
-  useViewportHeight,
-} from "@/components/common/virtual-rows";
+import VirtualRows from "@/components/common/virtual-rows";
 import { useLauncherConfig } from "@/contexts/config";
 import { useGlobalData } from "@/contexts/global-data";
 import { useSharedModals } from "@/contexts/shared-modal";
@@ -272,8 +271,6 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
   };
   const cardOpen = (path: string) =>
     openCards.get(path) ?? allCardsOpen ?? openFiles;
-  // The tree scrolls inside the dialog, which scrolls for the groups below it.
-  const treeHeight = useViewportHeight(0.55, 320);
 
   const isManager = isVustbManager(vustbAccount);
   // Publishing goes on top of the latest version; behind it the platform
@@ -575,7 +572,7 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
           {t("ModpackLocalChangesModal.header.title", { name: instanceName })}
         </ModalHeader>
         <ModalCloseButton />
-        <ModalBody>
+        <ModalBody display="flex" flexDirection="column" overflow="hidden">
           {detail === null ? (
             failed ? null : (
               <VStack py={6} spacing={2}>
@@ -586,8 +583,8 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
               </VStack>
             )
           ) : (
-            <VStack align="stretch" spacing={3}>
-              <VStack align="stretch" spacing={1}>
+            <>
+              <VStack align="stretch" spacing={1} flexShrink={0} mb={3}>
                 <Text fontSize="xs" className="secondary-text">
                   {t("ModpackLocalChangesModal.comparedTo", {
                     label: detail.label,
@@ -632,75 +629,89 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
                   </>
                 )}
               </VStack>
-              {tree.length > 0 && (
-                <TreeView
-                  nodes={tree}
-                  defaultExpandedDepth={expandedDepth(shownMain.length)}
-                  preserveExpanded
-                  expandAll={expandAll}
-                  command={command}
-                  maxHeight={treeHeight}
-                  leafPlaceholderWidth={0}
-                  renderNode={({ node: { data } }) =>
-                    data.entry ? (
-                      renderEntry(data.entry, data.name)
-                    ) : (
-                      <HStack spacing={2}>
-                        <Text fontSize="xs-sm" fontWeight="medium">
-                          {data.name}
-                        </Text>
-                        <Badge flexShrink={0}>{data.count}</Badge>
-                      </HStack>
-                    )
-                  }
-                />
-              )}
-              {tree.length === 0 &&
-                shownWillDelete.length === 0 &&
-                queryActive && <FilePanelEmpty filtered />}
-              {shownWillDelete.length > 0 && (
-                <ChangeGroup
-                  title={t("ModpackLocalChangesModal.willDelete.title", {
-                    count: shownWillDelete.length,
-                  })}
-                  description={t(
-                    "ModpackLocalChangesModal.willDelete.description"
+              <Box flex="1 1 auto" minH={0} overflowY="auto">
+                <VStack align="stretch" spacing={3}>
+                  {tree.length > 0 && (
+                    <TreeView
+                      nodes={tree}
+                      defaultExpandedDepth={expandedDepth(shownMain.length)}
+                      preserveExpanded
+                      expandAll={expandAll}
+                      command={command}
+                      scrollParent
+                      leafPlaceholderWidth={0}
+                      renderNode={({
+                        node: { data },
+                        isExpanded,
+                        expandSubtree,
+                      }) =>
+                        data.entry ? (
+                          renderEntry(data.entry, data.name)
+                        ) : (
+                          <HStack spacing={2}>
+                            <Text fontSize="xs-sm" fontWeight="medium">
+                              {data.name}
+                            </Text>
+                            <Badge flexShrink={0}>{data.count}</Badge>
+                            <RecursiveToggle
+                              open={isExpanded}
+                              onOpenChange={expandSubtree}
+                            />
+                          </HStack>
+                        )
+                      }
+                    />
                   )}
-                  defaultOpen
-                >
-                  <VirtualRows
-                    rowCount={shownWillDelete.length}
-                    rowKey={(index) => shownWillDelete[index].path}
-                    renderRow={(index) => (
-                      <Box pb={2}>
-                        {renderEntry(
-                          shownWillDelete[index],
-                          shownWillDelete[index].path,
-                          false
+                  {tree.length === 0 &&
+                    shownWillDelete.length === 0 &&
+                    queryActive && <FilePanelEmpty filtered />}
+                  {shownWillDelete.length > 0 && (
+                    <ChangeGroup
+                      title={t("ModpackLocalChangesModal.willDelete.title", {
+                        count: shownWillDelete.length,
+                      })}
+                      description={t(
+                        "ModpackLocalChangesModal.willDelete.description"
+                      )}
+                      defaultOpen
+                    >
+                      <VirtualRows
+                        rowCount={shownWillDelete.length}
+                        rowKey={(index) => shownWillDelete[index].path}
+                        renderRow={(index) => (
+                          <Box pb={2}>
+                            {renderEntry(
+                              shownWillDelete[index],
+                              shownWillDelete[index].path,
+                              false
+                            )}
+                          </Box>
                         )}
-                      </Box>
-                    )}
-                    layoutKey={shownWillDelete}
-                    maxHeight={treeHeight}
-                  />
-                </ChangeGroup>
-              )}
-            </VStack>
-          )}
-          {detail !== null && ignored.length > 0 && (
-            <Box mt={4}>
-              <ChangeGroup
-                title={t("ModpackLocalChangesModal.ignored.title", {
-                  count: ignored.length,
-                })}
-                description={t("ModpackLocalChangesModal.ignored.description")}
-              >
-                {sortedIgnored.map(renderIgnored)}
-              </ChangeGroup>
-            </Box>
+                        layoutKey={shownWillDelete}
+                        scrollParent
+                      />
+                    </ChangeGroup>
+                  )}
+                  {ignored.length > 0 && (
+                    <Box>
+                      <ChangeGroup
+                        title={t("ModpackLocalChangesModal.ignored.title", {
+                          count: ignored.length,
+                        })}
+                        description={t(
+                          "ModpackLocalChangesModal.ignored.description"
+                        )}
+                      >
+                        {sortedIgnored.map(renderIgnored)}
+                      </ChangeGroup>
+                    </Box>
+                  )}
+                </VStack>
+              </Box>
+            </>
           )}
           {behind && isManager && entries.length > 0 && (
-            <Alert status="info" mt={3} fontSize="xs-sm">
+            <Alert status="info" mt={3} fontSize="xs-sm" flexShrink={0}>
               <AlertIcon />
               {t("ModpackLocalChangesModal.publishHint.updateFirst")}
             </Alert>

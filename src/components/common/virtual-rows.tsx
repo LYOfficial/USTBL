@@ -10,19 +10,6 @@ import { AutoSizer, List, ListRowProps } from "react-virtualized";
 /** Rows no shorter than this let a long list skip summing every height. */
 const MIN_ROW_HEIGHT = 12;
 
-/** The window's height times `fraction`, but at least `min` px. */
-export const useViewportHeight = (fraction: number, min: number): number => {
-  const [height, setHeight] = useState(min);
-  useEffect(() => {
-    const update = () =>
-      setHeight(Math.max(min, Math.round(window.innerHeight * fraction)));
-    update();
-    window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
-  }, [fraction, min]);
-  return height;
-};
-
 const isTextField = (target: HTMLElement) =>
   target.tagName === "TEXTAREA" ||
   target.tagName === "SELECT" ||
@@ -30,6 +17,95 @@ const isTextField = (target: HTMLElement) =>
     !["checkbox", "radio", "button"].includes(
       (target as HTMLInputElement).type
     ));
+
+const SCROLLABLE = /(auto|scroll|overlay)/;
+
+/** The nearest ancestor that scrolls vertically. */
+const findScrollParent = (from: HTMLElement | null): HTMLElement | null => {
+  let element = from?.parentElement ?? null;
+  while (element && element !== document.body) {
+    if (SCROLLABLE.test(getComputedStyle(element).overflowY)) return element;
+    element = element.parentElement;
+  }
+  return null;
+};
+
+/** Elements that stay at the top of a scroller (`data-sticky-top`) cover its first rows. */
+const stickyInset = (scroller: HTMLElement): number =>
+  Array.from(
+    scroller.querySelectorAll<HTMLElement>("[data-sticky-top]")
+  ).reduce((sum, element) => sum + element.getBoundingClientRect().height, 0);
+
+interface ParentView {
+  scrollTop: number;
+  height: number;
+  /** Where the list starts inside the scroller's content, in px. */
+  offset: number;
+}
+
+/**
+ * Follows the ancestor that scrolls the list: its scroll position and height,
+ * and where the list sits inside it. The list is re-measured after every
+ * render, and when the scroller or what it holds changes size, because the
+ * content above the list may grow or shrink.
+ */
+const useParentView = (
+  boxRef: React.RefObject<HTMLElement>,
+  enabled: boolean
+) => {
+  const [scroller, setScroller] = useState<HTMLElement | null>(null);
+  const [view, setView] = useState<ParentView>({
+    scrollTop: 0,
+    height: 0,
+    offset: 0,
+  });
+  const viewRef = useRef(view);
+
+  useLayoutEffect(() => {
+    if (enabled) setScroller(findScrollParent(boxRef.current));
+  }, [enabled, boxRef]);
+
+  const measure = useCallback(() => {
+    const box = boxRef.current;
+    if (!scroller || !box) return;
+    const offset =
+      box.getBoundingClientRect().top -
+      scroller.getBoundingClientRect().top +
+      scroller.scrollTop -
+      scroller.clientTop;
+    const previous = viewRef.current;
+    if (
+      previous.scrollTop === scroller.scrollTop &&
+      previous.height === scroller.clientHeight &&
+      Math.abs(previous.offset - offset) < 0.5
+    ) {
+      return;
+    }
+    const next = {
+      scrollTop: scroller.scrollTop,
+      height: scroller.clientHeight,
+      offset,
+    };
+    viewRef.current = next;
+    setView(next);
+  }, [scroller, boxRef]);
+
+  useLayoutEffect(measure);
+
+  useEffect(() => {
+    if (!scroller) return;
+    scroller.addEventListener("scroll", measure, { passive: true });
+    const observer = new ResizeObserver(measure);
+    observer.observe(scroller);
+    Array.from(scroller.children).forEach((child) => observer.observe(child));
+    return () => {
+      scroller.removeEventListener("scroll", measure);
+      observer.disconnect();
+    };
+  }, [scroller, measure]);
+
+  return { scroller, view };
+};
 
 interface MeasuredRowProps {
   index: number;
@@ -80,6 +156,11 @@ interface VirtualRowsProps {
   renderRow: (index: number) => React.ReactNode;
   /** The most the list grows to, in px; it is shorter when its rows are. */
   maxHeight?: number;
+  /**
+   * Take the whole height of the rows and let the nearest scrolling ancestor
+   * scroll them, drawing only the rows in its view. `maxHeight` is ignored.
+   */
+  scrollParent?: boolean;
   /** The height assumed for a row until it is shown and measured. */
   estimatedRowHeight?: number;
   overscan?: number;
@@ -100,6 +181,7 @@ const VirtualRows: React.FC<VirtualRowsProps> = ({
   rowKey,
   renderRow,
   maxHeight = 320,
+  scrollParent = false,
   estimatedRowHeight = 28,
   overscan = 8,
   role = "list",
@@ -120,13 +202,15 @@ const VirtualRows: React.FC<VirtualRowsProps> = ({
 
   const sumHeights = useCallback(() => {
     // A long list is taller than any viewport whatever its rows measure.
-    if (countRef.current * MIN_ROW_HEIGHT >= maxHeight) return null;
+    if (scrollParent || countRef.current * MIN_ROW_HEIGHT >= maxHeight) {
+      return null;
+    }
     let sum = 0;
     for (let i = 0; i < countRef.current; i += 1) {
       sum += heights.current.get(keyRef.current(i)) ?? estimatedRowHeight;
     }
     return sum;
-  }, [maxHeight, estimatedRowHeight]);
+  }, [maxHeight, scrollParent, estimatedRowHeight]);
 
   // The list needs measuring, so the static export draws an empty box.
   const [ready, setReady] = useState(false);
@@ -165,6 +249,27 @@ const VirtualRows: React.FC<VirtualRowsProps> = ({
   }, [layoutKey, rowCount, sumHeights]);
 
   const viewport = Math.min(maxHeight, total ?? maxHeight);
+  const { scroller, view } = useParentView(boxRef, scrollParent);
+
+  /** Bring a row into the scroller's view, clear of what sticks to its top. */
+  const scrollToRow = (index: number) => {
+    if (!scroller) {
+      listRef.current?.scrollToRow(index);
+      return;
+    }
+    let top = view.offset;
+    for (let i = 0; i < index; i += 1) {
+      top += heights.current.get(rowKey(i)) ?? estimatedRowHeight;
+    }
+    const bottom =
+      top + (heights.current.get(rowKey(index)) ?? estimatedRowHeight);
+    const inset = stickyInset(scroller);
+    if (top < scroller.scrollTop + inset) {
+      scroller.scrollTop = top - inset;
+    } else if (bottom > scroller.scrollTop + scroller.clientHeight) {
+      scroller.scrollTop = bottom - scroller.clientHeight;
+    }
+  };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
@@ -179,7 +284,7 @@ const VirtualRows: React.FC<VirtualRowsProps> = ({
     if (next < 0 || next >= rowCount) return;
     event.preventDefault();
     // The neighbor may not be drawn yet: scroll to it, then focus once it is.
-    listRef.current?.scrollToRow(next);
+    scrollToRow(next);
     let tries = 0;
     const focusRow = () => {
       const element = boxRef.current?.querySelector<HTMLElement>(
@@ -188,7 +293,7 @@ const VirtualRows: React.FC<VirtualRowsProps> = ({
       const focusable = element?.querySelector<HTMLElement>(
         'button:not([disabled]), input:not([disabled]), [tabindex="0"]'
       );
-      if (focusable) focusable.focus();
+      if (focusable) focusable.focus({ preventScroll: scrollParent });
       else if (tries < 5) {
         tries += 1;
         requestAnimationFrame(focusRow);
@@ -197,9 +302,10 @@ const VirtualRows: React.FC<VirtualRowsProps> = ({
     requestAnimationFrame(focusRow);
   };
 
-  const rowRenderer = ({ index, key, style }: ListRowProps) => (
+  const rowRenderer = ({ index, style }: ListRowProps) => (
     <MeasuredRow
-      key={key}
+      // Keep focus and hover-related state from passing to another row's controls.
+      key={rowKey(index)}
       index={index}
       rowKey={rowKey(index)}
       style={style}
@@ -213,16 +319,26 @@ const VirtualRows: React.FC<VirtualRowsProps> = ({
     // The keys move focus between rows; the list itself is not a control.
     <div
       ref={boxRef}
-      style={{ height: viewport, width: "100%" }}
+      style={{ height: scrollParent ? undefined : viewport, width: "100%" }}
       onKeyDown={handleKeyDown}
     >
       <AutoSizer disableHeight>
         {({ width }) =>
-          !ready ? null : (
+          !ready || (scrollParent && !scroller) ? null : (
             <List
               ref={listRef}
               width={width}
-              height={viewport}
+              autoHeight={scrollParent}
+              height={
+                scrollParent
+                  ? Math.max(view.height, estimatedRowHeight)
+                  : viewport
+              }
+              scrollTop={
+                scrollParent
+                  ? Math.max(0, view.scrollTop - view.offset)
+                  : undefined
+              }
               rowCount={rowCount}
               rowHeight={({ index }) =>
                 heights.current.get(rowKey(index)) ?? estimatedRowHeight

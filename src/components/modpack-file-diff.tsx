@@ -1,6 +1,7 @@
 import { Box, Button, Text } from "@chakra-ui/react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { LuFileDiff } from "react-icons/lu";
 import { BeatLoader } from "react-spinners";
 import { DiffHunks } from "@/components/common/diff-view";
 import { ModpackFileDiff } from "@/models/modpack-update";
@@ -15,36 +16,50 @@ export const fileDiffNotice = (
   return diff.hunks.length === 0 ? "formatOnly" : null;
 };
 
-interface ModpackFileDiffRowProps {
+interface ModpackFileDiffButtonProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}
+
+/** The in-row button that opens the line diff below the file name. */
+export const ModpackFileDiffButton: React.FC<ModpackFileDiffButtonProps> = ({
+  open,
+  onOpenChange,
+}) => {
+  const { t } = useTranslation();
+  return (
+    <Button
+      size="xs"
+      variant="ghost"
+      leftIcon={<LuFileDiff />}
+      flexShrink={0}
+      aria-expanded={open}
+      onClick={() => onOpenChange(!open)}
+    >
+      {t(`UpdateModpackModal.plan.fileDiff.${open ? "hide" : "show"}`)}
+    </Button>
+  );
+};
+
+interface ModpackFileDiffPanelProps {
   instanceId: string;
   planHash: string;
   path: string;
-  /** Set to let the parent hold the state, as a row in a virtualized list must. */
-  open?: boolean;
-  onOpenChange?: (open: boolean) => void;
 }
 
 /** Diffs already read, so a row that scrolls back into view does not ask again. */
 const diffCache = new Map<string, ModpackFileDiff | null>();
 
 /**
- * A button that shows the line diff of one file of the update plan. The diff
- * is only asked for when it is opened, and again only for another plan.
+ * The line diff of one file of the update plan. It mounts only while open, is
+ * asked for once, and is read from the cache when its row is drawn again.
  */
-export const ModpackFileDiffRow: React.FC<ModpackFileDiffRowProps> = ({
+export const ModpackFileDiffPanel: React.FC<ModpackFileDiffPanelProps> = ({
   instanceId,
   planHash,
   path,
-  open: controlledOpen,
-  onOpenChange,
 }) => {
   const { t } = useTranslation();
-  const [ownOpen, setOwnOpen] = useState(false);
-  const open = controlledOpen ?? ownOpen;
-  const setOpen = (next: boolean) => {
-    setOwnOpen(next);
-    onOpenChange?.(next);
-  };
   const cacheKey = `${instanceId}\0${planHash}\0${path}`;
   // undefined while loading, null when the request failed.
   const [diff, setDiff] = useState<ModpackFileDiff | null | undefined>(() =>
@@ -52,7 +67,6 @@ export const ModpackFileDiffRow: React.FC<ModpackFileDiffRowProps> = ({
   );
 
   useEffect(() => {
-    if (!open) return;
     if (diffCache.has(cacheKey)) {
       setDiff(diffCache.get(cacheKey));
       return;
@@ -73,35 +87,31 @@ export const ModpackFileDiffRow: React.FC<ModpackFileDiffRowProps> = ({
     return () => {
       isActive = false;
     };
-  }, [open, instanceId, planHash, path, cacheKey]);
+  }, [instanceId, planHash, path, cacheKey]);
 
   const notice =
     diff === undefined ? null : diff ? fileDiffNotice(diff) : "unavailable";
   return (
     <Box px={3} pb={1.5}>
-      <Button variant="link" size="xs" onClick={() => setOpen(!open)}>
-        {t(`UpdateModpackModal.plan.fileDiff.${open ? "hide" : "show"}`)}
-      </Button>
-      {open &&
-        (diff === undefined ? (
-          <Box mt={1}>
-            <BeatLoader size={6} color="gray" />
-          </Box>
-        ) : notice ? (
-          <Text fontSize="xs" className="secondary-text" mt={1}>
-            {t(`UpdateModpackModal.plan.fileDiff.${notice}`)}
-          </Text>
-        ) : (
-          <Box
-            mt={1}
-            maxH="64"
-            overflow="auto"
-            borderWidth="1px"
-            borderRadius="md"
-          >
-            <DiffHunks hunks={diff?.hunks ?? []} />
-          </Box>
-        ))}
+      {diff === undefined ? (
+        <Box mt={1}>
+          <BeatLoader size={6} color="gray" />
+        </Box>
+      ) : notice ? (
+        <Text fontSize="xs" className="secondary-text" mt={1}>
+          {t(`UpdateModpackModal.plan.fileDiff.${notice}`)}
+        </Text>
+      ) : (
+        <Box
+          mt={1}
+          maxH="64"
+          overflow="auto"
+          borderWidth="1px"
+          borderRadius="md"
+        >
+          <DiffHunks hunks={diff?.hunks ?? []} />
+        </Box>
+      )}
     </Box>
   );
 };

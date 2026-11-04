@@ -867,7 +867,9 @@
       "disable": "禁用"
     },
     "expandAll": "全部展開",
-    "collapseAll": "全部摺疊"
+    "collapseAll": "全部摺疊",
+    "expandSubtree": "遞迴展開",
+    "collapseSubtree": "遞迴摺疊"
   },
   "FileError": {
     "FILE_BLOCKED_BY_ANTIVIRUS": "檔案 {{file}} 被防毒軟體攔截。請在 Windows 安全性中允許該檔案，或把遊戲目錄加入排除項後重試。",
@@ -3493,7 +3495,7 @@
         "removedTag": "移除"
       },
       "restoreComponents": "新版本調整了遊戲元件，更新時會一併重建遊戲的版本設定與相依函式庫",
-      "conflicts": "{{count}} 個檔案與你的修改衝突，預設套用新版，可以逐個處理",
+      "conflicts": "{{count}} 個本機修改與新版衝突",
       "autoMerged": "自動合併 {{count}}",
       "fileDiff": {
         "show": "查看差異",

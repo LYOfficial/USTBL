@@ -3,6 +3,8 @@ import {
   AlertIcon,
   Button,
   HStack,
+  Icon,
+  IconButton,
   Modal,
   ModalBody,
   ModalCloseButton,
@@ -13,6 +15,7 @@ import {
   ModalProps,
   Progress,
   Text,
+  Tooltip,
   VStack,
 } from "@chakra-ui/react";
 import {
@@ -24,6 +27,7 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { LuFoldVertical, LuUnfoldVertical } from "react-icons/lu";
 import { DiffExpandSignal } from "@/components/common/diff-view";
 import { FilePanelToolbar } from "@/components/common/file-panel";
 import {
@@ -495,6 +499,11 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
     []
   );
 
+  // The toolbar covers both groups and conflicts; the conflict row has its own controls.
+  const [groupExpandSignal, setGroupExpandSignal] = useState<DiffExpandSignal>({
+    open: false,
+    token: 0,
+  });
   // Conflict cards start open; the two buttons open or close every card at once.
   const [expandSignal, setExpandSignal] = useState<DiffExpandSignal>({
     open: true,
@@ -504,6 +513,13 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
     (open: boolean) =>
       setExpandSignal((prev) => ({ open, token: prev.token + 1 })),
     []
+  );
+  const expandEverything = useCallback(
+    (open: boolean) => {
+      setGroupExpandSignal((prev) => ({ open, token: prev.token + 1 }));
+      expandAll(open);
+    },
+    [expandAll]
   );
 
   const handleResume = useCallback(async () => {
@@ -662,12 +678,8 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
           <FilePanelToolbar
             query={fileQuery}
             onQueryChange={setFileQuery}
-            onExpandAll={
-              plan.conflicts.length > 0 ? () => expandAll(true) : undefined
-            }
-            onCollapseAll={
-              plan.conflicts.length > 0 ? () => expandAll(false) : undefined
-            }
+            onExpandAll={() => expandEverything(true)}
+            onCollapseAll={() => expandEverything(false)}
           />
         )}
         {shownPlan &&
@@ -680,7 +692,11 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
               {t("FileFilter.empty")}
             </Text>
           )}
-        <PlanChangeGroups instanceId={instanceId} plan={shownPlan ?? plan} />
+        <PlanChangeGroups
+          instanceId={instanceId}
+          plan={shownPlan ?? plan}
+          expandSignal={groupExpandSignal}
+        />
         {plan.conflicts.length > 0 && (
           <VStack align="stretch" spacing={3}>
             <HStack justify="space-between" spacing={2}>
@@ -700,6 +716,26 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
                 )}
               </HStack>
               <HStack spacing={1} flexShrink={0}>
+                <HStack spacing={1} mr={1}>
+                  <Tooltip label={t("FilePanel.expandAll")}>
+                    <IconButton
+                      size="xs"
+                      variant="ghost"
+                      aria-label={t("FilePanel.expandAll")}
+                      icon={<Icon as={LuUnfoldVertical} />}
+                      onClick={() => expandAll(true)}
+                    />
+                  </Tooltip>
+                  <Tooltip label={t("FilePanel.collapseAll")}>
+                    <IconButton
+                      size="xs"
+                      variant="ghost"
+                      aria-label={t("FilePanel.collapseAll")}
+                      icon={<Icon as={LuFoldVertical} />}
+                      onClick={() => expandAll(false)}
+                    />
+                  </Tooltip>
+                </HStack>
                 <Button
                   size="xs"
                   variant="ghost"
