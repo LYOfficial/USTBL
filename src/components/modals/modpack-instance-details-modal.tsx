@@ -70,18 +70,22 @@ const ModpackInstanceDetailsModal: React.FC<
       ? projects.find((p) => campusProjectRefs(p).includes(origin.projectId))
       : undefined;
 
+  const isLocal = origin?.platform === "local";
+
   const lineLabel = origin
-    ? [
-        origin.platform === "campus"
-          ? t("InstanceSyncPage.ledger.platform.campus")
-          : origin.platform === "modrinth"
-            ? "Modrinth"
-            : "CurseForge",
-        origin.gameVersion,
-        loaderSlug(origin.loaderType) === "vanilla"
-          ? t("InstanceSyncPage.platform.vanilla")
-          : origin.loaderType,
-      ].join(" · ")
+    ? isLocal
+      ? (instance?.version ?? "")
+      : [
+          origin.platform === "campus"
+            ? t("InstanceSyncPage.ledger.platform.campus")
+            : origin.platform === "modrinth"
+              ? "Modrinth"
+              : "CurseForge",
+          origin.gameVersion,
+          loaderSlug(origin.loaderType) === "vanilla"
+            ? t("InstanceSyncPage.platform.vanilla")
+            : origin.loaderType,
+        ].join(" · ")
     : "";
 
   const projectLabel = useMemo(() => {
@@ -226,30 +230,40 @@ const ModpackInstanceDetailsModal: React.FC<
                   {latestLabel}
                 </Text>
               )}
-              <Text fontSize="xs-sm">
-                {t("ModpackInstanceDetailsModal.follow.status")}:{" "}
-                {origin.follow
-                  ? t("ModpackInstanceDetailsModal.follow.following")
-                  : t("ModpackInstanceDetailsModal.follow.paused")}
-              </Text>
+              {!isLocal && (
+                <Text fontSize="xs-sm">
+                  {t("ModpackInstanceDetailsModal.follow.status")}:{" "}
+                  {origin.follow
+                    ? t("ModpackInstanceDetailsModal.follow.following")
+                    : t("ModpackInstanceDetailsModal.follow.paused")}
+                </Text>
+              )}
             </VStack>
           </VStack>
         </ModalBody>
         <ModalFooter gap={2}>
-          <Button variant="ghost" colorScheme="red" onClick={confirmUnlink}>
-            {t("ModpackInstanceDetailsModal.action.unlink")}
-          </Button>
-          <Button variant="outline" onClick={openMods}>
-            {t("ModpackInstanceDetailsModal.action.viewMods")}
-          </Button>
-          <Button
-            colorScheme={primaryColor}
-            onClick={() => handleSetFollow(!origin.follow)}
-          >
-            {origin.follow
-              ? t("ModpackInstanceDetailsModal.action.pause")
-              : t("ModpackInstanceDetailsModal.action.resume")}
-          </Button>
+          {isLocal ? (
+            <Button variant="outline" onClick={openMods}>
+              {t("ModpackInstanceDetailsModal.action.viewMods")}
+            </Button>
+          ) : (
+            <>
+              <Button variant="ghost" colorScheme="red" onClick={confirmUnlink}>
+                {t("ModpackInstanceDetailsModal.action.unlink")}
+              </Button>
+              <Button variant="outline" onClick={openMods}>
+                {t("ModpackInstanceDetailsModal.action.viewMods")}
+              </Button>
+              <Button
+                colorScheme={primaryColor}
+                onClick={() => handleSetFollow(!origin.follow)}
+              >
+                {origin.follow
+                  ? t("ModpackInstanceDetailsModal.action.pause")
+                  : t("ModpackInstanceDetailsModal.action.resume")}
+              </Button>
+            </>
+          )}
         </ModalFooter>
       </ModalContent>
     </Modal>

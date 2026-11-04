@@ -2811,6 +2811,18 @@
           }
         }
       },
+      "stageLocalModpackUpdate": {
+        "error": {
+          "description": {
+            "MODPACK_UPDATE_LOCAL_FORMAT_MISMATCH": "このモッドパックは現在のインスタンスと形式が異なるため、更新に使用できません",
+            "MODPACK_UPDATE_LOCAL_GAME_VERSION_MISMATCH": "このモッドパックは現在のインスタンスと Minecraft のバージョンが異なります。新しいインスタンスとしてインポートしてください",
+            "MODPACK_UPDATE_BUSY": "このModパックは更新中です",
+            "MODPACK_UPDATE_RUNNING": "ゲームが実行中です。Modパックを更新する前に閉じてください",
+            "MODPACK_UPDATE_UNSUPPORTED": "このインスタンスは自動更新できません",
+            "MODPACK_UPDATE_LINE_MISMATCH": "新しいバージョンのゲームバージョンまたはModローダーがこのインスタンスと異なります"
+          }
+        }
+      },
       "recoverModpackUpdate": {
         "error": {
           "title": "中断された更新の復旧に失敗しました"
@@ -3565,6 +3577,13 @@
     "ledger": {
       "title": "モッドパックのインスタンス",
       "checkAll": "すべて確認",
+      "group": {
+        "platform": "プラットフォーム",
+        "local": "ローカル"
+      },
+      "toast": {
+        "sameFile": "選択したファイルは現在のバージョンと同じため、更新は不要です"
+      },
       "badge": {
         "upToDate": "最新",
         "available": "更新あり",

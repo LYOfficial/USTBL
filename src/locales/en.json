@@ -2811,6 +2811,18 @@
           }
         }
       },
+      "stageLocalModpackUpdate": {
+        "error": {
+          "description": {
+            "MODPACK_UPDATE_LOCAL_FORMAT_MISMATCH": "This modpack's format differs from the current instance, so it cannot be used to update it",
+            "MODPACK_UPDATE_LOCAL_GAME_VERSION_MISMATCH": "This modpack is for a different Minecraft version than the current instance. Import it as a new instance instead",
+            "MODPACK_UPDATE_BUSY": "This modpack is already being updated",
+            "MODPACK_UPDATE_RUNNING": "The game is running; close it before updating the modpack",
+            "MODPACK_UPDATE_UNSUPPORTED": "This instance cannot be updated automatically",
+            "MODPACK_UPDATE_LINE_MISMATCH": "The new version is for a different game version or mod loader than this instance"
+          }
+        }
+      },
       "recoverModpackUpdate": {
         "error": {
           "title": "Failed to recover the interrupted modpack update"
@@ -3565,6 +3577,13 @@
     "ledger": {
       "title": "My modpack instances",
       "checkAll": "Check all",
+      "group": {
+        "platform": "Platform",
+        "local": "Local"
+      },
+      "toast": {
+        "sameFile": "The selected file is the same as the current version, so no update is needed"
+      },
       "badge": {
         "upToDate": "Up to date",
         "available": "Update available",

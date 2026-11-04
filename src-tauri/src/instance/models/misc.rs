@@ -92,6 +92,17 @@ pub enum OriginPlatform {
   Local,
 }
 
+/// The format of the archive a local import was installed from. A pack in
+/// another format cannot update the instance, so this is kept next to the
+/// version.
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PackFormat {
+  MultiMc,
+  Modrinth,
+  CurseForge,
+}
+
 fn default_follow() -> bool {
   true
 }
@@ -114,6 +125,10 @@ pub struct InstanceOrigin {
   /// The user may pause following without losing the identity.
   #[serde(default = "default_follow")]
   pub follow: bool,
+  /// Local imports only: the format of the installed archive. Missing on
+  /// instances imported before it was recorded.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub pack_format: Option<PackFormat>,
 }
 
 /// Origin claimed by a download entry, verified against the modpack file before
@@ -373,6 +388,10 @@ pub enum InstanceError {
   ModpackUpdatePrepareCancelled,
   ModpackUpdateRemoteInvalid,
   ModpackUpdateLineMismatch,
+  /// The picked archive is in another format than the local import it should update.
+  ModpackUpdateLocalFormatMismatch,
+  /// The picked archive is for another Minecraft version than the local import.
+  ModpackUpdateLocalGameVersionMismatch,
   ModpackUpdateUnsupported,
   ModpackUpdateRunning,
   ModpackUpdateReinstallRequired,

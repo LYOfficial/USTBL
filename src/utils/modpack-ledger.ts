@@ -86,3 +86,9 @@ export const ledgerScanned = (check: ModpackUpdateCheck | undefined) =>
 export const ledgerInstances = (
   instances: InstanceSummary[]
 ): InstanceSummary[] => instances.filter(hasFollowableOrigin);
+
+/** Local imports: listed apart from the ledger, they have no line to follow. */
+export const ledgerLocalInstances = (
+  instances: InstanceSummary[]
+): InstanceSummary[] =>
+  instances.filter((instance) => instance.origin?.platform === "local");

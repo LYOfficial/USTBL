@@ -463,6 +463,7 @@ mod tests {
       game_version: "1.21.1".into(),
       loader_type: ModLoaderType::Fabric,
       follow: true,
+      pack_format: None,
     }
   }
 
@@ -952,6 +953,7 @@ mod tests {
       "modrinth.index.json",
       "overrides/config/a.toml",
       "overrides/ustblcfg.json",
+      "overrides/install_profile.json",
       "client-overrides/config/a.toml",
       "client-overrides/mods/c.jar",
       "server-overrides/config/s.toml",
@@ -971,6 +973,7 @@ mod tests {
     let layers = vec!["overrides".to_string(), "client-overrides".to_string()];
     let mine = override_entries(&listing, &layers, "pack").unwrap();
     let theirs = list_override_entries(&File::open(&path).unwrap(), &layers, "pack").unwrap();
+    assert!(!mine.contains_key("install_profile.json"));
     assert_eq!(
       mine
         .iter()

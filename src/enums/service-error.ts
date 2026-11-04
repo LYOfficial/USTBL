@@ -54,6 +54,8 @@ export enum InstanceError {
   ModpackUpdateLineMismatch = "MODPACK_UPDATE_LINE_MISMATCH",
   ModpackUpdateUnsupported = "MODPACK_UPDATE_UNSUPPORTED",
   ModpackUpdateRunning = "MODPACK_UPDATE_RUNNING",
+  ModpackUpdateLocalFormatMismatch = "MODPACK_UPDATE_LOCAL_FORMAT_MISMATCH",
+  ModpackUpdateLocalGameVersionMismatch = "MODPACK_UPDATE_LOCAL_GAME_VERSION_MISMATCH",
   ModpackUpdateReinstallRequired = "MODPACK_UPDATE_REINSTALL_REQUIRED",
   ModpackPublishStale = "MODPACK_PUBLISH_STALE",
   ModpackUpdateLineGone = "MODPACK_UPDATE_LINE_GONE",

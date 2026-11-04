@@ -41,6 +41,8 @@ export interface InstanceOrigin {
   gameVersion: string;
   loaderType: ModLoaderType;
   follow: boolean;
+  /** Format of a local import's archive; absent on older imports. */
+  packFormat?: "multimc" | "modrinth" | "curseforge";
 }
 
 export interface ModpackOriginInput {

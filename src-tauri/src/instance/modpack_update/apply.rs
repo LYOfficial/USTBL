@@ -370,7 +370,74 @@ fn roll_back(root: &Path, journal: &Journal) -> io::Result<()> {
   roll_back_from(root, &backup_dir(root), journal)
 }
 
+/// Whether `path` is a relative path with `/` separators that stays inside the
+/// instance. Stricter than a host needs: a drive letter, a backslash or a `..`
+/// could name a file outside the instance once joined to the root.
+fn is_inside_instance(path: &str) -> bool {
+  !path.is_empty()
+    && !path.starts_with('/')
+    && !path.contains(['\\', ':', '\0'])
+    && path
+      .split('/')
+      .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
+    && Path::new(path)
+      .components()
+      .all(|component| matches!(component, std::path::Component::Normal(_)))
+}
+
+/// [`is_inside_instance`] and not inside the update directory. Windows ignores
+/// trailing dots and spaces, so `.ustbl-update.` counts as that directory.
+fn journal_path_is_safe(path: &str) -> bool {
+  is_inside_instance(path)
+    && !path.split('/').next().is_some_and(|first| {
+      first
+        .trim_end_matches(['.', ' '])
+        .eq_ignore_ascii_case(UPDATE_DIR)
+    })
+}
+
+/// A meta name is a bare file name in the instance root, or one of the files
+/// the engine keeps in the update directory.
+fn journal_meta_name_is_safe(name: &str) -> bool {
+  let in_update_dir = [
+    super::ignores::meta_name(),
+    super::release::meta_name(),
+    super::optional::meta_name(),
+  ]
+  .iter()
+  .any(|known| known == name);
+  in_update_dir || (!name.contains('/') && journal_path_is_safe(name))
+}
+
+/// A journal is read back from the instance folder, which a modpack could have
+/// written to, so nothing in it is trusted before a rollback deletes or writes.
+/// Every path must stay inside the instance and out of the update directory.
+/// Nothing is touched when any entry is refused.
+fn validate_journal(journal: &Journal) -> io::Result<()> {
+  let refuse = |kind: &str, value: &str| {
+    log::warn!("Refused to roll back a modpack update: unsafe {kind} in the journal: {value:?}");
+    Err(io::Error::new(
+      io::ErrorKind::InvalidData,
+      format!("unsafe {kind} in the update journal"),
+    ))
+  };
+  for op in &journal.ops {
+    if !journal_path_is_safe(&op.path) {
+      return refuse("path", &op.path);
+    }
+    if let Some(dir) = op.pruned_dirs.iter().find(|dir| !journal_path_is_safe(dir)) {
+      return refuse("pruned directory", dir);
+    }
+  }
+  for name in journal.meta_present.iter().chain(&journal.meta_absent) {
+    if !journal_meta_name_is_safe(name) {
+      return refuse("meta file name", name);
+    }
+  }
+  Ok(())
+}
 fn roll_back_from(root: &Path, backup: &Path, journal: &Journal) -> io::Result<()> {
+  validate_journal(journal)?;
   for op in journal.ops.iter().rev() {
     let target = root.join(&op.path);
     let saved = backup.join("files").join(&op.path);
@@ -610,11 +677,20 @@ async fn extract_archive_unit(
       _ => None,
     })
     .collect();
-  let stop = Arc::new(AtomicBool::new(false));
   let archive = archive.to_path_buf();
+  run_blocking_cancellable(env, move |stop| extract_entries(&archive, entries, stop)).await
+}
+
+/// Run `work` on the blocking pool with a stop flag that a cancel sets. The
+/// work is always awaited, see [`extract_archive_unit`].
+async fn run_blocking_cancellable<T: Send + 'static>(
+  env: &dyn UpdateEnv,
+  work: impl FnOnce(&AtomicBool) -> USTBLResult<T> + Send + 'static,
+) -> USTBLResult<T> {
+  let stop = Arc::new(AtomicBool::new(false));
   let worker = tokio::task::spawn_blocking({
     let stop = stop.clone();
-    move || extract_entries(&archive, entries, &stop)
+    move || work(&stop)
   });
   tokio::pin!(worker);
   let joined = tokio::select! {
@@ -625,6 +701,99 @@ async fn extract_archive_unit(
     }
   };
   joined.map_err(|e| crate::error::USTBLError(e.to_string()))?
+}
+
+/// Read `entries` of one archive into memory through a single open
+/// `ZipArchive`, in order. Each entry is read at most its declared size plus
+/// one byte, and rejected unless sha1 and size match.
+fn read_entries(
+  archive: &Path,
+  entries: Vec<(String, FileKey)>,
+  stop: &AtomicBool,
+) -> USTBLResult<Vec<Vec<u8>>> {
+  use io::Read;
+  let mut zip = zip::ZipArchive::new(fs::File::open(archive).at(archive).map_err(io_error)?)?;
+  let mut contents = Vec::with_capacity(entries.len());
+  for (entry, key) in entries {
+    if stop.load(Ordering::SeqCst) {
+      return Err(cancelled_error());
+    }
+    let source = zip.by_name(&entry)?;
+    let mut bytes = Vec::new();
+    source
+      .take(key.size.saturating_add(1))
+      .read_to_end(&mut bytes)
+      .at(archive)
+      .map_err(io_error)?;
+    if bytes.len() as u64 != key.size || hex::encode(Sha1::digest(&bytes)) != key.sha1 {
+      return Err(InstanceError::ModpackUpdateVerifyFailed.into());
+    }
+    contents.push(bytes);
+  }
+  Ok(contents)
+}
+
+/// The bytes of `files`, in order, verified against their keys. Entries of one
+/// archive are read through a single open archive and never touch the disk;
+/// other sources are staged under `scratch` and read back, which the caller
+/// cleans up.
+pub async fn read_remote_files(
+  env: &dyn UpdateEnv,
+  scratch: &Path,
+  files: &[&RemoteFile],
+) -> USTBLResult<Vec<Vec<u8>>> {
+  let mut contents: Vec<Option<Vec<u8>>> = vec![None; files.len()];
+  let mut per_archive: Vec<(PathBuf, Vec<usize>)> = Vec::new();
+  for (index, file) in files.iter().enumerate() {
+    match &file.source {
+      FileSource::ArchiveEntry { archive, .. } => {
+        match per_archive.iter_mut().find(|(known, _)| known == archive) {
+          Some((_, indexes)) => indexes.push(index),
+          None => per_archive.push((archive.clone(), vec![index])),
+        }
+      }
+      _ => {
+        let dest = scratch.join(&file.path);
+        stage_file(env, dest.clone(), file).await?;
+        contents[index] = Some(fs::read(&dest).at(&dest).map_err(io_error)?);
+      }
+    }
+  }
+  for (archive, indexes) in per_archive {
+    let mut batch: Vec<usize> = Vec::new();
+    let mut bytes = 0u64;
+    let mut batches = Vec::new();
+    for index in indexes {
+      let size = files[index].key.size;
+      if !batch.is_empty()
+        && (batch.len() >= ARCHIVE_UNIT_FILES || bytes + size > ARCHIVE_UNIT_BYTES)
+      {
+        batches.push(std::mem::take(&mut batch));
+        bytes = 0;
+      }
+      bytes += size;
+      batch.push(index);
+    }
+    if !batch.is_empty() {
+      batches.push(batch);
+    }
+    for batch in batches {
+      let entries: Vec<(String, FileKey)> = batch
+        .iter()
+        .filter_map(|&index| match &files[index].source {
+          FileSource::ArchiveEntry { entry, .. } => Some((entry.clone(), files[index].key.clone())),
+          _ => None,
+        })
+        .collect();
+      let path = archive.clone();
+      let read =
+        run_blocking_cancellable(env, move |stop| read_entries(&path, entries, stop)).await?;
+      for (index, bytes) in batch.into_iter().zip(read) {
+        contents[index] = Some(bytes);
+      }
+    }
+  }
+  Ok(contents.into_iter().flatten().collect())
 }
 
 /// Tell every pack session which of its files are about to be fetched, so it
@@ -1487,6 +1656,7 @@ mod tests {
       game_version: "1.21.1".into(),
       loader_type: ModLoaderType::Fabric,
       follow: true,
+      pack_format: None,
     }
   }
 
@@ -2610,6 +2780,57 @@ mod tests {
   }
 
   #[tokio::test]
+  async fn archive_entries_are_read_in_order_across_archives_and_verified() {
+    let root = setup();
+    let (first, second) = (root.0.join("a.zip"), root.0.join("b.zip"));
+    let mut files = archive_files(&first, ARCHIVE_UNIT_FILES + 3);
+    let others = archive_files(&second, 2);
+    files.insert(1, others[1].clone());
+    let env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let scratch = root.0.join("scratch");
+    let refs: Vec<&RemoteFile> = files.iter().collect();
+
+    let contents = read_remote_files(&env, &scratch, &refs).await.unwrap();
+
+    let expected: Vec<Vec<u8>> = files
+      .iter()
+      .map(|file| {
+        let index = file
+          .path
+          .trim_start_matches("config/")
+          .trim_end_matches(".toml");
+        format!("v{index}").into_bytes()
+      })
+      .collect();
+    assert_eq!(contents, expected);
+    assert!(!scratch.exists());
+
+    for bad in [
+      sha1_of(b"something else"),
+      FileKey {
+        size: 99,
+        ..files[3].key.clone()
+      },
+      FileKey {
+        size: 1,
+        ..files[3].key.clone()
+      },
+    ] {
+      let mut tampered = files.clone();
+      tampered[3].key = bad;
+      let refs: Vec<&RemoteFile> = tampered.iter().collect();
+      let error = read_remote_files(&env, &scratch, &refs).await.unwrap_err();
+      assert_eq!(
+        error.0,
+        InstanceError::ModpackUpdateVerifyFailed.to_string()
+      );
+    }
+  }
+
+  #[tokio::test]
   async fn retry_rechecks_sha1_and_size_and_fetches_only_missing_or_bad_files() {
     let root = setup();
     let mut env = FakeEnv {
@@ -2873,6 +3094,97 @@ mod tests {
     assert!(!journal_path(&root.0).exists());
   }
 
+  #[test]
+  fn recovery_refuses_a_journal_that_names_paths_outside_the_instance() {
+    let victim_dir = Root::new();
+    victim_dir.write("victim.txt", "keep");
+    let victim = victim_dir.0.join("victim.txt");
+    let absolute = victim.to_string_lossy().replace('\\', "/");
+    let op = |path: &str, pruned: &[&str]| JournalOp {
+      path: path.into(),
+      had_original: false,
+      moves_disabled: false,
+      writes_enabled: Some(true),
+      writes_disabled: false,
+      pruned_dirs: pruned.iter().map(|dir| dir.to_string()).collect(),
+    };
+    let escaping = format!(
+      "../{}/victim.txt",
+      victim_dir.0.file_name().unwrap().to_string_lossy()
+    );
+    let cases: Vec<(&str, Vec<JournalOp>, Vec<String>, Vec<String>)> = vec![
+      ("absolute op", vec![op(&absolute, &[])], vec![], vec![]),
+      (
+        "windows drive",
+        vec![op("C:/Windows/x", &[])],
+        vec![],
+        vec![],
+      ),
+      (
+        "backslash",
+        vec![op("mods\\..\\..\\x", &[])],
+        vec![],
+        vec![],
+      ),
+      ("parent dir", vec![op(&escaping, &[])], vec![], vec![]),
+      (
+        "update dir",
+        vec![op(".ustbl-update/journal.json", &[])],
+        vec![],
+        vec![],
+      ),
+      (
+        "update dir case",
+        vec![op(".USTBL-Update/backup/x", &[])],
+        vec![],
+        vec![],
+      ),
+      (
+        "update dir dots",
+        vec![op(".ustbl-update./x", &[])],
+        vec![],
+        vec![],
+      ),
+      (
+        "pruned dir",
+        vec![op("mods/a.jar", &["../outside"])],
+        vec![],
+        vec![],
+      ),
+      ("meta present", vec![], vec![escaping.clone()], vec![]),
+      ("meta absent", vec![], vec![], vec![absolute.clone()]),
+      ("meta nested", vec![], vec![], vec!["config/x.json".into()]),
+    ];
+    for (label, ops, meta_present, meta_absent) in cases {
+      let root = setup();
+      let journal = Journal {
+        schema: JOURNAL_SCHEMA,
+        state: JournalState::Committing,
+        from_version: "1".into(),
+        to_version: "2".into(),
+        ops,
+        meta_present,
+        meta_absent,
+      };
+      // The planted "backup" the old rollback would have moved out.
+      root.write(".ustbl-update/backup/files/mods/a.jar", "planted");
+      write_journal(&root.0, &journal).unwrap();
+
+      assert!(recover(&root.0).is_err(), "{label}");
+
+      assert_eq!(fs::read_to_string(&victim).unwrap(), "keep", "{label}");
+      assert!(
+        !victim_dir.0.parent().unwrap().join("outside").exists(),
+        "{label}"
+      );
+      assert_eq!(root.read("mods/old.jar").as_deref(), Some("old"), "{label}");
+      assert!(journal_path(&root.0).is_file(), "{label}");
+      assert!(
+        backup_dir(&root.0).join("files/mods/a.jar").is_file(),
+        "{label}"
+      );
+    }
+  }
   #[test]
   fn unlink_is_refused_while_an_update_is_mid_flight() {
     let root = setup();

@@ -6,6 +6,7 @@ pub mod diff;
 pub mod download_allowlist;
 pub mod ignores;
 pub mod local_scan;
+pub mod local_update;
 pub mod memory;
 pub mod merge;
 pub mod notice;

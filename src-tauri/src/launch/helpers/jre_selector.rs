@@ -138,6 +138,7 @@ mod tests {
         game_version: String::new(),
         loader_type: ModLoaderType::Forge,
         follow: true,
+        pack_format: None,
       }),
       ..Default::default()
     }

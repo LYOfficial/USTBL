@@ -494,27 +494,73 @@ fn canonical_path(
   }
 }
 
+/// Collects paths one spelling per case-folded name. The first spelling added
+/// wins, so callers add the remote's spellings before the baseline's.
+#[derive(Default)]
+struct FoldedPaths(BTreeMap<String, String>);
+
+impl FoldedPaths {
+  fn insert(&mut self, path: &str) {
+    self
+      .0
+      .entry(path.to_lowercase())
+      .or_insert_with(|| path.to_string());
+  }
+}
+
+/// The baseline re-keyed to the candidate spellings: an entry whose path only
+/// differs in case from its candidate (the remote renamed it) moves to the
+/// candidate's spelling, so the next baseline records the remote's spelling
+/// and the decision sees one entry for the one file. When the baseline holds
+/// several spellings of one name, the entry spelled like the candidate wins.
+fn align_baseline(
+  baseline: BTreeMap<String, BaselineFile>,
+  paths: &BTreeSet<String>,
+) -> BTreeMap<String, BaselineFile> {
+  let spellings: BTreeMap<String, &String> = paths
+    .iter()
+    .map(|path| (path.to_lowercase(), path))
+    .collect();
+  let mut aligned: BTreeMap<String, BaselineFile> = BTreeMap::new();
+  for (path, mut entry) in baseline {
+    let Some(spelling) = spellings.get(&path.to_lowercase()) else {
+      aligned.insert(path, entry);
+      continue;
+    };
+    if aligned.contains_key(spelling.as_str()) && path != **spelling {
+      continue;
+    }
+    entry.path = (*spelling).clone();
+    aligned.insert((*spelling).clone(), entry);
+  }
+  aligned
+}
+
 /// The candidate paths the decision runs over: the baseline, the shipped
 /// files, the `file` rules, and everything a delete `dir` rule covers.
-/// `rule_dirs` collects the delete `dir` rules for the prune map. Disk paths
-/// that fold to a baseline entry or a shipped file keep the baseline's or the
-/// manifest's spelling, so one file never appears twice.
+/// `rule_dirs` collects the delete `dir` rules for the prune map. Paths that
+/// fold to the same name are one candidate (§3): the remote's spelling wins
+/// over the baseline's, which wins over the disk's, so a file the new version
+/// only renames in case is one change, not a delete plus a write.
 fn candidate_paths(
   root: &Path,
   baseline: &BTreeMap<String, BaselineFile>,
   remote: &RemoteModpack,
 ) -> USTBLResult<(BTreeSet<String>, Vec<RemoteRule>)> {
-  let mut paths: BTreeSet<String> = baseline.keys().cloned().collect();
-  paths.extend(remote.files.iter().map(|file| file.path.clone()));
+  let mut folded = FoldedPaths::default();
+  for file in &remote.files {
+    folded.insert(&file.path);
+  }
   let mut delete_dirs = Vec::new();
   for rule in &remote.rules {
     match (rule.kind, rule.state) {
-      (RuleKind::File, _) => {
-        paths.insert(rule.path.clone());
-      }
+      (RuleKind::File, _) => folded.insert(&rule.path),
       (RuleKind::Dir, RuleState::Delete) => delete_dirs.push(rule.clone()),
       (RuleKind::Dir, RuleState::Ignore) => {}
     }
+  }
+  for path in baseline.keys() {
+    folded.insert(path);
   }
   // Enumerate under each delete dir rule, but only where no more specific
   // rule or shipped file shields the file.
@@ -529,9 +575,10 @@ fn candidate_paths(
   for (_, logical) in found {
     if matches!(remote.policy_of(&logical), Policy::Delete) {
       // Only this rule family may delete it; keep the canonical spelling.
-      paths.insert(canonical_path(&logical, &baseline_folded, remote));
+      folded.insert(&canonical_path(&logical, &baseline_folded, remote));
     }
   }
+  let paths = folded.0.into_values().collect();
   Ok((paths, delete_dirs))
 }
 
@@ -831,6 +878,7 @@ pub async fn compare(
 ) -> USTBLResult<Compared> {
   let baseline_map = baseline_map(baseline);
   let (paths, delete_dirs) = candidate_paths(root, &baseline_map, remote)?;
+  let baseline_map = align_baseline(baseline_map, &paths);
   let root = root.to_path_buf();
   let local_root = root.clone();
   let scan_paths = paths.clone();
@@ -1246,6 +1294,7 @@ mod tests {
       game_version: "1.21.1".into(),
       loader_type: ModLoaderType::Fabric,
       follow: true,
+      pack_format: None,
     };
     ModpackBaseline::build(
       &origin,
@@ -3002,6 +3051,128 @@ mod tests {
       .unwrap()
       .to
       .is_empty());
+    let _ = fs::remove_dir_all(root);
+  }
+
+  fn assert_one_spelling(prepared: &Prepared, operations: &[Operation], expected: &str) {
+    let folded = expected.to_lowercase();
+    let spellings: BTreeSet<&str> = prepared
+      .diff
+      .changes
+      .iter()
+      .map(|change| change.path.as_str())
+      .chain(prepared.diff.conflicts.iter().map(|c| c.path.as_str()))
+      .chain(operations.iter().map(|op| op.path.as_str()))
+      .filter(|path| path.to_lowercase() == folded)
+      .collect();
+    assert!(
+      spellings.iter().all(|path| *path == expected),
+      "{spellings:?}"
+    );
+    let baselines: Vec<_> = prepared
+      .next_baseline
+      .iter()
+      .filter(|file| file.path.to_lowercase() == folded)
+      .collect();
+    assert_eq!(baselines.len(), 1);
+    assert_eq!(baselines[0].path, expected);
+  }
+
+  #[tokio::test]
+  async fn a_case_only_rename_with_the_same_content_changes_nothing() {
+    let root = instance(&[("config/Quests/FlamingIdiots.json", "q1")]);
+    let baseline = baseline(&[("config/Quests/FlamingIdiots.json", "q1")]);
+    let remote = remote(&[("config/Quests/Flamingidiots.json", "q1")]);
+
+    let prepared = prepare_with_contents(&root, &baseline, &remote, &BTreeMap::new())
+      .await
+      .unwrap();
+
+    assert!(prepared.diff.is_empty());
+    let operations = resolve(&prepared, &BTreeMap::new());
+    assert!(operations.is_empty());
+    assert_one_spelling(&prepared, &operations, "config/Quests/Flamingidiots.json");
+    assert!(root.join("config/Quests/FlamingIdiots.json").is_file());
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn a_case_only_rename_with_new_content_is_one_update_at_the_remote_spelling() {
+    let root = instance(&[("config/Quests/FlamingIdiots.json", "q1")]);
+    let baseline = baseline(&[("config/Quests/FlamingIdiots.json", "q1")]);
+    let remote = remote(&[("config/Quests/Flamingidiots.json", "q2")]);
+
+    let prepared = prepare_with_contents(&root, &baseline, &remote, &BTreeMap::new())
+      .await
+      .unwrap();
+
+    assert!(prepared.diff.conflicts.is_empty());
+    assert_eq!(prepared.diff.changes.len(), 1);
+    assert_eq!(prepared.diff.changes[0].kind, ChangeKind::Update);
+    let operations = resolve(&prepared, &BTreeMap::new());
+    assert_eq!(operations.len(), 1);
+    assert_eq!(operations[0].path, "config/Quests/Flamingidiots.json");
+    assert_eq!(operations[0].write, Some(key("q2")));
+    assert_one_spelling(&prepared, &operations, "config/Quests/Flamingidiots.json");
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn a_locally_edited_case_renamed_file_is_one_conflict_at_the_remote_spelling() {
+    let root = instance(&[("config/Quests/FlamingIdiots.json", "q1-edited")]);
+    let baseline = baseline(&[("config/Quests/FlamingIdiots.json", "q1")]);
+    let remote = remote(&[("config/Quests/Flamingidiots.json", "q2")]);
+
+    let prepared = prepare_with_contents(&root, &baseline, &remote, &BTreeMap::new())
+      .await
+      .unwrap();
+
+    assert!(prepared.diff.changes.is_empty());
+    assert_eq!(prepared.diff.conflicts.len(), 1);
+    let conflict = &prepared.diff.conflicts[0];
+    assert_eq!(conflict.path, "config/Quests/Flamingidiots.json");
+    assert_eq!(conflict.kind, ConflictKind::ModifiedLocallyChangedRemotely);
+    assert_eq!(conflict.baseline, Some(key("q1")));
+    assert_eq!(conflict.local, Some(key("q1-edited")));
+
+    let take = BTreeMap::from([(conflict.path.clone(), ConflictChoice::TakeRemote)]);
+    let operations = resolve(&prepared, &take);
+    assert_eq!(operations.len(), 1);
+    assert_eq!(operations[0].path, "config/Quests/Flamingidiots.json");
+    assert_eq!(operations[0].write, Some(key("q2")));
+    assert_one_spelling(&prepared, &operations, "config/Quests/Flamingidiots.json");
+
+    let keep = resolve(&prepared, &BTreeMap::new());
+    assert!(keep.iter().all(|op| op.write.is_none()));
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn a_directory_case_rename_is_one_update_per_file() {
+    let root = instance(&[
+      ("config/Quests/Foo-x/a.json", "a1"),
+      ("config/Quests/Foo-x/b.json", "b1"),
+    ]);
+    let baseline = baseline(&[
+      ("config/Quests/Foo-x/a.json", "a1"),
+      ("config/Quests/Foo-x/b.json", "b1"),
+    ]);
+    let remote = remote(&[
+      ("config/Quests/foo-x/a.json", "a2"),
+      ("config/Quests/foo-x/b.json", "b1"),
+    ]);
+
+    let prepared = prepare_with_contents(&root, &baseline, &remote, &BTreeMap::new())
+      .await
+      .unwrap();
+
+    assert!(prepared.diff.conflicts.is_empty());
+    assert_eq!(prepared.diff.changes.len(), 1);
+    let operations = resolve(&prepared, &BTreeMap::new());
+    assert_eq!(operations.len(), 1);
+    assert_eq!(operations[0].path, "config/Quests/foo-x/a.json");
+    assert_one_spelling(&prepared, &operations, "config/Quests/foo-x/a.json");
+    assert_one_spelling(&prepared, &operations, "config/Quests/foo-x/b.json");
     let _ = fs::remove_dir_all(root);
   }
 

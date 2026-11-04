@@ -1276,6 +1276,7 @@ async fn try_adopt(
     game_version: instance.version.clone(),
     loader_type,
     follow: origin.is_none_or(|origin| origin.follow),
+    pack_format: None,
   };
   let loader = BaselineLoader {
     loader_type,
@@ -1416,6 +1417,7 @@ mod tests {
         game_version: "1.21.1".into(),
         loader_type: ModLoaderType::Unknown,
         follow: true,
+        pack_format: None,
       },
       "1.0.0".into(),
     );
@@ -1803,6 +1805,7 @@ mod tests {
       game_version: version.into(),
       loader_type: crate::instance::models::misc::ModLoaderType::LegacyForge,
       follow: true,
+      pack_format: None,
     }
   }
 
