@@ -1393,6 +1393,17 @@
       "location": "{{gameDir}} · versions/{{folder}}"
     }
   },
+  "FolderConflictDialog": {
+    "title": "フォルダ名の競合",
+    "body": "ゲームディレクトリ「{{gameDir}}」には、すでに「{{folder}}」という名前のフォルダがあります。",
+    "auto": "自動で対処",
+    "edit": "変更",
+    "label": "フォルダ名",
+    "error": {
+      "taken": "このフォルダ名はすでに使われています",
+      "invalid": "フォルダ名に \\ / : * ? \" < > | は使用できません"
+    }
+  },
   "InstanceModsPage": {
     "modLoaderList": {
       "title": "モッドローダー",
@@ -1691,6 +1702,14 @@
     },
     "button": {
       "login": "ログイン"
+    }
+  },
+  "RenameSuggestionModal": {
+    "title": "インスタンス名の更新",
+    "body": "モッドパックが {{version}} に更新されました。インスタンス名を新しいバージョン名に変更しますか？",
+    "button": {
+      "rename": "名前を変更",
+      "keep": "そのままにする"
     }
   },
   "RestartForUpdateConfirmDialog": {

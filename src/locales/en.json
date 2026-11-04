@@ -1393,6 +1393,17 @@
       "location": "{{gameDir}} · versions/{{folder}}"
     }
   },
+  "FolderConflictDialog": {
+    "title": "Folder Name Conflict",
+    "body": "The game directory \"{{gameDir}}\" already has a folder named \"{{folder}}\".",
+    "auto": "Resolve for Me",
+    "edit": "Change",
+    "label": "Folder name",
+    "error": {
+      "taken": "This folder name is already taken",
+      "invalid": "The folder name cannot contain \\ / : * ? \" < > |"
+    }
+  },
   "InstanceModsPage": {
     "modLoaderList": {
       "title": "Mod Loader",
@@ -1691,6 +1702,14 @@
     },
     "button": {
       "login": "Login"
+    }
+  },
+  "RenameSuggestionModal": {
+    "title": "Update Instance Name",
+    "body": "The modpack has been updated to {{version}}. Rename the instance to the new version?",
+    "button": {
+      "rename": "Rename",
+      "keep": "Keep Name"
     }
   },
   "RestartForUpdateConfirmDialog": {

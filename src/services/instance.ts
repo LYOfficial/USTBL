@@ -6,6 +6,7 @@ import {
   ExportModpackOptions,
   GameServerInfo,
   InstanceDeletionProgress,
+  InstanceFolderCheck,
   InstanceSummary,
   LocalModInfo,
   ModpackFileList,
@@ -210,6 +211,20 @@ export class InstanceService {
       instanceId,
       newName,
     });
+  }
+
+  /**
+   * CHECK whether a folder name is still free under a game directory's `versions`.
+   * @param {GameDirectory} directory - The game directory the instance goes into.
+   * @param {string} folder - The wanted folder name.
+   * @returns {Promise<InvokeResponse<InstanceFolderCheck>>} - Availability, plus the first free `<folder>-N` when taken.
+   */
+  @responseHandler("instance")
+  static async checkInstanceFolder(
+    directory: GameDirectory,
+    folder: string
+  ): Promise<InvokeResponse<InstanceFolderCheck>> {
+    return await invoke("check_instance_folder", { directory, folder });
   }
 
   /**

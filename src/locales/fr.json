@@ -1393,6 +1393,17 @@
       "location": "{{gameDir}} · versions/{{folder}}"
     }
   },
+  "FolderConflictDialog": {
+    "title": "Conflit de nom de dossier",
+    "body": "Le répertoire de jeu « {{gameDir}} » contient déjà un dossier nommé « {{folder}} ».",
+    "auto": "Résoudre pour moi",
+    "edit": "Modifier",
+    "label": "Nom du dossier",
+    "error": {
+      "taken": "Ce nom de dossier est déjà utilisé",
+      "invalid": "Le nom du dossier ne peut pas contenir \\ / : * ? \" < > |"
+    }
+  },
   "InstanceModsPage": {
     "modLoaderList": {
       "title": "Chargeur",
@@ -1691,6 +1702,14 @@
     },
     "button": {
       "login": "Connexion"
+    }
+  },
+  "RenameSuggestionModal": {
+    "title": "Mettre à jour le nom de l'instance",
+    "body": "Le modpack a été mis à jour vers {{version}}. Renommer l'instance avec le nom de la nouvelle version ?",
+    "button": {
+      "rename": "Renommer",
+      "keep": "Garder le nom"
     }
   },
   "RestartForUpdateConfirmDialog": {

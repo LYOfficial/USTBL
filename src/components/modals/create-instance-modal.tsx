@@ -34,6 +34,7 @@ import { LoaderSelector } from "@/components/loader-selector";
 import { useLauncherConfig } from "@/contexts/config";
 import { useToast } from "@/contexts/toast";
 import { ModLoaderType } from "@/enums/instance";
+import { useFolderConflict } from "@/hooks/folder-conflict";
 import { GameDirectory } from "@/models/config";
 import {
   GameClientResourceInfo,
@@ -86,6 +87,7 @@ export const CreateInstanceModal: React.FC<Omit<ModalProps, "children">> = ({
   const [instanceDirectory, setInstanceDirectory] = useState<GameDirectory>();
   const [isLoading, setIsLoading] = useState(false);
   const [isInstallFabricApi, setIsInstallFabricApi] = useState(true);
+  const { resolveFolder, folderConflictDialog } = useFolderConflict();
 
   useEffect(() => {
     setSelectedModLoader(defaultModLoaderResourceInfo);
@@ -97,34 +99,37 @@ export const CreateInstanceModal: React.FC<Omit<ModalProps, "children">> = ({
     setIsInstallFabricApi(true);
   }, [selectedGameVersion]);
 
-  const handleCreateInstance = useCallback(() => {
+  const handleCreateInstance = useCallback(async () => {
     if (!selectedGameVersion || !instanceDirectory) return;
 
     setIsLoading(true);
-    InstanceService.createInstance(
-      instanceDirectory,
-      instanceName,
-      instanceDescription,
-      instanceIconSrc,
-      selectedGameVersion,
-      selectedModLoader,
-      selectedOptiFine,
-      isInstallFabricApi
-    )
-      .then((res) => {
-        if (res.status === "success") {
-          // success toast will now be called by task context group listener
-          modalProps.onClose();
-          router.push("/downloads");
-        } else {
-          toast({
-            title: res.message,
-            description: res.details,
-            status: "error",
-          });
-        }
-      })
-      .finally(() => setIsLoading(false));
+    try {
+      const folder = await resolveFolder(instanceDirectory, instanceName);
+      if (folder === null) return;
+      const res = await InstanceService.createInstance(
+        instanceDirectory,
+        folder,
+        instanceDescription,
+        instanceIconSrc,
+        selectedGameVersion,
+        selectedModLoader,
+        selectedOptiFine,
+        isInstallFabricApi
+      );
+      if (res.status === "success") {
+        // success toast will now be called by task context group listener
+        modalProps.onClose();
+        router.push("/downloads");
+      } else {
+        toast({
+          title: res.message,
+          description: res.details,
+          status: "error",
+        });
+      }
+    } finally {
+      setIsLoading(false);
+    }
   }, [
     selectedGameVersion,
     instanceDirectory,
@@ -135,6 +140,7 @@ export const CreateInstanceModal: React.FC<Omit<ModalProps, "children">> = ({
     selectedOptiFine,
     isInstallFabricApi,
     modalProps,
+    resolveFolder,
     router,
     toast,
   ]);
@@ -388,6 +394,7 @@ export const CreateInstanceModal: React.FC<Omit<ModalProps, "children">> = ({
           {steps[activeStep].content}
         </Flex>
       </ModalContent>
+      {folderConflictDialog}
     </Modal>
   );
 };

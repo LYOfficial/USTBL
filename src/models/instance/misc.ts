@@ -7,6 +7,11 @@ export interface InstanceDeletionProgress {
   deletedFiles: number;
 }
 
+export interface InstanceFolderCheck {
+  available: boolean;
+  suggestion?: string | null;
+}
+
 export enum ModLoaderStatus {
   NotDownloaded = "NotDownloaded",
   Downloading = "Downloading",

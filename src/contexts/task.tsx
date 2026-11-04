@@ -49,11 +49,13 @@ import {
 } from "@/utils/campus-install-task";
 import { localizeFileError } from "@/utils/file-error";
 import { takeLoaderCompletions } from "@/utils/loader-completion";
+import { enqueueSuggestionModal } from "@/utils/modal-queue";
 import {
   finishModpackUpdate,
   isModpackUpdateGroup,
   localizeModpackUpdateError,
 } from "@/utils/modpack-update-task";
+import { takeRenameSuggestion } from "@/utils/rename-suggestion";
 
 interface TaskContextType {
   installProgress: Record<string, CampusInstallProgress>;
@@ -700,6 +702,21 @@ export const TaskContextProvider: React.FC<{ children: React.ReactNode }> = ({
           status: "info",
         });
         void router.push("/downloads");
+      },
+      suggestRename: (instanceId) => {
+        const name = getInstanceList()?.find(
+          (instance) => instance.id === instanceId
+        )?.name;
+        const suggestion = takeRenameSuggestion(instanceId, name);
+        if (!suggestion) return;
+        enqueueSuggestionModal((release) =>
+          openSharedModal("rename-suggestion", {
+            instanceId,
+            version: suggestion.version,
+            suggestedName: suggestion.suggested,
+            onDone: release,
+          })
+        );
       },
     });
   };

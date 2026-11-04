@@ -76,7 +76,10 @@ test("renaming writes the display name only", () => {
 
 test("changing a game directory name no longer rewrites instance detail routes", () => {
   const modal = read("src/components/modals/edit-game-directory-modal.tsx");
-  assert.doesNotMatch(modal, /instances\/details/);
+  assert.doesNotMatch(modal, /instances\/details\/\$\{currentName\}:/);
+  assert.doesNotMatch(modal, /replaceHistory\(\s*`\/instances\/details/);
+  // moving the directory drops the history of the instances it held
+  assert.match(modal, /removeHistory\(`\/instances\/details\/\$\{instance\.id\}`\)/);
   assert.match(modal, /\/instances\/list\/\$\{currentName\}/);
 });
 
@@ -90,4 +93,67 @@ test("modals take the new instance id from createInstance", () => {
     assert.match(source, /createResp\.data/, file);
     assert.doesNotMatch(source, /\$\{gameDirectory\.name\}:\$\{name\}/, file);
   }
+});
+
+test("every instance creation entry checks the folder first", () => {
+  for (const file of [
+    "src/components/modals/create-instance-modal.tsx",
+    "src/components/modals/import-modpack-modal.tsx",
+    "src/components/modals/install-campus-modpack-modal.tsx",
+    "src/components/modals/install-platform-modpack-modal.tsx",
+  ]) {
+    const source = read(file);
+    const check = source.indexOf("resolveFolder(");
+    const create = source.indexOf("InstanceService.createInstance(");
+    assert.ok(check !== -1 && check < create, file);
+    assert.match(source, /\{folderConflictDialog\}/, file);
+    assert.doesNotMatch(
+      source.slice(create, create + 80),
+      /\bname,/,
+      `${file} must create with the resolved folder`
+    );
+  }
+});
+
+test("a renamed-version suggestion swaps only the old label", () => {
+  const { suggestRenamedName, takeRenameSuggestion, pendingUpdateLabels } = load(
+    "src/utils/rename-suggestion.ts"
+  );
+  assert.equal(suggestRenamedName("GTNH 2.8.3", "2.8.3", "2.8.4"), "GTNH 2.8.4");
+  assert.equal(suggestRenamedName("GTNH", "2.8.3", "2.8.4"), null);
+  assert.equal(suggestRenamedName("GTNH 2.8.3", "", "2.8.4"), null);
+  assert.equal(suggestRenamedName("GTNH 2.8.3", undefined, "2.8.4"), null);
+  assert.equal(suggestRenamedName("GTNH 2.8.3", "2.8.3", "2.8.3"), null);
+  pendingUpdateLabels.set("a", { from: "1.0", to: "1.1" });
+  assert.deepEqual(takeRenameSuggestion("a", "Pack 1.0"), {
+    version: "1.1",
+    suggested: "Pack 1.1",
+  });
+  assert.equal(takeRenameSuggestion("a", "Pack 1.0"), null);
+  assert.equal(takeRenameSuggestion("b", "Pack 1.0"), null);
+});
+
+test("suggestion dialogs take turns", () => {
+  const { enqueueSuggestionModal } = load("src/utils/modal-queue.ts");
+  const order = [];
+  let releaseFirst;
+  enqueueSuggestionModal((release) => {
+    order.push("first");
+    releaseFirst = release;
+  });
+  enqueueSuggestionModal((release) => {
+    order.push("second");
+    release();
+  });
+  assert.deepEqual(order, ["first"]);
+  releaseFirst();
+  releaseFirst();
+  assert.deepEqual(order, ["first", "second"]);
+});
+
+test("the update flow notes labels, suggests after success and queues behind the memory prompt", () => {
+  assert.match(read("src/components/modals/update-modpack-modal.tsx"), /pendingUpdateLabels\.set/);
+  assert.match(read("src/utils/modpack-update-task.ts"), /suggestRename\?\.\(/);
+  assert.match(read("src/contexts/task.tsx"), /enqueueSuggestionModal/);
+  assert.match(read("src/hooks/memory-suggestion.ts"), /enqueueSuggestionModal/);
 });

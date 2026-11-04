@@ -1393,6 +1393,17 @@
       "location": "{{gameDir}} · versions/{{folder}}"
     }
   },
+  "FolderConflictDialog": {
+    "title": "目錄名衝突",
+    "body": "遊戲目錄「{{gameDir}}」中已有名為「{{folder}}」的資料夾。",
+    "auto": "幫我處理",
+    "edit": "修改",
+    "label": "目錄名",
+    "error": {
+      "taken": "該目錄名已被佔用",
+      "invalid": "目錄名不能包含 \\ / : * ? \" < > |"
+    }
+  },
   "InstanceModsPage": {
     "modLoaderList": {
       "title": "載入器",
@@ -1691,6 +1702,14 @@
     },
     "button": {
       "login": "登入"
+    }
+  },
+  "RenameSuggestionModal": {
+    "title": "更新實例名稱",
+    "body": "整合包已更新到 {{version}}，要把實例名稱改為新版本名嗎？",
+    "button": {
+      "rename": "改名",
+      "keep": "保持原名"
     }
   },
   "RestartForUpdateConfirmDialog": {

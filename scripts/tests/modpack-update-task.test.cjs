@@ -29,12 +29,15 @@ const fileError = load("src/utils/file-error.ts");
 const stages = load("src/utils/campus-install-task.ts", (name) =>
   name === "@/utils/file-error" ? fileError : {}
 );
+const renameSuggestion = load("src/utils/rename-suggestion.ts");
 const update = load("src/utils/modpack-update-task.ts", (name) =>
   name.endsWith("modpack-update-choices")
     ? choices
     : name === "@/utils/file-error"
       ? fileError
-      : stages
+      : name === "@/utils/rename-suggestion"
+        ? renameSuggestion
+        : stages
 );
 
 test("update groups are separate from installs, have ordered stages and a clean title", () => {
@@ -199,8 +202,8 @@ test("global task context receives results with no update modal mounted", () => 
     if (name === "@/contexts/global-data")
       return {
         useGlobalData: () => ({
-          getInstanceList: () => {
-            refreshes++;
+          getInstanceList: (refresh) => {
+            if (refresh) refreshes++;
           },
           checkModpackUpdate: (...args) => checks.push(args),
         }),
@@ -210,6 +213,7 @@ test("global task context receives results with no update modal mounted", () => 
     if (name === "@/contexts/toast")
       return { useToast: () => (notice) => notices.push(notice) };
     if (name === "@/utils/modpack-update-task") return update;
+    if (name === "@/utils/rename-suggestion") return renameSuggestion;
     if (name === "@/utils/file-error") return fileError;
     if (name === "@/services/modpack-update")
       return {
@@ -367,6 +371,7 @@ test("reopened dialog restores a failed plan's choices, submits once and closes 
             }),
           };
         if (name === "@/utils/modpack-update-choices") return choices;
+        if (name === "@/utils/rename-suggestion") return renameSuggestion;
         if (name === "@/enums/service-error") return { InstanceError: {} };
         if (name === "@/services/modpack-update")
           return {

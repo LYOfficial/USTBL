@@ -5,6 +5,7 @@ import {
   failedUpdatePlans,
   rememberedChoices,
 } from "@/utils/modpack-update-choices";
+import { pendingUpdateLabels } from "@/utils/rename-suggestion";
 
 export const isModpackUpdateGroup = (group: string): boolean =>
   group.startsWith("modpack-update?");
@@ -44,10 +45,12 @@ export function finishModpackUpdate(
     check: (instanceId: string, scanLocal: boolean) => unknown;
     notify: (failed: boolean, error?: string) => void;
     loaderPending: () => void;
+    suggestRename?: (instanceId: string) => void;
   }
 ) {
   handlers.refresh();
   if (payload.error) {
+    pendingUpdateLabels.delete(payload.instanceId);
     failedUpdatePlans.set(payload.instanceId, payload.planHash);
     handlers.notify(true, payload.error);
     return;
@@ -57,4 +60,5 @@ export function finishModpackUpdate(
   void handlers.check(payload.instanceId, true);
   handlers.notify(false);
   if (payload.outcome?.loaderInstallPending) handlers.loaderPending();
+  handlers.suggestRename?.(payload.instanceId);
 }

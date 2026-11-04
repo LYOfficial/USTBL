@@ -27,6 +27,7 @@ import { useGlobalData } from "@/contexts/global-data";
 import { useToast } from "@/contexts/toast";
 import { ModLoaderType } from "@/enums/instance";
 import { OtherResourceSource } from "@/enums/resource";
+import { useFolderConflict } from "@/hooks/folder-conflict";
 import { ModpackOptionalFile } from "@/models/modpack-update";
 import { OtherResourceFileInfo } from "@/models/resource";
 import { CampusModpackService } from "@/services/campus-modpack";
@@ -77,6 +78,7 @@ const InstallPlatformModpackModal: React.FC<
   const { t } = useTranslation();
   const { config } = useLauncherConfig();
   const { getInstanceList } = useGlobalData();
+  const { resolveFolder, folderConflictDialog } = useFolderConflict();
   const router = useRouter();
   const toast = useToast();
   const primaryColor = config.appearance.theme.primaryColor;
@@ -154,9 +156,11 @@ const InstallPlatformModpackModal: React.FC<
         });
         return;
       }
+      const folder = await resolveFolder(gameDirectory, name);
+      if (folder === null) return;
       const createResp = await InstanceService.createInstance(
         gameDirectory,
-        name,
+        folder,
         description,
         iconSrc,
         gameResp.data,
@@ -227,6 +231,7 @@ const InstallPlatformModpackModal: React.FC<
     onClose,
     optionalPicks,
     projectId,
+    resolveFolder,
     router,
     source,
     t,
@@ -317,6 +322,7 @@ const InstallPlatformModpackModal: React.FC<
           </ModalBody>
         </ModalContent>
       </Modal>
+      {folderConflictDialog}
     </>
   );
 };
