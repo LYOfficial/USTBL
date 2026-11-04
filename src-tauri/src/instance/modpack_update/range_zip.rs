@@ -1013,7 +1013,9 @@ mod tests {
   #[tokio::test]
   async fn the_listing_matches_what_the_zip_crate_reads() {
     let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-    let deflated = zip::write::SimpleFileOptions::default();
+    let deflated = zip::write::SimpleFileOptions::default()
+      .system(zip::System::Unix)
+      .unix_permissions(0o644);
     let stored = deflated.compression_method(zip::CompressionMethod::Stored);
     writer.start_file("manifest.json", deflated).unwrap();
     writer.write_all(b"{\"name\":\"pack\"}").unwrap();
@@ -1032,7 +1034,7 @@ mod tests {
     assert_eq!(listing.entries.len(), reference.len());
     for (index, entry) in listing.entries.iter().enumerate() {
       let known = reference.by_index(index).unwrap();
-      assert_eq!(entry.name, known.name());
+      assert_eq!(entry.name, known.name().unwrap().as_ref());
       assert_eq!(entry.crc32, known.crc32());
       assert_eq!(entry.size, known.size());
       assert_eq!(entry.compressed_size, known.compressed_size());

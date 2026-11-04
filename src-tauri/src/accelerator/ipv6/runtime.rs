@@ -107,7 +107,7 @@ pub async fn install(root: &Path) -> USTBLResult<()> {
   let mut executable = None;
   for i in 0..archive.len() {
     let mut file = archive.by_index(i)?;
-    if file.name().ends_with(".exe") && !file.is_dir() {
+    if file.name().is_ok_and(|name| name.ends_with(".exe")) && !file.is_dir() {
       if executable.is_some() || file.size() > MAX_DOWNLOAD as u64 {
         return Err(USTBLError("免流核心压缩包结构无效".into()));
       }

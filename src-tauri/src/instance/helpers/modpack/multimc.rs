@@ -61,7 +61,7 @@ impl ModpackManifest for MultiMcManifest {
       let mut found_path = None;
       for i in 0..archive.len() {
         let file = archive.by_index(i)?;
-        let name = file.name();
+        let name = file.name()?;
 
         if name.ends_with("mmc-pack.json") {
           if let Some(last_slash) = name.rfind('/') {
@@ -99,7 +99,7 @@ impl ModpackManifest for MultiMcManifest {
     manifest.base_path = base_path;
     manifest.game_dir = if archive
       .file_names()
-      .any(|n| n.starts_with(&format!("{}minecraft/", manifest.base_path)))
+      .any(|n| n.is_ok_and(|n| n.starts_with(&format!("{}minecraft/", manifest.base_path))))
     {
       "minecraft/".into()
     } else {

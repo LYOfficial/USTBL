@@ -454,7 +454,7 @@ fn remove_entry_from_zip(zip_path: &Path, entry_name: &str) -> USTBLResult<()> {
 
   for i in 0..archive.len() {
     let mut file = archive.by_index(i)?;
-    let name = file.name().to_string();
+    let name = file.name()?.to_string();
 
     if name == entry_name {
       continue;

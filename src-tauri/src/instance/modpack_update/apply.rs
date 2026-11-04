@@ -707,6 +707,20 @@ async fn stage_file(env: &dyn UpdateEnv, dest: PathBuf, file: &RemoteFile) -> US
         .await
         .map_err(|e| crate::error::USTBLError(e.to_string()))?;
     }
+    FileSource::Cached { path } => {
+      let (path, copy_to) = (path.clone(), dest.clone());
+      tokio::task::spawn_blocking(move || {
+        if let Some(parent) = copy_to.parent() {
+          fs::create_dir_all(parent).at(parent).map_err(io_error)?;
+        }
+        fs::copy(&path, &copy_to)
+          .at(&path)
+          .map(|_| ())
+          .map_err(io_error)
+      })
+      .await
+      .map_err(|e| crate::error::USTBLError(e.to_string()))??;
+    }
     FileSource::Pack(session) => session.fetch(&file.key.sha1, &dest).await?,
     // A preview has no bytes to stage.
     FileSource::Listed { .. } => return Err(InstanceError::ModpackUpdateRemoteInvalid.into()),
@@ -799,7 +813,10 @@ fn fetch_units<'a>(
 ) -> Vec<FetchUnit<'a>> {
   let mut units: Vec<FetchUnit<'a>> = Vec::new();
   for (file, dest) in to_fetch {
-    if matches!(file.source, FileSource::Download(_)) {
+    if matches!(
+      file.source,
+      FileSource::Download(_) | FileSource::Cached { .. }
+    ) {
       units.push(FetchUnit::Single(file, dest.clone()));
     }
   }
@@ -3025,6 +3042,53 @@ mod tests {
 
     assert_eq!(root.read("config/a.toml").as_deref(), Some("from-zip"));
     assert!(env.switched.lock().unwrap().is_empty());
+  }
+
+  #[tokio::test]
+  async fn a_file_fetched_ahead_of_planning_is_copied_from_the_cache_and_verified() {
+    let root = setup();
+    let cached = root.0.join("cached.bin");
+    fs::write(&cached, b"fetched-early").unwrap();
+    let env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let file = RemoteFile {
+      path: "mods/early.jar".into(),
+      key: sha1_of(b"fetched-early"),
+      source: FileSource::Cached {
+        path: cached.clone(),
+      },
+      disabled: false,
+      once: false,
+    };
+    let operations = vec![write_op(&file)];
+    apply(
+      &env,
+      request(&root, vec![file.clone()], operations, "0.15.0"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+      root.read("mods/early.jar").as_deref(),
+      Some("fetched-early")
+    );
+    assert!(cached.is_file());
+
+    // A cached file that no longer matches its key is refused, not installed.
+    fs::write(&cached, b"changed").unwrap();
+    let root = setup();
+    let env = FakeEnv {
+      root: root.0.clone(),
+      ..Default::default()
+    };
+    let operations = vec![write_op(&file)];
+    assert!(
+      apply(&env, request(&root, vec![file], operations, "0.15.0"))
+        .await
+        .is_err()
+    );
+    assert_eq!(root.read("mods/early.jar"), None);
   }
 
   #[tokio::test]

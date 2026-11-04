@@ -45,6 +45,9 @@ pub enum FileSource {
   Download(Box<DownloadParam>),
   /// Taken out of an archive that was already downloaded.
   ArchiveEntry { archive: PathBuf, entry: String },
+  /// Downloaded ahead of planning because the manifest gave no hash or size,
+  /// and kept in the remote cache; staging copies it from there.
+  Cached { path: PathBuf },
   /// Stored in the campus platform's packs, found by the file's sha1. The
   /// session is told which files are wanted before any is fetched.
   Pack(Arc<PackSession>),
@@ -61,6 +64,7 @@ pub enum FileSource {
 pub enum StoredFileSource {
   Download { param: Box<DownloadParam> },
   ArchiveEntry { archive: PathBuf, entry: String },
+  Cached { path: PathBuf },
   Pack { version_id: i64 },
   Listed { entry: String, exact: bool },
 }
@@ -75,6 +79,7 @@ impl From<&FileSource> for StoredFileSource {
         archive: archive.clone(),
         entry: entry.clone(),
       },
+      FileSource::Cached { path } => StoredFileSource::Cached { path: path.clone() },
       FileSource::Pack(session) => StoredFileSource::Pack {
         version_id: session.version_id(),
       },
@@ -360,6 +365,7 @@ impl RemoteModpack {
         StoredFileSource::ArchiveEntry { archive, entry } => {
           FileSource::ArchiveEntry { archive, entry }
         }
+        StoredFileSource::Cached { path } => FileSource::Cached { path },
         StoredFileSource::Listed { entry, exact } => FileSource::Listed { entry, exact },
         StoredFileSource::Pack { version_id } => FileSource::Pack(
           sessions
@@ -410,6 +416,25 @@ impl StoredRemoteModpack {
           .flat_map(|pack| pack.files.iter()),
       )
       .any(|file| matches!(file.source, StoredFileSource::Listed { .. }))
+  }
+
+  /// Whether every file kept in the remote cache is still there with its size.
+  pub fn cached_files_present(&self) -> bool {
+    self
+      .files
+      .iter()
+      .chain(
+        self
+          .component_pack
+          .iter()
+          .flat_map(|pack| pack.files.iter()),
+      )
+      .all(|file| match &file.source {
+        StoredFileSource::Cached { path } => {
+          std::fs::metadata(path).is_ok_and(|meta| meta.len() == file.key.size)
+        }
+        _ => true,
+      })
   }
 }
 

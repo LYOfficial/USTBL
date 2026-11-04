@@ -192,7 +192,7 @@ pub fn list_override_entries(
     let prefix = format!("{}/", overrides_path.trim_end_matches('/'));
     for i in 0..archive.len() {
       let entry = archive.by_index(i)?;
-      let relative = match entry.name().strip_prefix(&prefix) {
+      let relative = match entry.name()?.strip_prefix(&prefix) {
         Some(relative) if !relative.is_empty() && !entry.is_dir() => relative.to_string(),
         _ => continue,
       };
@@ -209,7 +209,7 @@ pub fn list_override_entries(
       if !entry.is_file() {
         continue;
       }
-      found.insert(relative, entry.name().to_string());
+      found.insert(relative, entry.name()?.to_string());
     }
   }
   Ok(found)

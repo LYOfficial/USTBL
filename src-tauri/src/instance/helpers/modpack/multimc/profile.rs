@@ -295,7 +295,7 @@ impl ResolvedMultiMc {
     let archive = ZipArchive::new(file)?;
     if !archive
       .file_names()
-      .any(|n| n == "mmc-pack.json" || n.ends_with("/mmc-pack.json"))
+      .any(|n| n.is_ok_and(|n| n == "mmc-pack.json" || n.ends_with("/mmc-pack.json")))
     {
       return Ok(None);
     }
