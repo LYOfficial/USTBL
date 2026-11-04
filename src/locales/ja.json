@@ -1379,6 +1379,30 @@
       "viewInstall": "インストールを表示"
     }
   },
+  "InstanceGroups": {
+    "installed": "インストール済み",
+    "starred": "スター付き",
+    "emptyHint": "ここにインスタンスをドラッグ",
+    "tooltip": {
+      "location": "{{gameDir}} · versions/{{folder}}"
+    },
+    "newGroup": {
+      "title": "新しいグループに追加",
+      "placeholder": "グループ名",
+      "create": "作成",
+      "duplicate": "同じ名前のグループが既にあります"
+    },
+    "menu": {
+      "pin": "グループを固定",
+      "unpin": "固定を解除",
+      "rename": "グループ名を変更",
+      "delete": "グループを削除"
+    },
+    "deleteGroup": {
+      "title": "グループを削除",
+      "body": "グループ「{{name}}」を削除しますか？中のインスタンスは削除されません。"
+    }
+  },
   "InstanceIconSelector": {
     "customize": "アイコンをカスタマイズ"
   },

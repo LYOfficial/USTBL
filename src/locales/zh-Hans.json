@@ -1379,6 +1379,30 @@
       "viewInstall": "查看安装"
     }
   },
+  "InstanceGroups": {
+    "installed": "已安装",
+    "starred": "收藏",
+    "emptyHint": "拖拽实例到这里",
+    "tooltip": {
+      "location": "{{gameDir}} · versions/{{folder}}"
+    },
+    "newGroup": {
+      "title": "添加到新的分栏",
+      "placeholder": "分栏名称",
+      "create": "创建",
+      "duplicate": "已有同名分栏"
+    },
+    "menu": {
+      "pin": "置顶分栏",
+      "unpin": "取消置顶",
+      "rename": "重命名分栏",
+      "delete": "删除分栏"
+    },
+    "deleteGroup": {
+      "title": "删除分栏",
+      "body": "删除分栏「{{name}}」？其中的实例不会被删除。"
+    }
+  },
   "InstanceIconSelector": {
     "customize": "自定义图像"
   },

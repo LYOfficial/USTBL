@@ -1379,6 +1379,30 @@
       "viewInstall": "Voir l'installation"
     }
   },
+  "InstanceGroups": {
+    "installed": "Installées",
+    "starred": "Favoris",
+    "emptyHint": "Glissez des instances ici",
+    "tooltip": {
+      "location": "{{gameDir}} · versions/{{folder}}"
+    },
+    "newGroup": {
+      "title": "Ajouter à un nouveau groupe",
+      "placeholder": "Nom du groupe",
+      "create": "Créer",
+      "duplicate": "Un groupe portant ce nom existe déjà"
+    },
+    "menu": {
+      "pin": "Épingler le groupe",
+      "unpin": "Désépingler",
+      "rename": "Renommer le groupe",
+      "delete": "Supprimer le groupe"
+    },
+    "deleteGroup": {
+      "title": "Supprimer le groupe",
+      "body": "Supprimer le groupe « {{name}} » ? Les instances qu'il contient ne seront pas supprimées."
+    }
+  },
   "InstanceIconSelector": {
     "customize": "Personnaliser les images"
   },

@@ -1379,6 +1379,30 @@
       "viewInstall": "View Installation"
     }
   },
+  "InstanceGroups": {
+    "installed": "Installed",
+    "starred": "Starred",
+    "emptyHint": "Drag instances here",
+    "tooltip": {
+      "location": "{{gameDir}} · versions/{{folder}}"
+    },
+    "newGroup": {
+      "title": "Add to New Group",
+      "placeholder": "Group name",
+      "create": "Create",
+      "duplicate": "A group with this name already exists"
+    },
+    "menu": {
+      "pin": "Pin Group",
+      "unpin": "Unpin",
+      "rename": "Rename Group",
+      "delete": "Delete Group"
+    },
+    "deleteGroup": {
+      "title": "Delete Group",
+      "body": "Delete the group \"{{name}}\"? The instances in it will not be deleted."
+    }
+  },
   "InstanceIconSelector": {
     "customize": "Customize Icon"
   },

@@ -55,6 +55,18 @@ export interface GameDirectory {
   dir: string;
 }
 
+export interface CustomInstanceGroup {
+  name: string;
+  members: string[];
+}
+
+export interface InstanceGroups {
+  order: string[];
+  pinned: string | null;
+  collapsed: string[];
+  custom: Record<string, CustomInstanceGroup>;
+}
+
 export interface LauncherConfig {
   basicInfo: {
     launcherVersion: string;
@@ -161,6 +173,7 @@ export interface LauncherConfig {
     instanceShaderPacksPage: {
       accordionStates: boolean[];
     };
+    instanceGroups: InstanceGroups;
   };
 }
 
@@ -321,6 +334,12 @@ export const defaultConfig: LauncherConfig = {
     },
     instanceShaderPacksPage: {
       accordionStates: [true, true],
+    },
+    instanceGroups: {
+      order: ["installed", "starred"],
+      pinned: null,
+      collapsed: [],
+      custom: {},
     },
   },
 };

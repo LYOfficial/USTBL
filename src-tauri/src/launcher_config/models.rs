@@ -11,6 +11,7 @@ use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use smart_default::SmartDefault;
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use strum_macros::Display;
@@ -159,6 +160,14 @@ structstruck::strike! {
 pub struct GameDirectory {
   pub name: String,
   pub dir: PathBuf,
+}
+
+// A user-made group in the instances sidebar; members are instance ids in the order they were added.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CustomInstanceGroup {
+  pub name: String,
+  pub members: Vec<String>,
 }
 
 // see java.net.proxy
@@ -324,6 +333,13 @@ structstruck::strike! {
       pub instance_shader_packs_page: struct {
         #[default([true, true])]
         pub accordion_states: [bool; 2],
+      },
+      pub instance_groups: struct InstanceGroupsState {
+        #[default(_code="vec![\"installed\".to_string(), \"starred\".to_string()]")]
+        pub order: Vec<String>,
+        pub pinned: Option<String>,
+        pub collapsed: Vec<String>,
+        pub custom: HashMap<String, CustomInstanceGroup>,
       }
     }
   }
@@ -479,5 +495,33 @@ mod tests {
     assert!(config
       .update("intelligence.mcp_server.launcher.enabled", "true")
       .is_err());
+  }
+
+  #[test]
+  fn instance_groups_default_for_old_configs_and_update_as_a_whole() {
+    let mut stored = serde_json::to_value(LauncherConfig::default()).unwrap();
+    stored["states"]
+      .as_object_mut()
+      .unwrap()
+      .remove("instanceGroups");
+    let mut config: LauncherConfig = serde_json::from_value(stored).unwrap();
+    let groups = &config.states.instance_groups;
+    assert_eq!(groups.order, vec!["installed", "starred"]);
+    assert_eq!(groups.pinned, None);
+    assert!(groups.collapsed.is_empty() && groups.custom.is_empty());
+
+    config
+      .update(
+        "states.instance_groups",
+        r#"{"order":["starred","g1"],"pinned":"g1","collapsed":["installed"],
+            "custom":{"g1":{"name":"Pack","members":["a","b"]}}}"#,
+      )
+      .unwrap();
+    let saved = serde_json::to_value(&config).unwrap();
+    assert_eq!(saved["states"]["instanceGroups"]["pinned"], "g1");
+    assert_eq!(
+      saved["states"]["instanceGroups"]["custom"]["g1"]["members"],
+      serde_json::json!(["a", "b"])
+    );
   }
 }

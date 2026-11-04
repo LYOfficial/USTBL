@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useGlobalData } from "@/contexts/global-data";
 import { useTaskContext } from "@/contexts/task";
 import { useToast } from "@/contexts/toast";
+import { useRemoveInstanceFromGroups } from "@/hooks/instance-groups";
 import { CampusModpackService } from "@/services/campus-modpack";
 import { localizeCampusInstallError } from "@/utils/campus-install-task";
 
@@ -11,6 +12,7 @@ export const useDiscardCampusInstall = () => {
   const { t } = useTranslation();
   const toast = useToast();
   const { getInstanceList } = useGlobalData();
+  const removeFromGroups = useRemoveInstanceFromGroups();
   const { refreshUnfinishedInstalls } = useTaskContext();
   const [discarding, setDiscarding] = useState(false);
   const running = useRef(false);
@@ -26,6 +28,7 @@ export const useDiscardCampusInstall = () => {
           await CampusModpackService.discardCampusModpackInstall(instanceId);
         if (response.status === "success") {
           succeeded = true;
+          removeFromGroups(instanceId);
         } else {
           toast({
             title: t("Services.instance.installCampusModpack.error.title"),
@@ -50,7 +53,7 @@ export const useDiscardCampusInstall = () => {
       }
       return succeeded;
     },
-    [getInstanceList, refreshUnfinishedInstalls, t, toast]
+    [getInstanceList, refreshUnfinishedInstalls, removeFromGroups, t, toast]
   );
 
   return { discard, discarding };

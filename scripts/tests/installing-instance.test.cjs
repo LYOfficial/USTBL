@@ -283,15 +283,11 @@ test("views wire pending flags to ledger, both card styles, details and navigati
     /router.push\("\/downloads"\)/
   );
   assert.match(
-    source("layouts/instances-layout.tsx"),
-    /groups.installingCount > 0/
+    source("utils/instance-groups.ts"),
+    /const \{ installing, all: installed \} = instanceNavigationGroups\(instances\)/
   );
   assert.match(
-    source("layouts/instances-layout.tsx"),
-    /instanceItems\(groups.all\)/
-  );
-  assert.match(
-    source("layouts/instances-layout.tsx"),
-    /instanceItems\(groups.installing\)/
+    source("components/instance-sidebar.tsx"),
+    /AllInstancesPage.installing/
   );
 });

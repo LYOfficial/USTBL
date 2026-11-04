@@ -1,6 +1,7 @@
 import { Box, Input, Text, Tooltip, VStack } from "@chakra-ui/react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { INSTANCE_TOOLTIP_DELAY_MS } from "@/components/instance-sidebar-parts";
 import { useLauncherConfig } from "@/contexts/config";
 import { useRenameInstance } from "@/hooks/rename-instance";
 import { InstanceSummary } from "@/models/instance/misc";
@@ -86,7 +87,8 @@ export const InstanceNameEditor: React.FC<InstanceNameEditorProps> = ({
           </Text>
         </VStack>
       }
-      openDelay={400}
+      openDelay={INSTANCE_TOOLTIP_DELAY_MS}
+      closeOnPointerDown
     >
       <Box as="span" onDoubleClick={() => setIsEditing(true)}>
         {instance.name}
