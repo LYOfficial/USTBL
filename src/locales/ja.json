@@ -111,7 +111,11 @@
       },
       "campusModpack": {
         "title": "北京科技大学モッドパックをインストール",
-        "description": "「インスタンスの同期と更新」から校内モッドパックをインストール"
+        "description": "「ディスカバー - 学内 Modpack」から校内モッドパックをインストール"
+      },
+      "discoverModpacks": {
+        "title": "モッドパックを探す",
+        "description": "Modrinth と CurseForge のモッドパックを閲覧"
       },
       "manageDirs": {
         "title": "ゲームディレクトリ管理",
@@ -437,9 +441,6 @@
     "footer": {
       "installFabricApi": "同時に Fabric API をインストール"
     }
-  },
-  "CreateRenamedInstShortcutAlertDialog": {
-    "content": "このインスタンスの名前が変更されました。インスタンスリストを更新するか、ランチャーを再起動してから、起動ショートカットの追加を再試行してください。"
   },
   "DeleteAuthServerAlertDialog": {
     "dialog": {
@@ -1387,6 +1388,22 @@
       "delete": "インスタンス削除"
     }
   },
+  "InstanceNameEditor": {
+    "tooltip": {
+      "location": "{{gameDir}} · versions/{{folder}}"
+    }
+  },
+  "FolderConflictDialog": {
+    "title": "フォルダ名の競合",
+    "body": "ゲームディレクトリ「{{gameDir}}」には、すでに「{{folder}}」という名前のフォルダがあります。",
+    "auto": "自動で対処",
+    "edit": "変更",
+    "label": "フォルダ名",
+    "error": {
+      "taken": "このフォルダ名はすでに使われています",
+      "invalid": "フォルダ名に \\ / : * ? \" < > | は使用できません"
+    }
+  },
   "InstanceModsPage": {
     "modLoaderList": {
       "title": "モッドローダー",
@@ -1685,6 +1702,14 @@
     },
     "button": {
       "login": "ログイン"
+    }
+  },
+  "RenameSuggestionModal": {
+    "title": "インスタンス名の更新",
+    "body": "モッドパックが {{version}} に更新されました。インスタンス名を新しいバージョン名に変更しますか？",
+    "button": {
+      "rename": "名前を変更",
+      "keep": "そのままにする"
     }
   },
   "RestartForUpdateConfirmDialog": {
@@ -2521,10 +2546,7 @@
           "title": "インスタンスの名前変更に失敗",
           "description": {
             "INSTANCE_NOT_FOUND_BY_ID": "指定された ID のインスタンスが見つからない",
-            "CONFLICT_NAME_ERROR": "現在のゲームディレクターにインスタンス名が重複",
-            "INVALID_NAME_ERROR": "インスタンス名が無効です",
-            "INVALID_SOURCE_PATH": "インスタンスディレクトリが無効です",
-            "FILE_MOVE_FAILED": "インスタンスディレクトリの移動に失敗"
+            "FILE_CREATION_FAILED": "ターゲットファイルの作成に失敗"
           }
         }
       },
@@ -3556,11 +3578,9 @@
     }
   },
   "InstanceSyncPage": {
-    "title": "インスタンスの同期と更新",
-    "description": "モッドパックを追従するインスタンスの状態と、校内モッドパック・おすすめ",
+    "title": "同期と更新",
+    "description": "更新を確認して適用します。ローカルから更新をインポートすることもできます",
     "platform": {
-      "title": "学内 Modpack",
-      "description": "学内の管理者が公開した Modpack です。インストール後は新しいバージョンに追従できます。",
       "recommended": "おすすめ",
       "vanilla": "バニラ",
       "onOtherPlatform": "{{platform}} で提供されています",
@@ -3575,8 +3595,8 @@
       }
     },
     "ledger": {
-      "title": "モッドパックのインスタンス",
       "checkAll": "すべて確認",
+      "installMore": "さらにインストール",
       "group": {
         "platform": "プラットフォーム",
         "local": "ローカル"

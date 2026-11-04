@@ -111,7 +111,11 @@
       },
       "campusModpack": {
         "title": "安装北科整合包",
-        "description": "前往「实例同步与更新」安装像素北科校内整合包"
+        "description": "前往「发现 - 校园整合包」安装像素北科校内整合包"
+      },
+      "discoverModpacks": {
+        "title": "发现整合包",
+        "description": "浏览 Modrinth 与 CurseForge 上的整合包"
       },
       "manageDirs": {
         "title": "管理游戏目录",
@@ -437,9 +441,6 @@
     "footer": {
       "installFabricApi": "同时安装 Fabric API 模组"
     }
-  },
-  "CreateRenamedInstShortcutAlertDialog": {
-    "content": "您最近更改了此实例的名称，请刷新实例列表或重启启动器后，再次尝试添加启动快捷方式。"
   },
   "DeleteAuthServerAlertDialog": {
     "dialog": {
@@ -1387,6 +1388,22 @@
       "delete": "删除实例"
     }
   },
+  "InstanceNameEditor": {
+    "tooltip": {
+      "location": "{{gameDir}} · versions/{{folder}}"
+    }
+  },
+  "FolderConflictDialog": {
+    "title": "目录名冲突",
+    "body": "游戏目录「{{gameDir}}」中已有名为「{{folder}}」的文件夹。",
+    "auto": "帮我处理",
+    "edit": "修改",
+    "label": "目录名",
+    "error": {
+      "taken": "该目录名已被占用",
+      "invalid": "目录名不能包含 \\ / : * ? \" < > |"
+    }
+  },
   "InstanceModsPage": {
     "modLoaderList": {
       "title": "加载器",
@@ -1685,6 +1702,14 @@
     },
     "button": {
       "login": "登录"
+    }
+  },
+  "RenameSuggestionModal": {
+    "title": "更新实例名称",
+    "body": "整合包已更新到 {{version}}，要把实例名称改为新版本名吗？",
+    "button": {
+      "rename": "改名",
+      "keep": "保持原名"
     }
   },
   "RestartForUpdateConfirmDialog": {
@@ -2518,13 +2543,10 @@
       },
       "renameInstance": {
         "error": {
-          "title": "实例重命名失败",
+          "title": "实例改名失败",
           "description": {
             "INSTANCE_NOT_FOUND_BY_ID": "实例 ID 不存在",
-            "CONFLICT_NAME_ERROR": "当前实例目录存在重名实例",
-            "INVALID_NAME_ERROR": "实例名称无效",
-            "INVALID_SOURCE_PATH": "实例目录无效",
-            "FILE_MOVE_FAILED": "实例目录移动失败"
+            "FILE_CREATION_FAILED": "目标文件创建失败"
           }
         }
       },
@@ -3556,11 +3578,9 @@
     }
   },
   "InstanceSyncPage": {
-    "title": "实例同步与更新",
-    "description": "跟随整合包的实例状态，以及校内整合包与推荐",
+    "title": "同步与更新",
+    "description": "检查并应用更新，可以从本地导入更新",
     "platform": {
-      "title": "校内整合包",
-      "description": "由校内管理员发布的整合包，安装后可跟随新版本更新。",
       "recommended": "推荐",
       "vanilla": "原版",
       "onOtherPlatform": "不在校内平台上，前往 {{platform}} 获取",
@@ -3575,8 +3595,8 @@
       }
     },
     "ledger": {
-      "title": "我的整合包实例",
       "checkAll": "全部检查",
+      "installMore": "安装更多",
       "group": {
         "platform": "平台",
         "local": "本地"

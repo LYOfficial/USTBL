@@ -7,6 +7,11 @@ export interface InstanceDeletionProgress {
   deletedFiles: number;
 }
 
+export interface InstanceFolderCheck {
+  available: boolean;
+  suggestion?: string | null;
+}
+
 export enum ModLoaderStatus {
   NotDownloaded = "NotDownloaded",
   Downloading = "Downloading",
@@ -61,6 +66,8 @@ export interface InstanceSummary {
   id: string;
   iconSrc: string;
   name: string;
+  folder: string;
+  gameDir: string;
   description?: string;
   starred: boolean;
   playTime: number;

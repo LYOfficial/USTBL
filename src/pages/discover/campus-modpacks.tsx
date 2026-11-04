@@ -3,6 +3,7 @@ import { useRouter } from "next/router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import CampusPlatformSection from "@/components/campus-platform-section";
+import { CommonIconButton } from "@/components/common/common-icon-button";
 import { Section } from "@/components/common/section";
 import { useGlobalData } from "@/contexts/global-data";
 import { useToast } from "@/contexts/toast";
@@ -61,6 +62,15 @@ const DiscoverCampusModpacksPage = () => {
     <Section
       title={t("DiscoverCampusModpacksPage.title")}
       description={t("DiscoverCampusModpacksPage.description")}
+      headExtra={
+        <CommonIconButton
+          icon="refresh"
+          onClick={fetchAll}
+          isDisabled={loading}
+          size="xs"
+          h={21}
+        />
+      }
       w="100%"
       h="100%"
       display="flex"

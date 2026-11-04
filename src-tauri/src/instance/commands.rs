@@ -3,6 +3,7 @@ use crate::error::USTBLResult;
 use crate::instance::helpers::client_json::{replace_native_libraries, McClientInfo};
 use crate::instance::helpers::deletion::{delete_instance_files, InstanceDeletionProgress};
 use crate::instance::helpers::game_version::{build_game_version_cmp_fn, compare_game_versions};
+use crate::instance::helpers::identity::{new_instance_id, write_display_name};
 use crate::instance::helpers::loader::common::{execute_processors, install_mod_loader};
 use crate::instance::helpers::loader::forge::download_forge_libraries;
 use crate::instance::helpers::loader::forge::InstallProfile;
@@ -16,8 +17,9 @@ use crate::instance::helpers::loader_lifecycle::{
   preparation_allowed, LOADER_LIFECYCLE,
 };
 use crate::instance::helpers::misc::{
-  get_instance_game_config, get_instance_subdir_path_by_id, get_instance_subdir_paths, owns_files,
-  refresh_and_update_instances, resolve_isolation, unify_instance_name,
+  check_folder, existing_folder_names, get_instance_game_config, get_instance_subdir_path_by_id,
+  get_instance_subdir_paths, migrate_selected_instance_id, owns_files,
+  refresh_and_update_instances, resolve_isolation, InstanceFolderCheck,
 };
 use crate::instance::helpers::modpack::base_store;
 use crate::instance::helpers::modpack::baseline::{hash_file, BaselineLoader, ModpackBaseline};
@@ -94,6 +96,8 @@ pub async fn retrieve_instance_list(app: AppHandle) -> USTBLResult<Vec<InstanceS
   for (id, instance) in crate::instance::modpack_update::commands::pending_campus_instances(&app) {
     instances.entry(id).or_insert(instance);
   }
+  // The refresh covers the main table; this also covers a pending install.
+  migrate_selected_instance_id(&app, &instances);
   for (id, instance) in instances.iter() {
     let (is_version_isolated, isolation_source) = resolve_isolation(instance, &global_game_config);
 
@@ -299,23 +303,60 @@ fn forget_instance(instances: &mut HashMap<String, Instance>, instance_id: &str)
   instances.keys().next().cloned().unwrap_or_default()
 }
 
+/// Changes only the display name; the folder, jar and version json stay as they
+/// are, so it also works while the game runs. An empty name restores the default
+/// (the folder name). Returns the name now shown.
 #[tauri::command]
 pub async fn rename_instance(
   app: AppHandle,
   instance_id: String,
   new_name: String,
-) -> USTBLResult<PathBuf> {
-  let binding = app.state::<Mutex<HashMap<String, Instance>>>();
-  let mut state = binding.lock().unwrap();
-  let instance = match state.get_mut(&instance_id) {
-    Some(x) => x,
-    None => return Err(InstanceError::InstanceNotFoundByID.into()),
+) -> USTBLResult<String> {
+  let display_name = new_name.trim().to_string();
+  let in_table = {
+    let binding = app.state::<Mutex<HashMap<String, Instance>>>();
+    let state = binding.lock().unwrap();
+    state
+      .get(&instance_id)
+      .map(|instance| (instance.version_path.clone(), instance.name.clone()))
   };
-  let new_path = unify_instance_name(&instance.version_path, &new_name)?;
+  let (version_path, folder, pending) = match in_table {
+    Some((version_path, folder)) => (version_path, folder, false),
+    // A pending install is not in the table yet, but it has a config to write.
+    None => {
+      let pending = crate::instance::modpack_update::commands::pending_campus_instances(&app);
+      let instance = pending
+        .get(&instance_id)
+        .ok_or(InstanceError::InstanceNotFoundByID)?;
+      (instance.version_path.clone(), instance.name.clone(), true)
+    }
+  };
+  if !write_display_name(&version_path, &display_name) {
+    return Err(InstanceError::FileCreationFailed.into());
+  }
+  if !pending {
+    let binding = app.state::<Mutex<HashMap<String, Instance>>>();
+    let mut state = binding.lock().unwrap();
+    if let Some(instance) = state.get_mut(&instance_id) {
+      instance.display_name = display_name.clone();
+    }
+  }
+  Ok(if display_name.is_empty() {
+    folder
+  } else {
+    display_name
+  })
+}
 
-  instance.version_path = new_path.clone();
-  instance.name = new_name;
-  Ok(new_path)
+/// Whether `folder` can still be created under `versions`, or which name to use
+/// instead.
+#[tauri::command]
+pub fn check_instance_folder(
+  directory: GameDirectory,
+  folder: String,
+) -> USTBLResult<InstanceFolderCheck> {
+  let existing = existing_folder_names(&directory.dir.join("versions"));
+  Ok(check_folder(&existing, &folder))
 }
 
 #[tauri::command]
@@ -916,7 +957,11 @@ pub fn create_launch_desktop_shortcut(
     .get(&instance_id)
     .ok_or(InstanceError::InstanceNotFoundByID)?;
 
-  let name = instance.name.clone();
+  // The display name is free text, so make it safe as a file name.
+  let name = match sanitize_filename::sanitize(instance.shown_name()) {
+    name if name.trim().is_empty() => instance.name.clone(),
+    name => name,
+  };
   let encoded_id = url::form_urlencoded::Serializer::new(String::new())
     .append_pair("id", &instance.id)
     .finish()
@@ -1023,7 +1068,7 @@ pub async fn create_instance(
   mut is_install_fabric_api: Option<bool>,
   modpack_version: Option<String>,
   origin: Option<ModpackOriginInput>,
-) -> USTBLResult<()> {
+) -> USTBLResult<String> {
   let client = app.state::<reqwest::Client>();
   let launcher_config_state = app.state::<Mutex<LauncherConfig>>();
   // Get priority list
@@ -1032,10 +1077,20 @@ pub async fn create_instance(
     get_source_priority_list(&launcher_config)
   };
 
-  // Ensure the instance name is unique
-  let version_path = directory.dir.join("versions").join(&name);
-  if version_path.exists() {
+  // The frontend checks the folder first; this is the check that counts. Creating
+  // the directory claims the name, so two creations cannot both pass.
+  let versions_dir = directory.dir.join("versions");
+  let version_path = versions_dir.join(&name);
+  if !check_folder(&existing_folder_names(&versions_dir), &name).available {
     return Err(InstanceError::ConflictNameError.into());
+  }
+  fs::create_dir_all(&versions_dir)?;
+  match fs::create_dir(&version_path) {
+    Ok(()) => {}
+    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+      return Err(InstanceError::ConflictNameError.into());
+    }
+    Err(e) => return Err(e.into()),
   }
 
   // Guard removes version_path on any early return (errors)
@@ -1052,8 +1107,10 @@ pub async fn create_instance(
 
   // Create instance config
   let mut instance = Instance {
-    id: format!("{}:{}", directory.name, name.clone()),
+    id: new_instance_id(),
     name: name.clone(),
+    display_name: String::new(),
+    game_dir: directory.name.clone(),
     version: game.id.clone(),
     version_path: version_path.clone(),
     mod_loader: ModLoader {
@@ -1315,7 +1372,7 @@ pub async fn create_instance(
     }),
   )?;
   dir_guard.commit(); // disarm the cleanup guard on success
-  Ok(())
+  Ok(instance.id)
 }
 
 #[tauri::command]

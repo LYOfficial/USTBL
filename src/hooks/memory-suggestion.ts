@@ -7,6 +7,7 @@ import {
   memorySuggestionKey,
   nextMemorySuggestion,
 } from "@/utils/memory-suggestion";
+import { enqueueSuggestionModal } from "@/utils/modal-queue";
 
 /**
  * Asks about the memory a modpack recommends, one instance at a time. It looks
@@ -36,18 +37,22 @@ export const useMemorySuggestions = (enabled: boolean) => {
     const next = nextMemorySuggestion(response.data, dismissed.current);
     if (!next) return;
     showing.current = true;
-    openRef.current("memory-suggestion", {
-      suggestion: next,
-      onAnswered: () => {
-        showing.current = false;
-        void check();
-      },
-      onDismissed: (dismissedSuggestion: MemorySuggestion) => {
-        dismissed.current.add(memorySuggestionKey(dismissedSuggestion));
-        showing.current = false;
-        void check();
-      },
-    });
+    enqueueSuggestionModal((release) =>
+      openRef.current("memory-suggestion", {
+        suggestion: next,
+        onAnswered: () => {
+          showing.current = false;
+          release();
+          void check();
+        },
+        onDismissed: (dismissedSuggestion: MemorySuggestion) => {
+          dismissed.current.add(memorySuggestionKey(dismissedSuggestion));
+          showing.current = false;
+          release();
+          void check();
+        },
+      })
+    );
   }, []);
 
   // The list getter changes whenever the instance list does.

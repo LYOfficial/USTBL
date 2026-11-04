@@ -39,6 +39,7 @@ import { JavaInfo } from "@/models/system-info";
 import { AccountService } from "@/services/account";
 import { LaunchService } from "@/services/launch";
 import { isVustbPlayer } from "@/utils/account";
+import { findInstanceById } from "@/utils/instance";
 
 // This modal will use shared-modal-context
 interface LaunchProcessModal extends Omit<ModalProps, "children"> {
@@ -70,9 +71,8 @@ const LaunchProcessModal: React.FC<LaunchProcessModal> = ({
   const previousStep = useRef<number>(-1);
 
   useEffect(() => {
-    setLaunchingInstance(
-      getInstanceList()?.find((instance) => instance.id === instanceId)
-    );
+    // A desktop shortcut made by an older version still carries the old id.
+    setLaunchingInstance(findInstanceById(getInstanceList(), instanceId));
   }, [getInstanceList, instanceId]);
 
   const handleCloseModalWithCancel = useCallback(() => {

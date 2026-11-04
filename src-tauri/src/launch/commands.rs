@@ -4,6 +4,7 @@ use crate::account::helpers::{authlib_injector, microsoft};
 use crate::account::models::PlayerType;
 use crate::error::USTBLResult;
 use crate::instance::helpers::client_json::{replace_native_libraries, McClientInfo};
+use crate::instance::helpers::identity::find_instance;
 use crate::instance::helpers::misc::{get_instance_game_config, get_instance_subdir_paths};
 use crate::instance::models::misc::{Instance, InstanceError, InstanceSubdirType, ModLoaderStatus};
 use crate::instance::modpack_update::apply::UpdateGuard;
@@ -72,11 +73,17 @@ pub async fn select_suitable_jre(
   javas_state: State<'_, Mutex<Vec<JavaInfo>>>,
   launching_queue_state: State<'_, Mutex<Vec<LaunchingState>>>,
 ) -> USTBLResult<JavaInfo> {
-  let instance = instances_state.lock()?.get(&instance_id).cloned();
+  // A desktop shortcut made by an older version carries the old `<game dir>:<folder>`
+  // id, so a miss is retried in that form.
+  let instance = {
+    let table = instances_state.lock()?;
+    find_instance(&table, &instance_id).cloned()
+  };
   // Pending clients may not have a jar and are absent from the normal launch map.
   let instance = launchable_instance(instance, || {
-    pending_campus_instances(&app).remove(&instance_id)
+    find_instance(&pending_campus_instances(&app), &instance_id).cloned()
   })?;
+  let instance_id = instance.id.clone();
   let game_config = get_instance_game_config(&app, &instance);
 
   let client_path = instance
@@ -390,7 +397,10 @@ pub async fn launch_game(
 
   // wait for the game window, create log window if needed
   let (tx, rx) = mpsc::channel();
-  crate::account::helpers::vustb_presence::track_game_started(id, instance.name.clone());
+  crate::account::helpers::vustb_presence::track_game_started(
+    id,
+    instance.shown_name().to_string(),
+  );
   let presence_app = app.clone();
   tauri::async_runtime::spawn(async move {
     let _ = crate::account::helpers::vustb_presence::sync(&presence_app).await;

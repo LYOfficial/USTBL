@@ -23,6 +23,7 @@ import { useLauncherConfig } from "@/contexts/config";
 import { useGlobalData } from "@/contexts/global-data";
 import { useToast } from "@/contexts/toast";
 import { ModLoaderType } from "@/enums/instance";
+import { useFolderConflict } from "@/hooks/folder-conflict";
 import {
   CampusModpackLine,
   CampusModpackProject,
@@ -64,6 +65,7 @@ const InstallCampusModpackModal: React.FC<InstallCampusModpackModalProps> = ({
   const router = useRouter();
   const toast = useToast();
   const { getInstanceList } = useGlobalData();
+  const { resolveFolder, folderConflictDialog } = useFolderConflict();
   const primaryColor = config.appearance.theme.primaryColor;
   const { onClose } = modalProps;
 
@@ -150,9 +152,11 @@ const InstallCampusModpackModal: React.FC<InstallCampusModpackModalProps> = ({
 
       // No archive: the instance is created empty with the modpack as its
       // origin, and the files arrive once the game client is ready.
+      const folder = await resolveFolder(gameDirectory, name);
+      if (folder === null) return;
       const createResp = await InstanceService.createInstance(
         gameDirectory,
-        name,
+        folder,
         description,
         iconSrc,
         gameResp.data,
@@ -170,7 +174,7 @@ const InstallCampusModpackModal: React.FC<InstallCampusModpackModalProps> = ({
       if (createResp.status === "success") {
         const registered =
           await CampusModpackService.registerCampusModpackInstall(
-            `${gameDirectory.name}:${name}`,
+            createResp.data,
             project.name
           );
         if (registered.status !== "success") {
@@ -186,7 +190,7 @@ const InstallCampusModpackModal: React.FC<InstallCampusModpackModalProps> = ({
         }
         getInstanceList(true);
         runCampusInstall(
-          { instanceId: `${gameDirectory.name}:${name}`, label: project.name },
+          { instanceId: createResp.data, label: project.name },
           toast,
           t
         );
@@ -212,55 +216,61 @@ const InstallCampusModpackModal: React.FC<InstallCampusModpackModalProps> = ({
     name,
     onClose,
     project,
+    resolveFolder,
     router,
     t,
     toast,
   ]);
 
   return (
-    <Modal
-      scrollBehavior="inside"
-      size={{ base: "2xl", lg: "3xl", xl: "4xl" }}
-      autoFocus={false}
-      {...modalProps}
-    >
-      <ModalOverlay />
-      <ModalContent>
-        <ModalHeader>{t("InstallCampusModpackModal.header.title")}</ModalHeader>
-        <ModalCloseButton />
-        <ModalBody>
-          <VStack w="100%" spacing={4}>
-            <InstanceBasicSettings
-              name={name}
-              setName={setName}
-              description={description}
-              setDescription={setDescription}
-              iconSrc={iconSrc}
-              setIconSrc={setIconSrc}
-              gameDirectory={gameDirectory}
-              setGameDirectory={setGameDirectory}
-              descriptionLabel={t("InstallCampusModpackModal.label.summary")}
-              descriptionMaxLines={SUMMARY_LINES}
-            />
-            <OptionItemGroup
-              title={t("InstallCampusModpackModal.label.modpackInfo")}
-              items={infoItems}
-              w="100%"
-            />
-          </VStack>
-        </ModalBody>
-        <ModalFooter>
-          <Button
-            colorScheme={primaryColor}
-            onClick={handleInstall}
-            isLoading={isLoading}
-            isDisabled={!loaderType}
-          >
-            {t("InstallCampusModpackModal.button.install")}
-          </Button>
-        </ModalFooter>
-      </ModalContent>
-    </Modal>
+    <>
+      <Modal
+        scrollBehavior="inside"
+        size={{ base: "2xl", lg: "3xl", xl: "4xl" }}
+        autoFocus={false}
+        {...modalProps}
+      >
+        <ModalOverlay />
+        <ModalContent>
+          <ModalHeader>
+            {t("InstallCampusModpackModal.header.title")}
+          </ModalHeader>
+          <ModalCloseButton />
+          <ModalBody>
+            <VStack w="100%" spacing={4}>
+              <InstanceBasicSettings
+                name={name}
+                setName={setName}
+                description={description}
+                setDescription={setDescription}
+                iconSrc={iconSrc}
+                setIconSrc={setIconSrc}
+                gameDirectory={gameDirectory}
+                setGameDirectory={setGameDirectory}
+                descriptionLabel={t("InstallCampusModpackModal.label.summary")}
+                descriptionMaxLines={SUMMARY_LINES}
+              />
+              <OptionItemGroup
+                title={t("InstallCampusModpackModal.label.modpackInfo")}
+                items={infoItems}
+                w="100%"
+              />
+            </VStack>
+          </ModalBody>
+          <ModalFooter>
+            <Button
+              colorScheme={primaryColor}
+              onClick={handleInstall}
+              isLoading={isLoading}
+              isDisabled={!loaderType}
+            >
+              {t("InstallCampusModpackModal.button.install")}
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+      {folderConflictDialog}
+    </>
   );
 };
 

@@ -111,7 +111,11 @@
       },
       "campusModpack": {
         "title": "Installer le modpack USTB",
-        "description": "Installez les packs du campus depuis « Synchronisation et mises à jour »"
+        "description": "Installez les packs du campus depuis « Découvrir - Modpacks du campus »"
+      },
+      "discoverModpacks": {
+        "title": "Découvrir des modpacks",
+        "description": "Parcourir les modpacks de Modrinth et CurseForge"
       },
       "manageDirs": {
         "title": "Gérer les répertoires du jeu",
@@ -437,9 +441,6 @@
     "footer": {
       "installFabricApi": "Installez également le mod Fabric API."
     }
-  },
-  "CreateRenamedInstShortcutAlertDialog": {
-    "content": "Vous avez récemment renommé cette instance. Veuillez actualiser la liste des instances ou redémarrer le lanceur, puis réessayez d'ajouter le raccourci."
   },
   "DeleteAuthServerAlertDialog": {
     "dialog": {
@@ -1387,6 +1388,22 @@
       "delete": "Supprimer l'instance"
     }
   },
+  "InstanceNameEditor": {
+    "tooltip": {
+      "location": "{{gameDir}} · versions/{{folder}}"
+    }
+  },
+  "FolderConflictDialog": {
+    "title": "Conflit de nom de dossier",
+    "body": "Le répertoire de jeu « {{gameDir}} » contient déjà un dossier nommé « {{folder}} ».",
+    "auto": "Résoudre pour moi",
+    "edit": "Modifier",
+    "label": "Nom du dossier",
+    "error": {
+      "taken": "Ce nom de dossier est déjà utilisé",
+      "invalid": "Le nom du dossier ne peut pas contenir \\ / : * ? \" < > |"
+    }
+  },
   "InstanceModsPage": {
     "modLoaderList": {
       "title": "Chargeur",
@@ -1685,6 +1702,14 @@
     },
     "button": {
       "login": "Connexion"
+    }
+  },
+  "RenameSuggestionModal": {
+    "title": "Mettre à jour le nom de l'instance",
+    "body": "Le modpack a été mis à jour vers {{version}}. Renommer l'instance avec le nom de la nouvelle version ?",
+    "button": {
+      "rename": "Renommer",
+      "keep": "Garder le nom"
     }
   },
   "RestartForUpdateConfirmDialog": {
@@ -2521,10 +2546,7 @@
           "title": "Échec du renommage de l'instance",
           "description": {
             "INSTANCE_NOT_FOUND_BY_ID": "ID d'instance introuvable",
-            "CONFLICT_NAME_ERROR": "Une instance portant le même nom existe déjà dans ce répertoire",
-            "INVALID_NAME_ERROR": "Le nom de l'instance est invalide",
-            "INVALID_SOURCE_PATH": "Le répertoire de l'instance est invalide",
-            "FILE_MOVE_FAILED": "Échec du déplacement du répertoire de l'instance"
+            "FILE_CREATION_FAILED": "Échec de la création du fichier cible"
           }
         }
       },
@@ -3557,10 +3579,8 @@
   },
   "InstanceSyncPage": {
     "title": "Synchronisation et mises à jour",
-    "description": "Instances qui suivent un pack, packs du campus et recommandations",
+    "description": "Vérifiez et appliquez les mises à jour, ou importez une mise à jour depuis un fichier local",
     "platform": {
-      "title": "Modpacks du campus",
-      "description": "Modpacks publiés par les responsables du campus. Les instances installées peuvent suivre les nouvelles versions.",
       "recommended": "Recommandé",
       "vanilla": "Vanilla",
       "onOtherPlatform": "Disponible sur {{platform}}",
@@ -3575,8 +3595,8 @@
       }
     },
     "ledger": {
-      "title": "Mes instances de packs",
       "checkAll": "Tout vérifier",
+      "installMore": "Installer plus",
       "group": {
         "platform": "Plateforme",
         "local": "Local"

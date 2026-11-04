@@ -38,7 +38,8 @@ const AddAndImportInstancePage = () => {
   const addAndImportOptions: Record<string, () => void> = {
     new: () => requireVustbAccount(onOpenCreateInstanceModal),
     modpack: handleImportModpackFromDisk,
-    campusModpack: () => router.push("/instances/sync"),
+    campusModpack: () => router.push("/discover/campus-modpacks"),
+    discoverModpacks: () => router.push("/discover/modpacks"),
     manageDirs: () => router.push("/settings/global-game"),
   };
 

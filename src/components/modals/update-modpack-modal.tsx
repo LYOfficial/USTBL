@@ -39,6 +39,7 @@ import {
   rememberedChoices,
   resolvePlanChoices,
 } from "@/utils/modpack-update-choices";
+import { pendingUpdateLabels } from "@/utils/rename-suggestion";
 
 interface UpdateModpackModalProps extends Omit<ModalProps, "children"> {
   instanceId: string;
@@ -318,12 +319,26 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
       setCheckPhase("applying");
       // Take the plan off the screen so its buttons stop rendering.
       setPlanPhase("idle");
+      // Note the old and new version labels for the rename suggestion once
+      // the update finishes; without an old label nothing is suggested.
+      const fromLabel = getInstanceList()?.find(
+        (instance) => instance.id === instanceId
+      )?.modpackVersion;
+      if (fromLabel && plan.toLabel) {
+        pendingUpdateLabels.set(instanceId, {
+          from: fromLabel,
+          to: plan.toLabel,
+        });
+      } else {
+        pendingUpdateLabels.delete(instanceId);
+      }
       const response = await ModpackUpdateService.applyModpackUpdate(
         instanceId,
         plan.planHash,
         choices,
         optionalPicksRef.current
       );
+      if (response.status !== "success") pendingUpdateLabels.delete(instanceId);
       if (response.status === "success") {
         toast({
           title: t("DownloadTasksPage.updateStarted"),
@@ -347,7 +362,17 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
     } finally {
       applyInFlight.current = false;
     }
-  }, [plan, instanceId, choices, instanceName, toast, t, modalProps, runCheck]);
+  }, [
+    plan,
+    instanceId,
+    choices,
+    instanceName,
+    getInstanceList,
+    toast,
+    t,
+    modalProps,
+    runCheck,
+  ]);
 
   const handleRollback = useCallback(async () => {
     if (rollbackInFlight.current) return;

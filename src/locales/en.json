@@ -111,7 +111,11 @@
       },
       "campusModpack": {
         "title": "Install USTB Modpack",
-        "description": "Install USTB campus modpacks from Instance Sync & Updates"
+        "description": "Go to \"Discover - Campus Modpacks\" to install USTB campus modpacks"
+      },
+      "discoverModpacks": {
+        "title": "Discover Modpacks",
+        "description": "Browse modpacks on Modrinth and CurseForge"
       },
       "manageDirs": {
         "title": "Manage Game Directories",
@@ -437,9 +441,6 @@
     "footer": {
       "installFabricApi": "Install Fabric API Mod"
     }
-  },
-  "CreateRenamedInstShortcutAlertDialog": {
-    "content": "The name of this instance has recently been changed. Please refresh the instance list or restart the launcher before trying to add a launch shortcut again."
   },
   "DeleteAuthServerAlertDialog": {
     "dialog": {
@@ -1387,6 +1388,22 @@
       "delete": "Delete"
     }
   },
+  "InstanceNameEditor": {
+    "tooltip": {
+      "location": "{{gameDir}} · versions/{{folder}}"
+    }
+  },
+  "FolderConflictDialog": {
+    "title": "Folder Name Conflict",
+    "body": "The game directory \"{{gameDir}}\" already has a folder named \"{{folder}}\".",
+    "auto": "Resolve for Me",
+    "edit": "Change",
+    "label": "Folder name",
+    "error": {
+      "taken": "This folder name is already taken",
+      "invalid": "The folder name cannot contain \\ / : * ? \" < > |"
+    }
+  },
   "InstanceModsPage": {
     "modLoaderList": {
       "title": "Mod Loader",
@@ -1685,6 +1702,14 @@
     },
     "button": {
       "login": "Login"
+    }
+  },
+  "RenameSuggestionModal": {
+    "title": "Update Instance Name",
+    "body": "The modpack has been updated to {{version}}. Rename the instance to the new version?",
+    "button": {
+      "rename": "Rename",
+      "keep": "Keep Name"
     }
   },
   "RestartForUpdateConfirmDialog": {
@@ -2521,10 +2546,7 @@
           "title": "Failed to rename instance",
           "description": {
             "INSTANCE_NOT_FOUND_BY_ID": "Instance ID does not exist",
-            "CONFLICT_NAME_ERROR": "A duplicate instance name exists",
-            "INVALID_NAME_ERROR": "Invalid instance name",
-            "INVALID_SOURCE_PATH": "Invalid source path",
-            "FILE_MOVE_FAILED": "Failed to move instance files"
+            "FILE_CREATION_FAILED": "Failed to create target file"
           }
         }
       },
@@ -3556,11 +3578,9 @@
     }
   },
   "InstanceSyncPage": {
-    "title": "Instance Sync & Updates",
-    "description": "Instances that follow a modpack, plus campus modpacks and recommendations",
+    "title": "Sync & Updates",
+    "description": "Check for and apply updates, or import an update from a local file",
     "platform": {
-      "title": "Campus Modpacks",
-      "description": "Modpacks published by campus maintainers. Installed instances can follow new versions.",
       "recommended": "Recommended",
       "vanilla": "Vanilla",
       "onOtherPlatform": "Hosted on {{platform}}",
@@ -3575,8 +3595,8 @@
       }
     },
     "ledger": {
-      "title": "My modpack instances",
       "checkAll": "Check all",
+      "installMore": "Install more",
       "group": {
         "platform": "Platform",
         "local": "Local"

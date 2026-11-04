@@ -16,6 +16,7 @@ import NotifyModpackUpdatesModal from "@/components/modals/notify-modpack-update
 import NotifyNewVersionModal from "@/components/modals/notify-new-version-modal";
 import PublishModpackModal from "@/components/modals/publish-modpack-modal";
 import ReLoginPlayerModal from "@/components/modals/relogin-player-modal";
+import RenameSuggestionModal from "@/components/modals/rename-suggestion-modal";
 import SpotlightSearchModal from "@/components/modals/spotlight-search-modal";
 import UpdateModpackModal from "@/components/modals/update-modpack-modal";
 import VustbAnnouncementModal from "@/components/modals/vustb-announcement-modal";
@@ -58,6 +59,7 @@ const SharedModals: React.FC<{ children: React.ReactNode }> = ({
     "notify-new-version": NotifyNewVersionModal,
     "publish-modpack": PublishModpackModal,
     relogin: ReLoginPlayerModal,
+    "rename-suggestion": RenameSuggestionModal,
     "spotlight-search": SpotlightSearchModal,
     "update-modpack": UpdateModpackModal,
     "vustb-announcement": VustbAnnouncementModal,

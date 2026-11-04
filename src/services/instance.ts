@@ -6,6 +6,7 @@ import {
   ExportModpackOptions,
   GameServerInfo,
   InstanceDeletionProgress,
+  InstanceFolderCheck,
   InstanceSummary,
   LocalModInfo,
   ModpackFileList,
@@ -82,7 +83,7 @@ export class InstanceService {
    * @param {boolean} [isInstallFabricApi] - Optional flag to indicate whether to install Fabric API (only valid when modLoader is Fabric).
    * @param {string} [modpackVersion] - Optional modpack version to display with the instance.
    * @param {ModpackOriginInput} [origin] - Optional platform origin of the modpack, verified by the backend.
-   * @returns {Promise<InvokeResponse<null>>}
+   * @returns {Promise<InvokeResponse<string>>} The ID of the created instance.
    */
   @responseHandler("instance")
   static async createInstance(
@@ -96,7 +97,7 @@ export class InstanceService {
     isInstallFabricApi?: boolean,
     modpackVersion?: string,
     origin?: ModpackOriginInput
-  ): Promise<InvokeResponse<null>> {
+  ): Promise<InvokeResponse<string>> {
     return await invoke("create_instance", {
       directory,
       name,
@@ -196,10 +197,10 @@ export class InstanceService {
   }
 
   /**
-   * RENAME the specified instance (will update version folder name and field in version JSON).
+   * RENAME the specified instance: changes only the display name, never the folder.
    * @param {string} instanceId - The instance ID to rename.
-   * @param {string} newName - New name
-   * @returns {Promise<InvokeResponse<string>>} - New version path, for the frontend to sync update.
+   * @param {string} newName - New display name; empty restores the folder name.
+   * @returns {Promise<InvokeResponse<string>>} - The name now shown.
    */
   @responseHandler("instance")
   static async renameInstance(
@@ -210,6 +211,20 @@ export class InstanceService {
       instanceId,
       newName,
     });
+  }
+
+  /**
+   * CHECK whether a folder name is still free under a game directory's `versions`.
+   * @param {GameDirectory} directory - The game directory the instance goes into.
+   * @param {string} folder - The wanted folder name.
+   * @returns {Promise<InvokeResponse<InstanceFolderCheck>>} - Availability, plus the first free `<folder>-N` when taken.
+   */
+  @responseHandler("instance")
+  static async checkInstanceFolder(
+    directory: GameDirectory,
+    folder: string
+  ): Promise<InvokeResponse<InstanceFolderCheck>> {
+    return await invoke("check_instance_folder", { directory, folder });
   }
 
   /**

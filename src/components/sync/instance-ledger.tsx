@@ -1,12 +1,6 @@
-import {
-  Badge,
-  Button,
-  HStack,
-  Text,
-  VStack,
-  useColorModeValue,
-} from "@chakra-ui/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Badge, Button, HStack, Text, VStack } from "@chakra-ui/react";
+import { useRouter } from "next/router";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { CommonIconButton } from "@/components/common/common-icon-button";
 import { OptionItemGroup } from "@/components/common/option-item";
@@ -45,12 +39,7 @@ const BADGE_COLORS: Record<LedgerBadge, string> = {
 
 interface InstanceLedgerProps {
   instances: InstanceSummary[];
-  /** The row to flash after a jump from a project card. */
-  highlightId: string | null;
 }
-
-/** DOM id of a ledger row; the project cards jump to it. */
-export const ledgerRowId = (instanceId: string) => `sync-row-${instanceId}`;
 
 /**
  * Every instance that follows a modpack line, with where it stands against
@@ -58,17 +47,13 @@ export const ledgerRowId = (instanceId: string) => `sync-row-${instanceId}`;
  */
 export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
   instances,
-  highlightId,
 }) => {
   const { t } = useTranslation();
+  const router = useRouter();
   const { openSharedModal } = useSharedModals();
   const { config } = useLauncherConfig();
   const primaryColor = config.appearance.theme.primaryColor;
   const { modpackChecks, checkModpackUpdate } = useGlobalData();
-  const highlightBg = useColorModeValue(
-    `${primaryColor}.100`,
-    `${primaryColor}.800`
-  );
 
   const [checking, setChecking] = useState(false);
 
@@ -77,21 +62,6 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
   const rows = useMemo(() => ledgerInstances(instances), [instances]);
   const localRows = useMemo(() => ledgerLocalInstances(instances), [instances]);
 
-  // A collapsed group keeps its rows in the DOM but hidden. A jump from a
-  // project card remounts the platform group expanded, then scrolls to the row.
-  const platformOpenRef = useRef(true);
-  const [platformKey, setPlatformKey] = useState(0);
-  useEffect(() => {
-    if (!highlightId || platformOpenRef.current) return;
-    if (!rows.some((instance) => instance.id === highlightId)) return;
-    platformOpenRef.current = true;
-    setPlatformKey((key) => key + 1);
-    requestAnimationFrame(() =>
-      document
-        .getElementById(ledgerRowId(highlightId))
-        ?.scrollIntoView({ behavior: "smooth", block: "center" })
-    );
-  }, [highlightId, rows]);
   const followedKey = rows
     .filter(shouldCheckInstance)
     .map((instance) => instance.id)
@@ -147,28 +117,31 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
 
   return (
     <VStack align="stretch" spacing={3}>
-      <HStack spacing={2} px={1} justify="space-between" w="100%">
-        <Text fontSize="sm" fontWeight="bold">
-          {t("InstanceSyncPage.ledger.title")}
-        </Text>
-        <CommonIconButton
-          icon="refresh"
-          label={t("InstanceSyncPage.ledger.checkAll")}
-          withTooltip
-          onClick={() => checkAll(() => false)}
-          isDisabled={checking || !followedKey}
-          size="xs"
-          h={21}
-        />
-      </HStack>
       {rows.length > 0 && (
         <Section
-          key={platformKey}
           title={t("InstanceSyncPage.ledger.group.platform")}
           isAccordion
-          onAccordionToggle={(isOpen) => {
-            platformOpenRef.current = isOpen;
-          }}
+          titleExtra={
+            <CommonIconButton
+              icon="external"
+              label={t("InstanceSyncPage.ledger.installMore")}
+              withTooltip
+              onClick={() => router.push("/discover/modpacks")}
+              size="xs"
+              h={21}
+            />
+          }
+          headExtra={
+            <CommonIconButton
+              icon="refresh"
+              label={t("InstanceSyncPage.ledger.checkAll")}
+              withTooltip
+              onClick={() => checkAll(() => false)}
+              isDisabled={checking || !followedKey}
+              size="xs"
+              h={21}
+            />
+          }
         >
           <OptionItemGroup
             items={rows.map((instance) => {
@@ -227,9 +200,6 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
               );
 
               return {
-                id: ledgerRowId(instance.id),
-                bg: highlightId === instance.id ? highlightBg : undefined,
-                transition: "background-color 0.4s ease-in-out",
                 title: (
                   <HStack spacing={2}>
                     <Text fontSize="xs-sm">{instance.name}</Text>
@@ -262,7 +232,6 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
             items={localRows.map((instance) => {
               const installing = isInstallingInstance(instance);
               return {
-                id: ledgerRowId(instance.id),
                 title: (
                   <HStack spacing={2}>
                     <Text fontSize="xs-sm">{instance.name}</Text>

@@ -32,6 +32,7 @@ import { useLauncherConfig } from "@/contexts/config";
 import { useGlobalData } from "@/contexts/global-data";
 import { useToast } from "@/contexts/toast";
 import { ModLoaderType } from "@/enums/instance";
+import { useFolderConflict } from "@/hooks/folder-conflict";
 import { ModpackMetaInfo } from "@/models/instance/misc";
 import {
   ModpackOptionalFile,
@@ -56,6 +57,7 @@ const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
 }) => {
   const { config } = useLauncherConfig();
   const { getInstanceList } = useGlobalData();
+  const { resolveFolder, folderConflictDialog } = useFolderConflict();
   const router = useRouter();
   const toast = useToast();
   const primaryColor = config.appearance.theme.primaryColor;
@@ -179,9 +181,11 @@ const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
         // update engine installs the pack once the game client is ready, like
         // any other modpack install.
         const label = modpack.version || modpack.name;
+        const folder = await resolveFolder(gameDirectory, name);
+        if (folder === null) return;
         const createResp = await InstanceService.createInstance(
           gameDirectory,
-          name,
+          folder,
           description,
           iconSrc,
           clientResourceInfo,
@@ -207,7 +211,7 @@ const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
           });
           return;
         }
-        const instanceId = `${gameDirectory.name}:${name}`;
+        const instanceId = createResp.data;
         const registered =
           await CampusModpackService.registerCampusModpackInstall(
             instanceId,
@@ -246,6 +250,7 @@ const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
       name,
       optionalPicks,
       path,
+      resolveFolder,
       router,
       toast,
     ]
@@ -426,6 +431,7 @@ const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
           </ModalFooter>
         </ModalContent>
       </Modal>
+      {folderConflictDialog}
     </>
   );
 };

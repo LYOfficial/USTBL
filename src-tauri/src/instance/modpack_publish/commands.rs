@@ -945,7 +945,7 @@ async fn prepare(
     error: None,
     created_at: chrono::Utc::now().timestamp_millis(),
     instance_id: instance_id.to_string(),
-    instance_name: instance.name.clone(),
+    instance_name: instance.shown_name().to_string(),
     project_slug: slug,
     project_name,
     version_id,

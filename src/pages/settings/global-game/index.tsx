@@ -130,8 +130,12 @@ const GlobalGameSettingsPage = () => {
       "localGameDirectories",
       config.localGameDirectories.filter((dir) => dir.dir !== selectedDir.dir)
     );
+    (getInstanceList() || [])
+      .filter((instance) => instance.gameDir === selectedDir.name)
+      .forEach((instance) =>
+        removeHistory(`/instances/details/${instance.id}`)
+      );
     getInstanceList(true); // refresh frontend state of instance list
-    removeHistory(`/instances/details/${selectedDir.name}:`);
     removeHistory(`/instances/list/${selectedDir.name}`);
     closeSharedModal("generic-confirm");
   };

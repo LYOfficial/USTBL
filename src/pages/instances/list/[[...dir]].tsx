@@ -56,8 +56,8 @@ const InstanceListPage = () => {
     setInstanceList(() => {
       const all = getInstanceList() || [];
       if (!dir) return all; // /instances/list, show all
-      const dirPrefix = Array.isArray(dir) ? dir.join("/") : dir;
-      return all.filter((inst) => inst.id.startsWith(`${dirPrefix}:`));
+      const gameDir = Array.isArray(dir) ? dir.join("/") : dir;
+      return all.filter((inst) => inst.gameDir === gameDir);
     });
   }, [dir, router.isReady, getInstanceList]);
 
@@ -173,7 +173,7 @@ const InstanceListPage = () => {
             colorScheme={primaryColor}
             variant={primaryColor === "gray" ? "subtle" : "outline"}
             onClick={() => {
-              router.push("/instances/sync");
+              router.push("/discover/campus-modpacks");
             }}
           >
             {t("AllInstancesPage.button.installCampusModpack")}

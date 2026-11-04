@@ -242,15 +242,13 @@ const EditGameDirectoryModal: React.FC<EditGameDirectoryModalProps> = ({
         )
       );
 
-      if (currentPath === _dirPath) {
-        // only update dir name, instance not changed
-        replaceHistory(
-          `/instances/details/${currentName}:`,
-          `/instances/details/${dirName}:`
-        );
-      } else {
-        // update dir path, instance may change, remove all route history
-        removeHistory(`/instances/details/${currentName}:`);
+      if (currentPath !== _dirPath) {
+        // the directory moved, so its instances may be gone
+        (getInstanceList() || [])
+          .filter((instance) => instance.gameDir === currentName)
+          .forEach((instance) =>
+            removeHistory(`/instances/details/${instance.id}`)
+          );
       }
       replaceHistory(
         `/instances/list/${currentName}`,
