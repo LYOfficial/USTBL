@@ -133,14 +133,14 @@ pub struct UpdateCheck {
   pub unlinked: bool,
 }
 
-#[derive(Debug, Clone, serde::Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoaderChange {
   pub from: BaselineLoader,
   pub to: BaselineLoader,
 }
 
-fn compute_loader_change(
+pub(super) fn compute_loader_change(
   baseline: &BaselineLoader,
   remote: &BaselineLoader,
 ) -> Option<LoaderChange> {
@@ -1918,6 +1918,29 @@ async fn plan_prepared(
   baseline: &ModpackBaseline,
   latest: &LatestVersion,
 ) -> USTBLResult<PlannedRun> {
+  // A platform pack is previewed through byte ranges of its archive when it
+  // can be; the archive itself is only downloaded when the update is confirmed.
+  if let Some(run) = super::preview_fetch::plan_by_ranges(
+    app,
+    &target.origin,
+    &target.root,
+    &target.instance.name,
+    baseline,
+    latest,
+    is_fresh(&target.origin),
+  )
+  .await
+  {
+    return Ok(PlannedRun {
+      version_id: run.remote.version_id.clone(),
+      label: run.remote.label.clone(),
+      diff: run.prepared.diff,
+      plan_hash: run.prepared.plan_hash,
+      loader_change: run.loader_change,
+      reinstall_required: false,
+      remote: run.remote,
+    });
+  }
   let remote = resolve_remote(
     app,
     &target.origin,
@@ -2620,7 +2643,12 @@ async fn apply_modpack_update_inner(
   // has a base to diff against. Text files only; `store` re-validates.
   let base_texts = remote_contents.clone();
   let prepared = finish(compared, &target.root, &remote, &remote_contents)?;
-  if prepared.plan_hash != plan_hash {
+  if prepared.plan_hash != plan_hash
+    && !preview_was_confirmed(
+      &app, &target, &baseline, &latest, &prepared, &plan_hash, fresh,
+    )
+    .await
+  {
     // The cached plan the player looked at describes another state; drop it
     // so a retry re-plans instead of serving it again.
     plan_cache::clear_plan_cache(&target.root);
@@ -2664,7 +2692,9 @@ async fn apply_modpack_update_inner(
       base_texts,
       next_baseline: prepared.next_baseline.clone(),
       ignores,
-      plan_hash: plan_hash.clone(),
+      // The staging record carries the hash of the plan that is applied; for a
+      // confirmed preview that is the full plan's, not the previewed one.
+      plan_hash: prepared.plan_hash.clone(),
     },
   )
   .await;
@@ -2675,6 +2705,53 @@ async fn apply_modpack_update_inner(
     version_id,
     loader_install_pending: env.loader_install_pending.load(Ordering::SeqCst),
   })
+}
+
+/// Whether a plan hash that differs from the full plan's is the hash of a
+/// preview of this very state: a preview names the files it did not read with
+/// stand-in keys, so its hash can never equal the full plan's. Only a platform
+/// archive already on disk can settle it.
+async fn preview_was_confirmed(
+  app: &AppHandle,
+  target: &Target,
+  baseline: &ModpackBaseline,
+  latest: &LatestVersion,
+  full: &super::plan::Prepared,
+  confirmed: &str,
+  fresh: bool,
+) -> bool {
+  if fresh {
+    return false;
+  }
+  let Some(archive) = super::sources::downloaded_archive(&target.root, latest) else {
+    return false;
+  };
+  let facts = async {
+    let file = std::fs::File::open(&archive)?;
+    let manifest = crate::instance::helpers::modpack::misc::parse_platform_manifest(&file)?;
+    super::sources::archive_facts(app, &manifest, &target.root, &target.origin).await
+  };
+  let facts = match facts.await {
+    Ok(facts) => facts,
+    Err(error) => {
+      log::info!("modpack update: archive facts unavailable for the preview check: {error:?}");
+      return false;
+    }
+  };
+  let full_loader_change = compute_loader_change(&baseline.loader, &facts.loader);
+  super::preview::accepts(
+    facts,
+    latest,
+    &archive,
+    &target.root,
+    &target.instance.name,
+    baseline,
+    fresh,
+    confirmed,
+    full,
+    &full_loader_change,
+  )
+  .await
 }
 
 /// The modpack version the launcher already announced for this instance.

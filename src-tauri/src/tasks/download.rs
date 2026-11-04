@@ -872,6 +872,11 @@ fn ensure_complete(on_disk: i64, total: i64) -> Result<(), AttemptError> {
   Ok(())
 }
 
+/// Every URL `param` can be fetched from, in the order a download tries them.
+pub fn source_urls(app_handle: &AppHandle, param: &DownloadParam) -> Vec<Url> {
+  DownloadTask::sources(param, &content_source_priority(app_handle))
+}
+
 /// Content source order for the current configuration.
 ///
 /// The MCIM mirror is the only content source that works without extra

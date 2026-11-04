@@ -47,6 +47,12 @@ pub enum FileSource {
   /// Stored in the campus platform's packs, found by the file's sha1. The
   /// session is told which files are wanted before any is fetched.
   Pack(Arc<PackSession>),
+  /// An entry of an archive that was only listed (read through byte ranges),
+  /// not downloaded. Such a file has a key for comparing and nothing to write:
+  /// a remote that holds one is a preview and can never be applied.
+  /// `exact` says whether the key is the entry's real SHA-1; otherwise it
+  /// stands in for content that is known to differ from every local candidate.
+  Listed { entry: String, exact: bool },
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -55,6 +61,7 @@ pub enum StoredFileSource {
   Download { param: Box<DownloadParam> },
   ArchiveEntry { archive: PathBuf, entry: String },
   Pack { version_id: i64 },
+  Listed { entry: String, exact: bool },
 }
 
 impl From<&FileSource> for StoredFileSource {
@@ -69,6 +76,10 @@ impl From<&FileSource> for StoredFileSource {
       },
       FileSource::Pack(session) => StoredFileSource::Pack {
         version_id: session.version_id(),
+      },
+      FileSource::Listed { entry, exact } => StoredFileSource::Listed {
+        entry: entry.clone(),
+        exact: *exact,
       },
     }
   }
@@ -293,6 +304,7 @@ impl RemoteModpack {
         StoredFileSource::ArchiveEntry { archive, entry } => {
           FileSource::ArchiveEntry { archive, entry }
         }
+        StoredFileSource::Listed { entry, exact } => FileSource::Listed { entry, exact },
         StoredFileSource::Pack { version_id } => FileSource::Pack(
           sessions
             .entry(version_id)
@@ -327,7 +339,40 @@ impl RemoteModpack {
   }
 }
 
+impl StoredRemoteModpack {
+  /// Whether the stored remote is a preview. Those are never written to the
+  /// remote cache; one that shows up anyway must not be read back as a full
+  /// remote.
+  pub fn has_listed_files(&self) -> bool {
+    self
+      .files
+      .iter()
+      .chain(
+        self
+          .component_pack
+          .iter()
+          .flat_map(|pack| pack.files.iter()),
+      )
+      .any(|file| matches!(file.source, StoredFileSource::Listed { .. }))
+  }
+}
+
 impl RemoteModpack {
+  /// Whether any file of this remote is only listed. Such a remote is a
+  /// preview: it has no bytes to write, so the update refuses it.
+  pub fn has_listed_files(&self) -> bool {
+    self
+      .files
+      .iter()
+      .chain(
+        self
+          .component_pack
+          .iter()
+          .flat_map(|pack| pack.files.iter()),
+      )
+      .any(|file| matches!(file.source, FileSource::Listed { .. }))
+  }
+
   /// Reject anything that could write outside the instance or over launcher
   /// owned files, and paths that collide on case-insensitive file systems.
   /// A `/3` manifest's rules get the same checks plus their own: no rule may

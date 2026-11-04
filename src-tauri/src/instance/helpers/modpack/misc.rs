@@ -70,6 +70,26 @@ pub(crate) fn parse_platform_manifest(file: &File) -> USTBLResult<ManifestBox> {
   }
   Err(InstanceError::ModpackManifestParseError.into())
 }
+
+/// The archive entries a platform manifest can live in, in the order
+/// [`parse_platform_manifest`] tries them.
+pub(crate) const PLATFORM_MANIFEST_ENTRIES: [&str; 2] = ["manifest.json", "modrinth.index.json"];
+
+/// Parse the content of one of [`PLATFORM_MANIFEST_ENTRIES`], for an archive
+/// whose entries are read without opening it as a file.
+pub(crate) fn parse_platform_manifest_entry(name: &str, content: &[u8]) -> Option<ManifestBox> {
+  let text = std::str::from_utf8(content).ok()?;
+  match name {
+    "manifest.json" => serde_json::from_str::<CurseForgeManifest>(text)
+      .ok()
+      .map(|manifest| Box::new(manifest) as ManifestBox),
+    "modrinth.index.json" => serde_json::from_str::<ModrinthManifest>(text)
+      .ok()
+      .map(|manifest| Box::new(manifest) as ManifestBox),
+    _ => None,
+  }
+}
+
 fn get_parsers() -> Vec<Parser> {
   vec![
     Box::new(|f| {

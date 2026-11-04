@@ -12,7 +12,9 @@ use crate::file_error::AtPath;
 use crate::instance::helpers::modpack::baseline::{
   components_of_mmc_pack, hash_file, normalize_relative_path, BaselineLoader,
 };
-use crate::instance::helpers::modpack::misc::{list_override_entries, parse_platform_manifest};
+use crate::instance::helpers::modpack::misc::{
+  list_override_entries, parse_platform_manifest, ManifestBox,
+};
 use crate::instance::models::misc::{InstanceError, InstanceOrigin, ModLoaderType, OriginPlatform};
 use crate::resource::commands::fetch_resource_version_packs;
 use crate::resource::models::{
@@ -239,7 +241,7 @@ pub struct CampusSource {
   pub url: Option<String>,
 }
 
-fn plain_download(url: &str) -> USTBLResult<Box<DownloadParam>> {
+pub(super) fn plain_download(url: &str) -> USTBLResult<Box<DownloadParam>> {
   Ok(Box::new(DownloadParam {
     src: Url::parse(url).map_err(|_| InstanceError::ModpackUpdateRemoteInvalid)?,
     dest: PathBuf::new(),
@@ -459,8 +461,27 @@ impl RemoteCache {
 }
 
 /// The archive of an Archive payload: its sha1 and the path it is kept at.
-fn archive_path(root: &Path, sha1: &str) -> PathBuf {
+pub(super) fn archive_path(root: &Path, sha1: &str) -> PathBuf {
   remote_dir(root).join(format!("{sha1}.zip"))
+}
+
+/// The archive of an Archive payload, when it is on disk. The update has just
+/// downloaded and verified it by the time it asks.
+pub fn downloaded_archive(root: &Path, latest: &LatestVersion) -> Option<PathBuf> {
+  let (sha1, _) = latest.archive_ref()?;
+  let path = archive_path(root, sha1);
+  path.is_file().then_some(path)
+}
+
+/// The cache of `version`, when one exists that describes it fetched into `root`.
+pub fn matching_remote_cache(
+  origin: &InstanceOrigin,
+  root: &Path,
+  version: &LatestVersion,
+) -> Option<RemoteCache> {
+  let bytes = fs::read(remote_cache_path(root, &version.version_id)).ok()?;
+  let cache: RemoteCache = serde_json::from_slice(&bytes).ok()?;
+  (cache.matches(origin, root, version) && !cache.remote.has_listed_files()).then_some(cache)
 }
 
 pub fn load_remote_cache(
@@ -469,15 +490,10 @@ pub fn load_remote_cache(
   root: &Path,
   version: &LatestVersion,
 ) -> Option<RemoteModpack> {
-  let bytes = fs::read(remote_cache_path(root, &version.version_id)).ok()?;
-  let cache: RemoteCache = serde_json::from_slice(&bytes).ok()?;
-  if cache.matches(origin, root, version) {
-    Some(RemoteModpack::from_stored(cache.remote, |version_id| {
-      PackSession::new(AppTransport::new(app.clone()), version_id)
-    }))
-  } else {
-    None
-  }
+  let cache = matching_remote_cache(origin, root, version)?;
+  Some(RemoteModpack::from_stored(cache.remote, |version_id| {
+    PackSession::new(AppTransport::new(app.clone()), version_id)
+  }))
 }
 
 pub fn write_remote_cache(root: &Path, cache: &RemoteCache) -> std::io::Result<()> {
@@ -590,6 +606,62 @@ pub async fn remote_from_archive(
 ) -> USTBLResult<RemoteModpack> {
   let file = File::open(archive)?;
   let manifest = parse_platform_manifest(&file)?;
+  let facts = archive_facts(app, &manifest, root, origin).await?;
+
+  let hashing_started = std::time::Instant::now();
+  let overrides_paths = facts.overrides_paths.clone();
+  let (archive_path, name) = (archive.to_path_buf(), instance_name.to_string());
+  let overrides = tokio::task::spawn_blocking(move || -> USTBLResult<Vec<RemoteFile>> {
+    let file = File::open(&archive_path)?;
+    let entries = list_override_entries(&file, &overrides_paths, &name)?;
+    // One open archive for every entry, not one per entry.
+    let mut zip = zip::ZipArchive::new(file)?;
+    entries
+      .into_iter()
+      .map(|(path, entry)| {
+        Ok(RemoteFile {
+          key: hash_zip_entry(&mut zip, &archive_path, &entry)?,
+          path,
+          source: FileSource::ArchiveEntry {
+            archive: archive_path.clone(),
+            entry,
+          },
+          disabled: false,
+          once: false,
+        })
+      })
+      .collect()
+  })
+  .await
+  .map_err(|e| USTBLError(e.to_string()))??;
+  log::info!(
+    "modpack archive overrides: {} files hashed elapsed_ms={}",
+    overrides.len(),
+    hashing_started.elapsed().as_millis()
+  );
+
+  Ok(assemble_remote(latest, facts, overrides))
+}
+
+/// What a platform archive's manifest says, independent of how its overrides
+/// are read: the same for a downloaded archive and for one read through byte
+/// ranges.
+pub struct ArchiveFacts {
+  pub game_version: String,
+  pub loader: BaselineLoader,
+  /// Archive directories holding overrides, in layering order.
+  pub overrides_paths: Vec<String>,
+  /// Files the manifest asks to download, with the platform's hash and size.
+  pub downloads: Vec<RemoteFile>,
+}
+
+/// Check the manifest against the followed line and look up its downloads.
+pub async fn archive_facts(
+  app: &AppHandle,
+  manifest: &ManifestBox,
+  root: &Path,
+  origin: &InstanceOrigin,
+) -> USTBLResult<ArchiveFacts> {
   let game_version = manifest.get_client_version()?;
   let (loader_type, loader_version) = manifest.get_mod_loader_type_version()?;
   if game_version != origin.game_version
@@ -627,49 +699,30 @@ pub async fn remote_from_archive(
     downloads.len(),
     params_started.elapsed().as_millis()
   );
-
-  let hashing_started = std::time::Instant::now();
-  let overrides_paths = manifest.get_overrides_paths();
-  let (archive_path, name) = (archive.to_path_buf(), instance_name.to_string());
-  let overrides = tokio::task::spawn_blocking(move || -> USTBLResult<Vec<RemoteFile>> {
-    let file = File::open(&archive_path)?;
-    let entries = list_override_entries(&file, &overrides_paths, &name)?;
-    // One open archive for every entry, not one per entry.
-    let mut zip = zip::ZipArchive::new(file)?;
-    entries
-      .into_iter()
-      .map(|(path, entry)| {
-        Ok(RemoteFile {
-          key: hash_zip_entry(&mut zip, &archive_path, &entry)?,
-          path,
-          source: FileSource::ArchiveEntry {
-            archive: archive_path.clone(),
-            entry,
-          },
-          disabled: false,
-          once: false,
-        })
-      })
-      .collect()
-  })
-  .await
-  .map_err(|e| USTBLError(e.to_string()))??;
-  log::info!(
-    "modpack archive overrides: {} files hashed elapsed_ms={}",
-    overrides.len(),
-    hashing_started.elapsed().as_millis()
-  );
-
-  let (downloads, overrides) = read_disabled_mods(downloads, overrides);
-
-  Ok(RemoteModpack {
-    version_id: latest.version_id.clone(),
-    label: latest.label.clone(),
+  Ok(ArchiveFacts {
     game_version,
     loader: BaselineLoader {
       loader_type,
       version: loader_version,
     },
+    overrides_paths: manifest.get_overrides_paths(),
+    downloads,
+  })
+}
+
+/// The remote of a platform archive from its manifest facts and the files its
+/// overrides contribute.
+pub fn assemble_remote(
+  latest: &LatestVersion,
+  facts: ArchiveFacts,
+  overrides: Vec<RemoteFile>,
+) -> RemoteModpack {
+  let (downloads, overrides) = read_disabled_mods(facts.downloads, overrides);
+  RemoteModpack {
+    version_id: latest.version_id.clone(),
+    label: latest.label.clone(),
+    game_version: facts.game_version,
+    loader: facts.loader,
     components: None,
     component_pack: None,
     files: merge_files(downloads, overrides),
@@ -677,7 +730,7 @@ pub async fn remote_from_archive(
     rules_manifest: false,
     disabled_authoritative: true,
     path_index: Arc::new(std::sync::OnceLock::new()),
-  })
+  }
 }
 
 // ---- light check --------------------------------------------------------------
@@ -728,7 +781,7 @@ pub fn campus_client(app: &AppHandle) -> reqwest::Client {
     .unwrap_or_else(|| crate::utils::web::build_campus_client(app))
 }
 
-fn remote_dir(root: &Path) -> PathBuf {
+pub(super) fn remote_dir(root: &Path) -> PathBuf {
   root.join(UPDATE_DIR).join("remote")
 }
 
