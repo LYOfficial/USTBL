@@ -1379,6 +1379,14 @@
       "viewInstall": "インストールを表示"
     }
   },
+  "InstanceGroups": {
+    "installed": "インストール済み",
+    "starred": "スター付き",
+    "emptyHint": "ここにインスタンスをドラッグ",
+    "tooltip": {
+      "location": "{{gameDir}} · versions/{{folder}}"
+    }
+  },
   "InstanceIconSelector": {
     "customize": "アイコンをカスタマイズ"
   },

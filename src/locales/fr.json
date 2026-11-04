@@ -1379,6 +1379,14 @@
       "viewInstall": "Voir l'installation"
     }
   },
+  "InstanceGroups": {
+    "installed": "Installées",
+    "starred": "Favoris",
+    "emptyHint": "Glissez des instances ici",
+    "tooltip": {
+      "location": "{{gameDir}} · versions/{{folder}}"
+    }
+  },
   "InstanceIconSelector": {
     "customize": "Personnaliser les images"
   },

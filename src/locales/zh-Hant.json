@@ -1379,6 +1379,14 @@
       "viewInstall": "查看安裝"
     }
   },
+  "InstanceGroups": {
+    "installed": "已安裝",
+    "starred": "收藏",
+    "emptyHint": "拖曳實例到這裡",
+    "tooltip": {
+      "location": "{{gameDir}} · versions/{{folder}}"
+    }
+  },
   "InstanceIconSelector": {
     "customize": "自訂圖像"
   },
