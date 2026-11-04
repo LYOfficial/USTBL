@@ -1,14 +1,13 @@
 import {
   Box,
   Collapse,
-  Flex,
   HStack,
   Icon,
   Text,
   useColorModeValue,
   useDisclosure,
 } from "@chakra-ui/react";
-import React from "react";
+import React, { useMemo, useState } from "react";
 import { LuChevronDown, LuChevronRight } from "react-icons/lu";
 import {
   ModpackDiffEdit,
@@ -16,25 +15,63 @@ import {
   ModpackDiffLine,
   ModpackDiffLineKind,
 } from "@/models/modpack-update";
+import {
+  DIFF_ROW_HEIGHT,
+  DIFF_VIEWPORT_HEIGHT,
+  diffRowCount,
+  diffVisibleRange,
+  shouldVirtualizeDiff,
+  textColumns,
+} from "@/utils/diff-virtual";
 
 const MONO =
   "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace";
 
 /** Colors of the GitHub diff view, light and dark. */
-const useDiffColors = () => ({
-  border: useColorModeValue("#d0d7de", "#30363d"),
-  headerBg: useColorModeValue("#f6f8fa", "#161b22"),
-  hunkBg: useColorModeValue("#ddf4ff", "rgba(56,139,253,0.1)"),
-  hunkGutter: useColorModeValue("#b6e3ff", "rgba(56,139,253,0.2)"),
-  hunkText: useColorModeValue("#57606a", "#8b949e"),
-  addBg: useColorModeValue("#e6ffec", "rgba(46,160,67,0.15)"),
-  addGutter: useColorModeValue("#ccffd8", "rgba(63,185,80,0.3)"),
-  deleteBg: useColorModeValue("#ffebe9", "rgba(248,81,73,0.1)"),
-  deleteGutter: useColorModeValue("#ffd7d5", "rgba(248,81,73,0.3)"),
-  number: useColorModeValue("#6e7781", "#6e7681"),
-  addStat: useColorModeValue("#1a7f37", "#3fb950"),
-  deleteStat: useColorModeValue("#cf222e", "#f85149"),
-});
+const useDiffColors = () => {
+  const border = useColorModeValue("#d0d7de", "#30363d");
+  const headerBg = useColorModeValue("#f6f8fa", "#161b22");
+  const hunkBg = useColorModeValue("#ddf4ff", "rgba(56,139,253,0.1)");
+  const hunkGutter = useColorModeValue("#b6e3ff", "rgba(56,139,253,0.2)");
+  const hunkText = useColorModeValue("#57606a", "#8b949e");
+  const addBg = useColorModeValue("#e6ffec", "rgba(46,160,67,0.15)");
+  const addGutter = useColorModeValue("#ccffd8", "rgba(63,185,80,0.3)");
+  const deleteBg = useColorModeValue("#ffebe9", "rgba(248,81,73,0.1)");
+  const deleteGutter = useColorModeValue("#ffd7d5", "rgba(248,81,73,0.3)");
+  const number = useColorModeValue("#6e7781", "#6e7681");
+  const addStat = useColorModeValue("#1a7f37", "#3fb950");
+  const deleteStat = useColorModeValue("#cf222e", "#f85149");
+  return useMemo(
+    () => ({
+      border,
+      headerBg,
+      hunkBg,
+      hunkGutter,
+      hunkText,
+      addBg,
+      addGutter,
+      deleteBg,
+      deleteGutter,
+      number,
+      addStat,
+      deleteStat,
+    }),
+    [
+      border,
+      headerBg,
+      hunkBg,
+      hunkGutter,
+      hunkText,
+      addBg,
+      addGutter,
+      deleteBg,
+      deleteGutter,
+      number,
+      addStat,
+      deleteStat,
+    ]
+  );
+};
 
 type DiffColors = ReturnType<typeof useDiffColors>;
 
@@ -110,74 +147,117 @@ export const regionHunk = (
   };
 };
 
-const Gutter: React.FC<{
-  value?: number | null;
-  bg?: string;
-  color: string;
-}> = ({ value, bg, color }) => (
-  <Box
-    as="span"
-    flex="0 0 auto"
-    minW="3.25em"
-    px={2}
-    textAlign="right"
-    color={color}
-    bg={bg}
-    userSelect="none"
-  >
-    {value ?? ""}
-  </Box>
-);
+const CELL_PADDING = "0 0.5rem";
 
-const DiffRow: React.FC<{
-  line: ModpackDiffLine;
-  colors: DiffColors;
-  action?: React.ReactNode;
-}> = ({ line, colors, action }) => {
-  const bg =
-    line.kind === "add"
-      ? colors.addBg
-      : line.kind === "delete"
-        ? colors.deleteBg
-        : undefined;
-  const gutter =
-    line.kind === "add"
-      ? colors.addGutter
-      : line.kind === "delete"
-        ? colors.deleteGutter
-        : undefined;
-  return (
-    <Flex bg={bg} minW="fit-content">
-      <Gutter value={line.oldNumber} bg={gutter} color={colors.number} />
-      <Gutter value={line.newNumber} bg={gutter} color={colors.number} />
-      <Box
-        as="span"
-        flex="0 0 auto"
-        w="1.5em"
-        textAlign="center"
-        userSelect="none"
-      >
-        {MARKS[line.kind]}
-      </Box>
-      <Box as="span" whiteSpace="pre" pr={4}>
-        {line.text === "" ? " " : line.text}
-      </Box>
-      {action && (
-        <Box
-          as="span"
-          ml="auto"
-          pl={2}
-          pr={2}
-          position="sticky"
-          right={0}
-          flex="0 0 auto"
-        >
-          {action}
-        </Box>
-      )}
-    </Flex>
-  );
+/**
+ * Inline styles of the diff rows, computed once per color mode so that
+ * thousands of rows don't each go through the style system.
+ */
+const buildRowStyles = (
+  colors: DiffColors,
+  gutterWidth: string,
+  virtual: boolean
+) => {
+  const gutter = (bg?: string): React.CSSProperties => ({
+    flex: "0 0 auto",
+    minWidth: gutterWidth,
+    padding: CELL_PADDING,
+    textAlign: "right",
+    color: colors.number,
+    background: bg,
+    userSelect: "none",
+  });
+  const row = (bg?: string): React.CSSProperties => ({
+    display: "flex",
+    minWidth: "fit-content",
+    background: bg,
+    ...(virtual && {
+      position: "absolute",
+      left: 0,
+      width: "100%",
+      height: DIFF_ROW_HEIGHT,
+    }),
+  });
+  return {
+    row: {
+      context: row(),
+      add: row(colors.addBg),
+      delete: row(colors.deleteBg),
+    } as Record<ModpackDiffLineKind, React.CSSProperties>,
+    gutter: {
+      context: gutter(),
+      add: gutter(colors.addGutter),
+      delete: gutter(colors.deleteGutter),
+    } as Record<ModpackDiffLineKind, React.CSSProperties>,
+    mark: {
+      flex: "0 0 auto",
+      width: "1.5em",
+      textAlign: "center",
+      userSelect: "none",
+    } as React.CSSProperties,
+    text: { whiteSpace: "pre", paddingRight: "1rem" } as React.CSSProperties,
+    action: {
+      marginLeft: "auto",
+      padding: CELL_PADDING,
+      position: "sticky",
+      right: 0,
+      flex: "0 0 auto",
+      ...(virtual && { display: "flex", alignItems: "center", zIndex: 1 }),
+    } as React.CSSProperties,
+    header: row(colors.hunkBg),
+    headerGutter: {
+      flex: "0 0 auto",
+      minWidth: `calc(${gutterWidth} * 2 + 2rem + 1.5em)`,
+      background: colors.hunkGutter,
+    } as React.CSSProperties,
+    headerText: {
+      whiteSpace: "pre",
+      padding: CELL_PADDING,
+      color: colors.hunkText,
+    } as React.CSSProperties,
+  };
 };
+
+type RowStyles = ReturnType<typeof buildRowStyles>;
+
+const DiffRow = React.memo(function DiffRow({
+  line,
+  styles,
+  top,
+  action,
+}: {
+  line: ModpackDiffLine;
+  styles: RowStyles;
+  top?: number;
+  action?: React.ReactNode;
+}) {
+  const rowStyle =
+    top === undefined
+      ? styles.row[line.kind]
+      : { ...styles.row[line.kind], top };
+  return (
+    <div style={rowStyle}>
+      <span style={styles.gutter[line.kind]}>{line.oldNumber ?? ""}</span>
+      <span style={styles.gutter[line.kind]}>{line.newNumber ?? ""}</span>
+      <span style={styles.mark}>{MARKS[line.kind]}</span>
+      <span style={styles.text}>{line.text === "" ? " " : line.text}</span>
+      {action && <span style={styles.action}>{action}</span>}
+    </div>
+  );
+});
+
+const HunkHeaderRow: React.FC<{
+  hunk: ModpackDiffHunk;
+  styles: RowStyles;
+  top?: number;
+}> = ({ hunk, styles, top }) => (
+  <div style={top === undefined ? styles.header : { ...styles.header, top }}>
+    <span style={styles.headerGutter} />
+    <span style={styles.headerText}>
+      {`@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`}
+    </span>
+  </div>
+);
 
 interface DiffHunksProps {
   hunks: ModpackDiffHunk[];
@@ -193,58 +273,164 @@ interface DiffHunksProps {
   ) => React.ReactNode;
 }
 
-/** The body of a GitHub-style unified diff. */
-export const DiffHunks: React.FC<DiffHunksProps> = ({
-  hunks,
-  hideHunkHeaders = false,
-  renderEditAction,
-}) => {
-  const colors = useDiffColors();
+/** The edit control for line `index` of `hunk`, if it starts a change. */
+const lineAction = (
+  hunk: ModpackDiffHunk,
+  index: number,
+  renderEditAction: DiffHunksProps["renderEditAction"]
+) => {
+  const line = hunk.lines[index];
+  const edit =
+    line.edit !== undefined && line.edit !== null
+      ? hunk.edits?.[line.edit]
+      : undefined;
+  const first = edit !== undefined && hunk.lines[index - 1]?.edit !== line.edit;
+  return first && renderEditAction?.(edit, hunk);
+};
+
+/** A diff row of a long diff: a hunk header (`index` -1) or a line. */
+interface FlatRow {
+  hunk: ModpackDiffHunk;
+  index: number;
+}
+
+/**
+ * A long diff in a fixed-height box that renders only the rows in view.
+ * The inner element is as wide as the longest line (in `ch`, the monospace
+ * advance) and rows are absolutely placed at full inner width, so one scroll
+ * container scrolls everything sideways and row backgrounds span all of it.
+ */
+const VirtualDiffHunks: React.FC<
+  DiffHunksProps & { colors: DiffColors; rowCount: number }
+> = ({ hunks, hideHunkHeaders, renderEditAction, colors, rowCount }) => {
+  const [first, setFirst] = useState(0);
+  const { rows, gutterWidth, contentWidth } = useMemo(() => {
+    const rows: FlatRow[] = [];
+    let columns = 0;
+    let maxNumber = 0;
+    for (const hunk of hunks) {
+      if (!hideHunkHeaders) {
+        rows.push({ hunk, index: -1 });
+        columns = Math.max(columns, 40);
+      }
+      hunk.lines.forEach((line, index) => {
+        rows.push({ hunk, index });
+        columns = Math.max(columns, textColumns(line.text));
+        maxNumber = Math.max(
+          maxNumber,
+          line.oldNumber ?? 0,
+          line.newNumber ?? 0
+        );
+      });
+    }
+    const gutterWidth = `max(3.25em, calc(${String(maxNumber).length}ch + 1rem))`;
+    return {
+      rows,
+      gutterWidth,
+      contentWidth: `calc(${gutterWidth} * 2 + 1.5em + ${columns}ch + 1rem)`,
+    };
+  }, [hunks, hideHunkHeaders]);
+  const styles = useMemo(
+    () => buildRowStyles(colors, gutterWidth, true),
+    [colors, gutterWidth]
+  );
+  const { start, end } = diffVisibleRange(first, rowCount);
   return (
     <Box
       fontFamily={MONO}
       fontSize="xs"
-      lineHeight="20px"
+      lineHeight={`${DIFF_ROW_HEIGHT}px`}
+      h={`${DIFF_VIEWPORT_HEIGHT}px`}
+      overflow="auto"
+      role="table"
+      tabIndex={0}
+      onScroll={(e) =>
+        setFirst(Math.floor(e.currentTarget.scrollTop / DIFF_ROW_HEIGHT))
+      }
+    >
+      <div
+        style={{
+          position: "relative",
+          minWidth: "100%",
+          width: contentWidth,
+          height: rowCount * DIFF_ROW_HEIGHT,
+        }}
+      >
+        {rows.slice(start, end).map(({ hunk, index }, offset) => {
+          const top = (start + offset) * DIFF_ROW_HEIGHT;
+          return index < 0 ? (
+            <HunkHeaderRow
+              key={start + offset}
+              hunk={hunk}
+              styles={styles}
+              top={top}
+            />
+          ) : (
+            <DiffRow
+              key={start + offset}
+              line={hunk.lines[index]}
+              styles={styles}
+              top={top}
+              action={lineAction(hunk, index, renderEditAction)}
+            />
+          );
+        })}
+      </div>
+    </Box>
+  );
+};
+
+/**
+ * The body of a GitHub-style unified diff. A diff of more than
+ * `DIFF_VIRTUAL_THRESHOLD` rows scrolls inside a box and renders only the
+ * rows in view; a shorter one is laid out in full.
+ */
+export const DiffHunks = React.memo(function DiffHunks({
+  hunks,
+  hideHunkHeaders = false,
+  renderEditAction,
+}: DiffHunksProps) {
+  const colors = useDiffColors();
+  const rowCount = diffRowCount(hunks, hideHunkHeaders);
+  const styles = useMemo(
+    () => buildRowStyles(colors, "3.25em", false),
+    [colors]
+  );
+  if (shouldVirtualizeDiff(rowCount)) {
+    return (
+      <VirtualDiffHunks
+        hunks={hunks}
+        hideHunkHeaders={hideHunkHeaders}
+        renderEditAction={renderEditAction}
+        colors={colors}
+        rowCount={rowCount}
+      />
+    );
+  }
+  return (
+    <Box
+      fontFamily={MONO}
+      fontSize="xs"
+      lineHeight={`${DIFF_ROW_HEIGHT}px`}
       overflowX="auto"
       role="table"
     >
       {hunks.map((hunk, index) => (
         <React.Fragment key={index}>
-          {!hideHunkHeaders && (
-            <Flex bg={colors.hunkBg} color={colors.hunkText} minW="fit-content">
-              <Box
-                as="span"
-                flex="0 0 auto"
-                minW="calc(6.5em + 2rem + 1.5em)"
-                bg={colors.hunkGutter}
-              />
-              <Box as="span" whiteSpace="pre" px={2}>
-                {`@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`}
-              </Box>
-            </Flex>
-          )}
-          {hunk.lines.map((line, lineIndex) => {
-            const edit =
-              line.edit !== undefined && line.edit !== null
-                ? hunk.edits?.[line.edit]
-                : undefined;
-            const first =
-              edit !== undefined &&
-              hunk.lines[lineIndex - 1]?.edit !== line.edit;
-            return (
-              <DiffRow
-                key={lineIndex}
-                line={line}
-                colors={colors}
-                action={first && renderEditAction?.(edit, hunk)}
-              />
-            );
-          })}
+          {!hideHunkHeaders && <HunkHeaderRow hunk={hunk} styles={styles} />}
+          {hunk.lines.map((line, lineIndex) => (
+            <DiffRow
+              key={lineIndex}
+              line={line}
+              styles={styles}
+              action={lineAction(hunk, lineIndex, renderEditAction)}
+            />
+          ))}
         </React.Fragment>
       ))}
     </Box>
   );
-};
+});
 
 interface DiffFileProps {
   path: string;
@@ -324,7 +510,7 @@ export const DiffFile: React.FC<DiffFileProps> = ({
         )}
       </HStack>
       {children && (
-        <Collapse in={isOpen} animateOpacity={false}>
+        <Collapse in={isOpen} animateOpacity={false} unmountOnExit>
           {children}
         </Collapse>
       )}

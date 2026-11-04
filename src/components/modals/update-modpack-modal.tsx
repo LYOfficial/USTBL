@@ -1,11 +1,8 @@
 import {
   Alert,
   AlertIcon,
-  Box,
   Button,
-  ButtonGroup,
   HStack,
-  Icon,
   Modal,
   ModalBody,
   ModalCloseButton,
@@ -20,8 +17,10 @@ import {
 } from "@chakra-ui/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { LuChevronDown, LuChevronRight } from "react-icons/lu";
-import { DiffFile, DiffHunks, regionHunk } from "@/components/common/diff-view";
+import {
+  ConflictItem,
+  PlanChangeGroups,
+} from "@/components/modpack-update-lists";
 import { OptionalFilesList } from "@/components/optional-files-list";
 import { useLauncherConfig } from "@/contexts/config";
 import { useGlobalData } from "@/contexts/global-data";
@@ -30,7 +29,6 @@ import { InstanceError } from "@/enums/service-error";
 import { CampusInstallProgress } from "@/models/campus-modpack";
 import {
   ModpackConflictChoice,
-  ModpackFileChange,
   ModpackUpdateCheck,
   ModpackUpdatePlan,
 } from "@/models/modpack-update";
@@ -41,7 +39,6 @@ import {
   rememberedChoices,
   resolvePlanChoices,
 } from "@/utils/modpack-update-choices";
-import { groupPlanChanges } from "@/utils/modpack-update-groups";
 
 interface UpdateModpackModalProps extends Omit<ModalProps, "children"> {
   instanceId: string;
@@ -56,110 +53,6 @@ interface PlanError {
   message: string;
   details?: string;
 }
-
-const formatSize = (size?: number) => {
-  if (size === undefined) return "";
-  if (size < 1024) return `${size} B`;
-  const units = ["KiB", "MiB", "GiB"];
-  let value = size / 1024;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value.toFixed(value >= 100 ? 0 : 1)} ${units[unit]}`;
-};
-
-const fileName = (path: string) => path.split("/").pop() ?? path;
-
-/** One collapsible group of file changes, capped until "show all". */
-const ChangeGroup: React.FC<{
-  title: string;
-  colorScheme: string;
-  changes: ModpackFileChange[];
-  renderSize: (change: ModpackFileChange) => string;
-  description?: string;
-  defaultOpen?: boolean;
-}> = ({
-  title,
-  colorScheme,
-  changes,
-  renderSize,
-  description,
-  defaultOpen = false,
-}) => {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(defaultOpen);
-  const [showAll, setShowAll] = useState(false);
-  if (changes.length === 0) return null;
-  const sorted = [...changes].sort((a, b) => a.path.localeCompare(b.path));
-  const shown = showAll ? sorted : sorted.slice(0, 100);
-  return (
-    <Box borderWidth="1px" borderRadius="md">
-      <HStack
-        as="button"
-        type="button"
-        w="full"
-        px={3}
-        py={2}
-        spacing={2}
-        onClick={() => setOpen(!open)}
-        aria-expanded={open}
-      >
-        <Icon as={open ? LuChevronDown : LuChevronRight} />
-        <Text fontWeight="medium" color={`${colorScheme}.500`}>
-          {t(title, { count: changes.length })}
-        </Text>
-      </HStack>
-      {open && (
-        <VStack align="stretch" spacing={0} borderTopWidth="1px">
-          {description && (
-            <Text fontSize="xs" className="secondary-text" px={3} py={1.5}>
-              {description}
-            </Text>
-          )}
-          {shown.map((change) => (
-            <HStack
-              key={change.path}
-              justify="space-between"
-              spacing={3}
-              px={3}
-              py={1.5}
-              borderTopWidth="1px"
-            >
-              <Box minW={0}>
-                <Text fontSize="sm" noOfLines={1} wordBreak="break-all">
-                  {fileName(change.path)}
-                </Text>
-                {change.path.includes("/") && (
-                  <Text fontSize="xs" className="secondary-text" noOfLines={1}>
-                    {change.path}
-                  </Text>
-                )}
-              </Box>
-              <Text fontSize="xs" className="secondary-text" flexShrink={0}>
-                {renderSize(change)}
-              </Text>
-            </HStack>
-          ))}
-          {!showAll && sorted.length > shown.length && (
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={() => setShowAll(true)}
-              borderTopWidth="1px"
-              borderRadius={0}
-            >
-              {t("UpdateModpackModal.plan.showAll", {
-                count: sorted.length - shown.length,
-              })}
-            </Button>
-          )}
-        </VStack>
-      )}
-    </Box>
-  );
-};
 
 const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
   instanceId,
@@ -508,20 +401,10 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
     [plan]
   );
 
-  const renderChoice = (key: string, choice: ModpackConflictChoice) => (
-    <ButtonGroup size="xs" isAttached variant="outline" flexShrink={0}>
-      {(["keepLocal", "takeRemote"] as const).map((option) => (
-        <Button
-          key={option}
-          colorScheme={choice === option ? primaryColor : undefined}
-          variant={choice === option ? "solid" : "outline"}
-          aria-pressed={choice === option}
-          onClick={() => setChoices((prev) => ({ ...prev, [key]: option }))}
-        >
-          {t(`UpdateModpackModal.choice.${option}`)}
-        </Button>
-      ))}
-    </ButtonGroup>
+  const chooseOne = useCallback(
+    (key: string, choice: ModpackConflictChoice) =>
+      setChoices((prev) => ({ ...prev, [key]: choice })),
+    []
   );
 
   const handleResume = useCallback(async () => {
@@ -628,13 +511,6 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
         </Text>
       );
     }
-    const groups = groupPlanChanges(plan);
-    const adds = groups.add;
-    const updates = groups.update;
-    const deletes = groups.delete;
-    const disables = groups.disable;
-    const enables = groups.enable;
-    const retires = groups.retire;
     return (
       <VStack align="stretch" spacing={3}>
         <Text>
@@ -668,70 +544,7 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
             {t("UpdateModpackModal.plan.restoreComponents")}
           </Text>
         )}
-        <VStack align="stretch" spacing={2}>
-          <ChangeGroup
-            title="UpdateModpackModal.plan.restored"
-            colorScheme="orange"
-            changes={groups.restored}
-            description={t("UpdateModpackModal.plan.restoredDescription")}
-            defaultOpen
-            renderSize={(change) =>
-              `${t(`UpdateModpackModal.plan.restoredKind.${change.kind}`)} ${
-                change.kind === "add"
-                  ? formatSize(change.remote?.size)
-                  : change.kind === "update"
-                    ? `${formatSize(change.localSize)} → ${formatSize(change.remote?.size)}`
-                    : formatSize(change.localSize)
-              }`
-            }
-          />
-          <ChangeGroup
-            title="UpdateModpackModal.plan.add"
-            colorScheme="green"
-            changes={adds}
-            renderSize={(change) => formatSize(change.remote?.size)}
-          />
-          <ChangeGroup
-            title="UpdateModpackModal.plan.update"
-            colorScheme="blue"
-            changes={updates}
-            renderSize={(change) =>
-              `${formatSize(change.localSize)} → ${formatSize(change.remote?.size)}`
-            }
-          />
-          <ChangeGroup
-            title="UpdateModpackModal.plan.delete"
-            colorScheme="red"
-            changes={deletes}
-            renderSize={(change) => formatSize(change.localSize)}
-          />
-          <ChangeGroup
-            title="UpdateModpackModal.plan.disable"
-            colorScheme="gray"
-            changes={disables}
-            renderSize={(change) => formatSize(change.localSize)}
-          />
-          <ChangeGroup
-            title="UpdateModpackModal.plan.enable"
-            colorScheme="gray"
-            changes={enables}
-            renderSize={(change) => formatSize(change.localSize)}
-          />
-          <ChangeGroup
-            title="UpdateModpackModal.plan.retire"
-            colorScheme="gray"
-            changes={retires}
-            renderSize={(change) => formatSize(change.localSize)}
-          />
-          <ChangeGroup
-            title="UpdateModpackModal.plan.autoMerged"
-            colorScheme="green"
-            changes={groups.autoMerged}
-            renderSize={(change) =>
-              `${formatSize(change.localSize)} → ${formatSize(change.remote?.size)}`
-            }
-          />
-        </VStack>
+        <PlanChangeGroups plan={plan} />
         {plan.conflicts.length > 0 && (
           <VStack align="stretch" spacing={3}>
             <HStack justify="space-between" spacing={2}>
@@ -757,115 +570,16 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
                 </Button>
               </HStack>
             </HStack>
-            {plan.conflicts.map((conflict) => {
-              // A text conflict is answered block by block; anything else as
-              // a whole file. Never both, so each answer has one control.
-              const byHunk = conflict.hunks.length > 0;
-              return (
-                <DiffFile
-                  key={conflict.path}
-                  path={conflict.path}
-                  tags={
-                    <Text
-                      fontSize="xs"
-                      className="secondary-text"
-                      noOfLines={1}
-                    >
-                      {t(`UpdateModpackModal.conflictKind.${conflict.kind}`)}
-                    </Text>
-                  }
-                  actions={
-                    <>
-                      <Button
-                        size="xs"
-                        variant="ghost"
-                        onClick={() => revealConflictFile(conflict.path)}
-                      >
-                        {t("UpdateModpackModal.choice.revealFile")}
-                      </Button>
-                      {!byHunk &&
-                        renderChoice(
-                          conflict.path,
-                          choices[conflict.path] ?? "keepLocal"
-                        )}
-                    </>
-                  }
-                >
-                  {byHunk && (
-                    <VStack align="stretch" spacing={0}>
-                      {conflict.hunks.map((hunk, index) => {
-                        const key = `${conflict.path}#${index}`;
-                        const choice = choices[key] ?? "keepLocal";
-                        return (
-                          <VStack
-                            key={key}
-                            align="stretch"
-                            spacing={0}
-                            borderTopWidth={index > 0 ? "1px" : 0}
-                          >
-                            <HStack
-                              justify="space-between"
-                              px={3}
-                              py={1.5}
-                              spacing={2}
-                            >
-                              <Text
-                                fontSize="xs"
-                                className="secondary-text"
-                                minW={0}
-                              >
-                                {t("UpdateModpackModal.choice.hunk", {
-                                  number: index + 1,
-                                  from: hunk.baseStart + 1,
-                                  to: Math.max(
-                                    hunk.baseEnd,
-                                    hunk.baseStart + 1
-                                  ),
-                                })}
-                              </Text>
-                              {renderChoice(key, choice)}
-                            </HStack>
-                            {(["keepLocal", "takeRemote"] as const).map(
-                              (side) => (
-                                <Box
-                                  key={side}
-                                  opacity={choice === side ? 1 : 0.55}
-                                >
-                                  <Text
-                                    fontSize="xs"
-                                    fontWeight="medium"
-                                    px={3}
-                                    pt={1}
-                                  >
-                                    {t(
-                                      side === "keepLocal"
-                                        ? "UpdateModpackModal.choice.localSide"
-                                        : "UpdateModpackModal.choice.remoteSide"
-                                    )}
-                                  </Text>
-                                  <DiffHunks
-                                    hideHunkHeaders
-                                    hunks={[
-                                      regionHunk(
-                                        hunk.baseStart + 1,
-                                        hunk.base,
-                                        side === "keepLocal"
-                                          ? hunk.local
-                                          : hunk.remote
-                                      ),
-                                    ]}
-                                  />
-                                </Box>
-                              )
-                            )}
-                          </VStack>
-                        );
-                      })}
-                    </VStack>
-                  )}
-                </DiffFile>
-              );
-            })}
+            {plan.conflicts.map((conflict) => (
+              <ConflictItem
+                key={conflict.path}
+                conflict={conflict}
+                choices={choices}
+                primaryColor={primaryColor}
+                onChoose={chooseOne}
+                onReveal={revealConflictFile}
+              />
+            ))}
           </VStack>
         )}
       </VStack>

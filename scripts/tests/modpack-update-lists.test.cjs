@@ -1,0 +1,123 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const test = require("node:test");
+const ts = require("typescript");
+
+function read(file) {
+  return fs.readFileSync(path.join(__dirname, "../../", file), "utf8");
+}
+
+function load(file, requireModule) {
+  const module = { exports: {} };
+  new Function(
+    "exports",
+    "module",
+    "require",
+    "React",
+    ts.transpileModule(read(file), {
+      compilerOptions: {
+        module: ts.ModuleKind.CommonJS,
+        jsx: ts.JsxEmit.React,
+      },
+    }).outputText
+  )(module.exports, module, requireModule, { createElement: () => null });
+  return module.exports;
+}
+
+const lists = load("src/components/modpack-update-lists.tsx", (name) =>
+  name === "react"
+    ? {
+        memo: (component) => component,
+        useMemo: (fn) => fn(),
+        useState: () => [],
+      }
+    : {}
+);
+
+const hunk = () => ({
+  baseStart: 0,
+  baseEnd: 1,
+  base: ["a"],
+  local: ["b"],
+  remote: ["c"],
+});
+const props = (conflict, choices, extra = {}) => ({
+  conflict,
+  choices,
+  primaryColor: "blue",
+  onChoose: () => {},
+  onReveal: () => {},
+  ...extra,
+});
+
+test("a conflict re-renders only for its own answers", () => {
+  const file = { path: "a.cfg", kind: "x", hunks: [] };
+  const text = { path: "b.cfg", kind: "x", hunks: [hunk(), hunk()] };
+  const equal = lists.conflictItemEqual;
+  const onChoose = () => {};
+  const onReveal = () => {};
+  const base = { onChoose, onReveal };
+
+  // Another conflict's answer does not touch this one.
+  assert.equal(
+    equal(
+      props(file, { "b.cfg#0": "takeRemote" }, base),
+      props(file, { "b.cfg#0": "keepLocal", "b.cfg#1": "takeRemote" }, base)
+    ),
+    true
+  );
+  assert.equal(
+    equal(props(text, { "a.cfg": "takeRemote" }, base), props(text, {}, base)),
+    true
+  );
+  // Its own answers, including a default turning explicit, are compared by value.
+  assert.equal(
+    equal(props(file, {}, base), props(file, { "a.cfg": "keepLocal" }, base)),
+    true
+  );
+  assert.equal(
+    equal(props(file, {}, base), props(file, { "a.cfg": "takeRemote" }, base)),
+    false
+  );
+  assert.equal(
+    equal(
+      props(text, { "b.cfg#0": "takeRemote" }, base),
+      props(text, { "b.cfg#0": "takeRemote", "b.cfg#1": "takeRemote" }, base)
+    ),
+    false
+  );
+  // A new conflict object or callback always re-renders.
+  assert.equal(
+    equal(props(file, {}, base), props({ ...file }, {}, base)),
+    false
+  );
+  assert.equal(
+    equal(
+      props(file, {}, base),
+      props(file, {}, { ...base, onChoose: () => {} })
+    ),
+    false
+  );
+});
+
+test("collapsed diff files do not keep their diff mounted", () => {
+  const diff = read("src/components/common/diff-view.tsx");
+  assert.match(diff, /<Collapse[^>]*unmountOnExit/);
+  assert.match(diff, /export const DiffHunks = React\.memo\(/);
+});
+
+test("the update dialog hands conflicts to memoized items with stable callbacks", () => {
+  const modal = read("src/components/modals/update-modpack-modal.tsx");
+  assert.match(modal, /<ConflictItem[^>]*onChoose=\{chooseOne\}/s);
+  assert.match(
+    modal,
+    /const chooseOne = useCallback\([\s\S]*?setChoices\(\(prev\)[\s\S]*?\[\]\s*\)/
+  );
+  // Choosing all is one state update, not one per conflict.
+  const chooseAll = modal.slice(
+    modal.indexOf("const chooseAll"),
+    modal.indexOf("const chooseOne")
+  );
+  assert.equal(chooseAll.match(/setChoices\(/g).length, 1);
+});
