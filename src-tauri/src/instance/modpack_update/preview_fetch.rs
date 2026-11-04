@@ -80,7 +80,12 @@ pub fn range_target(
   latest: &LatestVersion,
   fresh: bool,
 ) -> Option<(String, String)> {
-  if fresh || origin.platform == OriginPlatform::Campus {
+  if fresh
+    || matches!(
+      origin.platform,
+      OriginPlatform::Campus | OriginPlatform::Local
+    )
+  {
     return None;
   }
   let (sha1, url) = latest.archive_ref()?;

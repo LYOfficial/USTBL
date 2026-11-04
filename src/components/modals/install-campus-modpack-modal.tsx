@@ -158,7 +158,6 @@ const InstallCampusModpackModal: React.FC<InstallCampusModpackModalProps> = ({
         gameResp.data,
         loaderInfo,
         undefined,
-        undefined,
         false,
         undefined,
         {

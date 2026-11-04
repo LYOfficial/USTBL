@@ -109,7 +109,6 @@ export const CreateInstanceModal: React.FC<Omit<ModalProps, "children">> = ({
       selectedGameVersion,
       selectedModLoader,
       selectedOptiFine,
-      undefined, // modpackPath
       isInstallFabricApi
     )
       .then((res) => {

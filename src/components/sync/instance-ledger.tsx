@@ -104,7 +104,7 @@ export const InstanceLedger: React.FC<InstanceLedgerProps> = ({
 
   const lineLabel = (instance: InstanceSummary): string => {
     const origin = instance.origin;
-    if (!origin) return instance.version;
+    if (!origin || origin.platform === "local") return instance.version;
     const platformName =
       origin.platform === "campus"
         ? t("InstanceSyncPage.ledger.platform.campus")

@@ -4,8 +4,15 @@ import type { ModpackUpdateCheck } from "@/models/modpack-update";
 export const isInstallingInstance = (instance?: InstanceSummary): boolean =>
   instance?.campusInstallPending === true;
 
+/**
+ * A local import records where its files came from, but there is no line to
+ * follow: it is never checked, listed in the ledger or offered updates.
+ */
+export const hasFollowableOrigin = (instance?: InstanceSummary): boolean =>
+  !!instance?.origin && instance.origin.platform !== "local";
+
 export const shouldCheckInstance = (instance?: InstanceSummary): boolean =>
-  !!instance?.origin && !isInstallingInstance(instance);
+  hasFollowableOrigin(instance) && !isInstallingInstance(instance);
 
 /**
  * One campus project listing replaces a per-instance request once two or more

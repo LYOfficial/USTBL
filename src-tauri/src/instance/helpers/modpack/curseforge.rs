@@ -577,7 +577,7 @@ impl ModpackManifest for CurseForgeManifest {
       .mod_loaders
       .iter()
       .find(|l| l.primary)
-      .ok_or(InstanceError::ModLoaderVersionParseError)?;
+      .ok_or(InstanceError::ModpackManifestParseError)?;
 
     let Some((loader_type, version)) = loader.id.split_once('-') else {
       return Err(InstanceError::ModLoaderVersionParseError.into());

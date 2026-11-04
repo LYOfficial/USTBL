@@ -5,7 +5,10 @@ import {
   ModpackCheckStatus,
   ModpackUpdateCheck,
 } from "@/models/modpack-update";
-import { isInstallingInstance } from "@/utils/installing-instance";
+import {
+  hasFollowableOrigin,
+  isInstallingInstance,
+} from "@/utils/installing-instance";
 
 /** The slug the platforms use for a loader type. */
 export const loaderSlug = (loader: ModLoaderType): string =>
@@ -76,9 +79,10 @@ export const ledgerScanned = (check: ModpackUpdateCheck | undefined) =>
   check?.localChanges != null;
 
 /**
- * The ledger of modpack instances: only those with an origin. An instance
- * without one carries no identity and is an ordinary instance.
+ * The ledger of modpack instances: only those with an origin to follow. An
+ * instance without one, or one imported from a local file, carries no
+ * identity and is an ordinary instance.
  */
 export const ledgerInstances = (
   instances: InstanceSummary[]
-): InstanceSummary[] => instances.filter((instance) => instance.origin);
+): InstanceSummary[] => instances.filter(hasFollowableOrigin);

@@ -25,14 +25,16 @@ import {
   loaderTypesToIcon,
 } from "@/components/modals/create-instance-modal";
 import { useLauncherConfig } from "@/contexts/config";
+import { useGlobalData } from "@/contexts/global-data";
 import { useToast } from "@/contexts/toast";
+import { ModLoaderType } from "@/enums/instance";
 import { ModpackMetaInfo } from "@/models/instance/misc";
-import {
-  ModLoaderResourceInfo,
-  defaultModLoaderResourceInfo,
-} from "@/models/resource";
+import { defaultModLoaderResourceInfo } from "@/models/resource";
+import { CampusModpackService } from "@/services/campus-modpack";
 import { InstanceService } from "@/services/instance";
 import { ResourceService } from "@/services/resource";
+import { runCampusInstall } from "@/utils/campus-install";
+import { localizeCampusInstallError } from "@/utils/campus-install-task";
 import { isDirNameInvalid, sanitizeFileName } from "@/utils/string";
 
 interface ImportModpackModalProps extends Omit<ModalProps, "children"> {
@@ -44,6 +46,7 @@ const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
   ...modalProps
 }) => {
   const { config } = useLauncherConfig();
+  const { getInstanceList } = useGlobalData();
   const router = useRouter();
   const toast = useToast();
   const primaryColor = config.appearance.theme.primaryColor;
@@ -114,38 +117,59 @@ const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
       }
       const clientResourceInfo = versionResp.data;
 
-      // then install modpack through `create_instance`
+      // The instance is created empty with the archive as its origin. The
+      // update engine installs the pack once the game client is ready, like
+      // any other modpack install.
+      const label = modpack.version || modpack.name;
       const createResp = await InstanceService.createInstance(
         gameDirectory,
         name,
         description,
         iconSrc,
         clientResourceInfo,
-        modpack.modLoader
-          ? ({
-              loaderType: modpack.modLoader.loaderType,
-              version: modpack.modLoader.version,
-              branch: modpack.modLoader.branch,
-              description: "",
-              stable: true,
-            } as ModLoaderResourceInfo)
-          : defaultModLoaderResourceInfo,
+        defaultModLoaderResourceInfo,
         undefined,
-        path,
+        false,
         undefined,
-        modpack.version,
-        undefined
+        {
+          platform: "local",
+          projectId: modpack.name,
+          versionId: "",
+          expectedSha1: "",
+          label,
+          loaderType: modpack.modLoader?.loaderType ?? ModLoaderType.Unknown,
+          localPath: path,
+        }
       );
-      if (createResp.status === "success") {
-        onClose();
-        router.push("/downloads");
-      } else {
+      if (createResp.status !== "success") {
         toast({
           title: createResp.message,
           description: createResp.details,
           status: "error",
         });
+        return;
       }
+      const instanceId = `${gameDirectory.name}:${name}`;
+      const registered =
+        await CampusModpackService.registerCampusModpackInstall(
+          instanceId,
+          label
+        );
+      if (registered.status !== "success") {
+        toast({
+          title: t("Services.instance.installCampusModpack.error.title"),
+          description: localizeCampusInstallError(
+            t,
+            String(registered.raw_error ?? registered.details ?? "")
+          ),
+          status: "error",
+        });
+        return;
+      }
+      getInstanceList(true);
+      runCampusInstall({ instanceId, label }, toast, t);
+      onClose();
+      router.push("/downloads");
     } catch (error) {
       logger.error("Error creating instance:", error);
     } finally {
@@ -154,6 +178,7 @@ const ImportModpackModal: React.FC<ImportModpackModalProps> = ({
   }, [
     description,
     gameDirectory,
+    getInstanceList,
     iconSrc,
     onClose,
     modpack,
