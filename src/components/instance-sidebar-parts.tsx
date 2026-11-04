@@ -1,4 +1,5 @@
 import {
+  Box,
   Button,
   HStack,
   Icon,
@@ -11,12 +12,13 @@ import React, { useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { IconType } from "react-icons";
 import { FaStar } from "react-icons/fa6";
-import { LuBox, LuChevronDown, LuChevronRight } from "react-icons/lu";
+import { LuBox, LuChevronDown, LuChevronLeft } from "react-icons/lu";
 import SelectableButton from "@/components/common/selectable-button";
 import { InstanceSummary } from "@/models/instance/misc";
 import { getGameDirName } from "@/utils/instance";
 
 export const DOUBLE_CLICK_DELAY_MS = 250;
+export const INSTANCE_TOOLTIP_DELAY_MS = 2000;
 
 /**
  * Runs `onSingle` only once it is clear that no second click follows, and
@@ -135,23 +137,28 @@ export const InstanceRow: React.FC<InstanceRowProps> = ({
         </VStack>
       }
       placement="right"
+      openDelay={INSTANCE_TOOLTIP_DELAY_MS}
+      closeOnPointerDown
       isDisabled={tooltipDisabled}
     >
-      <SelectableButton
-        size="sm"
-        w="100%"
-        isSelected={selected}
-        onClick={handleClick}
-        onPointerDown={onPointerDown}
-        data-instance-id={instance.id}
-      >
-        <HStack spacing={2} overflow="hidden">
-          <Icon as={icon} />
-          <Text fontSize="sm" className="ellipsis-text">
-            {instance.name}
-          </Text>
-        </HStack>
-      </SelectableButton>
+      {/* SelectableButton does not forward refs, so the tooltip anchors here */}
+      <Box>
+        <SelectableButton
+          size="sm"
+          w="100%"
+          isSelected={selected}
+          onClick={handleClick}
+          onPointerDown={onPointerDown}
+          data-instance-id={instance.id}
+        >
+          <HStack spacing={2} overflow="hidden">
+            <Icon as={icon} />
+            <Text fontSize="sm" className="ellipsis-text">
+              {instance.name}
+            </Text>
+          </HStack>
+        </SelectableButton>
+      </Box>
     </Tooltip>
   );
 };
@@ -167,6 +174,7 @@ interface SectionHeaderProps {
   onSubmitName?: (name: string) => void;
   onCancelEdit?: () => void;
   onPointerDown?: (event: React.PointerEvent) => void;
+  onContextMenu?: (event: React.MouseEvent) => void;
 }
 
 export const SectionHeader: React.FC<SectionHeaderProps> = ({
@@ -180,20 +188,22 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
   onSubmitName,
   onCancelEdit,
   onPointerDown,
+  onContextMenu,
 }) => {
   // Only renamable headers wait for a possible second click.
   const handleClick = useClickOrDoubleClick(onToggle, onStartEdit ?? onToggle);
-  const chevron = <Icon as={open ? LuChevronDown : LuChevronRight} />;
+  const chevron = <Icon as={open ? LuChevronDown : LuChevronLeft} />;
 
   if (editing && onSubmitName && onCancelEdit) {
     return (
       <HStack spacing={2} h={8} px={3}>
-        {chevron}
+        <Icon as={icon} />
         <InlineNameInput
           initial={title}
           onSubmit={onSubmitName}
           onCancel={onCancelEdit}
         />
+        {chevron}
       </HStack>
     );
   }
@@ -206,10 +216,11 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
       justifyContent="start"
       onClick={onStartEdit ? handleClick : onToggle}
       onPointerDown={onPointerDown}
+      onContextMenu={onContextMenu}
       aria-expanded={open}
-      leftIcon={chevron}
+      rightIcon={chevron}
     >
-      <HStack spacing={2} overflow="hidden">
+      <HStack spacing={2} overflow="hidden" flex={1} minW={0}>
         <Icon as={icon} />
         <Text className="ellipsis-text">{title}</Text>
         <Text className="secondary-text" fontSize="xs">

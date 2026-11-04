@@ -16,6 +16,7 @@ import GenericConfirmDialog from "@/components/modals/generic-confirm-dialog";
 import { useLauncherConfig } from "@/contexts/config";
 import { useGlobalData } from "@/contexts/global-data";
 import { useToast } from "@/contexts/toast";
+import { useRemoveInstanceFromGroups } from "@/hooks/instance-groups";
 import {
   InstanceDeletionProgress,
   InstanceSummary,
@@ -36,6 +37,7 @@ const DeleteInstanceDialog: React.FC<DeleteInstanceDialogProps> = ({
   const router = useRouter();
   const { getInstanceList } = useGlobalData();
   const { config } = useLauncherConfig();
+  const removeFromGroups = useRemoveInstanceFromGroups();
   const deleteStarted = useRef(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [progress, setProgress] = useState<InstanceDeletionProgress>({
@@ -58,6 +60,7 @@ const DeleteInstanceDialog: React.FC<DeleteInstanceDialogProps> = ({
       );
       getInstanceList(true);
       if (response.status === "success") {
+        removeFromGroups(instance.id);
         toast({
           title: response.message,
           status: "success",
@@ -81,7 +84,15 @@ const DeleteInstanceDialog: React.FC<DeleteInstanceDialogProps> = ({
     } finally {
       onClose();
     }
-  }, [getInstanceList, instance.id, onClose, router, t, toast]);
+  }, [
+    getInstanceList,
+    instance.id,
+    onClose,
+    removeFromGroups,
+    router,
+    t,
+    toast,
+  ]);
 
   useEffect(() => {
     if (isOpen && skipConfirmation) {

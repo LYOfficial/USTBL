@@ -378,3 +378,9 @@ export const moveSection = (
   if (rest.every((item, index) => item === g.order[index])) return groups;
   return { ...g, order: rest };
 };
+
+export const newGroupId = () =>
+  `g-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+export const sameGroups = (a: InstanceGroups, b: InstanceGroups) =>
+  JSON.stringify(a) === JSON.stringify(b);

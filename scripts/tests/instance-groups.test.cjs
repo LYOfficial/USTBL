@@ -323,3 +323,14 @@ test("the pinned group and installing cannot be sorted", () => {
   assert.equal(moveSection(g, "g1", "g2", true), g);
   assert.equal(moveSection(g, "g2", "g1", false), g);
 });
+
+test("every place that removes an instance also clears it from the groups", () => {
+  const source = (file) =>
+    fs.readFileSync(path.join(__dirname, "../../src", file), "utf8");
+  for (const file of [
+    "components/modals/delete-instance-alert-dialog.tsx",
+    "hooks/discard-campus-install.ts",
+  ]) {
+    assert.match(source(file), /removeFromGroups\(/, file);
+  }
+});
