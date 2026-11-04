@@ -26,8 +26,15 @@ import {
 import { BeatLoader } from "react-spinners";
 import BlockToggle from "@/components/common/block-toggle";
 import Empty from "@/components/common/empty";
+import FileFilterInput from "@/components/common/file-filter-input";
 import PublishChangeDiff from "@/components/common/publish-change-diff";
 import TreeView, { TreeNode } from "@/components/common/tree-view";
+import {
+  AUTO_EXPAND_LIMIT,
+  countFiles,
+  filterTreeByQuery,
+  isQueryActive,
+} from "@/utils/fuzzy-filter";
 import {
   CHANGE_CATEGORIES,
   ChangeCategory,
@@ -143,6 +150,16 @@ const PublishFileTree: React.FC<PublishFileTreeProps> = ({
     [changes]
   );
   const filtered = isFilterActive(filter);
+  const [query, setQuery] = useState("");
+  const queryActive = isQueryActive(query);
+  const markedNodes = useMemo(
+    () => filterNodes(nodes, marks, filter),
+    [nodes, marks, filter]
+  );
+  const shownNodes = useMemo(
+    () => filterTreeByQuery(markedNodes, query),
+    [markedNodes, query]
+  );
   const tree = useMemo(() => {
     const convert = (list: PublishNode[]): TreeNode<PublishNode>[] =>
       list.map((node) => ({
@@ -150,8 +167,14 @@ const PublishFileTree: React.FC<PublishFileTreeProps> = ({
         data: node,
         children: convert(node.children),
       }));
-    return convert(filterNodes(nodes, marks, filter));
-  }, [nodes, marks, filter]);
+    return convert(shownNodes);
+  }, [shownNodes]);
+  // Hits open their parents without touching the remembered expansion, so
+  // clearing the query brings back what the user had open.
+  const expandAll = useMemo(
+    () => queryActive && countFiles(shownNodes) <= AUTO_EXPAND_LIMIT,
+    [queryActive, shownNodes]
+  );
   // The request must change only when the filter changes, not when draft state rebuilds the tree.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const expandRequest = useMemo(
@@ -193,6 +216,7 @@ const PublishFileTree: React.FC<PublishFileTreeProps> = ({
                 </Button>
               </Tooltip>
             ))}
+            <FileFilterInput w="180px" value={query} onChange={setQuery} />
             <Box flex="1" />
             <BlockToggle
               checked={filter.onlyChanged}
@@ -242,6 +266,7 @@ const PublishFileTree: React.FC<PublishFileTreeProps> = ({
             defaultExpandedDepth={0}
             preserveExpanded
             expandRequest={expandRequest}
+            expandAll={expandAll}
             renderNode={({ node: { data } }) => (
               <PublishTreeRow
                 instanceId={instanceId}
@@ -261,7 +286,13 @@ const PublishFileTree: React.FC<PublishFileTreeProps> = ({
             )}
           />
         ) : (
-          <Empty withIcon={false} size="sm" />
+          <Empty
+            withIcon={false}
+            size="sm"
+            description={
+              queryActive || filtered ? t("FileFilter.empty") : undefined
+            }
+          />
         )}
       </Box>
     </Box>

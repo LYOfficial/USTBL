@@ -851,6 +851,12 @@
       "description": "首次启动，正在自动下载 Java 25 运行时"
     }
   },
+  "FileFilter": {
+    "placeholder": "筛选文件",
+    "empty": "没有匹配的文件",
+    "clear": "清除筛选",
+    "shown": "显示 {{shown}} / {{total}}"
+  },
   "FileError": {
     "FILE_BLOCKED_BY_ANTIVIRUS": "文件 {{file}} 被杀毒软件拦截。请在 Windows 安全中心允许该文件，或把游戏目录加入排除项后重试。",
     "FILE_MISSING": "找不到文件 {{file}}，可能已被删除、移动或被杀毒软件隔离。请检查后重试。",
@@ -1349,6 +1355,15 @@
       "description": "该整合包要从以下不在 Modrinth 认可范围内的地址下载 {{count}} 个文件。这些文件未经平台审核，可能不安全，请仅在信任整合包作者时继续。",
       "trust": "信任并继续",
       "cancel": "取消导入"
+    },
+    "mode": {
+      "create": "新建实例",
+      "update": "更新已有实例"
+    },
+    "update": {
+      "instance": "要更新的实例",
+      "noInstance": "没有可以从本地文件更新的实例",
+      "confirm": "预览更新"
     }
   },
   "InstanceBasicSettings": {

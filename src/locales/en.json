@@ -851,6 +851,12 @@
       "description": "First launch detected, downloading the Java 25 runtime automatically"
     }
   },
+  "FileFilter": {
+    "placeholder": "Filter files",
+    "empty": "No matching files",
+    "clear": "Clear filter",
+    "shown": "Showing {{shown}} of {{total}}"
+  },
   "FileError": {
     "FILE_BLOCKED_BY_ANTIVIRUS": "File {{file}} was blocked by antivirus software. Allow the file in Windows Security, or add the game directory to the exclusions, then try again.",
     "FILE_MISSING": "Cannot find file {{file}}. It may have been deleted, moved, or quarantined by antivirus software. Check and try again.",
@@ -1349,6 +1355,15 @@
       "description": "This modpack downloads {{count}} files from the addresses below, which Modrinth does not approve. These files have not been reviewed by the platform and may be unsafe. Continue only if you trust the modpack author.",
       "trust": "Trust and continue",
       "cancel": "Cancel import"
+    },
+    "mode": {
+      "create": "New instance",
+      "update": "Update existing instance"
+    },
+    "update": {
+      "instance": "Instance to update",
+      "noInstance": "No instance can be updated from a local file",
+      "confirm": "Preview update"
     }
   },
   "InstanceBasicSettings": {

@@ -26,6 +26,7 @@ function load(file, requireModule = () => ({})) {
 
 const choices = load("src/utils/modpack-update-choices.ts");
 const fileError = load("src/utils/file-error.ts");
+const fuzzyFilter = load("src/utils/fuzzy-filter.ts");
 const stages = load("src/utils/campus-install-task.ts", (name) =>
   name === "@/utils/file-error" ? fileError : {}
 );
@@ -327,6 +328,7 @@ test("reopened dialog restores a failed plan's choices, submits once and closes 
         return fn;
       },
       useEffect: () => {},
+      useMemo: (fn) => fn(),
       useRef: (initial) => {
         const i = cursor++;
         return (slots[i] ??= { current: initial });
@@ -371,6 +373,7 @@ test("reopened dialog restores a failed plan's choices, submits once and closes 
             }),
           };
         if (name === "@/utils/modpack-update-choices") return choices;
+        if (name === "@/utils/fuzzy-filter") return fuzzyFilter;
         if (name === "@/utils/rename-suggestion") return renameSuggestion;
         if (name === "@/enums/service-error") return { InstanceError: {} };
         if (name === "@/services/modpack-update")

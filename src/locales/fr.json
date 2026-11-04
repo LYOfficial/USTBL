@@ -851,6 +851,12 @@
       "description": "Premier lancement détecté, téléchargement automatique de l'environnement Java 25"
     }
   },
+  "FileFilter": {
+    "placeholder": "Filtrer les fichiers",
+    "empty": "Aucun fichier correspondant",
+    "clear": "Effacer le filtre",
+    "shown": "{{shown}} affichés sur {{total}}"
+  },
   "FileError": {
     "FILE_BLOCKED_BY_ANTIVIRUS": "Le fichier {{file}} a été bloqué par l'antivirus. Autorisez-le dans Sécurité Windows, ou ajoutez le dossier du jeu aux exclusions, puis réessayez.",
     "FILE_MISSING": "Fichier {{file}} introuvable. Il a peut-être été supprimé, déplacé ou mis en quarantaine par l'antivirus. Vérifiez puis réessayez.",
@@ -1349,6 +1355,15 @@
       "description": "Ce modpack télécharge {{count}} fichiers depuis les adresses ci-dessous, qui ne sont pas approuvées par Modrinth. Ces fichiers n'ont pas été vérifiés par la plateforme et peuvent être dangereux. Ne continuez que si vous faites confiance à l'auteur du modpack.",
       "trust": "Faire confiance et continuer",
       "cancel": "Annuler l'importation"
+    },
+    "mode": {
+      "create": "Nouvelle instance",
+      "update": "Mettre à jour une instance existante"
+    },
+    "update": {
+      "instance": "Instance à mettre à jour",
+      "noInstance": "Aucune instance ne peut être mise à jour depuis un fichier local",
+      "confirm": "Aperçu de la mise à jour"
     }
   },
   "InstanceBasicSettings": {

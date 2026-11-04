@@ -870,6 +870,24 @@ fn update_target(app: &AppHandle, instance_id: &str) -> USTBLResult<Option<Targe
   target_with(app, instance_id, true)
 }
 
+/// [`target`] for the local-changes commands. They only read the files and the
+/// baseline, so a settled local import is theirs too.
+fn changes_target(app: &AppHandle, instance_id: &str) -> USTBLResult<Option<Target>> {
+  if let Some(target) = target(app, instance_id)? {
+    return Ok(Some(target));
+  }
+  let instance = current_instance(app, instance_id)?;
+  let Some(origin) = instance.origin.clone() else {
+    return Ok(None);
+  };
+  let root = instance.version_path.clone();
+  Ok(Some(Target {
+    instance,
+    origin,
+    root,
+  }))
+}
+
 fn target_with(
   app: &AppHandle,
   instance_id: &str,
@@ -1578,20 +1596,15 @@ pub async fn check_modpack_update(
   scan_local: Option<bool>,
 ) -> USTBLResult<UpdateCheck> {
   let Some(target) = target(&app, &instance_id)? else {
-    if let Some(target) = update_target(&app, &instance_id)? {
-      return Ok(picked_archive_check(&target));
+    let staged = update_target(&app, &instance_id)?;
+    let mut check = match &staged {
+      Some(target) => picked_archive_check(target),
+      None => settled_local_check(None),
+    };
+    if scan_local == Some(true) {
+      check.local_changes = count_settled_local(&app, &instance_id).await;
     }
-    return Ok(UpdateCheck {
-      status: CheckStatus::NotFollowing,
-      follow: false,
-      current_label: None,
-      latest_version_id: None,
-      latest_label: None,
-      reason: None,
-      can_roll_back: false,
-      local_changes: None,
-      unlinked: false,
-    });
+    return Ok(check);
   };
   check_unless_installing(&target, check_installed_modpack(&app, &target, scan_local)).await
 }
@@ -1608,6 +1621,34 @@ pub async fn prime_campus_listing(app: AppHandle) {
 #[tauri::command]
 pub fn clear_campus_listing() {
   super::sources::campus_listing().clear();
+}
+
+/// The check of an instance the engine does not follow (a settled local
+/// import, or none with an origin). `local_changes` is set only by a scan.
+fn settled_local_check(local_changes: Option<usize>) -> UpdateCheck {
+  UpdateCheck {
+    status: CheckStatus::NotFollowing,
+    follow: false,
+    current_label: None,
+    latest_version_id: None,
+    latest_label: None,
+    reason: None,
+    can_roll_back: false,
+    local_changes,
+    unlinked: false,
+  }
+}
+
+/// The local-change count of a local import against its baseline. `None`
+/// when the instance is not a local import or has no matching baseline, so
+/// there is nothing to compare.
+async fn count_settled_local(app: &AppHandle, instance_id: &str) -> Option<usize> {
+  let target = changes_target(app, instance_id).ok()??;
+  if target.origin.platform != OriginPlatform::Local || has_campus_install(&target.root) {
+    return None;
+  }
+  let baseline = load_baseline(&target).await.ok()?;
+  count_local_changes(&target.root, &baseline).await.ok()
 }
 
 /// The check of a local import with an archive picked to update it: the
@@ -1861,7 +1902,8 @@ pub async fn list_modpack_change_detail(
   app: AppHandle,
   instance_id: String,
 ) -> USTBLResult<ModpackChangeDetail> {
-  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let target =
+    changes_target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let baseline = load_baseline(&target).await?;
   let (mut release, fallback) = release::release_for(&target.root, &baseline);
   let mut incomplete = false;
@@ -1898,6 +1940,17 @@ pub async fn list_modpack_change_detail(
   })
   .await
   .map_err(|error| crate::error::USTBLError(error.to_string()))??;
+  if target.origin.platform == OriginPlatform::Local && fallback {
+    // The fallback label is the archive's SHA-1; show the version the player knows.
+    if let Some(version) = target
+      .instance
+      .modpack_version
+      .clone()
+      .filter(|v| !v.is_empty())
+    {
+      release.label = version;
+    }
+  }
   let entries = super::changes::classify(&target.root, &baseline, &release, &listed).await?;
   Ok(ModpackChangeDetail {
     version_id: release.version_id,
@@ -1927,7 +1980,8 @@ pub async fn ignore_modpack_local_change(
   baseline_sha1: String,
   range: Option<super::ignores::Region>,
 ) -> USTBLResult<()> {
-  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let target =
+    changes_target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let _guard = UpdateGuard::acquire(&target.root)?;
   let baseline = load_baseline(&target).await?;
   let root = target.root.clone();
@@ -1947,7 +2001,8 @@ pub async fn ignore_modpack_added_file(
   instance_id: String,
   path: String,
 ) -> USTBLResult<()> {
-  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let target =
+    changes_target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let _guard = UpdateGuard::acquire(&target.root)?;
   let baseline = load_baseline(&target).await?;
   let (release, _) = release::release_for(&target.root, &baseline);
@@ -1970,7 +2025,8 @@ pub async fn list_modpack_ignores(
   app: AppHandle,
   instance_id: String,
 ) -> USTBLResult<Vec<super::ignores::IgnoredItem>> {
-  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let target =
+    changes_target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let baseline = load_baseline(&target).await?;
   let (release, _) = release::release_for(&target.root, &baseline);
   let root = target.root.clone();
@@ -1988,7 +2044,8 @@ pub async fn unignore_modpack_local_change(
   path: String,
   range: Option<super::ignores::Region>,
 ) -> USTBLResult<()> {
-  let target = target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
+  let target =
+    changes_target(&app, &instance_id)?.ok_or(InstanceError::ModpackUpdateUnsupported)?;
   let _guard = UpdateGuard::acquire(&target.root)?;
   let baseline = load_baseline(&target).await?;
   let root = target.root.clone();
@@ -4102,6 +4159,19 @@ mod tests {
     local_update::clear_target(&root);
     assert!(!engine_handles(&local, &root, false, true));
     let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn the_check_of_a_settled_local_import_carries_only_the_scan_count() {
+    let unscanned = settled_local_check(None);
+    assert_eq!(unscanned.status, CheckStatus::NotFollowing);
+    assert_eq!(unscanned.local_changes, None);
+    assert!(!unscanned.follow);
+
+    // A count of 0 still means the comparison ran.
+    let scanned = settled_local_check(Some(0));
+    assert_eq!(scanned.status, CheckStatus::NotFollowing);
+    assert_eq!(scanned.local_changes, Some(0));
   }
 
   #[test]

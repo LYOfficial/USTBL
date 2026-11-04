@@ -18,10 +18,11 @@ import {
   Tooltip,
   VStack,
 } from "@chakra-ui/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LuFoldVertical, LuUnfoldVertical } from "react-icons/lu";
 import { DiffExpandSignal } from "@/components/common/diff-view";
+import FileFilterInput from "@/components/common/file-filter-input";
 import {
   ConflictItem,
   PlanChangeGroups,
@@ -39,6 +40,7 @@ import {
 } from "@/models/modpack-update";
 import { CampusModpackService } from "@/services/campus-modpack";
 import { ModpackUpdateService } from "@/services/modpack-update";
+import { createPathMatcher, isQueryActive } from "@/utils/fuzzy-filter";
 import { componentDisplayName } from "@/utils/modpack-components";
 import {
   failedUpdatePlans,
@@ -94,6 +96,7 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
   const [progress, setProgress] = useState<CampusInstallProgress | null>(null);
   const [confirmingRollback, setConfirmingRollback] = useState(false);
   const [planError, setPlanError] = useState<PlanError | null>(null);
+  const [fileQuery, setFileQuery] = useState("");
   const choicesRef = useRef(choices);
   choicesRef.current = choices;
   // Picks among the optional files this version added. They are part of the
@@ -444,6 +447,24 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
     [plan]
   );
 
+  // Display only: answers and "all" buttons still cover every conflict.
+  const matchesPath = useMemo(() => createPathMatcher(fileQuery), [fileQuery]);
+  const shownPlan = useMemo(() => {
+    if (!plan || !isQueryActive(fileQuery)) return plan;
+    return {
+      ...plan,
+      changes: plan.changes.filter((change) => matchesPath(change.path)),
+      autoMerged: plan.autoMerged.filter((change) => matchesPath(change.path)),
+    };
+  }, [plan, fileQuery, matchesPath]);
+  const shownConflicts = useMemo(
+    () =>
+      plan
+        ? plan.conflicts.filter((conflict) => matchesPath(conflict.path))
+        : [],
+    [plan, matchesPath]
+  );
+
   const chooseOne = useCallback(
     (key: string, choice: ModpackConflictChoice) =>
       setChoices((prev) => ({ ...prev, [key]: choice })),
@@ -644,15 +665,37 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
             {t("UpdateModpackModal.plan.restoreComponents")}
           </Text>
         )}
-        <PlanChangeGroups plan={plan} />
+        {plan.changes.length + plan.autoMerged.length + plan.conflicts.length >
+          0 && <FileFilterInput value={fileQuery} onChange={setFileQuery} />}
+        {shownPlan &&
+          isQueryActive(fileQuery) &&
+          shownPlan.changes.length +
+            shownPlan.autoMerged.length +
+            shownConflicts.length ===
+            0 && (
+            <Text fontSize="xs-sm" className="secondary-text">
+              {t("FileFilter.empty")}
+            </Text>
+          )}
+        <PlanChangeGroups plan={shownPlan ?? plan} />
         {plan.conflicts.length > 0 && (
           <VStack align="stretch" spacing={3}>
             <HStack justify="space-between" spacing={2}>
-              <Text fontWeight="medium">
-                {t("UpdateModpackModal.plan.conflicts", {
-                  count: plan.conflicts.length,
-                })}
-              </Text>
+              <HStack spacing={2} minW={0}>
+                <Text fontWeight="medium">
+                  {t("UpdateModpackModal.plan.conflicts", {
+                    count: plan.conflicts.length,
+                  })}
+                </Text>
+                {isQueryActive(fileQuery) && (
+                  <Text fontSize="xs" className="secondary-text">
+                    {t("FileFilter.shown", {
+                      shown: shownConflicts.length,
+                      total: plan.conflicts.length,
+                    })}
+                  </Text>
+                )}
+              </HStack>
               <HStack spacing={1} flexShrink={0}>
                 {(
                   [
@@ -689,7 +732,7 @@ const UpdateModpackModal: React.FC<UpdateModpackModalProps> = ({
                 </Button>
               </HStack>
             </HStack>
-            {plan.conflicts.map((conflict) => (
+            {shownConflicts.map((conflict) => (
               <ConflictItem
                 key={conflict.path}
                 conflict={conflict}

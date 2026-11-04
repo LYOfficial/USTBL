@@ -9,8 +9,9 @@ import { InstanceService } from "@/services/instance";
 import { ModpackUpdateService } from "@/services/modpack-update";
 
 /**
- * Update a local import from an archive on disk: pick the file, confirm any
- * unofficial download addresses, stage it, then open the update dialog.
+ * Update a local import from an archive on disk: pick the file (or take a path
+ * already chosen), confirm any unofficial download addresses, stage it, then
+ * open the update dialog.
  * `pickingId` is the instance being processed, to show a loading state.
  */
 export const useLocalModpackUpdate = () => {
@@ -19,6 +20,7 @@ export const useLocalModpackUpdate = () => {
   const { openGenericConfirmDialog, openSharedModal } = useSharedModals();
   const [pickingId, setPickingId] = useState<string | null>(null);
   const busy = useRef(false);
+  const picking = useRef(false);
 
   const confirmUnofficial = useCallback(
     (data: ModpackUnofficialDownloads) =>
@@ -47,23 +49,21 @@ export const useLocalModpackUpdate = () => {
     [openGenericConfirmDialog, t]
   );
 
-  const updateFromFile = useCallback(
-    async (instanceId: string, instanceName: string) => {
-      if (busy.current) return;
+  /**
+   * Stage an archive that is already chosen and open the update dialog.
+   * Resolves to whether the dialog was opened (false: cancelled or failed,
+   * with the reason already shown).
+   */
+  const updateFromPath = useCallback(
+    async (
+      instanceId: string,
+      instanceName: string,
+      picked: string
+    ): Promise<boolean> => {
+      if (busy.current) return false;
       busy.current = true;
       setPickingId(instanceId);
       try {
-        const picked = await open({
-          multiple: false,
-          filters: [
-            {
-              name: t("General.dialog.filterName.modpack"),
-              extensions: ["zip", "mrpack"],
-            },
-          ],
-        });
-        if (!picked) return;
-
         // An archive that cannot be read fails the stage step with its own error.
         const unofficial =
           await ModpackUpdateService.listLocalModpackUnofficialDownloads(
@@ -74,7 +74,7 @@ export const useLocalModpackUpdate = () => {
           unofficial.data.fileCount > 0 &&
           !(await confirmUnofficial(unofficial.data))
         ) {
-          return;
+          return false;
         }
 
         const meta = await InstanceService.retrieveModpackMetaInfo(picked);
@@ -90,16 +90,17 @@ export const useLocalModpackUpdate = () => {
             title: response.details || response.message,
             status: "error",
           });
-          return;
+          return false;
         }
         if (response.data.unchanged) {
           toast({
             title: t("InstanceSyncPage.ledger.toast.sameFile"),
             status: "info",
           });
-          return;
+          return false;
         }
         openSharedModal("update-modpack", { instanceId, instanceName });
+        return true;
       } finally {
         busy.current = false;
         setPickingId(null);
@@ -108,5 +109,31 @@ export const useLocalModpackUpdate = () => {
     [t, toast, confirmUnofficial, openSharedModal]
   );
 
-  return { updateFromFile, pickingId };
+  const updateFromFile = useCallback(
+    async (instanceId: string, instanceName: string) => {
+      if (busy.current || picking.current) return;
+      picking.current = true;
+      setPickingId(instanceId);
+      try {
+        const picked = await open({
+          multiple: false,
+          filters: [
+            {
+              name: t("General.dialog.filterName.modpack"),
+              extensions: ["zip", "mrpack"],
+            },
+          ],
+        });
+        if (!picked) return;
+        // Release the picker flag first: the staging below holds `busy`.
+        picking.current = false;
+        await updateFromPath(instanceId, instanceName, picked);
+      } finally {
+        picking.current = false;
+        setPickingId(null);
+      }
+    },
+    [t, updateFromPath]
+  );
+  return { updateFromFile, updateFromPath, pickingId };
 };

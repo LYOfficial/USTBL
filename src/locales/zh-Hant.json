@@ -851,6 +851,12 @@
       "description": "首次啟動，正在自動下載 Java 25 執行環境"
     }
   },
+  "FileFilter": {
+    "placeholder": "篩選檔案",
+    "empty": "沒有符合的檔案",
+    "clear": "清除篩選",
+    "shown": "顯示 {{shown}} / {{total}}"
+  },
   "FileError": {
     "FILE_BLOCKED_BY_ANTIVIRUS": "檔案 {{file}} 被防毒軟體攔截。請在 Windows 安全性中允許該檔案，或把遊戲目錄加入排除項後重試。",
     "FILE_MISSING": "找不到檔案 {{file}}，可能已被刪除、移動或被防毒軟體隔離。請檢查後重試。",
@@ -1349,6 +1355,15 @@
       "description": "此整合包要從以下不在 Modrinth 認可範圍內的位址下載 {{count}} 個檔案。這些檔案未經平台審核，可能不安全，請僅在信任整合包作者時繼續。",
       "trust": "信任並繼續",
       "cancel": "取消匯入"
+    },
+    "mode": {
+      "create": "新建實例",
+      "update": "更新已有實例"
+    },
+    "update": {
+      "instance": "要更新的實例",
+      "noInstance": "沒有可以從本機檔案更新的實例",
+      "confirm": "預覽更新"
     }
   },
   "InstanceBasicSettings": {
