@@ -3,7 +3,16 @@
 import {
   ModpackChangeClass,
   ModpackChangeDetailEntry,
+  ModpackIgnoredItem,
 } from "@/models/modpack-update";
+import { DiffRank, sortByRank } from "@/utils/diff-rank";
+import {
+  compareDirsFirst,
+  compareNames,
+  createPathTree,
+  placePath,
+  sortPathTree,
+} from "@/utils/path-tree";
 
 /** Up to this many entries, the whole tree starts expanded. */
 export const OPEN_LIMIT = 5;
@@ -94,52 +103,56 @@ export interface ChangeTreeNode {
 export const buildChangeTree = (
   entries: ModpackChangeDetailEntry[]
 ): ChangeTreeNode[] => {
-  const roots: ChangeTreeNode[] = [];
-  const dirs = new Map<string, ChangeTreeNode>();
+  const tree = createPathTree<ChangeTreeNode>();
   for (const entry of entries) {
-    const parts = entry.path.split("/").filter(Boolean);
-    let siblings = roots;
-    let current = "";
-    parts.slice(0, -1).forEach((part) => {
-      current = current ? `${current}/${part}` : part;
-      const key = current.toLowerCase();
-      let dir = dirs.get(key);
-      if (!dir) {
-        dir = {
-          path: current,
-          name: part,
-          kind: "dir",
-          count: 0,
-          children: [],
-        };
-        dirs.set(key, dir);
-        siblings.push(dir);
-      }
-      dir.count += 1;
-      siblings = dir.children;
-    });
-    siblings.push({
-      path: entry.path,
-      name: parts[parts.length - 1] ?? entry.path,
-      kind: "file",
-      count: 1,
-      entry,
-      children: [],
+    placePath(tree, entry.path, {
+      makeDir: (path, name) => ({
+        path,
+        name,
+        kind: "dir" as const,
+        count: 0,
+        children: [],
+      }),
+      makeLeaf: (path, name) => ({
+        path: entry.path,
+        name,
+        kind: "file" as const,
+        count: 1,
+        entry,
+        children: [],
+      }),
+      onDir: (dir) => {
+        dir.count += 1;
+      },
+      mergeLeaves: false,
     });
   }
-  const sort = (nodes: ChangeTreeNode[]) => {
-    nodes.sort((a, b) =>
-      a.kind !== b.kind
-        ? a.kind === "dir"
-          ? -1
-          : 1
-        : a.name.localeCompare(b.name)
-    );
-    nodes.forEach((node) => sort(node.children));
-  };
-  sort(roots);
-  return roots;
+  return sortPathTree(tree.roots, (a, b) =>
+    a.kind === "file" && b.kind === "file" && a.entry && b.entry
+      ? entryRank(a.entry) - entryRank(b.entry) || compareNames(a.name, b.name)
+      : compareDirsFirst(a, b)
+  );
 };
+
+/**
+ * Where an entry goes among its siblings: 0 shows a line diff, 1 is a changed
+ * file with no diff to show (not text, no copy of the original), 2 is a file
+ * that is added, deleted, switched or first-install only.
+ */
+export const entryRank = (entry: ModpackChangeDetailEntry): DiffRank => {
+  if (entry.class !== "modified") return 2;
+  return entry.hunks && entry.hunks.length > 0 ? 0 : 1;
+};
+
+/** Ignored items: spots ignored show a diff, a whole file does not, an added file is the rest. */
+export const ignoredRank = (item: ModpackIgnoredItem): DiffRank =>
+  item.added ? 2 : item.whole ? 1 : 0;
+
+export const sortEntriesByDiff = (entries: ModpackChangeDetailEntry[]) =>
+  sortByRank(entries, entryRank);
+
+export const sortIgnoredByDiff = (items: ModpackIgnoredItem[]) =>
+  sortByRank(items, ignoredRank);
 
 /** Few entries open the whole tree; more open the first level only. */
 export const expandedDepth = (total: number): number =>

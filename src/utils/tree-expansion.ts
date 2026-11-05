@@ -37,5 +37,14 @@ export const applyExpansionRequest = (
   ids.forEach((id) => history.set(id, true));
 };
 
+/** "Expand all" or "collapse all": every given branch takes the same state, and is remembered so. */
+export const applyBulkExpansion = (
+  history: ExpansionHistory,
+  branches: Set<string>,
+  open: boolean
+): void => {
+  branches.forEach((id) => history.set(id, open));
+};
+
 export const branchIds = (nodes: TreeNode[]): Set<string> =>
   collectBranches(nodes);

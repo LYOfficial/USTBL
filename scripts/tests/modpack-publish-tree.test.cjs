@@ -21,7 +21,9 @@ function load(file) {
         },
       }
     ).outputText
-  )(exports, module, () => ({}));
+  )(exports, module, (name) =>
+    name === "@/utils/path-tree" ? load("src/utils/path-tree.ts") : {}
+  );
   return module.exports;
 }
 

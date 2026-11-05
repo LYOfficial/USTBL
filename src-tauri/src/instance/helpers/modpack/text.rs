@@ -1,6 +1,7 @@
 //! Conservative text classification and normalization for modpack files.
 
 use regex::Regex;
+use serde::Serialize;
 use std::path::Path;
 
 pub const MAX_TEXT_SIZE: usize = 2 * 1024 * 1024;
@@ -20,18 +21,52 @@ fn extension(path: &str) -> Option<&str> {
   Path::new(path).extension().and_then(|value| value.to_str())
 }
 
+/// Why a file is not eligible for the line-based text path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NotTextReason {
+  /// The extension is not one of the text types.
+  NotTextType,
+  /// Larger than `MAX_TEXT_SIZE`.
+  TooLarge,
+  /// Contains a NUL byte.
+  Binary,
+  /// Not valid UTF-8.
+  NotUtf8,
+}
+
+/// The reasons that need no content: the type, then the size.
+pub fn size_reason(path: &str, size: u64) -> Result<(), NotTextReason> {
+  let known = extension(path).is_some_and(|value| {
+    TEXT_EXTENSIONS
+      .iter()
+      .any(|known| value.eq_ignore_ascii_case(known))
+  });
+  if !known {
+    Err(NotTextReason::NotTextType)
+  } else if size > MAX_TEXT_SIZE as u64 {
+    Err(NotTextReason::TooLarge)
+  } else {
+    Ok(())
+  }
+}
+
+/// Why a file is not text, checked in this order: type, size, NUL byte,
+/// UTF-8. The first failing check names the reason.
+pub fn text_reason(path: &str, bytes: &[u8]) -> Result<(), NotTextReason> {
+  size_reason(path, bytes.len() as u64)?;
+  if bytes.contains(&0) {
+    Err(NotTextReason::Binary)
+  } else if std::str::from_utf8(bytes).is_err() {
+    Err(NotTextReason::NotUtf8)
+  } else {
+    Ok(())
+  }
+}
+
 /// Whether a file is eligible for the conservative, line-based text path.
 pub fn is_text_path(path: &str, bytes: &[u8]) -> bool {
-  bytes.len() <= MAX_TEXT_SIZE
-    && extension(path)
-      .map(|value| {
-        TEXT_EXTENSIONS
-          .iter()
-          .any(|known| value.eq_ignore_ascii_case(known))
-      })
-      .unwrap_or(false)
-    && !bytes.contains(&0)
-    && std::str::from_utf8(bytes).is_ok()
+  text_reason(path, bytes).is_ok()
 }
 
 fn normalize_properties_header(text: &str) -> String {
@@ -130,5 +165,84 @@ mod tests {
       "config/a.toml",
       &vec![b'a'; MAX_TEXT_SIZE + 1]
     ));
+  }
+
+  #[test]
+  fn each_failure_names_its_reason() {
+    assert_eq!(text_reason("config/a.toml", b"a=1"), Ok(()));
+    assert_eq!(
+      text_reason("mods/a.jar", b"PK"),
+      Err(NotTextReason::NotTextType)
+    );
+    assert_eq!(
+      text_reason("config/a.toml", &vec![b'a'; MAX_TEXT_SIZE + 1]),
+      Err(NotTextReason::TooLarge)
+    );
+    assert_eq!(
+      text_reason("config/a.toml", &vec![b'a'; MAX_TEXT_SIZE]),
+      Ok(())
+    );
+    assert_eq!(
+      text_reason("config/a.toml", b"a\0b"),
+      Err(NotTextReason::Binary)
+    );
+    assert_eq!(
+      text_reason("config/a.toml", b"a=\xE4"),
+      Err(NotTextReason::NotUtf8)
+    );
+  }
+
+  #[test]
+  fn the_first_failing_check_wins() {
+    let big = vec![0u8; MAX_TEXT_SIZE + 1];
+    // Type before size, size before content, NUL before encoding.
+    assert_eq!(
+      text_reason("mods/a.jar", &big),
+      Err(NotTextReason::NotTextType)
+    );
+    assert_eq!(
+      text_reason("config/a.toml", &big),
+      Err(NotTextReason::TooLarge)
+    );
+    assert_eq!(
+      text_reason("mods/a.jar", b"\0\xFF"),
+      Err(NotTextReason::NotTextType)
+    );
+    assert_eq!(
+      text_reason("config/a.toml", b"\0\xFF"),
+      Err(NotTextReason::Binary)
+    );
+  }
+
+  #[test]
+  fn the_size_check_alone_needs_no_content() {
+    assert_eq!(size_reason("config/a.toml", 10), Ok(()));
+    assert_eq!(
+      size_reason("config/a.toml", MAX_TEXT_SIZE as u64 + 1),
+      Err(NotTextReason::TooLarge)
+    );
+    assert_eq!(size_reason("a.png", 1), Err(NotTextReason::NotTextType));
+  }
+
+  #[test]
+  fn reasons_serialize_as_the_names_the_frontend_reads() {
+    let names: Vec<_> = [
+      NotTextReason::NotTextType,
+      NotTextReason::TooLarge,
+      NotTextReason::Binary,
+      NotTextReason::NotUtf8,
+    ]
+    .iter()
+    .map(|reason| serde_json::to_string(reason).unwrap())
+    .collect();
+    assert_eq!(
+      names,
+      vec![
+        "\"notTextType\"",
+        "\"tooLarge\"",
+        "\"binary\"",
+        "\"notUtf8\""
+      ]
+    );
   }
 }

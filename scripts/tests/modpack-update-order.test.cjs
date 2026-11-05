@@ -17,7 +17,13 @@ function load(file) {
     ts.transpileModule(fs.readFileSync(path.join(root, file), "utf8"), {
       compilerOptions: { module: ts.ModuleKind.CommonJS },
     }).outputText
-  )(exports, module, () => ({}));
+  )(exports, module, (name) =>
+    name === "@/utils/diff-rank"
+      ? load("src/utils/diff-rank.ts")
+      : name === "@/utils/path-tree"
+        ? load("src/utils/path-tree.ts")
+        : {}
+  );
   return module.exports;
 }
 

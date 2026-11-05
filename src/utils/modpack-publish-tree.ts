@@ -2,6 +2,12 @@
 // 三态与本地忽略》§4). The tree is a view over `PublishDraft`: a list of rules
 // kept exactly as the publisher set them, plus the files that are ticked
 // explicitly where a rule would otherwise cover them.
+import {
+  compareDirsFirst,
+  createPathTree,
+  placePath,
+  sortPathTree,
+} from "@/utils/path-tree";
 
 export type PublishState = "include" | "ignore" | "delete";
 /** What a node can show: a virtual file with no rule is "remove" (unmentioned). */
@@ -430,39 +436,37 @@ export interface PublishNode {
 
 /** Directories first, then files, each by name. */
 export const buildPublishNodes = (context: PublishContext): PublishNode[] => {
-  const roots: PublishNode[] = [];
-  const byKey = new Map<string, PublishNode>();
+  const tree = createPathTree<PublishNode>();
   const place = (
     path: string,
     leaf: Pick<PublishNode, "kind" | "ghost" | "disabled" | "conflict">
-  ) => {
-    const parts = path.split("/").filter(Boolean);
-    let siblings = roots;
-    let current = "";
-    parts.forEach((part, at) => {
-      current = current ? `${current}/${part}` : part;
-      const key = keyOf(current);
-      let node = byKey.get(key);
-      const last = at === parts.length - 1;
-      if (!node) {
-        node = {
-          path: current,
-          name: part,
-          kind: last ? leaf.kind : "dir",
-          ghost: last ? leaf.ghost : true,
-          disabled: last ? leaf.disabled : false,
-          conflict: last ? leaf.conflict : false,
-          children: [],
-        };
-        byKey.set(key, node);
-        siblings.push(node);
-      } else if (last && node.kind === "dir" && leaf.kind === "dir") {
-        node.ghost = node.ghost && leaf.ghost;
-      }
-      if (!last && !leaf.ghost) node.ghost = false;
-      siblings = node.children;
+  ) =>
+    placePath(tree, path, {
+      keyOf,
+      makeDir: (current, name) => ({
+        path: current,
+        name,
+        kind: "dir" as const,
+        ghost: true,
+        disabled: false,
+        conflict: false,
+        children: [],
+      }),
+      makeLeaf: (current, name) => ({
+        path: current,
+        name,
+        ...leaf,
+        children: [],
+      }),
+      onDir: (node) => {
+        if (!leaf.ghost) node.ghost = false;
+      },
+      onLeaf: (node, created) => {
+        if (!created && node.kind === "dir" && leaf.kind === "dir") {
+          node.ghost = node.ghost && leaf.ghost;
+        }
+      },
     });
-  };
   for (const file of context.files) {
     place(file.path, {
       kind: "file",
@@ -479,18 +483,7 @@ export const buildPublishNodes = (context: PublishContext): PublishNode[] => {
       conflict: false,
     });
   }
-  const sort = (nodes: PublishNode[]) => {
-    nodes.sort((a, b) =>
-      a.kind !== b.kind
-        ? a.kind === "dir"
-          ? -1
-          : 1
-        : a.name.localeCompare(b.name)
-    );
-    nodes.forEach((node) => sort(node.children));
-  };
-  sort(roots);
-  return roots;
+  return sortPathTree(tree.roots, compareDirsFirst);
 };
 
 // ------------------------------------------------------------- change marks

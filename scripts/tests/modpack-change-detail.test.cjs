@@ -16,7 +16,13 @@ function load(file) {
       fs.readFileSync(path.join(__dirname, "../../", file), "utf8"),
       { compilerOptions: { module: ts.ModuleKind.CommonJS } }
     ).outputText
-  )(exports, module, () => ({}));
+  )(exports, module, (name) =>
+    name === "@/utils/path-tree"
+      ? load("src/utils/path-tree.ts")
+      : name === "@/utils/diff-rank"
+        ? load("src/utils/diff-rank.ts")
+        : {}
+  );
   return module.exports;
 }
 

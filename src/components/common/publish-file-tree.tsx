@@ -12,7 +12,7 @@ import {
   Tooltip,
   VStack,
 } from "@chakra-ui/react";
-import { useMemo, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   LuBan,
@@ -26,10 +26,15 @@ import {
 } from "react-icons/lu";
 import { BeatLoader } from "react-spinners";
 import BlockToggle from "@/components/common/block-toggle";
-import Empty from "@/components/common/empty";
-import FileFilterInput from "@/components/common/file-filter-input";
+import {
+  ChangeFilterButton,
+  ChangeTag,
+  FilePanelEmpty,
+  FilePanelToolbar,
+  RecursiveToggle,
+} from "@/components/common/file-panel";
 import PublishChangeDiff from "@/components/common/publish-change-diff";
-import TreeView, { TreeNode } from "@/components/common/tree-view";
+import TreeView, { TreeCommand } from "@/components/common/tree-view";
 import { useLauncherConfig } from "@/contexts/config";
 import {
   AUTO_EXPAND_LIMIT,
@@ -69,6 +74,7 @@ import {
   toggleCategory,
   viewOf,
 } from "@/utils/modpack-publish-tree";
+import { toTreeNodes } from "@/utils/path-tree";
 import { branchIds } from "@/utils/tree-expansion";
 
 const STATE_STYLE: Record<
@@ -80,15 +86,6 @@ const STATE_STYLE: Record<
   delete: { colorScheme: "red", icon: <LuTrash2 /> },
   remove: { colorScheme: "gray", icon: <LuX /> },
   mixed: { colorScheme: "purple", icon: <LuMinus /> },
-};
-
-const CHANGE_COLOR: Record<ChangeCategory, string> = {
-  modified: "orange",
-  added: "green",
-  enable: "purple",
-  disable: "purple",
-  onceChanged: "cyan",
-  deleted: "red",
 };
 
 interface PublishFileTreeProps {
@@ -159,26 +156,33 @@ const PublishFileTree: React.FC<PublishFileTreeProps> = ({
     () => new Map(changes.map((change) => [keyOf(change.path), change])),
     [changes]
   );
-  const filtered = isFilterActive(filter);
   const [query, setQuery] = useState("");
-  const queryActive = isQueryActive(query);
+  // Filtering thousands of files must not hold up typing or a click: the tree
+  // follows these one render behind, and the controls answer at once.
+  const shownFilter = useDeferredValue(filter);
+  const shownQuery = useDeferredValue(query);
+  const filtered = isFilterActive(shownFilter);
+  const [command, setCommand] = useState<TreeCommand>();
+  const [openDiffs, setOpenDiffs] = useState<Set<string>>(new Set());
+  const toggleDiff = (path: string) =>
+    setOpenDiffs((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(path)) next.add(path);
+      return next;
+    });
+  const queryActive = isQueryActive(shownQuery);
   const markedNodes = useMemo(
-    () => filterNodes(nodes, marks, filter),
-    [nodes, marks, filter]
+    () => filterNodes(nodes, marks, shownFilter),
+    [nodes, marks, shownFilter]
   );
   const shownNodes = useMemo(
-    () => filterTreeByQuery(markedNodes, query),
-    [markedNodes, query]
+    () => filterTreeByQuery(markedNodes, shownQuery),
+    [markedNodes, shownQuery]
   );
-  const tree = useMemo(() => {
-    const convert = (list: PublishNode[]): TreeNode<PublishNode>[] =>
-      list.map((node) => ({
-        id: node.path,
-        data: node,
-        children: convert(node.children),
-      }));
-    return convert(shownNodes);
-  }, [shownNodes]);
+  const tree = useMemo(
+    () => toTreeNodes(shownNodes, (node) => node.path),
+    [shownNodes]
+  );
   // Hits open their parents without touching the remembered expansion, so
   // clearing the query brings back what the user had open.
   const expandAll = useMemo(
@@ -191,15 +195,16 @@ const PublishFileTree: React.FC<PublishFileTreeProps> = ({
     () => (filtered ? { ids: branchIds(tree) } : undefined),
     // The request must change only when the filter changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [filter]
+    [shownFilter]
   );
 
   const label = (state: ShownState) => t(`PublishModpackModal.tree.${state}`);
 
   return (
-    <Box w="100%">
+    // The card behind is opaque; the toolbar that sticks to the top takes its color.
+    <Box w="100%" bg="inherit">
       {!isLoading && (
-        <VStack align="stretch" spacing={2} mb={2}>
+        <VStack align="stretch" spacing={1} mb={2}>
           <HStack spacing={2} flexWrap="wrap">
             <Text fontSize="xs" className="secondary-text">
               {t("PublishModpackModal.tree.filter.title")}
@@ -209,34 +214,19 @@ const PublishFileTree: React.FC<PublishFileTreeProps> = ({
                 key={category}
                 label={t(`PublishModpackModal.tree.changeHint.${category}`)}
               >
-                <Button
-                  size="xs"
-                  colorScheme={CHANGE_COLOR[category]}
-                  variant={
-                    filter.categories.has(category) ? "solid" : "outline"
-                  }
-                  isDisabled={counts[category] === 0}
-                  aria-pressed={filter.categories.has(category)}
-                  onClick={() =>
-                    setFilter((prev) => toggleCategory(prev, category))
-                  }
-                >
-                  {t(`PublishModpackModal.tree.change.${category}`)}{" "}
-                  {counts[category]}
-                </Button>
+                <span>
+                  <ChangeFilterButton
+                    visual={category}
+                    count={counts[category]}
+                    selected={filter.categories.has(category)}
+                    isDisabled={counts[category] === 0}
+                    onClick={() =>
+                      setFilter((prev) => toggleCategory(prev, category))
+                    }
+                  />
+                </span>
               </Tooltip>
             ))}
-            <FileFilterInput w="180px" value={query} onChange={setQuery} />
-            <Box flex="1" />
-            <BlockToggle
-              checked={filter.onlyChanged}
-              onChange={(checked) =>
-                setFilter((prev) => ({ ...prev, onlyChanged: checked }))
-              }
-              aria-label={t("PublishModpackModal.tree.filter.onlyChanged")}
-            >
-              {t("PublishModpackModal.tree.filter.onlyChanged")}
-            </BlockToggle>
           </HStack>
           {previous === null && (
             <Text fontSize="xs" className="secondary-text">
@@ -265,7 +255,35 @@ const PublishFileTree: React.FC<PublishFileTreeProps> = ({
         ))}
         <Text w="100%">{t("PublishModpackModal.tree.legend.cycle")}</Text>
       </HStack>
-      <Box maxH="xs" overflowY="auto">
+      {!isLoading && (
+        <Box
+          data-sticky-top
+          position="sticky"
+          top={-2}
+          zIndex="sticky"
+          bg="inherit"
+          py={1.5}
+        >
+          <FilePanelToolbar
+            query={query}
+            onQueryChange={setQuery}
+            onExpandAll={() => setCommand({ type: "expand" })}
+            onCollapseAll={() => setCommand({ type: "collapse" })}
+            controls={
+              <BlockToggle
+                checked={filter.onlyChanged}
+                onChange={(checked) =>
+                  setFilter((prev) => ({ ...prev, onlyChanged: checked }))
+                }
+                aria-label={t("PublishModpackModal.tree.filter.onlyChanged")}
+              >
+                {t("PublishModpackModal.tree.filter.onlyChanged")}
+              </BlockToggle>
+            }
+          />
+        </Box>
+      )}
+      <Box>
         {isLoading ? (
           <Center py={4}>
             <BeatLoader size={10} color="gray" />
@@ -273,14 +291,18 @@ const PublishFileTree: React.FC<PublishFileTreeProps> = ({
         ) : tree.length > 0 ? (
           <TreeView
             nodes={tree}
+            scrollParent
             defaultExpandedDepth={0}
             preserveExpanded
             expandRequest={expandRequest}
             expandAll={expandAll}
-            renderNode={({ node: { data } }) => (
+            command={command}
+            renderNode={({ node: { data }, isExpanded, expandSubtree }) => (
               <PublishTreeRow
                 instanceId={instanceId}
                 data={data}
+                isExpanded={isExpanded}
+                onExpandSubtree={expandSubtree}
                 context={context}
                 draft={draft}
                 view={view}
@@ -292,18 +314,14 @@ const PublishFileTree: React.FC<PublishFileTreeProps> = ({
                 localDeleteCount={
                   localDeleteDirCounts.get(keyOf(data.path)) ?? 0
                 }
+                showDiff={openDiffs.has(data.path)}
+                onToggleDiff={() => toggleDiff(data.path)}
                 onDraftChange={onDraftChange}
               />
             )}
           />
         ) : (
-          <Empty
-            withIcon={false}
-            size="sm"
-            description={
-              queryActive || filtered ? t("FileFilter.empty") : undefined
-            }
-          />
+          <FilePanelEmpty filtered={queryActive || filtered} />
         )}
       </Box>
     </Box>
@@ -313,6 +331,8 @@ const PublishFileTree: React.FC<PublishFileTreeProps> = ({
 interface PublishTreeRowProps {
   instanceId: string;
   data: PublishNode;
+  isExpanded: boolean;
+  onExpandSubtree: (open: boolean) => void;
   context: PublishContext;
   draft: PublishDraft;
   view: ReturnType<typeof viewOf>;
@@ -322,12 +342,17 @@ interface PublishTreeRowProps {
   change: PublishChange | undefined;
   dirChanges: number;
   localDeleteCount: number;
+  /** Held by the tree: a row is destroyed when it scrolls out of view. */
+  showDiff: boolean;
+  onToggleDiff: () => void;
   onDraftChange: (updater: (prev: PublishDraft) => PublishDraft) => void;
 }
 
 const PublishTreeRow: React.FC<PublishTreeRowProps> = ({
   instanceId,
   data,
+  isExpanded,
+  onExpandSubtree,
   context,
   draft,
   view,
@@ -337,12 +362,14 @@ const PublishTreeRow: React.FC<PublishTreeRowProps> = ({
   change,
   dirChanges,
   localDeleteCount,
+  showDiff,
+  onToggleDiff,
   onDraftChange,
 }) => {
   const { t } = useTranslation();
   const { config } = useLauncherConfig();
   const primaryColor = config.appearance.theme.primaryColor;
-  const [showDiff, setShowDiff] = useState(false);
+
   const isDir = data.kind === "dir";
   const state = isDir ? view.dirState(data.path) : view.fileState(data.path);
   const canRemove = data.ghost && (isDir || canRemoveFile(draft, data.path));
@@ -501,16 +528,9 @@ const PublishTreeRow: React.FC<PublishTreeRowProps> = ({
               }`
             )}
           >
-            <Tag
-              size="sm"
-              variant="subtle"
-              colorScheme={CHANGE_COLOR[category]}
-              flexShrink={0}
-            >
-              <TagLabel>
-                {t(`PublishModpackModal.tree.change.${category}`)}
-              </TagLabel>
-            </Tag>
+            <span>
+              <ChangeTag visual={category} />
+            </span>
           </Tooltip>
         ) : null}
         {!isDir && change?.localIgnored ? (
@@ -536,6 +556,9 @@ const PublishTreeRow: React.FC<PublishTreeRowProps> = ({
             </TagLabel>
           </Tag>
         ) : null}
+        {isDir && (
+          <RecursiveToggle open={isExpanded} onOpenChange={onExpandSubtree} />
+        )}
         <Box flex="1" />
         {canDiff ? (
           <Button
@@ -544,7 +567,7 @@ const PublishTreeRow: React.FC<PublishTreeRowProps> = ({
             leftIcon={<LuFileDiff />}
             flexShrink={0}
             aria-expanded={showDiff}
-            onClick={() => setShowDiff((prev) => !prev)}
+            onClick={onToggleDiff}
           >
             {t(
               showDiff

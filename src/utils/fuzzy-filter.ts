@@ -2,8 +2,8 @@
 // local-changes dialog. A query is split on whitespace; a path matches when
 // every term occurs in it as a subsequence, ignoring case and the kind of slash.
 
-/** More matching files than this and the tree keeps the user's own expansion. */
-export const AUTO_EXPAND_LIMIT = 300;
+/** More matching files than this and the tree keeps the user's own expansion. Only the rows in view are drawn, so this guards the cost of opening many branches, not of rendering them. */
+export const AUTO_EXPAND_LIMIT = 5000;
 
 const normalize = (text: string): string =>
   text.toLowerCase().replace(/\\/g, "/");

@@ -7,7 +7,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import React, { memo, useMemo, useState } from "react";
+import React, { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LuChevronDown, LuChevronRight } from "react-icons/lu";
 import {
@@ -15,8 +15,14 @@ import {
   DiffFile,
   DiffHunks,
   regionHunk,
+  useDiffColors,
 } from "@/components/common/diff-view";
-import { ModpackFileDiffRow } from "@/components/modpack-file-diff";
+import { RecursiveToggle } from "@/components/common/file-panel";
+import VirtualRows from "@/components/common/virtual-rows";
+import {
+  ModpackFileDiffButton,
+  ModpackFileDiffPanel,
+} from "@/components/modpack-file-diff";
 import {
   ModpackConflict,
   ModpackConflictChoice,
@@ -72,7 +78,7 @@ const renderSize = (
   }
 };
 
-/** One collapsible group of file changes, capped until "show all". */
+/** One collapsible group of file changes, drawn in the dialog's own view. */
 const ChangeGroup: React.FC<{
   title: string;
   colorScheme: string;
@@ -80,6 +86,7 @@ const ChangeGroup: React.FC<{
   sizeMode: SizeMode;
   description?: string;
   defaultOpen?: boolean;
+  expandSignal?: DiffExpandSignal;
   /** Set for groups whose rows can open a line diff of the plan. */
   diff?: { instanceId: string; planHash: string };
 }> = ({
@@ -89,34 +96,44 @@ const ChangeGroup: React.FC<{
   sizeMode,
   description,
   defaultOpen = false,
+  expandSignal,
   diff,
 }) => {
   const { t } = useTranslation();
   const [open, setOpen] = useState(defaultOpen);
-  const [showAll, setShowAll] = useState(false);
+  const handledToken = useRef(expandSignal?.token);
+  useEffect(() => {
+    if (!expandSignal || expandSignal.token === handledToken.current) return;
+    handledToken.current = expandSignal.token;
+    setOpen(expandSignal.open);
+  }, [expandSignal]);
+  // Rows scroll out of the list and are destroyed, so their diffs are opened here.
+  const [openDiffs, setOpenDiffs] = useState<Set<string>>(new Set());
   // Sorting thousands of paths is only worth it for a group that is open.
   const sorted = useMemo(
     () => (open ? sortChangesByDiff(changes) : []),
     [open, changes]
   );
   if (changes.length === 0) return null;
-  const shown = showAll ? sorted : sorted.slice(0, 100);
   return (
     <Box borderWidth="1px" borderRadius="md">
-      <HStack
-        as="button"
-        type="button"
-        w="full"
-        px={3}
-        py={2}
-        spacing={2}
-        onClick={() => setOpen(!open)}
-        aria-expanded={open}
-      >
-        <Icon as={open ? LuChevronDown : LuChevronRight} />
-        <Text fontWeight="medium" color={`${colorScheme}.500`}>
-          {t(title, { count: changes.length })}
-        </Text>
+      <HStack data-group w="full" px={3} py={2} spacing={2}>
+        <HStack
+          as="button"
+          type="button"
+          flex={1}
+          minW={0}
+          spacing={2}
+          textAlign="left"
+          onClick={() => setOpen(!open)}
+          aria-expanded={open}
+        >
+          <Icon as={open ? LuChevronDown : LuChevronRight} />
+          <Text fontWeight="medium" color={`${colorScheme}.500`}>
+            {t(title, { count: changes.length })}
+          </Text>
+        </HStack>
+        <RecursiveToggle open={open} onOpenChange={setOpen} />
       </HStack>
       {open && (
         <VStack align="stretch" spacing={0} borderTopWidth="1px">
@@ -125,55 +142,68 @@ const ChangeGroup: React.FC<{
               {description}
             </Text>
           )}
-          {shown.map((change) => (
-            <Box key={change.path}>
-              <HStack
-                justify="space-between"
-                spacing={3}
-                px={3}
-                py={1.5}
-                borderTopWidth="1px"
-              >
-                <Box minW={0}>
-                  <Text fontSize="sm" noOfLines={1} wordBreak="break-all">
-                    {fileName(change.path)}
-                  </Text>
-                  {change.path.includes("/") && (
-                    <Text
-                      fontSize="xs"
-                      className="secondary-text"
-                      noOfLines={1}
-                    >
-                      {change.path}
-                    </Text>
+          <VirtualRows
+            rowCount={sorted.length}
+            rowKey={(index) => sorted[index].path}
+            layoutKey={sorted}
+            scrollParent
+            renderRow={(index) => {
+              const change = sorted[index];
+              const canDiff = diff && canShowChangeDiff(change);
+              const diffOpen = openDiffs.has(change.path);
+              const setDiffOpen = (next: boolean) =>
+                setOpenDiffs((prev) => {
+                  const copy = new Set(prev);
+                  if (next) copy.add(change.path);
+                  else copy.delete(change.path);
+                  return copy;
+                });
+              return (
+                <Box>
+                  <HStack
+                    justify="space-between"
+                    spacing={3}
+                    px={3}
+                    py={1.5}
+                    borderTopWidth="1px"
+                  >
+                    <Box minW={0}>
+                      <Text fontSize="sm" noOfLines={1} wordBreak="break-all">
+                        {fileName(change.path)}
+                      </Text>
+                      {change.path.includes("/") && (
+                        <Text
+                          fontSize="xs"
+                          className="secondary-text"
+                          noOfLines={1}
+                        >
+                          {change.path}
+                        </Text>
+                      )}
+                    </Box>
+                    <HStack spacing={1} flexShrink={0}>
+                      {canDiff && (
+                        <ModpackFileDiffButton
+                          open={diffOpen}
+                          onOpenChange={setDiffOpen}
+                        />
+                      )}
+                      <Text fontSize="xs" className="secondary-text">
+                        {renderSize(sizeMode, change, t)}
+                      </Text>
+                    </HStack>
+                  </HStack>
+                  {canDiff && diffOpen && diff && (
+                    <ModpackFileDiffPanel
+                      instanceId={diff.instanceId}
+                      planHash={diff.planHash}
+                      path={change.path}
+                    />
                   )}
                 </Box>
-                <Text fontSize="xs" className="secondary-text" flexShrink={0}>
-                  {renderSize(sizeMode, change, t)}
-                </Text>
-              </HStack>
-              {diff && canShowChangeDiff(change) && (
-                <ModpackFileDiffRow
-                  instanceId={diff.instanceId}
-                  planHash={diff.planHash}
-                  path={change.path}
-                />
-              )}
-            </Box>
-          ))}
-          {!showAll && sorted.length > shown.length && (
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={() => setShowAll(true)}
-              borderTopWidth="1px"
-              borderRadius={0}
-            >
-              {t("UpdateModpackModal.plan.showAll", {
-                count: sorted.length - shown.length,
-              })}
-            </Button>
-          )}
+              );
+            }}
+          />
         </VStack>
       )}
     </Box>
@@ -187,9 +217,11 @@ const ChangeGroup: React.FC<{
 export const PlanChangeGroups = memo(function PlanChangeGroups({
   instanceId,
   plan,
+  expandSignal,
 }: {
   instanceId: string;
   plan: ModpackUpdatePlan;
+  expandSignal?: DiffExpandSignal;
 }) {
   const { t } = useTranslation();
   const groups = useMemo(() => groupPlanChanges(plan), [plan]);
@@ -205,18 +237,21 @@ export const PlanChangeGroups = memo(function PlanChangeGroups({
         changes={groups.restored}
         description={t("UpdateModpackModal.plan.restoredDescription")}
         defaultOpen
+        expandSignal={expandSignal}
         sizeMode="restored"
       />
       <ChangeGroup
         title="UpdateModpackModal.plan.add"
         colorScheme="green"
         changes={groups.add}
+        expandSignal={expandSignal}
         sizeMode="added"
       />
       <ChangeGroup
         title="UpdateModpackModal.plan.update"
         colorScheme="blue"
         changes={groups.update}
+        expandSignal={expandSignal}
         sizeMode="updated"
         diff={diff}
       />
@@ -224,30 +259,35 @@ export const PlanChangeGroups = memo(function PlanChangeGroups({
         title="UpdateModpackModal.plan.delete"
         colorScheme="red"
         changes={groups.delete}
+        expandSignal={expandSignal}
         sizeMode="removed"
       />
       <ChangeGroup
         title="UpdateModpackModal.plan.disable"
         colorScheme="gray"
         changes={groups.disable}
+        expandSignal={expandSignal}
         sizeMode="removed"
       />
       <ChangeGroup
         title="UpdateModpackModal.plan.enable"
         colorScheme="gray"
         changes={groups.enable}
+        expandSignal={expandSignal}
         sizeMode="removed"
       />
       <ChangeGroup
         title="UpdateModpackModal.plan.retire"
         colorScheme="gray"
         changes={groups.retire}
+        expandSignal={expandSignal}
         sizeMode="removed"
       />
       <ChangeGroup
         title="UpdateModpackModal.plan.autoMerged"
         colorScheme="green"
         changes={groups.autoMerged}
+        expandSignal={expandSignal}
         sizeMode="updated"
         diff={diff}
       />
@@ -361,10 +401,20 @@ const ConflictHunk = memo(function ConflictHunk({
   onChoose: ChooseConflict;
 }) {
   const { t } = useTranslation();
+  const colors = useDiffColors();
   const key = hunkKey(path, index);
   return (
     <VStack align="stretch" spacing={0} borderTopWidth={index > 0 ? "1px" : 0}>
-      <HStack justify="space-between" px={3} py={1.5} spacing={2}>
+      <HStack
+        position="sticky"
+        top="var(--diff-file-header-h, 0px)"
+        zIndex={1}
+        bg={colors.headerBg}
+        justify="space-between"
+        px={3}
+        py={1.5}
+        spacing={2}
+      >
         <Text fontSize="xs" className="secondary-text" minW={0}>
           {t("UpdateModpackModal.choice.hunk", {
             number: index + 1,
@@ -494,6 +544,7 @@ export const ConflictItem = memo(function ConflictItem({
     <DiffFile
       path={conflict.path}
       expandSignal={expandSignal}
+      stickyHeader
       tags={kindText}
       actions={
         <>

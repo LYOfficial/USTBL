@@ -857,6 +857,26 @@
     "clear": "Clear filter",
     "shown": "Showing {{shown}} of {{total}}"
   },
+  "FilePanel": {
+    "change": {
+      "modified": "Modified",
+      "added": "Added",
+      "onceChanged": "First-install only · changed",
+      "deleted": "Deleted",
+      "enable": "Enable",
+      "disable": "Disable"
+    },
+    "expandAll": "Expand all",
+    "collapseAll": "Collapse all",
+    "expandSubtree": "Expand recursively",
+    "collapseSubtree": "Collapse recursively",
+    "noDiff": {
+      "notTextType": "Not a text file; differences are not shown",
+      "tooLarge": "File exceeds 2 MB; differences are not shown",
+      "binary": "Binary file; differences are not shown",
+      "notUtf8": "Not UTF-8 encoded; differences are not shown"
+    }
+  },
   "FileError": {
     "FILE_BLOCKED_BY_ANTIVIRUS": "File {{file}} was blocked by antivirus software. Allow the file in Windows Security, or add the game directory to the exclusions, then try again.",
     "FILE_MISSING": "Cannot find file {{file}}. It may have been deleted, moved, or quarantined by antivirus software. Check and try again.",
@@ -3359,14 +3379,6 @@
         "mixed": "Files in this directory have different settings"
       },
       "clickTo": "Click to change to {{next}}",
-      "change": {
-        "modified": "Modified",
-        "added": "Added",
-        "onceChanged": "First-install only · changed",
-        "deleted": "Deleted",
-        "enable": "Enable",
-        "disable": "Disable"
-      },
       "changeHint": {
         "modified": "The content differs from the previous version.",
         "added": "The previous version does not have this file.",
@@ -3489,13 +3501,11 @@
         "removedTag": "Removed"
       },
       "restoreComponents": "This version changes the game components. The update will also rebuild the game's version profile and libraries.",
-      "conflicts": "{{count}} files conflict with your changes; the new version is applied by default, and you can handle them individually",
+      "conflicts": "{{count}} local changes conflict with the new version",
       "autoMerged": "{{count}} auto-merged",
-      "showAll": "Show all ({{count}} more)",
       "fileDiff": {
         "show": "Show diff",
         "hide": "Hide diff",
-        "notText": "Not text or too large to show a diff",
         "unavailable": "Unable to get the new version's content; try again later",
         "formatOnly": "Only line endings or other formatting differ"
       },
@@ -3525,8 +3535,6 @@
       "hunk": "Conflict {{number}} (lines {{from}}–{{to}} in the original file)",
       "allKeepLocal": "Keep all local",
       "allTakeRemote": "Apply new version to all",
-      "expandAll": "Expand all",
-      "collapseAll": "Collapse all",
       "localSide": "Local",
       "remoteSide": "New version"
     },
@@ -3575,16 +3583,8 @@
     "comparedTo": "Compared with: {{label}}",
     "countingRule": "Lists local changes: modifications, deletions, enabled state, and new files in mods, resource packs, and shaders.",
     "incomplete": "Unable to get the previous version’s change rules; try again",
-    "class": {
-      "modified": "Modified",
-      "deleted": "Deleted",
-      "added": "New",
-      "enable": "Enabled",
-      "disable": "Disabled"
-    },
     "disabled": "Disabled",
     "noDiff": {
-      "notText": "Non-text or too large; differences are not shown",
       "baseMissing": "No copy from installation exists; differences cannot be shown",
       "bothVariants": "A file and its .disabled variant both exist. Delete one of them"
     },

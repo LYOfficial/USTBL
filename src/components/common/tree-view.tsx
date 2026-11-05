@@ -1,11 +1,15 @@
-import { Box, HStack, IconButton, VStack } from "@chakra-ui/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Box, HStack, IconButton } from "@chakra-ui/react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LuChevronDown, LuChevronRight } from "react-icons/lu";
+import VirtualRows from "@/components/common/virtual-rows";
 import {
   ExpansionHistory,
+  applyBulkExpansion,
   applyExpansionRequest,
+  branchIds,
   syncExpandedState,
 } from "@/utils/tree-expansion";
+import { flattenTree, indentRem } from "@/utils/tree-flatten";
 
 export interface TreeNode<T = unknown> {
   id: string;
@@ -23,19 +27,38 @@ export interface TreeNodeRenderContext<T = unknown> {
   depth: number;
   isLeaf: boolean;
   isExpanded: boolean;
+  /** Open or close this branch and every branch below it. */
+  expandSubtree: (open: boolean) => void;
 }
 
 interface TreeViewProps<T = unknown> {
   nodes: TreeNode<T>[];
   renderNode: (context: TreeNodeRenderContext<T>) => React.ReactNode;
+  /** Indent per level in Chakra spacing units (0.25rem each). */
   indentSize?: number;
   spacing?: number;
+  /** The tallest the tree grows in px before it scrolls. */
+  maxHeight?: number;
+  /**
+   * Grow to the full height of the rows and let the nearest scrolling ancestor
+   * scroll them; `maxHeight` is then ignored.
+   */
+  scrollParent?: boolean;
   defaultExpandedDepth?: number;
   preserveExpanded?: boolean;
   expandRequest?: { ids: Set<string> };
   /** Show every branch open without touching the remembered expansion. */
   expandAll?: boolean;
+  /**
+   * Opens or closes every branch of `nodes` each time a new command arrives
+   * (compared by identity), whatever was open before.
+   */
+  command?: TreeCommand;
   leafPlaceholderWidth?: number;
+}
+
+export interface TreeCommand {
+  type: "expand" | "collapse";
 }
 
 const collectExpandedIdsByDepth = <T,>(
@@ -79,10 +102,13 @@ const TreeView = <T,>({
   renderNode,
   indentSize = 3,
   spacing = 1,
+  maxHeight = 320,
+  scrollParent = false,
   defaultExpandedDepth = 0,
   preserveExpanded = false,
   expandRequest,
   expandAll = false,
+  command,
   leafPlaceholderWidth = 24,
 }: TreeViewProps<T>) => {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
@@ -117,6 +143,18 @@ const TreeView = <T,>({
     setClosedIds(new Set());
   }, [expandAll]);
 
+  const lastCommand = useRef<TreeCommand>();
+  useEffect(() => {
+    if (!command || lastCommand.current === command) return;
+    lastCommand.current = command;
+    const branches = branchIds(nodes);
+    const open = command.type === "expand";
+    applyBulkExpansion(expansionHistory.current, branches, open);
+    setExpandedIds(open ? branches : new Set());
+    // With `expandAll` on, closed branches are what is tracked.
+    setClosedIds(open ? new Set() : new Set(branches));
+  }, [command, nodes]);
+
   const toggleExpanded = useCallback(
     (id: string) => {
       if (expandAll) {
@@ -143,51 +181,88 @@ const TreeView = <T,>({
     [expandAll]
   );
 
-  const renderBranch = (node: TreeNode<T>, depth: number): React.ReactNode => {
-    const children = node.children ?? [];
-    const isLeaf = children.length === 0;
-    const isExpanded = expandAll
-      ? !closedIds.has(node.id)
-      : expandedIds.has(node.id);
+  const expandSubtree = useCallback(
+    (node: TreeNode<T>, open: boolean) => {
+      const branches = branchIds([node]);
+      applyBulkExpansion(expansionHistory.current, branches, open);
+      if (expandAll) {
+        setClosedIds((prev) => {
+          const next = new Set(prev);
+          branches.forEach((id) => (open ? next.delete(id) : next.add(id)));
+          return next;
+        });
+      } else {
+        setExpandedIds((prev) => {
+          const next = new Set(prev);
+          branches.forEach((id) => (open ? next.add(id) : next.delete(id)));
+          return next;
+        });
+      }
+    },
+    [expandAll]
+  );
 
+  const isOpen = useCallback(
+    (id: string) => (expandAll ? !closedIds.has(id) : expandedIds.has(id)),
+    [expandAll, closedIds, expandedIds]
+  );
+  // Only the lines that are shown exist; the list draws the ones in view.
+  const rows = useMemo(() => flattenTree(nodes, isOpen), [nodes, isOpen]);
+
+  const renderRow = (index: number) => {
+    const { node, depth, isLeaf, isExpanded, posInSet, setSize } = rows[index];
     return (
-      <VStack key={node.id} align="stretch" spacing={spacing}>
-        <HStack
-          spacing={1}
-          w="100%"
-          align="center"
-          minH={6}
-          pl={depth * indentSize}
-        >
-          {!isLeaf ? (
-            <IconButton
-              aria-label={isExpanded ? "collapse" : "expand"}
-              icon={isExpanded ? <LuChevronDown /> : <LuChevronRight />}
-              size="xs"
-              variant="ghost"
-              onClick={() => toggleExpanded(node.id)}
-            />
-          ) : leafPlaceholderWidth > 0 ? (
-            <Box w={`${leafPlaceholderWidth}px`} flexShrink={0} />
-          ) : null}
-          <Box flex="1" minW={0}>
-            {renderNode({ node, depth, isLeaf, isExpanded })}
-          </Box>
-        </HStack>
-        {!isLeaf && isExpanded && (
-          <VStack align="stretch" spacing={spacing}>
-            {children.map((child) => renderBranch(child, depth + 1))}
-          </VStack>
-        )}
-      </VStack>
+      <HStack
+        data-group
+        role="treeitem"
+        aria-level={depth + 1}
+        aria-posinset={posInSet}
+        aria-setsize={setSize}
+        aria-expanded={isLeaf ? undefined : isExpanded}
+        spacing={1}
+        w="100%"
+        align="center"
+        minH={6}
+        pb={spacing}
+        style={{ paddingLeft: `${indentRem(depth, indentSize)}rem` }}
+      >
+        {!isLeaf ? (
+          <IconButton
+            aria-label={isExpanded ? "collapse" : "expand"}
+            icon={isExpanded ? <LuChevronDown /> : <LuChevronRight />}
+            size="xs"
+            variant="ghost"
+            onClick={() => toggleExpanded(node.id)}
+          />
+        ) : leafPlaceholderWidth > 0 ? (
+          <Box w={`${leafPlaceholderWidth}px`} flexShrink={0} />
+        ) : null}
+        <Box flex="1" minW={0}>
+          {renderNode({
+            node,
+            depth,
+            isLeaf,
+            isExpanded,
+            expandSubtree: (open) => expandSubtree(node, open),
+          })}
+        </Box>
+      </HStack>
     );
   };
 
   return (
-    <VStack align="stretch" spacing={spacing} w="100%">
-      {nodes.map((node) => renderBranch(node, 0))}
-    </VStack>
+    <Box w="100%">
+      <VirtualRows
+        rowCount={rows.length}
+        rowKey={(index) => rows[index].node.id}
+        renderRow={renderRow}
+        layoutKey={rows}
+        maxHeight={maxHeight}
+        scrollParent={scrollParent}
+        role="tree"
+        rowRole="presentation"
+      />
+    </Box>
   );
 };
-
 export default TreeView;

@@ -8,7 +8,7 @@ use crate::error::USTBLResult;
 use crate::instance::helpers::modpack::base_store;
 use crate::instance::helpers::modpack::baseline::ModpackBaseline;
 use crate::instance::helpers::modpack::multimc::profile::safe_relative;
-use crate::instance::helpers::modpack::text::{self, normalize_text, MAX_TEXT_SIZE};
+use crate::instance::helpers::modpack::text::{self, normalize_text, NotTextReason, MAX_TEXT_SIZE};
 use crate::instance::models::misc::InstanceError;
 use crate::instance::modpack_update::change_core::{self, ChangeClass, Judge, Spec};
 use crate::instance::modpack_update::changes::logical_disk_path;
@@ -134,16 +134,56 @@ fn is_sha1(value: &str) -> bool {
   value.len() == 40 && value.chars().all(|c| c.is_ascii_hexdigit())
 }
 
+/// Why the publish tree has no line diff to show for a file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PublishDiffUnavailable {
+  NotTextType,
+  TooLarge,
+  Binary,
+  NotUtf8,
+  /// The file on disk is gone or cannot be read.
+  LocalMissing,
+  /// The previous release's text is not kept locally.
+  BaseMissing,
+}
+
+impl From<NotTextReason> for PublishDiffUnavailable {
+  fn from(reason: NotTextReason) -> Self {
+    match reason {
+      NotTextReason::NotTextType => Self::NotTextType,
+      NotTextReason::TooLarge => Self::TooLarge,
+      NotTextReason::Binary => Self::Binary,
+      NotTextReason::NotUtf8 => Self::NotUtf8,
+    }
+  }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublishFileDiff {
+  /// Empty when only line endings, a BOM or a properties timestamp differ.
+  pub hunks: Option<Vec<DiffHunk>>,
+  pub unavailable: Option<PublishDiffUnavailable>,
+}
+
+impl PublishFileDiff {
+  fn without(reason: PublishDiffUnavailable) -> Self {
+    Self {
+      hunks: None,
+      unavailable: Some(reason),
+    }
+  }
+}
+
 /// The line diff of a file from the previous release's text to the one on
-/// disk. `None` when it cannot be drawn: the previous content is not kept
-/// locally, or either side is not a text file. The hash names a file inside the
+/// disk, or the reason it cannot be drawn. The checks run in this order: the
+/// file on disk exists, its type and size, its content (NUL byte, UTF-8), the
+/// previous text is kept, that text is text. The hash names a file inside the
 /// instance's base store, so anything but a SHA-1 is refused, as is a path that
 /// leaves the instance.
-pub fn file_diff(
-  root: &Path,
-  path: &str,
-  previous_sha1: &str,
-) -> USTBLResult<Option<Vec<DiffHunk>>> {
+pub fn file_diff(root: &Path, path: &str, previous_sha1: &str) -> USTBLResult<PublishFileDiff> {
+  use PublishDiffUnavailable::{BaseMissing, LocalMissing};
   safe_relative(path)?;
   if !is_sha1(previous_sha1) {
     return Err(InstanceError::ModpackUpdateUnsupported.into());
@@ -155,27 +195,39 @@ pub fn file_diff(
   } else if disabled.is_file() {
     disabled
   } else {
-    return Ok(None);
+    return Ok(PublishFileDiff::without(LocalMissing));
   };
-  let too_big = std::fs::metadata(&file).map_or(true, |meta| meta.len() > MAX_TEXT_SIZE as u64);
-  if too_big {
-    return Ok(None);
+  let Ok(meta) = std::fs::metadata(&file) else {
+    return Ok(PublishFileDiff::without(LocalMissing));
+  };
+  // Size is judged before reading, so a huge file is never loaded.
+  if let Err(reason) = text::size_reason(path, meta.len()) {
+    return Ok(PublishFileDiff::without(reason.into()));
   }
   let Ok(local) = std::fs::read(&file) else {
-    return Ok(None);
+    return Ok(PublishFileDiff::without(LocalMissing));
   };
+  if let Err(reason) = text::text_reason(path, &local) {
+    return Ok(PublishFileDiff::without(reason.into()));
+  }
   let Ok(Some(before)) = base_store::load(root, &previous_sha1.to_lowercase()) else {
-    return Ok(None);
+    return Ok(PublishFileDiff::without(BaseMissing));
   };
   let (Some(old), Some(new)) = (normalize_text(path, &before), normalize_text(path, &local)) else {
-    return Ok(None);
+    let reason = text::text_reason(path, &before).err();
+    return Ok(PublishFileDiff::without(
+      reason.map_or(BaseMissing, Into::into),
+    ));
   };
-  Ok(Some(unified_diff_hiding(
-    &lines_of(&old),
-    &lines_of(&new),
-    CONTEXT_LINES,
-    &|_| false,
-  )))
+  Ok(PublishFileDiff {
+    hunks: Some(unified_diff_hiding(
+      &lines_of(&old),
+      &lines_of(&new),
+      CONTEXT_LINES,
+      &|_| false,
+    )),
+    unavailable: None,
+  })
 }
 
 #[cfg(test)]
@@ -536,7 +588,10 @@ mod tests {
   fn the_diff_runs_from_the_kept_previous_text_to_the_disk_text() {
     let root = root(&[("config/a.cfg", "a=1\r\nb=3\r\n")]);
     let sha1 = keep_base(&root, "config/a.cfg", "a=1\nb=2\n");
-    let hunks = file_diff(&root, "config/a.cfg", &sha1).unwrap().unwrap();
+    let hunks = file_diff(&root, "config/a.cfg", &sha1)
+      .unwrap()
+      .hunks
+      .unwrap();
     assert_eq!(hunks.len(), 1);
     let texts: Vec<_> = hunks[0]
       .lines
@@ -551,7 +606,10 @@ mod tests {
   fn text_that_differs_only_in_normalized_noise_has_no_hunks() {
     let root = root(&[("config/a.cfg", "a=1\r\n")]);
     let sha1 = keep_base(&root, "config/a.cfg", "a=1\n");
-    let hunks = file_diff(&root, "config/a.cfg", &sha1).unwrap().unwrap();
+    let hunks = file_diff(&root, "config/a.cfg", &sha1)
+      .unwrap()
+      .hunks
+      .unwrap();
     assert!(hunks.is_empty());
     let _ = fs::remove_dir_all(root);
   }
@@ -562,41 +620,67 @@ mod tests {
     let sha1 = keep_base(&root, "mods/a.properties", "k=1\n");
     let hunks = file_diff(&root, "mods/a.properties", &sha1)
       .unwrap()
+      .hunks
       .unwrap();
     assert_eq!(hunks.len(), 1);
     let _ = fs::remove_dir_all(root);
   }
 
+  fn why(root: &Path, path: &str, sha1: &str) -> Option<PublishDiffUnavailable> {
+    let diff = file_diff(root, path, sha1).unwrap();
+    assert!(diff.hunks.is_none(), "{path}");
+    diff.unavailable
+  }
+
   #[test]
-  fn the_diff_is_none_when_the_previous_text_is_not_kept() {
+  fn the_diff_says_when_the_previous_text_is_not_kept() {
     let root = root(&[("config/a.cfg", "a=2\n")]);
-    assert!(file_diff(&root, "config/a.cfg", &sha1_of("a=1\n"))
-      .unwrap()
-      .is_none());
+    assert_eq!(
+      why(&root, "config/a.cfg", &sha1_of("a=1\n")),
+      Some(PublishDiffUnavailable::BaseMissing)
+    );
     let _ = fs::remove_dir_all(root);
   }
 
   #[test]
-  fn the_diff_is_none_for_binary_and_missing_files() {
-    let root = root(&[("mods/a.jar", "jar"), ("config/b.cfg", "x")]);
+  fn the_diff_names_the_reason_a_file_is_not_text_or_missing() {
+    let root = root(&[
+      ("mods/a.jar", "jar"),
+      ("config/b.cfg", "x"),
+      ("config/zero.cfg", "a\0b"),
+    ]);
+    fs::write(root.join("config/latin.cfg"), b"a=\xE4").unwrap();
     let sha1 = keep_base(&root, "config/b.cfg", "x");
-    // The kept text cannot be drawn against a jar.
-    assert!(file_diff(&root, "mods/a.jar", &sha1).unwrap().is_none());
-    assert!(file_diff(&root, "config/gone.cfg", &sha1)
-      .unwrap()
-      .is_none());
+    assert_eq!(
+      why(&root, "mods/a.jar", &sha1),
+      Some(PublishDiffUnavailable::NotTextType)
+    );
+    assert_eq!(
+      why(&root, "config/zero.cfg", &sha1),
+      Some(PublishDiffUnavailable::Binary)
+    );
+    assert_eq!(
+      why(&root, "config/latin.cfg", &sha1),
+      Some(PublishDiffUnavailable::NotUtf8)
+    );
+    assert_eq!(
+      why(&root, "config/gone.cfg", &sha1),
+      Some(PublishDiffUnavailable::LocalMissing)
+    );
     let _ = fs::remove_dir_all(root);
   }
 
   #[test]
-  fn the_diff_is_none_for_a_text_file_over_the_size_limit() {
+  fn the_diff_names_a_text_file_over_the_size_limit() {
     let big = "a".repeat(MAX_TEXT_SIZE + 1);
     let root = root(&[("config/big.cfg", &big)]);
     let sha1 = keep_base(&root, "config/big.cfg", "a");
-    assert!(file_diff(&root, "config/big.cfg", &sha1).unwrap().is_none());
+    assert_eq!(
+      why(&root, "config/big.cfg", &sha1),
+      Some(PublishDiffUnavailable::TooLarge)
+    );
     let _ = fs::remove_dir_all(root);
   }
-
   #[test]
   fn the_diff_refuses_paths_outside_the_instance_and_names_that_are_not_a_sha1() {
     let root = root(&[("config/a.cfg", "a")]);

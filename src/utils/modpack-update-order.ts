@@ -1,4 +1,6 @@
 import { ModpackConflict, ModpackFileChange } from "@/models/modpack-update";
+import { DiffRank, sortByRank } from "@/utils/diff-rank";
+import { compareNames } from "@/utils/path-tree";
 
 /**
  * The extensions the backend reads as text (`TEXT_EXTENSIONS` in
@@ -41,7 +43,7 @@ export const canShowChangeDiff = (change: ModpackFileChange) =>
  * file as a whole (a changed file without blocks, a file in the way, a file
  * managed again), 2 is the rest (a file the new version removes or restores).
  */
-export const conflictRank = (conflict: ModpackConflict): 0 | 1 | 2 => {
+export const conflictRank = (conflict: ModpackConflict): DiffRank => {
   if (conflict.hunks.length > 0) return 0;
   switch (conflict.kind) {
     case "modifiedLocallyChangedRemotely":
@@ -55,18 +57,15 @@ export const conflictRank = (conflict: ModpackConflict): 0 | 1 | 2 => {
 
 /** Conflicts by rank; the order within a rank (the plan's) is kept. */
 export const sortConflicts = (conflicts: ModpackConflict[]) =>
-  conflicts
-    .map((conflict, index) => ({ conflict, index }))
-    .sort(
-      (a, b) =>
-        conflictRank(a.conflict) - conflictRank(b.conflict) || a.index - b.index
-    )
-    .map(({ conflict }) => conflict);
+  sortByRank(conflicts, conflictRank);
 
-/** Changes with a diff to show first, each part by path. */
+/**
+ * Where a file change goes: 0 can show a line diff, 1 is an update that
+ * replaces the file as a whole, 2 adds, removes or switches a file.
+ */
+export const changeRank = (change: ModpackFileChange): DiffRank =>
+  canShowChangeDiff(change) ? 0 : change.kind === "update" ? 1 : 2;
+
+/** Changes by rank, each rank by path. */
 export const sortChangesByDiff = (changes: ModpackFileChange[]) =>
-  [...changes].sort(
-    (a, b) =>
-      Number(canShowChangeDiff(b)) - Number(canShowChangeDiff(a)) ||
-      a.path.localeCompare(b.path)
-  );
+  sortByRank(changes, changeRank, (a, b) => compareNames(a.path, b.path));

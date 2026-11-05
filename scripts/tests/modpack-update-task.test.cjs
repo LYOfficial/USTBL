@@ -27,7 +27,15 @@ function load(file, requireModule = () => ({})) {
 const choices = load("src/utils/modpack-update-choices.ts");
 const fileError = load("src/utils/file-error.ts");
 const fuzzyFilter = load("src/utils/fuzzy-filter.ts");
-const updateOrder = load("src/utils/modpack-update-order.ts");
+const diffRank = load("src/utils/diff-rank.ts");
+const pathTree = load("src/utils/path-tree.ts");
+const updateOrder = load("src/utils/modpack-update-order.ts", (name) =>
+  name === "@/utils/diff-rank"
+    ? diffRank
+    : name === "@/utils/path-tree"
+      ? pathTree
+      : {}
+);
 const stages = load("src/utils/campus-install-task.ts", (name) =>
   name === "@/utils/file-error" ? fileError : {}
 );
@@ -328,6 +336,7 @@ test("reopened dialog restores a failed plan's choices, submits once and closes 
         callbacks.push(fn);
         return fn;
       },
+      useDeferredValue: (value) => value,
       useEffect: () => {},
       useMemo: (fn) => fn(),
       useRef: (initial) => {

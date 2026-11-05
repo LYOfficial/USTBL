@@ -61,9 +61,6 @@ const PublishSummary: React.FC<PublishSummaryProps> = ({ summary }) => {
 
   return (
     <VStack align="stretch" spacing={1} w="100%" aria-live="polite">
-      <Text fontSize="xs" fontWeight="bold">
-        {t("PublishModpackModal.summary.title")}
-      </Text>
       {summary.isNew && (
         <Text fontSize="xs" className="secondary-text">
           {t("PublishModpackModal.summary.isNew")}

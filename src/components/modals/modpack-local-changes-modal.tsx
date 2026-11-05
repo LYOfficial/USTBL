@@ -19,16 +19,27 @@ import {
   Text,
   Tooltip,
   VStack,
-  Wrap,
-  WrapItem,
   useDisclosure,
 } from "@chakra-ui/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { LuChevronDown, LuChevronRight } from "react-icons/lu";
 import { DiffFile, DiffHunks, regionHunk } from "@/components/common/diff-view";
-import FileFilterInput from "@/components/common/file-filter-input";
-import TreeView, { TreeNode } from "@/components/common/tree-view";
+import {
+  ChangeFilterButton,
+  ChangeTag,
+  FilePanelEmpty,
+  FilePanelToolbar,
+  RecursiveToggle,
+} from "@/components/common/file-panel";
+import TreeView, { TreeCommand } from "@/components/common/tree-view";
+import VirtualRows from "@/components/common/virtual-rows";
 import { useLauncherConfig } from "@/contexts/config";
 import { useGlobalData } from "@/contexts/global-data";
 import { useSharedModals } from "@/contexts/shared-modal";
@@ -42,6 +53,7 @@ import { InvokeResponse } from "@/models/response";
 import { VustbAccount, isVustbManager } from "@/models/vustb";
 import { AccountService } from "@/services/account";
 import { ModpackUpdateService } from "@/services/modpack-update";
+import { diffReasonKey } from "@/utils/diff-reason";
 import {
   AUTO_EXPAND_LIMIT,
   createPathMatcher,
@@ -50,7 +62,6 @@ import {
 import {
   CLASS_ORDER,
   ChangeFilter,
-  ChangeTreeNode,
   OPEN_LIMIT,
   buildChangeTree,
   countByClass,
@@ -58,24 +69,17 @@ import {
   filterEntries,
   isRuleDeleted,
   revealPath,
+  sortEntriesByDiff,
+  sortIgnoredByDiff,
   splitByGroup,
 } from "@/utils/modpack-change-detail";
+import { toTreeNodes } from "@/utils/path-tree";
 import { formatByteSize } from "@/utils/string";
 
 interface ModpackLocalChangesModalProps extends Omit<ModalProps, "children"> {
   instanceId: string;
   instanceName: string;
 }
-
-const CLASS_COLORS: Record<ChangeFilter, string> = {
-  modified: "orange",
-  deleted: "red",
-  enable: "gray",
-  disable: "gray",
-  onceChanged: "purple",
-  added: "green",
-  addedExcluded: "gray",
-};
 
 /** A titled section that folds, for the groups under the tree. */
 const ChangeGroup: React.FC<{
@@ -220,33 +224,54 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
   const groups = useMemo(() => splitByGroup(entries), [entries]);
   // The counts and the filter cover the body only.
   const counts = useMemo(() => countByClass(groups.main), [groups.main]);
-  const queryActive = isQueryActive(query);
-  const matchesPath = useMemo(() => createPathMatcher(query), [query]);
+  // The list follows the filter one render behind, so typing and clicks stay quick.
+  const shownFilter = useDeferredValue(filter);
+  const shownQuery = useDeferredValue(query);
+  const queryActive = isQueryActive(shownQuery);
+  const matchesPath = useMemo(
+    () => createPathMatcher(shownQuery),
+    [shownQuery]
+  );
   const shownMain = useMemo(
     () =>
-      filterEntries(groups.main, filter).filter((entry) =>
+      filterEntries(groups.main, shownFilter).filter((entry) =>
         matchesPath(entry.path)
       ),
-    [groups.main, filter, matchesPath]
+    [groups.main, shownFilter, matchesPath]
   );
   const shownWillDelete = useMemo(
-    () => groups.willDelete.filter((entry) => matchesPath(entry.path)),
+    () =>
+      sortEntriesByDiff(
+        groups.willDelete.filter((entry) => matchesPath(entry.path))
+      ),
     [groups.willDelete, matchesPath]
   );
+  const sortedIgnored = useMemo(() => sortIgnoredByDiff(ignored), [ignored]);
   // Hits open their parents without touching the remembered expansion, so
   // clearing the query brings back what the user had open.
   const expandAll = queryActive && shownMain.length <= AUTO_EXPAND_LIMIT;
   // TreeView resets its expansion whenever `nodes` changes identity.
-  const tree = useMemo(() => {
-    const convert = (list: ChangeTreeNode[]): TreeNode<ChangeTreeNode>[] =>
-      list.map((node) => ({
-        id: node.path.toLowerCase(),
-        data: node,
-        children: convert(node.children),
-      }));
-    return convert(buildChangeTree(shownMain));
-  }, [shownMain]);
+  const tree = useMemo(
+    () =>
+      toTreeNodes(buildChangeTree(shownMain), (node) =>
+        node.path.toLowerCase()
+      ),
+    [shownMain]
+  );
   const openFiles = shownMain.length <= OPEN_LIMIT;
+  // The tree draws only the cards in view, so which are open lives here.
+  const [openCards, setOpenCards] = useState<Map<string, boolean>>(new Map());
+  // What the cards without a choice of their own do; null follows the count.
+  const [allCardsOpen, setAllCardsOpen] = useState<boolean | null>(null);
+  const [command, setCommand] = useState<TreeCommand>();
+  /** The two toolbar buttons: every directory and every card. */
+  const openEverything = (open: boolean) => {
+    setCommand({ type: open ? "expand" : "collapse" });
+    setAllCardsOpen(open);
+    setOpenCards(new Map());
+  };
+  const cardOpen = (path: string) =>
+    openCards.get(path) ?? allCardsOpen ?? openFiles;
 
   const isManager = isVustbManager(vustbAccount);
   // Publishing goes on top of the latest version; behind it the platform
@@ -352,7 +377,10 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
           );
         }
         return note(
-          t(`ModpackLocalChangesModal.noDiff.${entry.noDiff ?? "notText"}`)
+          t(
+            diffReasonKey(entry.noDiff ?? "notTextType") ??
+              `ModpackLocalChangesModal.noDiff.${entry.noDiff}`
+          )
         );
       default:
         return null;
@@ -395,18 +423,15 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
         <DiffFile
           path={label}
           hunks={entry.hunks}
-          defaultOpen={openFiles}
+          open={cardOpen(entry.path)}
+          onOpenChange={(open) =>
+            setOpenCards((prev) => new Map(prev).set(entry.path, open))
+          }
           tags={
             <>
-              <Badge colorScheme={CLASS_COLORS[labelClass]} flexShrink={0}>
-                {t(`ModpackLocalChangesModal.class.${labelClass}`)}
-              </Badge>
+              <ChangeTag visual={labelClass} />
               {entry.class === "modified" && entry.toggled && (
-                <Badge colorScheme="gray" flexShrink={0}>
-                  {t(
-                    `ModpackLocalChangesModal.class.${entry.disabled ? "disable" : "enable"}`
-                  )}
-                </Badge>
+                <ChangeTag visual={entry.disabled ? "disable" : "enable"} />
               )}
               {entry.disabled && !entry.toggled && (
                 <Badge flexShrink={0}>
@@ -551,7 +576,7 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
           {t("ModpackLocalChangesModal.header.title", { name: instanceName })}
         </ModalHeader>
         <ModalCloseButton />
-        <ModalBody>
+        <ModalBody display="flex" flexDirection="column" overflow="hidden">
           {detail === null ? (
             failed ? null : (
               <VStack py={6} spacing={2}>
@@ -562,8 +587,8 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
               </VStack>
             )
           ) : (
-            <VStack align="stretch" spacing={3}>
-              <VStack align="stretch" spacing={1}>
+            <>
+              <VStack align="stretch" spacing={1} flexShrink={0} mb={3}>
                 <Text fontSize="xs" className="secondary-text">
                   {t("ModpackLocalChangesModal.comparedTo", {
                     label: detail.label,
@@ -583,102 +608,114 @@ const ModpackLocalChangesModal: React.FC<ModpackLocalChangesModalProps> = ({
                   )
                 ) : (
                   <>
-                    <Wrap spacing={1.5} pt={1}>
-                      {CLASS_ORDER.filter((name) => counts[name] > 0).map(
-                        (name) => (
-                          <WrapItem key={name}>
-                            <Button
-                              size="xs"
-                              colorScheme={CLASS_COLORS[name]}
-                              variant={filter === name ? "solid" : "outline"}
-                              aria-pressed={filter === name}
-                              onClick={() =>
-                                setFilter((prev) =>
-                                  prev === name ? null : name
-                                )
-                              }
-                            >
-                              {t(`ModpackLocalChangesModal.class.${name}`)}{" "}
-                              {counts[name]}
-                            </Button>
-                          </WrapItem>
-                        )
-                      )}
-                      <WrapItem>
-                        <FileFilterInput
-                          w="180px"
-                          value={query}
-                          onChange={setQuery}
+                    <FilePanelToolbar
+                      query={query}
+                      onQueryChange={setQuery}
+                      onExpandAll={() => openEverything(true)}
+                      onCollapseAll={() => openEverything(false)}
+                      controls={CLASS_ORDER.filter(
+                        (name) => counts[name] > 0
+                      ).map((name) => (
+                        <ChangeFilterButton
+                          key={name}
+                          visual={name}
+                          count={counts[name]}
+                          selected={filter === name}
+                          onClick={() =>
+                            setFilter((prev) => (prev === name ? null : name))
+                          }
                         />
-                      </WrapItem>
-                    </Wrap>
+                      ))}
+                    />
                     <Text fontSize="xs" className="secondary-text">
                       {t("ModpackLocalChangesModal.countingRule")}
                     </Text>
                   </>
                 )}
               </VStack>
-              {tree.length > 0 && (
-                <TreeView
-                  nodes={tree}
-                  defaultExpandedDepth={expandedDepth(shownMain.length)}
-                  preserveExpanded
-                  expandAll={expandAll}
-                  leafPlaceholderWidth={0}
-                  renderNode={({ node: { data } }) =>
-                    data.entry ? (
-                      renderEntry(data.entry, data.name)
-                    ) : (
-                      <HStack spacing={2}>
-                        <Text fontSize="xs-sm" fontWeight="medium">
-                          {data.name}
-                        </Text>
-                        <Badge flexShrink={0}>{data.count}</Badge>
-                      </HStack>
-                    )
-                  }
-                />
-              )}
-              {tree.length === 0 &&
-                shownWillDelete.length === 0 &&
-                queryActive && (
-                  <Text fontSize="xs-sm" className="secondary-text">
-                    {t("FileFilter.empty")}
-                  </Text>
-                )}
-              {shownWillDelete.length > 0 && (
-                <ChangeGroup
-                  title={t("ModpackLocalChangesModal.willDelete.title", {
-                    count: shownWillDelete.length,
-                  })}
-                  description={t(
-                    "ModpackLocalChangesModal.willDelete.description"
+              <Box flex="1 1 auto" minH={0} overflowY="auto">
+                <VStack align="stretch" spacing={3}>
+                  {tree.length > 0 && (
+                    <TreeView
+                      nodes={tree}
+                      defaultExpandedDepth={expandedDepth(shownMain.length)}
+                      preserveExpanded
+                      expandAll={expandAll}
+                      command={command}
+                      scrollParent
+                      leafPlaceholderWidth={0}
+                      renderNode={({
+                        node: { data },
+                        isExpanded,
+                        expandSubtree,
+                      }) =>
+                        data.entry ? (
+                          renderEntry(data.entry, data.name)
+                        ) : (
+                          <HStack spacing={2}>
+                            <Text fontSize="xs-sm" fontWeight="medium">
+                              {data.name}
+                            </Text>
+                            <Badge flexShrink={0}>{data.count}</Badge>
+                            <RecursiveToggle
+                              open={isExpanded}
+                              onOpenChange={expandSubtree}
+                            />
+                          </HStack>
+                        )
+                      }
+                    />
                   )}
-                  defaultOpen
-                >
-                  {shownWillDelete.map((entry) => (
-                    <Box key={entry.path}>
-                      {renderEntry(entry, entry.path, false)}
+                  {tree.length === 0 &&
+                    shownWillDelete.length === 0 &&
+                    queryActive && <FilePanelEmpty filtered />}
+                  {shownWillDelete.length > 0 && (
+                    <ChangeGroup
+                      title={t("ModpackLocalChangesModal.willDelete.title", {
+                        count: shownWillDelete.length,
+                      })}
+                      description={t(
+                        "ModpackLocalChangesModal.willDelete.description"
+                      )}
+                      defaultOpen
+                    >
+                      <VirtualRows
+                        rowCount={shownWillDelete.length}
+                        rowKey={(index) => shownWillDelete[index].path}
+                        renderRow={(index) => (
+                          <Box pb={2}>
+                            {renderEntry(
+                              shownWillDelete[index],
+                              shownWillDelete[index].path,
+                              false
+                            )}
+                          </Box>
+                        )}
+                        layoutKey={shownWillDelete}
+                        scrollParent
+                      />
+                    </ChangeGroup>
+                  )}
+                  {ignored.length > 0 && (
+                    <Box>
+                      <ChangeGroup
+                        title={t("ModpackLocalChangesModal.ignored.title", {
+                          count: ignored.length,
+                        })}
+                        description={t(
+                          "ModpackLocalChangesModal.ignored.description"
+                        )}
+                      >
+                        {sortedIgnored.map(renderIgnored)}
+                      </ChangeGroup>
                     </Box>
-                  ))}
-                </ChangeGroup>
-              )}
-            </VStack>
-          )}
-          {detail !== null && ignored.length > 0 && (
-            <Box mt={4}>
-              <ChangeGroup
-                title={t("ModpackLocalChangesModal.ignored.title", {
-                  count: ignored.length,
-                })}
-                description={t("ModpackLocalChangesModal.ignored.description")}
-              >
-                {ignored.map(renderIgnored)}
-              </ChangeGroup>
-            </Box>
+                  )}
+                </VStack>
+              </Box>
+            </>
           )}
           {behind && isManager && entries.length > 0 && (
-            <Alert status="info" mt={3} fontSize="xs-sm">
+            <Alert status="info" mt={3} fontSize="xs-sm" flexShrink={0}>
               <AlertIcon />
               {t("ModpackLocalChangesModal.publishHint.updateFirst")}
             </Alert>

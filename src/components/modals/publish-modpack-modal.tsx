@@ -470,6 +470,14 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
         },
       ],
     },
+    ...(pushSummary
+      ? [
+          {
+            title: t("PublishModpackModal.summary.title"),
+            items: [<PublishSummary key="summary" summary={pushSummary} />],
+          },
+        ]
+      : []),
     {
       title: t("PublishModpackModal.label.includedFiles"),
       items: [
@@ -519,8 +527,7 @@ const PublishModpackModal: React.FC<PublishModpackModalProps> = ({
             ))}
           </VStack>
         </ModalBody>
-        <ModalFooter flexDirection="column" alignItems="stretch" gap={3}>
-          {pushSummary && <PublishSummary summary={pushSummary} />}
+        <ModalFooter>
           <HStack spacing={2} justify="flex-end">
             {progress && (
               <Text fontSize="xs" className="secondary-text">

@@ -7,7 +7,13 @@ import {
   useColorModeValue,
   useDisclosure,
 } from "@chakra-ui/react";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { LuChevronDown, LuChevronRight } from "react-icons/lu";
 import {
   ModpackDiffEdit,
@@ -28,7 +34,7 @@ const MONO =
   "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace";
 
 /** Colors of the GitHub diff view, light and dark. */
-const useDiffColors = () => {
+export const useDiffColors = () => {
   const border = useColorModeValue("#d0d7de", "#30363d");
   const headerBg = useColorModeValue("#f6f8fa", "#161b22");
   const hunkBg = useColorModeValue("#ddf4ff", "rgba(56,139,253,0.1)");
@@ -442,10 +448,18 @@ interface DiffFileProps {
   actions?: React.ReactNode;
   defaultOpen?: boolean;
   /**
+   * Set to let the parent hold the state, as a card in a virtualized list must:
+   * the card is destroyed when it scrolls out of view.
+   */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /**
    * Opens or closes the file whenever `token` changes (and decides the first
    * state when set), while the header still toggles it by hand in between.
    */
   expandSignal?: DiffExpandSignal;
+  /** Keep the file header in view while its body scrolls in an ancestor. */
+  stickyHeader?: boolean;
   children?: React.ReactNode;
 }
 
@@ -461,12 +475,18 @@ export const DiffFile: React.FC<DiffFileProps> = ({
   tags,
   actions,
   defaultOpen = true,
+  open,
+  onOpenChange,
   expandSignal,
+  stickyHeader = false,
   children,
 }) => {
   const colors = useDiffColors();
   const { isOpen, onToggle, onOpen, onClose } = useDisclosure({
     defaultIsOpen: expandSignal ? expandSignal.open : defaultOpen,
+    isOpen: open,
+    onOpen: () => onOpenChange?.(true),
+    onClose: () => onOpenChange?.(false),
   });
   const handledToken = useRef(expandSignal?.token);
   useEffect(() => {
@@ -476,14 +496,35 @@ export const DiffFile: React.FC<DiffFileProps> = ({
     else onClose();
   }, [expandSignal, onOpen, onClose]);
   const stats = hunks ? diffStats(hunks) : null;
+  const cardRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const card = cardRef.current;
+    const header = headerRef.current;
+    if (!stickyHeader || !card || !header) return;
+    const measure = () =>
+      card.style.setProperty(
+        "--diff-file-header-h",
+        `${header.offsetHeight}px`
+      );
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(header);
+    return () => observer.disconnect();
+  }, [stickyHeader, isOpen]);
   return (
     <Box
+      ref={cardRef}
       borderWidth="1px"
       borderColor={colors.border}
       borderRadius="md"
-      overflow="hidden"
+      overflow={stickyHeader ? "clip" : "hidden"}
     >
       <HStack
+        ref={headerRef}
+        position={stickyHeader ? "sticky" : undefined}
+        top={stickyHeader ? 0 : undefined}
+        zIndex={stickyHeader ? 2 : undefined}
         bg={colors.headerBg}
         px={2}
         py={1.5}
@@ -529,11 +570,14 @@ export const DiffFile: React.FC<DiffFileProps> = ({
           </HStack>
         )}
       </HStack>
-      {children && (
-        <Collapse in={isOpen} animateOpacity={false} unmountOnExit>
-          {children}
-        </Collapse>
-      )}
+      {children &&
+        (stickyHeader ? (
+          isOpen && children
+        ) : (
+          <Collapse in={isOpen} animateOpacity={false} unmountOnExit>
+            {children}
+          </Collapse>
+        ))}
     </Box>
   );
 };

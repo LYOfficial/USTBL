@@ -9,7 +9,7 @@ use super::plan_cache::{self, PlanCache};
 use super::remote::{RemoteModpack, StoredFileSource, StoredRemoteFile};
 use super::text_diff::{lines_of, unified_diff_hiding, DiffHunk, CONTEXT_LINES};
 use crate::error::USTBLResult;
-use crate::instance::helpers::modpack::text;
+use crate::instance::helpers::modpack::text::{self, NotTextReason};
 use crate::instance::models::misc::{InstanceError, OriginPlatform};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -130,10 +130,23 @@ pub fn load_current(root: &Path, plan_hash: &str) -> USTBLResult<PlanCache> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum FileDiffUnavailable {
-  /// Not UTF-8 text within the size limit.
-  NotText,
+  NotTextType,
+  TooLarge,
+  Binary,
+  NotUtf8,
   /// The plan has nothing to compare for this path, or a side cannot be read.
   Unavailable,
+}
+
+impl From<NotTextReason> for FileDiffUnavailable {
+  fn from(reason: NotTextReason) -> Self {
+    match reason {
+      NotTextReason::NotTextType => Self::NotTextType,
+      NotTextReason::TooLarge => Self::TooLarge,
+      NotTextReason::Binary => Self::Binary,
+      NotTextReason::NotUtf8 => Self::NotUtf8,
+    }
+  }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -154,7 +167,8 @@ impl ModpackFileDiff {
   }
 }
 
-/// The diff from `old` to `new`, both read as the update reads text.
+/// The diff from `old` to `new`, both read as the update reads text. When
+/// neither is text, the reason is the old side's.
 pub fn diff_bytes(path: &str, old: &[u8], new: &[u8]) -> ModpackFileDiff {
   match (
     text::normalize_text(path, old),
@@ -169,7 +183,12 @@ pub fn diff_bytes(path: &str, old: &[u8], new: &[u8]) -> ModpackFileDiff {
       )),
       unavailable: None,
     },
-    _ => ModpackFileDiff::unavailable(FileDiffUnavailable::NotText),
+    _ => {
+      let reason = text::text_reason(path, old)
+        .and(text::text_reason(path, new))
+        .err();
+      ModpackFileDiff::unavailable(reason.map_or(FileDiffUnavailable::Unavailable, Into::into))
+    }
   }
 }
 
@@ -324,11 +343,25 @@ mod tests {
     assert_eq!(same.hunks, Some(Vec::new()));
     assert_eq!(
       diff_bytes("mods/a.jar", b"PK", b"PK2").unavailable,
-      Some(FileDiffUnavailable::NotText)
+      Some(FileDiffUnavailable::NotTextType)
     );
     assert_eq!(
       diff_bytes("config/a.cfg", b"a=\xE4", b"a=1").unavailable,
-      Some(FileDiffUnavailable::NotText)
+      Some(FileDiffUnavailable::NotUtf8)
+    );
+    assert_eq!(
+      diff_bytes("config/a.cfg", b"a=1", b"a\0").unavailable,
+      Some(FileDiffUnavailable::Binary)
+    );
+    let big = vec![b'a'; text::MAX_TEXT_SIZE + 1];
+    assert_eq!(
+      diff_bytes("config/a.cfg", b"a=1", &big).unavailable,
+      Some(FileDiffUnavailable::TooLarge)
+    );
+    // Both sides fail: the old (local) side names the reason.
+    assert_eq!(
+      diff_bytes("config/a.cfg", b"a\0", &big).unavailable,
+      Some(FileDiffUnavailable::Binary)
     );
   }
 

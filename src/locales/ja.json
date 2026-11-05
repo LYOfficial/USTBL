@@ -857,6 +857,26 @@
     "clear": "絞り込みを解除",
     "shown": "{{total}} 件中 {{shown}} 件を表示"
   },
+  "FilePanel": {
+    "change": {
+      "modified": "変更",
+      "added": "追加",
+      "onceChanged": "初回インストールのみ · 変更",
+      "deleted": "削除",
+      "enable": "有効化",
+      "disable": "無効化"
+    },
+    "expandAll": "すべて展開",
+    "collapseAll": "すべて折りたたむ",
+    "expandSubtree": "再帰的に展開",
+    "collapseSubtree": "再帰的に折りたたむ",
+    "noDiff": {
+      "notTextType": "テキストファイルではないため、差分を表示しません",
+      "tooLarge": "ファイルサイズが 2 MB を超えているため、差分を表示しません",
+      "binary": "バイナリファイルのため、差分を表示しません",
+      "notUtf8": "UTF-8 エンコーディングではないため、差分を表示しません"
+    }
+  },
   "FileError": {
     "FILE_BLOCKED_BY_ANTIVIRUS": "ファイル {{file}} がウイルス対策ソフトにブロックされました。Windows セキュリティでこのファイルを許可するか、ゲームのフォルダーを除外に追加してから、もう一度お試しください。",
     "FILE_MISSING": "ファイル {{file}} が見つかりません。削除または移動されたか、ウイルス対策ソフトに隔離された可能性があります。確認してからもう一度お試しください。",
@@ -3359,14 +3379,6 @@
         "mixed": "フォルダー内のファイル設定が複数あります"
       },
       "clickTo": "クリックで「{{next}}」に切り替え",
-      "change": {
-        "modified": "変更",
-        "added": "追加",
-        "onceChanged": "初回インストールのみ · 変更",
-        "deleted": "削除",
-        "enable": "有効化",
-        "disable": "無効化"
-      },
       "changeHint": {
         "modified": "前のバージョンと内容が異なります。",
         "added": "前のバージョンにはこのファイルがありません。",
@@ -3489,13 +3501,11 @@
         "removedTag": "削除"
       },
       "restoreComponents": "このバージョンではゲームコンポーネントが変更されています。更新時にバージョン構成とライブラリも再構築されます。",
-      "conflicts": "{{count}}件のファイルがあなたの変更と競合しています。既定では新バージョンを適用します。個別に処理できます",
+      "conflicts": "{{count}} 件のローカル変更が新バージョンと競合しています",
       "autoMerged": "自動マージ {{count}}",
-      "showAll": "すべて表示（あと {{count}} 件）",
       "fileDiff": {
         "show": "差分を表示",
         "hide": "差分を閉じる",
-        "notText": "テキストでないか大きすぎるため、差分を表示できません",
         "unavailable": "新しいバージョンの内容を取得できません。後でもう一度お試しください",
         "formatOnly": "改行などの形式だけが異なります"
       },
@@ -3525,8 +3535,6 @@
       "hunk": "競合 {{number}}（元ファイルの{{from}}～{{to}}行）",
       "allKeepLocal": "すべてローカルを保持",
       "allTakeRemote": "すべて新バージョンを適用",
-      "expandAll": "すべて展開",
-      "collapseAll": "すべて折りたたむ",
       "localSide": "ローカル",
       "remoteSide": "新しいバージョン"
     },
@@ -3575,16 +3583,8 @@
     "comparedTo": "比較対象：{{label}}",
     "countingRule": "ローカルの変更を表示します：変更、削除、有効状態、およびmods・リソースパック・シェーダーの新規ファイル。",
     "incomplete": "前のバージョンの変更ルールを取得できません。もう一度お試しください",
-    "class": {
-      "modified": "変更",
-      "deleted": "削除",
-      "added": "新規",
-      "enable": "有効",
-      "disable": "無効"
-    },
     "disabled": "無効",
     "noDiff": {
-      "notText": "テキストでないか大きすぎるため、差分を表示できません",
       "baseMissing": "インストール時のコピーがないため、差分を表示できません",
       "bothVariants": "同名ファイルとその .disabled 変体が同時に存在します。どちらかを削除してください"
     },
